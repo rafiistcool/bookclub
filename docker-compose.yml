@@ -1,0 +1,13 @@
+services:
+  bookclub:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-change-me-to-a-long-random-string}
+      BOOKCLUB_BOOTSTRAP_INVITE: ${BOOKCLUB_BOOTSTRAP_INVITE:-DEV-ONLY}
+      BOOKCLUB_HTTPS: ${BOOKCLUB_HTTPS:-0}
+      DEBUG: ${DEBUG:-1}
+      DATABASE_PATH: /data/bookclub.db
+    volumes:
+      - ./data:/data
