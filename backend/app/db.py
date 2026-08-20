@@ -27,10 +27,10 @@ def init_db(path: Path) -> Engine:
     return engine
 
 
-def ensure_bootstrap_invite(session: Session, settings: Settings) -> None:
+def ensure_bootstrap_invite(session: Session, settings: Settings) -> str | None:
     existing = session.exec(select(Invite).limit(1)).first()
     if existing is not None:
-        return
+        return None
     code = normalize_invite_code(settings.bookclub_bootstrap_invite)
     if not code:
         raise RuntimeError("BOOKCLUB_BOOTSTRAP_INVITE is empty")
@@ -38,3 +38,4 @@ def ensure_bootstrap_invite(session: Session, settings: Settings) -> None:
         raise RuntimeError("Set BOOKCLUB_BOOTSTRAP_INVITE to a secret code when DEBUG=0")
     session.add(Invite(code=code, created_by_id=None))
     session.commit()
+    return code

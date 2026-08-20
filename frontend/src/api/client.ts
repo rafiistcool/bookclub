@@ -1,4 +1,4 @@
-import type { Invite, Member, SearchPage, SearchParams, ShelfItem, ShelfList, User } from "../types";
+import type { ClubConfig, Invite, Member, SearchPage, SearchParams, ShelfItem, ShelfList, User } from "../types";
 import type { Status } from "../constants";
 
 export class ApiError extends Error {
@@ -40,6 +40,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
+  config: () => request<ClubConfig>("/api/config"),
   me: () => request<User>("/api/auth/me"),
   register: (body: { username: string; password: string; invite_code: string }) =>
     request<User>("/api/auth/register", { method: "POST", body: JSON.stringify(body) }),

@@ -6,7 +6,41 @@ A tiny private bookclub for 2–5 people. Each person has an account and their o
 
 Search [Open Library](https://openlibrary.org), add a book, drag it between columns (or use **Move to…**). Friends can look at each other’s shelves. Signup is invite-only.
 
-No Redis, no Postgres. One Python process and a SQLite file.
+No Redis, no Postgres. One Python process and a SQLite file. Anyone can self-host it.
+
+---
+
+## Self-host
+
+One named club per instance. A stranger can stand this up with Compose:
+
+```bash
+git clone <this-repo>
+cd bookclub
+cp .env.example .env
+# set BOOKCLUB_NAME, and either set SECRET_KEY + BOOKCLUB_BOOTSTRAP_INVITE
+# or leave them empty to generate files under ./data
+docker compose up --build -d
+docker compose logs bookclub
+```
+
+Open `http://<host>:8000`. Register with the first-run invite (logs and `data/.bootstrap_invite`), then mint more from **Invites**. `DEBUG=0` is the Compose default, so `/api/docs` stays closed.
+
+Put a reverse proxy on the **same host** as the UI (the Vue app calls relative `/api`; `BOOKCLUB_PUBLIC_URL` is this instance’s public origin, not a split frontend). Leave `BOOKCLUB_HTTPS=auto`. Bundled Caddy does **not** publish `:8000`:
+
+```bash
+# in .env: BOOKCLUB_DOMAIN=books.example.com
+#          BOOKCLUB_PUBLIC_URL=https://books.example.com
+docker compose -f docker-compose.yml -f docker-compose.proxy.yml up --build -d
+```
+
+Full notes (LAN, NAS `PUID`/`PGID`, bare metal, backup, systemd): **[SELFHOST.md](SELFHOST.md)**.
+
+Local demo overlay (debug docs + invite `DEV-ONLY` — not for a shared host):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
 
 ---
 
@@ -30,7 +64,7 @@ From the repo root:
 cp .env.example .env
 ```
 
-The defaults in `.env` are fine for local work (`DEBUG=1`, invite `DEV-ONLY`).
+Uncomment the local Vite block at the bottom of `.env` (`DEBUG=1`, invite `DEV-ONLY`). Leave `DEBUG=0` if you are using Docker Compose.
 
 ### 2. Backend
 
@@ -101,61 +135,16 @@ Or without activating:
 cd backend && .venv/bin/pytest
 ```
 
----
-
-## Run
-
-Two ways to actually *use* the site (no Vite). Pick one.
-
-### Option A — one process, no Docker
-
-Build the Vue app into `backend/app/static`, then serve API + UI from uvicorn.
+One-process run without Docker (build the Vue app, then serve API + UI from uvicorn):
 
 ```bash
-cd frontend
-npm install
-npm run build
-
+cd frontend && npm install && npm run build
 cd ../backend
-# use the same venv you created for develop
-source .venv/bin/activate   # or activate.fish
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+source .venv/bin/activate
+uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Open **[http://127.0.0.1:8000](http://127.0.0.1:8000)**.
-
-For a machine you share with friends, set real secrets first:
-
-```bash
-DEBUG=0 \
-SECRET_KEY='paste-a-long-random-string' \
-BOOKCLUB_BOOTSTRAP_INVITE='a-secret-you-share-once' \
-BOOKCLUB_HTTPS=1 \
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
-
-`DEBUG=0` refuses to start if `SECRET_KEY` is still the example value, and refuses the `DEV-ONLY` bootstrap invite.
-
-Put HTTPS in front (Caddy, Tailscale Serve, Cloudflare Tunnel). Set `BOOKCLUB_HTTPS=1` so the session cookie is `Secure`.
-
-### Option B — Docker
-
-From the repo root (needs a `.env` or you can rely on compose defaults):
-
-```bash
-docker compose up --build
-```
-
-Open **[http://127.0.0.1:8000](http://127.0.0.1:8000)**.
-
-The database lives in `./data/bookclub.db` on the host. Compose defaults to `DEBUG=1` and invite `DEV-ONLY` so a first run works. For a real deploy, put this in `.env`:
-
-```bash
-DEBUG=0
-SECRET_KEY=paste-a-long-random-string
-BOOKCLUB_BOOTSTRAP_INVITE=a-secret-you-share-once
-BOOKCLUB_HTTPS=1
-```
+Open **[http://127.0.0.1:8000](http://127.0.0.1:8000)**. Bind `0.0.0.0` only if you intend the LAN to reach the process. For a machine you share, use the [self-host](#self-host) defaults (`DEBUG=0`, generated secrets, HTTPS in front).
 
 ---
 
@@ -180,13 +169,13 @@ On a phone, swipe the board sideways. Hold a card briefly, then drag it to anoth
 - Invite-only. No email, no password reset.
 - Any signed-in member can mint invites (account menu → **Invites**).
 - Treat unused codes like passwords.
-- The first unused invite is created only when the database has none (`BOOKCLUB_BOOTSTRAP_INVITE`).
+- The first unused invite is created only when the database has none (`BOOKCLUB_BOOTSTRAP_INVITE` or a generated `data/.bootstrap_invite`).
 
 ### Data
 
 Everything is in **`data/bookclub.db`** (SQLite, WAL mode).
 
-- Backup: copy that file (stop writes first if you want to be picky; WAL is usually fine).
+- Backup: `python -m app.backup [outfile]` (or copy the file; stop writes first if you want to be picky; WAL is usually fine).
 - Reset local data: stop the server and delete `data/bookclub.db` plus `data/bookclub.db-wal` / `data/bookclub.db-shm` if they exist. Next start creates a fresh DB and the bootstrap invite again.
 
 Book search is proxied to Open Library (no API key). Only books someone actually adds are stored. Covers are loaded from `covers.openlibrary.org`.
@@ -200,6 +189,7 @@ backend/           FastAPI app, tests, venv
 frontend/          Vue 3 + Vite + Pinia
   src/pages/       Screens
   src/components/  Cards, board, sheets
+deploy/            Self-host templates (Caddy, systemd, env example)
 data/              SQLite file (gitignored except .gitkeep)
 ```
 
@@ -209,15 +199,23 @@ data/              SQLite file (gitignored except .gitkeep)
 
 ## Environment
 
-Loaded from the repo-root `.env` (see `.env.example`).
+Loaded from the repo-root `.env` (copy `.env.example` or `deploy/env.example`). Compose injects the same keys; bare-metal uvicorn now reads that file too.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `SECRET_KEY` | `dev-secret-change-me` | Signs the session cookie. Changing it logs everyone out. Required to be non-default when `DEBUG=0`. |
-| `BOOKCLUB_BOOTSTRAP_INVITE` | `DEV-ONLY` | First invite, only if the DB has none. `DEV-ONLY` is rejected when `DEBUG=0`. |
-| `DEBUG` | `1` | `1`: CORS for Vite, `/api/docs`. `0`: production checks, no docs. |
-| `BOOKCLUB_HTTPS` | `0` | `1`: session cookie is `Secure` (use behind HTTPS). |
+| `BOOKCLUB_NAME` | `Bookclub` | Club name in the UI, tab title, manifest, API title, and Open Library User-Agent. |
+| `BOOKCLUB_THEME` | `#b44a2a` | Optional accent (`#rgb` / `#rrggbb`). |
+| `BOOKCLUB_THEME_DARK` | shaded accent | Optional darker accent. |
+| `BOOKCLUB_PUBLIC_URL` | empty | Canonical origin of this instance (`https://books.example.com`). Same-origin reverse proxy is the supported path; the UI does not talk to a split API host. Vite `localhost:5173` CORS is only when `DEBUG=1`. |
+| `SECRET_KEY` | empty in Compose | Signs the session cookie. Changing it logs everyone out. Empty + `DEBUG=0` writes `data/.secret_key`. Example / short values are refused when `DEBUG=0`. |
+| `BOOKCLUB_BOOTSTRAP_INVITE` | empty in Compose | First invite, only if the DB has none. Empty + `DEBUG=0` writes `data/.bootstrap_invite`. `DEV-ONLY` is refused when `DEBUG=0`. |
+| `DEBUG` | `0` in Compose | `1`: CORS for Vite, `/api/docs`. `0`: no docs. |
+| `BOOKCLUB_HTTPS` | `auto` | `auto`: session cookie is `Secure` only on HTTPS (including `X-Forwarded-Proto`). `1`: always. `0`: never. |
+| `BOOKCLUB_TRUSTED_PROXIES` | `*` | Who may set `X-Forwarded-*`. `*` is correct behind a private reverse proxy. |
 | `DATABASE_PATH` | `<repo>/data/bookclub.db` | Absolute path if you want it elsewhere. Docker uses `/data/bookclub.db`. |
+| `BOOKCLUB_PORT` | `8000` | Host port published by Compose. |
+| `BOOKCLUB_DOMAIN` | (required for proxy file) | Hostname for `docker-compose.proxy.yml`. Not localhost. |
+| `PUID` / `PGID` | `1000` | Runtime user for bind-mounted `./data`. |
 
 ---
 
@@ -227,7 +225,8 @@ Cookie session: `bookclub_session`. Send it with `credentials: include` / curl `
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/api/health` | No auth |
+| `GET` | `/api/health` | No auth; also pings SQLite |
+| `GET` | `/api/config` | Club name and theme (no auth) |
 | `POST` | `/api/auth/register` | `{ username, password, invite_code }` — also signs you in |
 | `POST` | `/api/auth/login` | `{ username, password }` |
 | `POST` | `/api/auth/logout` | |
@@ -248,7 +247,7 @@ Shelf stages: `want_to_read`, `currently_reading`, `finished`, `did_not_finish`.
 ## Troubleshooting
 
 **`DEV-ONLY` is not valid**  
-Someone already registered on this database. Mint a new invite (UI or `python -m app.create_invite`), or delete `data/bookclub.db*` and start over.
+Someone already registered on this database, or you are on `DEBUG=0` (that code is refused). Mint a new invite (UI, `python -m app.create_invite`, or the code in `data/.bootstrap_invite` on a fresh DB).
 
 **Vite loads but login/search fails**  
 Backend isn’t running on `:8000`. Start uvicorn first. Vite only proxies `/api`.
@@ -256,17 +255,20 @@ Backend isn’t running on `:8000`. Start uvicorn first. Vite only proxies `/api
 **Port 8000 already in use**  
 A leftover uvicorn from earlier. Stop it, or pick another port and point Vite’s `server.proxy` at that port.
 
-**`SECRET_KEY must be set when DEBUG=0`**  
-You’re in run/production mode with the example secret. Set a long random `SECRET_KEY`.
+**`SECRET_KEY must be a long random string when DEBUG=0`**  
+You set the example secret (or a short one) in production. Paste a long random value, or leave `SECRET_KEY` empty so `data/.secret_key` is generated.
 
-**`BOOKCLUB_BOOTSTRAP_INVITE` error on start**  
-`DEBUG=0` and the DB is empty, but the bootstrap invite is still `DEV-ONLY`. Set a real code.
+**`BOOKCLUB_BOOTSTRAP_INVITE cannot be DEV-ONLY`**  
+`DEBUG=0` refuses that demo code. Set a real invite, or leave the variable empty to generate one.
+
+**Logged in on HTTP, not on HTTPS**  
+The reverse proxy is not forwarding `X-Forwarded-Proto`. Or you set `BOOKCLUB_HTTPS=1` while still using plain HTTP (the browser will not store a `Secure` cookie). Leave `BOOKCLUB_HTTPS=auto`.
 
 **Open Library search errors**  
 Need outbound HTTPS. The shelf still works if search is down.
 
 **Forgot every invite, nobody can join**  
-If the DB already has users, run `python -m app.create_invite` from `backend/`. If it has *no* users and no invites, set `BOOKCLUB_BOOTSTRAP_INVITE` and restart.
+If the DB already has users, run `python -m app.create_invite` from `backend/` (or `docker compose exec bookclub python -m app.create_invite`). If it has *no* users and no invites, set `BOOKCLUB_BOOTSTRAP_INVITE` and restart.
 
 **Lost your password**  
 There is no reset. Delete that row (or the whole DB on a toy install) and register again with a new invite.

@@ -1,0 +1,34 @@
+# TLS reverse proxy. Does not publish bookclub:8000 on the host.
+#   BOOKCLUB_DOMAIN=books.example.com BOOKCLUB_PUBLIC_URL=https://books.example.com \
+#     docker compose -f docker-compose.yml -f docker-compose.proxy.yml up --build -d
+#
+# Requires Compose v2.24+ (`!reset`). Do not use this file for localhost —
+# Caddy binds 80/443 and expects a real hostname for Let's Encrypt.
+services:
+  bookclub:
+    ports: !reset []
+    environment:
+      BOOKCLUB_HTTPS: ${BOOKCLUB_HTTPS:-auto}
+      BOOKCLUB_TRUSTED_PROXIES: ${BOOKCLUB_TRUSTED_PROXIES:-*}
+      BOOKCLUB_PUBLIC_URL: ${BOOKCLUB_PUBLIC_URL:-}
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      BOOKCLUB_DOMAIN: ${BOOKCLUB_DOMAIN:?Set BOOKCLUB_DOMAIN to the hostname people type}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      bookclub:
+        condition: service_healthy
+
+volumes:
+  caddy-data:
+  caddy-config:

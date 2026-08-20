@@ -31,6 +31,7 @@ class _FakeResponse:
 class _FakeClient:
     calls = 0
     last_params = None
+    last_headers = None
 
     def __init__(self, *args, **kwargs):
         pass
@@ -44,6 +45,7 @@ class _FakeClient:
     async def get(self, url, params=None, headers=None):
         _FakeClient.calls += 1
         _FakeClient.last_params = params
+        _FakeClient.last_headers = headers
         return _FakeResponse()
 
 
@@ -64,6 +66,7 @@ def test_search_empty_q_browses(client, monkeypatch):
     assert _FakeClient.last_params["lang"] == "en"
     assert "language" not in _FakeClient.last_params
     assert _FakeClient.last_params["sort"] == "readinglog"
+    assert "Bookclub/1.0" in (_FakeClient.last_headers or {}).get("User-Agent", "")
 
 
 def test_search_maps_and_caches(client, monkeypatch):

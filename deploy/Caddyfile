@@ -1,0 +1,6 @@
+# Set BOOKCLUB_DOMAIN to the public hostname (not localhost).
+# Caddy issues a Let's Encrypt cert when this name is on the public internet.
+{$BOOKCLUB_DOMAIN} {
+	encode gzip
+	reverse_proxy bookclub:8000
+}
