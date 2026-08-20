@@ -7,6 +7,8 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, col, select
 
+from app.branding import open_library_ua
+from app.config import get_settings
 from app.deps import get_current_user, get_session
 from app.models import Book, ShelfEntry, User
 from app.schemas import SearchHit, SearchPage
@@ -18,7 +20,6 @@ _SUBJECT_KEY_RE = re.compile(r"^[a-z0-9_]+$")
 _CACHE_TTL = 300.0
 _search_cache: dict[str, tuple[float, SearchPage]] = {}
 OPEN_LIBRARY_URL = "https://openlibrary.org/search.json"
-OPEN_LIBRARY_UA = "Bookclub/1.0 (private book club; catalog browse via Open Library)"
 Sort = Literal["readinglog", "new", "title", "relevance"]
 
 
@@ -131,7 +132,7 @@ async def fetch_open_library(
             response = await client.get(
                 OPEN_LIBRARY_URL,
                 params=params,
-                headers={"User-Agent": OPEN_LIBRARY_UA},
+                headers={"User-Agent": open_library_ua(get_settings())},
             )
             response.raise_for_status()
             payload = response.json()

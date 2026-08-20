@@ -93,6 +93,13 @@ def read_or_create_file(path: Path, factory) -> tuple[str, bool]:
     return value, True
 
 
+def explicit_env(name: str) -> str | None:
+    if name not in os.environ:
+        return None
+    value = os.environ[name].strip()
+    return value or None
+
+
 def prepare_environment() -> dict[str, bool]:
     """Fill SECRET_KEY / bootstrap invite for production, persist them under the data dir."""
     debug = debug_from_env()
@@ -105,8 +112,8 @@ def prepare_environment() -> dict[str, bool]:
         return info
 
     data_dir = data_dir_from_env()
-    secret = os.environ.get("SECRET_KEY")
-    if is_placeholder_secret(secret):
+    secret = explicit_env("SECRET_KEY")
+    if secret is None:
         secret, created = read_or_create_file(
             data_dir / SECRET_FILENAME, lambda: secrets.token_urlsafe(48)
         )
@@ -118,9 +125,15 @@ def prepare_environment() -> dict[str, bool]:
             )
         os.environ["SECRET_KEY"] = secret
         info["generated_secret"] = created
+    elif is_placeholder_secret(secret):
+        raise RuntimeError(
+            "SECRET_KEY must be a long random string when DEBUG=0 "
+            f"(at least {MIN_SECRET_LENGTH} characters). "
+            "Do not use the example value."
+        )
 
-    invite = os.environ.get("BOOKCLUB_BOOTSTRAP_INVITE")
-    if is_placeholder_invite(invite):
+    invite = explicit_env("BOOKCLUB_BOOTSTRAP_INVITE")
+    if invite is None:
         invite, created = read_or_create_file(
             data_dir / INVITE_FILENAME, generate_invite_code
         )
@@ -133,14 +146,22 @@ def prepare_environment() -> dict[str, bool]:
         info["generated_invite"] = created
         if created:
             announce_invite(invite)
+    elif is_placeholder_invite(invite):
+        raise RuntimeError(
+            "BOOKCLUB_BOOTSTRAP_INVITE cannot be DEV-ONLY when DEBUG=0. "
+            "Set a secret code, or leave it empty to generate one."
+        )
     return info
 
 
 def announce_invite(code: str) -> None:
+    from app.branding import sanitize_name
+
+    name = sanitize_name(os.environ.get("BOOKCLUB_NAME"))
     banner = (
         "\n"
         "============================================================\n"
-        "Bookclub first-run invite (share once, then mint more):\n"
+        f"{name} first-run invite (share once, then mint more):\n"
         f"  {code}\n"
         "============================================================\n"
     )

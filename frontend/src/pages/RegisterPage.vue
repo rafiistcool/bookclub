@@ -2,7 +2,10 @@
 import { ref } from "vue";
 import { useRouter } from "vue-router";
 import { ApiError } from "../api/client";
+import { useClub } from "../stores/club";
 import { useSession } from "../stores/session";
+
+const club = useClub();
 
 const session = useSession();
 const router = useRouter();
@@ -29,7 +32,7 @@ async function submit() {
 
 <template>
   <main class="auth-page">
-    <h1 class="wordmark">Bookclub</h1>
+    <h1 class="wordmark">{{ club.name }}</h1>
     <p class="lede">Join with an invite from someone already here.</p>
     <form @submit.prevent="submit">
       <p v-if="error" class="error">{{ error }}</p>

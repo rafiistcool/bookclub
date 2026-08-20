@@ -9,7 +9,8 @@ tailnet hostname at whatever machine you have.
 
 ## What you get
 
-- Invite-only accounts for a small group
+- Invite-only accounts for a small group (one club per instance)
+- Your name and optional theme colors from env
 - Data in one directory you can copy
 - Session cookies that become `Secure` automatically behind HTTPS
 - A first-run invite printed in the logs if you do not set one yourself
@@ -27,8 +28,9 @@ Works on amd64 and arm64 (Raspberry Pi 4+, most NAS boxes).
 From the repo root:
 
 ```bash
-cp deploy/env.example .env
-# optional: edit BOOKCLUB_DOMAIN, BOOKCLUB_PORT, PUID/PGID
+cp .env.example .env
+# set BOOKCLUB_NAME (and optional BOOKCLUB_THEME / BOOKCLUB_PUBLIC_URL)
+# set SECRET_KEY and BOOKCLUB_BOOTSTRAP_INVITE, or leave them empty
 docker compose up --build -d
 docker compose logs -f bookclub
 ```
@@ -56,6 +58,7 @@ If the machine has a public DNS name:
 ```bash
 # in .env
 BOOKCLUB_DOMAIN=books.example.com
+BOOKCLUB_PUBLIC_URL=https://books.example.com
 ```
 
 ```bash
@@ -144,15 +147,16 @@ recreates the bootstrap invite from `BOOKCLUB_BOOTSTRAP_INVITE` or
 
 ## 5. Environment
 
-See `deploy/env.example` and the table in the README. Important production
-rules:
+See `.env.example` and the table in the README. Important production rules:
 
 - `DEBUG=0` hides `/api/docs`.
-- Placeholder secrets (`dev-secret-change-me`, `change-me-to-a-long-random-string`,
-  anything shorter than 32 characters) are replaced by a generated key.
-- `DEV-ONLY` is not accepted as the first invite when `DEBUG=0`.
+- Empty `SECRET_KEY` / `BOOKCLUB_BOOTSTRAP_INVITE` generate files under `./data`.
+- Explicit placeholders (`dev-secret-change-me`, `DEV-ONLY`, short keys) are
+  refused when `DEBUG=0`.
 - `BOOKCLUB_HTTPS=auto` (default) marks the session cookie `Secure` only when
   the request is HTTPS, including after `X-Forwarded-Proto`.
+- `BOOKCLUB_PUBLIC_URL` adds CORS for that origin. `DEBUG=1` also allows
+  Vite on `localhost:5173`.
 
 ## 6. Security notes
 

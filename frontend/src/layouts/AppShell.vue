@@ -2,8 +2,10 @@
 import { onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import BottomNav from "../components/BottomNav.vue";
+import { useClub } from "../stores/club";
 import { useSession } from "../stores/session";
 
+const club = useClub();
 const session = useSession();
 const router = useRouter();
 const menuOpen = ref(false);
@@ -26,7 +28,7 @@ onUnmounted(() => document.removeEventListener("click", close));
 <template>
   <div class="shell">
     <header class="topbar">
-      <RouterLink class="wordmark" to="/library">Bookclub</RouterLink>
+      <RouterLink class="wordmark" to="/library">{{ club.name }}</RouterLink>
       <div class="topbar-actions">
         <button class="account-btn" type="button" @click.stop="menuOpen = !menuOpen">
           {{ session.user?.username }}

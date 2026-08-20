@@ -66,3 +66,10 @@ export type Invite = {
   used_by: string | null;
   created_at: string;
 };
+
+export type ClubConfig = {
+  name: string;
+  theme: string;
+  theme_dark: string;
+  public_url: string;
+};

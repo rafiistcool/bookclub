@@ -1,6 +1,9 @@
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
-from app.config import get_settings
+from app.branding import cors_origins, open_library_ua, public_config
+from app.config import Settings, get_settings
 from app.runtime import (
     INVITE_FILENAME,
     SECRET_FILENAME,
@@ -54,24 +57,36 @@ def test_production_generates_and_reuses_secrets(tmp_path, monkeypatch):
 
 
 def _production_client(tmp_path, monkeypatch, **env) -> TestClient:
+    base_url = env.pop("base_url", "http://test")
     monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "bookclub.db"))
-    monkeypatch.setenv("DEBUG", "0")
-    monkeypatch.setenv("SECRET_KEY", env.get("SECRET_KEY", "p" * 32))
+    monkeypatch.setenv("DEBUG", env.pop("DEBUG", "0"))
+    monkeypatch.setenv("SECRET_KEY", env.pop("SECRET_KEY", "p" * 32))
     monkeypatch.setenv(
-        "BOOKCLUB_BOOTSTRAP_INVITE", env.get("BOOKCLUB_BOOTSTRAP_INVITE", "SELFHOST1")
+        "BOOKCLUB_BOOTSTRAP_INVITE",
+        env.pop("BOOKCLUB_BOOTSTRAP_INVITE", "SELFHOST1"),
     )
-    monkeypatch.setenv("BOOKCLUB_HTTPS", env.get("BOOKCLUB_HTTPS", "auto"))
+    monkeypatch.setenv("BOOKCLUB_HTTPS", env.pop("BOOKCLUB_HTTPS", "auto"))
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
     get_settings.cache_clear()
     reset_rate_limits()
     from app.main import create_app
 
-    return TestClient(create_app(), base_url=env.get("base_url", "http://test"))
+    return TestClient(create_app(), base_url=base_url)
 
 
 def test_production_app_registers_and_hides_docs(tmp_path, monkeypatch):
     with _production_client(tmp_path, monkeypatch) as client:
         assert client.get("/api/health").json() == {"ok": True}
         assert client.get("/api/docs").status_code == 404
+        vite = client.options(
+            "/api/health",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert vite.headers.get("access-control-allow-origin") is None
         response = register(client, "ada", invite="SELFHOST1")
         assert response.status_code == 201
         assert client.get("/api/auth/me").json()["username"] == "ada"
@@ -129,3 +144,98 @@ def test_backup_copies_sqlite(tmp_path, monkeypatch):
     backup_database(tmp_path / "bookclub.db", dest)
     assert dest.is_file()
     assert dest.stat().st_size > 0
+
+
+def test_production_refuses_demo_secret_and_invite(tmp_path, monkeypatch):
+    monkeypatch.setenv("DEBUG", "0")
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "bookclub.db"))
+    monkeypatch.setenv("SECRET_KEY", "dev-secret-change-me")
+    monkeypatch.setenv("BOOKCLUB_BOOTSTRAP_INVITE", "FRIENDS")
+    with pytest.raises(RuntimeError, match="SECRET_KEY"):
+        prepare_environment()
+
+    monkeypatch.setenv("SECRET_KEY", "a" * 32)
+    monkeypatch.setenv("BOOKCLUB_BOOTSTRAP_INVITE", "DEV-ONLY")
+    with pytest.raises(RuntimeError, match="DEV-ONLY"):
+        prepare_environment()
+
+
+def test_public_config_and_cors_origins():
+    branded = Settings(
+        bookclub_name="Thursday Readers",
+        bookclub_theme="#224466",
+        bookclub_public_url="https://books.example.com/app",
+        debug=False,
+    )
+    config = public_config(branded)
+    assert config["name"] == "Thursday Readers"
+    assert config["theme"] == "#224466"
+    assert config["theme_dark"].startswith("#")
+    assert config["public_url"] == "https://books.example.com"
+    assert cors_origins(branded) == ["https://books.example.com"]
+    assert "ThursdayReaders/1.0" in open_library_ua(branded)
+    assert "https://books.example.com" in open_library_ua(branded)
+
+    dev = Settings(debug=True, bookclub_public_url="https://books.example.com")
+    origins = cors_origins(dev)
+    assert "http://localhost:5173" in origins
+    assert "https://books.example.com" in origins
+
+    with pytest.raises(ValidationError):
+        Settings(bookclub_public_url="not-a-url")
+
+
+def test_branded_app_config_cors_and_user_agent(tmp_path, monkeypatch):
+    with _production_client(
+        tmp_path,
+        monkeypatch,
+        BOOKCLUB_NAME="Thursday Readers",
+        BOOKCLUB_THEME="#336699",
+        BOOKCLUB_PUBLIC_URL="https://books.example.com",
+    ) as client:
+        assert client.app.title == "Thursday Readers"
+        assert client.get("/api/docs").status_code == 404
+        body = client.get("/api/config").json()
+        assert body["name"] == "Thursday Readers"
+        assert body["theme"] == "#336699"
+        assert body["public_url"] == "https://books.example.com"
+        manifest = client.get("/manifest.webmanifest").json()
+        assert manifest["name"] == "Thursday Readers"
+        assert manifest["theme_color"] == "#336699"
+
+        allowed = client.options(
+            "/api/health",
+            headers={
+                "Origin": "https://books.example.com",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert allowed.headers.get("access-control-allow-origin") == (
+            "https://books.example.com"
+        )
+        denied = client.options(
+            "/api/health",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert denied.headers.get("access-control-allow-origin") != (
+            "http://localhost:5173"
+        )
+
+
+def test_debug_cors_keeps_vite(client):
+    config = client.get("/api/config").json()
+    assert config["name"] == "Bookclub"
+    preflight = client.options(
+        "/api/health",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert preflight.headers.get("access-control-allow-origin") == (
+        "http://localhost:5173"
+    )
+    assert preflight.headers.get("access-control-allow-credentials") == "true"
