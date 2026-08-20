@@ -1,0 +1,9 @@
+# Local demo overlay. Do not use this on a shared host.
+# docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+services:
+  bookclub:
+    environment:
+      DEBUG: "1"
+      BOOKCLUB_HTTPS: "0"
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
+      BOOKCLUB_BOOTSTRAP_INVITE: ${BOOKCLUB_BOOTSTRAP_INVITE:-DEV-ONLY}

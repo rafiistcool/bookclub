@@ -3,10 +3,13 @@ from sqlmodel import Session, select
 from app.config import get_settings
 from app.db import init_db
 from app.models import Invite
+from app.runtime import prepare_environment
 from app.security import generate_invite_code
 
 
 def main() -> None:
+    prepare_environment()
+    get_settings.cache_clear()
     settings = get_settings()
     engine = init_db(settings.database_path)
     code = generate_invite_code()

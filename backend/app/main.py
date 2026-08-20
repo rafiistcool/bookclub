@@ -6,21 +6,24 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlmodel import Session
 from starlette.middleware.sessions import SessionMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app.config import get_settings
 from app.db import ensure_bootstrap_invite, init_db
+from app.http import AutoSecureCookieMiddleware
 from app.routers import auth, books, invites, members, shelf
-from sqlmodel import Session
+from app.runtime import https_mode, prepare_environment, trusted_proxy_hosts
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 logger = logging.getLogger("bookclub")
 
 
 def create_app() -> FastAPI:
+    prepare_environment()
+    get_settings.cache_clear()
     settings = get_settings()
-    if not settings.debug and settings.secret_key == "dev-secret-change-me":
-        raise RuntimeError("SECRET_KEY must be set when DEBUG=0")
 
     engine = init_db(settings.database_path)
     with Session(engine) as session:
@@ -35,13 +38,20 @@ def create_app() -> FastAPI:
     app.state.engine = engine
     app.state.settings = settings
 
+    cookie_https = https_mode(settings.bookclub_https)
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.secret_key,
         session_cookie="bookclub_session",
         max_age=30 * 24 * 3600,
         same_site="lax",
-        https_only=settings.bookclub_https,
+        https_only=cookie_https == "always",
+    )
+    if cookie_https == "auto":
+        app.add_middleware(AutoSecureCookieMiddleware)
+    app.add_middleware(
+        ProxyHeadersMiddleware,
+        trusted_hosts=trusted_proxy_hosts(settings.bookclub_trusted_proxies),
     )
     if settings.debug:
         app.add_middleware(

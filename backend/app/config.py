@@ -15,9 +15,10 @@ class Settings(BaseSettings):
 
     secret_key: str = "dev-secret-change-me"
     debug: bool = True
-    bookclub_https: bool = False
+    bookclub_https: str = "auto"
     bookclub_bootstrap_invite: str = "DEV-ONLY"
     database_path: Path = _REPO_ROOT / "data" / "bookclub.db"
+    bookclub_trusted_proxies: str = "*"
 
 
 @lru_cache

@@ -1,13 +1,54 @@
+# Production / self-host. Local Vite+uvicorn development is documented in the README.
+# Demo overlay: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 services:
   bookclub:
     build: .
+    restart: unless-stopped
+    init: true
     ports:
-      - "8000:8000"
+      - "${BOOKCLUB_PORT:-8000}:8000"
     environment:
-      SECRET_KEY: ${SECRET_KEY:-change-me-to-a-long-random-string}
-      BOOKCLUB_BOOTSTRAP_INVITE: ${BOOKCLUB_BOOTSTRAP_INVITE:-DEV-ONLY}
-      BOOKCLUB_HTTPS: ${BOOKCLUB_HTTPS:-0}
-      DEBUG: ${DEBUG:-1}
+      SECRET_KEY: ${SECRET_KEY:-}
+      BOOKCLUB_BOOTSTRAP_INVITE: ${BOOKCLUB_BOOTSTRAP_INVITE:-}
+      BOOKCLUB_HTTPS: ${BOOKCLUB_HTTPS:-auto}
+      BOOKCLUB_TRUSTED_PROXIES: ${BOOKCLUB_TRUSTED_PROXIES:-*}
+      DEBUG: ${DEBUG:-0}
       DATABASE_PATH: /data/bookclub.db
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
     volumes:
-      - ./data:/data
+      - ${BOOKCLUB_DATA:-./data}:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["proxy"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      BOOKCLUB_DOMAIN: ${BOOKCLUB_DOMAIN:-localhost}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      bookclub:
+        condition: service_healthy
+
+volumes:
+  caddy-data:
+  caddy-config:
