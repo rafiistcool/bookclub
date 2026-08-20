@@ -2,11 +2,12 @@ import json
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 from sqlmodel import Session
 from starlette.middleware.sessions import SessionMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -17,6 +18,7 @@ from app.branding import (
     manifest_payload,
     public_config,
     sanitize_name,
+    warn_invalid_theme,
 )
 from app.config import get_settings
 from app.db import ensure_bootstrap_invite, init_db
@@ -33,6 +35,7 @@ def create_app() -> FastAPI:
     get_settings.cache_clear()
     settings = get_settings()
     club_name = sanitize_name(settings.bookclub_name)
+    warn_invalid_theme(settings)
 
     engine = init_db(settings.database_path)
     with Session(engine) as session:
@@ -86,6 +89,12 @@ def create_app() -> FastAPI:
 
     @app.get("/api/health")
     def health() -> dict[str, bool]:
+        try:
+            with Session(engine) as session:
+                session.execute(text("SELECT 1"))
+        except Exception:
+            logger.exception("health check failed")
+            raise HTTPException(status_code=503, detail="database unavailable") from None
         return {"ok": True}
 
     @app.get("/api/config")

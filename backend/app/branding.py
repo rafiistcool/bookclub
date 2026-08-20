@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from html import escape
 from urllib.parse import urlparse
 
 from app.config import Settings
+
+logger = logging.getLogger("bookclub")
 
 DEFAULT_NAME = "Bookclub"
 DEFAULT_THEME = "#b44a2a"
@@ -79,6 +82,17 @@ def open_library_ua(settings: Settings) -> str:
     token = token or "Bookclub"
     contact = public_origin(settings.bookclub_public_url) or "private book club"
     return f"{token}/1.0 ({contact}; catalog browse via Open Library)"
+
+
+def warn_invalid_theme(settings: Settings) -> None:
+    raw = (settings.bookclub_theme or "").strip()
+    if raw and not sanitize_theme(raw):
+        logger.warning(
+            "Invalid BOOKCLUB_THEME %r; using default %s", raw, DEFAULT_THEME
+        )
+    raw_dark = (settings.bookclub_theme_dark or "").strip()
+    if raw_dark and not sanitize_theme(raw_dark):
+        logger.warning("Invalid BOOKCLUB_THEME_DARK %r; ignoring", raw_dark)
 
 
 def public_config(settings: Settings) -> dict[str, str]:

@@ -26,12 +26,12 @@ docker compose logs bookclub
 
 Open `http://<host>:8000`. Register with the first-run invite (logs and `data/.bootstrap_invite`), then mint more from **Invites**. `DEBUG=0` is the Compose default, so `/api/docs` stays closed.
 
-Behind a reverse proxy, set `BOOKCLUB_PUBLIC_URL=https://your.hostname` (CORS + Open Library contact) and leave `BOOKCLUB_HTTPS=auto`. Optional bundled Caddy:
+Put a reverse proxy on the **same host** as the UI (the Vue app calls relative `/api`; `BOOKCLUB_PUBLIC_URL` is this instance’s public origin, not a split frontend). Leave `BOOKCLUB_HTTPS=auto`. Bundled Caddy does **not** publish `:8000`:
 
 ```bash
 # in .env: BOOKCLUB_DOMAIN=books.example.com
 #          BOOKCLUB_PUBLIC_URL=https://books.example.com
-docker compose --profile proxy up --build -d
+docker compose -f docker-compose.yml -f docker-compose.proxy.yml up --build -d
 ```
 
 Full notes (LAN, NAS `PUID`/`PGID`, bare metal, backup, systemd): **[SELFHOST.md](SELFHOST.md)**.
@@ -141,10 +141,10 @@ One-process run without Docker (build the Vue app, then serve API + UI from uvic
 cd frontend && npm install && npm run build
 cd ../backend
 source .venv/bin/activate
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Open **[http://127.0.0.1:8000](http://127.0.0.1:8000)**. For a machine you share, use the [self-host](#self-host) defaults (`DEBUG=0`, generated secrets, HTTPS in front).
+Open **[http://127.0.0.1:8000](http://127.0.0.1:8000)**. Bind `0.0.0.0` only if you intend the LAN to reach the process. For a machine you share, use the [self-host](#self-host) defaults (`DEBUG=0`, generated secrets, HTTPS in front).
 
 ---
 
@@ -199,14 +199,14 @@ data/              SQLite file (gitignored except .gitkeep)
 
 ## Environment
 
-Loaded from the repo-root `.env` (see `.env.example` for development and `deploy/env.example` for self-host).
+Loaded from the repo-root `.env` (copy `.env.example` or `deploy/env.example`). Compose injects the same keys; bare-metal uvicorn now reads that file too.
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `BOOKCLUB_NAME` | `Bookclub` | Club name in the UI, tab title, manifest, API title, and Open Library User-Agent. |
 | `BOOKCLUB_THEME` | `#b44a2a` | Optional accent (`#rgb` / `#rrggbb`). |
 | `BOOKCLUB_THEME_DARK` | shaded accent | Optional darker accent. |
-| `BOOKCLUB_PUBLIC_URL` | empty | Public origin (`https://books.example.com`). Adds CORS for that origin; keep Vite `localhost:5173` when `DEBUG=1`. |
+| `BOOKCLUB_PUBLIC_URL` | empty | Canonical origin of this instance (`https://books.example.com`). Same-origin reverse proxy is the supported path; the UI does not talk to a split API host. Vite `localhost:5173` CORS is only when `DEBUG=1`. |
 | `SECRET_KEY` | empty in Compose | Signs the session cookie. Changing it logs everyone out. Empty + `DEBUG=0` writes `data/.secret_key`. Example / short values are refused when `DEBUG=0`. |
 | `BOOKCLUB_BOOTSTRAP_INVITE` | empty in Compose | First invite, only if the DB has none. Empty + `DEBUG=0` writes `data/.bootstrap_invite`. `DEV-ONLY` is refused when `DEBUG=0`. |
 | `DEBUG` | `0` in Compose | `1`: CORS for Vite, `/api/docs`. `0`: no docs. |
@@ -214,7 +214,7 @@ Loaded from the repo-root `.env` (see `.env.example` for development and `deploy
 | `BOOKCLUB_TRUSTED_PROXIES` | `*` | Who may set `X-Forwarded-*`. `*` is correct behind a private reverse proxy. |
 | `DATABASE_PATH` | `<repo>/data/bookclub.db` | Absolute path if you want it elsewhere. Docker uses `/data/bookclub.db`. |
 | `BOOKCLUB_PORT` | `8000` | Host port published by Compose. |
-| `BOOKCLUB_DOMAIN` | `localhost` | Hostname for the optional Caddy profile. |
+| `BOOKCLUB_DOMAIN` | (required for proxy file) | Hostname for `docker-compose.proxy.yml`. Not localhost. |
 | `PUID` / `PGID` | `1000` | Runtime user for bind-mounted `./data`. |
 
 ---
@@ -225,7 +225,7 @@ Cookie session: `bookclub_session`. Send it with `credentials: include` / curl `
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/api/health` | No auth |
+| `GET` | `/api/health` | No auth; also pings SQLite |
 | `GET` | `/api/config` | Club name and theme (no auth) |
 | `POST` | `/api/auth/register` | `{ username, password, invite_code }` — also signs you in |
 | `POST` | `/api/auth/login` | `{ username, password }` |

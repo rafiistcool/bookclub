@@ -1,7 +1,6 @@
-# Generic reverse proxy. Set BOOKCLUB_DOMAIN to the hostname people type
-# (example: books.example.com). Caddy issues a Let's Encrypt cert for
-# public DNS names. For localhost it serves HTTPS with a local cert.
-{$BOOKCLUB_DOMAIN:localhost} {
+# Set BOOKCLUB_DOMAIN to the public hostname (not localhost).
+# Caddy issues a Let's Encrypt cert when this name is on the public internet.
+{$BOOKCLUB_DOMAIN} {
 	encode gzip
 	reverse_proxy bookclub:8000
 }

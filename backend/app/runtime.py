@@ -88,8 +88,14 @@ def read_or_create_file(path: Path, factory) -> tuple[str, bool]:
     path.write_text(f"{value}\n", encoding="utf-8")
     try:
         path.chmod(0o600)
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.warning(
+            "Could not chmod 600 %s (%s). On NFS/CIFS this is common; "
+            "the file is still usable, but do not put a SQLite WAL database "
+            "on a network share.",
+            path,
+            exc,
+        )
     return value, True
 
 
@@ -102,6 +108,9 @@ def explicit_env(name: str) -> str | None:
 
 def prepare_environment() -> dict[str, bool]:
     """Fill SECRET_KEY / bootstrap invite for production, persist them under the data dir."""
+    from app.config import apply_dotenv
+
+    apply_dotenv()
     debug = debug_from_env()
     info = {
         "debug": debug,

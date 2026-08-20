@@ -62,15 +62,19 @@ BOOKCLUB_PUBLIC_URL=https://books.example.com
 ```
 
 ```bash
-docker compose --profile proxy up --build -d
+docker compose -f docker-compose.yml -f docker-compose.proxy.yml up --build -d
 ```
 
-Caddy listens on 80/443 and proxies to the app. Set A/AAAA records to the
-server and open those ports. Let's Encrypt is automatic.
+Caddy listens on 80/443 and proxies to the app on the Docker network.
+`:8000` is **not** published on the host. Set A/AAAA records to the server
+and open 80/443. Let's Encrypt is automatic. `BOOKCLUB_DOMAIN` must be the
+real hostname (not `localhost`) — this file binds 80/443.
 
-You can also put your own reverse proxy in front of port 8000. Send
-`X-Forwarded-Proto: https` and leave `BOOKCLUB_HTTPS=auto` so the session
-cookie is marked `Secure`.
+You can also put your own reverse proxy in front of port 8000 on the same
+host. The UI calls relative `/api`, so the browser must see one origin.
+Send `X-Forwarded-Proto: https` and leave `BOOKCLUB_HTTPS=auto` so the
+session cookie is marked `Secure`. Set `BOOKCLUB_TRUSTED_PROXIES` to the
+proxy (or `127.0.0.1` if it shares the host).
 
 ### LAN, Tailscale, Cloudflare Tunnel
 
@@ -92,11 +96,18 @@ PGID=1000
 BOOKCLUB_DATA=/volume1/docker/bookclub
 ```
 
+Put `BOOKCLUB_DATA` on a **local disk**. SQLite WAL on NFS or another
+network filesystem can corrupt the database. If `chmod 600` on
+`.secret_key` fails (common on CIFS/NFS), the app logs a warning and
+continues — that is not a license to store the DB on a share.
+
 ## 3. Bare metal
 
 ```bash
-cp deploy/env.example .env
-# set DEBUG=0; leave secrets empty to auto-generate
+cp .env.example .env
+# or: cp deploy/env.example .env
+# both files set DEBUG=0 and empty secrets (generated on first start)
+# set BOOKCLUB_NAME; optionally BOOKCLUB_PUBLIC_URL and BOOKCLUB_TRUSTED_PROXIES=127.0.0.1
 
 cd frontend && npm ci && npm run build && cd ..
 
@@ -104,7 +115,8 @@ cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips 127.0.0.1
+# bind loopback; put Caddy/nginx/Tailscale Serve in front
+uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 Put HTTPS in front of `127.0.0.1:8000`. A sample systemd unit is
@@ -155,8 +167,11 @@ See `.env.example` and the table in the README. Important production rules:
   refused when `DEBUG=0`.
 - `BOOKCLUB_HTTPS=auto` (default) marks the session cookie `Secure` only when
   the request is HTTPS, including after `X-Forwarded-Proto`.
-- `BOOKCLUB_PUBLIC_URL` adds CORS for that origin. `DEBUG=1` also allows
-  Vite on `localhost:5173`.
+- `BOOKCLUB_PUBLIC_URL` is the public origin of this same instance (Open
+  Library contact / docs). The UI uses relative `/api`; put TLS on the
+  same host. `DEBUG=1` also allows Vite on `localhost:5173`.
+- `BOOKCLUB_TRUSTED_PROXIES` is who may set `X-Forwarded-*`. The image no
+  longer forces `--forwarded-allow-ips *`.
 
 ## 6. Security notes
 

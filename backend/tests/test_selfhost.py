@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -66,6 +68,8 @@ def _production_client(tmp_path, monkeypatch, **env) -> TestClient:
         env.pop("BOOKCLUB_BOOTSTRAP_INVITE", "SELFHOST1"),
     )
     monkeypatch.setenv("BOOKCLUB_HTTPS", env.pop("BOOKCLUB_HTTPS", "auto"))
+    monkeypatch.setenv("BOOKCLUB_NAME", env.pop("BOOKCLUB_NAME", "Bookclub"))
+    monkeypatch.delenv("BOOKCLUB_ENV_FILE", raising=False)
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     get_settings.cache_clear()
@@ -89,6 +93,9 @@ def test_production_app_registers_and_hides_docs(tmp_path, monkeypatch):
         assert vite.headers.get("access-control-allow-origin") is None
         response = register(client, "ada", invite="SELFHOST1")
         assert response.status_code == 201
+        cookie = response.headers.get("set-cookie", "")
+        assert "httponly" in cookie.lower()
+        assert "samesite=lax" in cookie.lower()
         assert client.get("/api/auth/me").json()["username"] == "ada"
 
 
@@ -223,6 +230,80 @@ def test_branded_app_config_cors_and_user_agent(tmp_path, monkeypatch):
         assert denied.headers.get("access-control-allow-origin") != (
             "http://localhost:5173"
         )
+
+
+def test_dotenv_only_production_boot(tmp_path, monkeypatch):
+    for key in (
+        "DEBUG",
+        "SECRET_KEY",
+        "BOOKCLUB_BOOTSTRAP_INVITE",
+        "BOOKCLUB_NAME",
+        "DATABASE_PATH",
+        "BOOKCLUB_HTTPS",
+        "BOOKCLUB_PUBLIC_URL",
+        "BOOKCLUB_THEME",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "DEBUG=0",
+                "SECRET_KEY=",
+                "BOOKCLUB_BOOTSTRAP_INVITE=",
+                f"DATABASE_PATH={tmp_path / 'bookclub.db'}",
+                "BOOKCLUB_NAME=Dotenv Club",
+                "BOOKCLUB_HTTPS=auto",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("BOOKCLUB_ENV_FILE", str(env_file))
+    get_settings.cache_clear()
+    reset_rate_limits()
+    from app.main import create_app
+
+    with TestClient(create_app()) as client:
+        assert client.app.title == "Dotenv Club"
+        assert client.get("/api/docs").status_code == 404
+        assert client.get("/api/health").json() == {"ok": True}
+        assert client.get("/api/config").json()["name"] == "Dotenv Club"
+        invite = (tmp_path / INVITE_FILENAME).read_text(encoding="utf-8").strip()
+        assert invite
+        assert register(client, "ada", invite=invite).status_code == 201
+
+
+def test_trusted_proxy_denies_forwarded_proto(tmp_path, monkeypatch):
+    with _production_client(
+        tmp_path, monkeypatch, BOOKCLUB_TRUSTED_PROXIES="127.0.0.1"
+    ) as client:
+        response = client.post(
+            "/api/auth/register",
+            json={
+                "username": "ada",
+                "password": "password1",
+                "invite_code": "SELFHOST1",
+            },
+            headers={"X-Forwarded-Proto": "https"},
+        )
+        cookie = response.headers.get("set-cookie", "")
+        assert response.status_code == 201
+        assert "bookclub_session=" in cookie
+        assert "secure" not in cookie.lower()
+        assert "httponly" in cookie.lower()
+        assert "samesite=lax" in cookie.lower()
+
+
+def test_invalid_theme_warns_and_falls_back(tmp_path, monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger="bookclub")
+    with _production_client(
+        tmp_path, monkeypatch, BOOKCLUB_THEME="not-a-color"
+    ) as client:
+        body = client.get("/api/config").json()
+        assert body["theme"] == "#b44a2a"
+        assert "BOOKCLUB_THEME" in caplog.text
+        assert "not-a-color" in caplog.text
 
 
 def test_debug_cors_keeps_vite(client):

@@ -1,16 +1,41 @@
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse
+import os
 
+from dotenv import dotenv_values
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def dotenv_path() -> Path:
+    raw = os.environ.get("BOOKCLUB_ENV_FILE")
+    if raw:
+        return Path(raw).expanduser()
+    return _REPO_ROOT / ".env"
+
+
+def apply_dotenv() -> None:
+    """Copy unset keys from the dotenv file into os.environ.
+
+    Pydantic Settings reads .env for *its* fields, but prepare_environment()
+    and debug_from_env() only see the process environment. Compose injects
+    vars; bare-metal `cp .env.example .env && uvicorn` does not. Process
+    environment always wins (override=False).
+    """
+    path = dotenv_path()
+    if not path.is_file():
+        return
+    for key, value in dotenv_values(path).items():
+        if not key or key in os.environ:
+            continue
+        os.environ[key] = value if value is not None else ""
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=_REPO_ROOT / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -42,4 +67,6 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    apply_dotenv()
+    path = dotenv_path()
+    return Settings(_env_file=path if path.is_file() else None)
