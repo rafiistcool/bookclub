@@ -41,7 +41,8 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
   color: inherit;
 }
@@ -56,6 +57,7 @@ button {
 
 button:focus-visible,
 input:focus-visible,
+textarea:focus-visible,
 a:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -114,13 +116,19 @@ img {
   font-weight: 600;
 }
 
-.field input {
+.field input,
+.field textarea {
   width: 100%;
   border: 1px solid var(--line);
   background: #fffdf8;
   border-radius: 12px;
   padding: 14px 14px;
   min-height: 48px;
+}
+
+.field textarea {
+  min-height: 5.5rem;
+  resize: vertical;
 }
 
 .password-wrap {
@@ -284,7 +292,7 @@ img {
   height: calc(var(--nav-h) + env(safe-area-inset-bottom));
   padding: 6px 8px env(safe-area-inset-bottom);
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   background: #fffdf8;
   border-top: 1px solid var(--line);
 }
@@ -568,6 +576,11 @@ img {
   color: var(--dnf);
 }
 
+.badge.club-pick {
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+
 .icon-btn {
   border: 0;
   background: transparent;
@@ -686,6 +699,274 @@ img {
   margin: 0 0 12px;
 }
 
+.club-pick-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  margin-bottom: 16px;
+  background: #fffdf8;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.club-pick-banner.compact {
+  box-shadow: none;
+}
+
+.club-pick-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 12px;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+}
+
+.club-pick-kicker {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 2px;
+}
+
+.club-pick-note,
+.club-pick-meeting {
+  margin-top: 4px;
+  font-style: italic;
+}
+
+.home-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.home-cover {
+  width: min(100%, 220px);
+  margin: 0 auto;
+}
+
+.home-progress {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 28px;
+}
+
+.home-progress h2 {
+  font-size: 1.15rem;
+  margin-bottom: 10px;
+}
+
+.home-progress ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.home-progress a {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.club-pick-empty {
+  width: 100%;
+}
+
+.club-pick-card {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 16px;
+  align-items: start;
+  padding: 14px;
+  background: #fffdf8;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.club-pick-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.club-pick-readers,
+.club-pick-history {
+  margin-top: 28px;
+}
+
+.club-pick-readers h2,
+.club-pick-history h2 {
+  font-size: 1.15rem;
+  margin-bottom: 12px;
+}
+
+.club-pick-readers ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.club-pick-readers li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  background: #fffdf8;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.club-pick-readers a {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.finish-note {
+  margin-top: 4px;
+  font-size: 0.85rem;
+  font-style: italic;
+  color: var(--ink-soft);
+}
+
+.star-row {
+  display: flex;
+  gap: 2px;
+}
+
+.star-btn {
+  border: 0;
+  background: transparent;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  font-size: 1.4rem;
+  line-height: 1;
+  color: var(--accent);
+}
+
+.past-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.past-pick-toggle {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 64px 1fr;
+  gap: 12px;
+  align-items: center;
+  cursor: pointer;
+  text-align: left;
+}
+
+.pick-thread {
+  display: grid;
+  gap: 12px;
+}
+
+.pick-thread-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.pick-thread-list li {
+  padding: 12px 14px;
+  background: #fffdf8;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.pick-thread-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin: 0 0 6px;
+  font-size: 0.85rem;
+}
+
+.pick-thread-body {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.pick-thread-form {
+  display: grid;
+  gap: 10px;
+}
+
+.overlap-row {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 10px;
+  background: #fffdf8;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  text-decoration: none;
+  color: inherit;
+}
+
+.next-up {
+  margin-top: 28px;
+  display: grid;
+  gap: 12px;
+}
+
+.next-up h2 {
+  font-size: 1.15rem;
+}
+
+.next-up-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.next-up-row {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 12px;
+  align-items: start;
+  padding: 12px;
+  background: #fffdf8;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.next-up-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .member-card {
   display: flex;
   align-items: center;
@@ -719,6 +1000,61 @@ img {
 .invite-code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: 0.06em;
+}
+
+.backup-block {
+  margin-top: 36px;
+}
+
+.backup-block h2 {
+  font-size: 1.15rem;
+  margin-bottom: 8px;
+}
+
+.backup-block .btn {
+  width: 100%;
+}
+
+.import-block {
+  margin-top: 36px;
+}
+
+.import-block h2 {
+  font-size: 1.15rem;
+  margin-bottom: 8px;
+}
+
+.import-block .btn {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.import-file {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: #fffdf8;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.import-file input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.import-skips {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
 }
 
 .toast {

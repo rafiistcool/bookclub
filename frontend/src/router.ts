@@ -22,7 +22,7 @@ const router = createRouter({
       component: () => import("./layouts/AppShell.vue"),
       meta: { auth: true },
       children: [
-        { path: "", redirect: "/library" },
+        { path: "", component: () => import("./pages/HomePage.vue") },
         { path: "library", component: () => import("./pages/LibraryPage.vue") },
         { path: "shelf", component: () => import("./pages/ShelfPage.vue") },
         { path: "friends", component: () => import("./pages/FriendsPage.vue") },
@@ -31,6 +31,8 @@ const router = createRouter({
           component: () => import("./pages/FriendShelfPage.vue"),
         },
         { path: "invites", component: () => import("./pages/InvitesPage.vue") },
+        { path: "overlap", component: () => import("./pages/OverlapPage.vue") },
+        { path: "pick", redirect: "/" },
       ],
     },
   ],
@@ -50,7 +52,7 @@ router.beforeEach(async (to) => {
     return { path: "/login", query: { next: to.fullPath } };
   }
   if (to.meta.guest && session.user) {
-    return { path: "/library" };
+    return { path: "/" };
   }
   return true;
 });

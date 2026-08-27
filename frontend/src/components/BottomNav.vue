@@ -4,12 +4,20 @@ import { useRoute } from "vue-router";
 const route = useRoute();
 
 function active(prefix: string) {
+  if (prefix === "/") return route.path === "/";
   return route.path === prefix || route.path.startsWith(prefix + "/");
 }
 </script>
 
 <template>
   <nav class="bottom-nav" aria-label="Main">
+    <RouterLink to="/" :class="{ active: active('/') }">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M4 11.5 12 5l8 6.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+        <path d="M6.5 10.5V19h11v-8.5" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+      </svg>
+      Home
+    </RouterLink>
     <RouterLink to="/library" :class="{ active: active('/library') }">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.8" />

@@ -16,9 +16,9 @@ const error = ref("");
 const pending = ref(false);
 
 function safeNextPath(raw: unknown): string {
-  if (typeof raw !== "string") return "/library";
+  if (typeof raw !== "string") return "/";
   if (!raw.startsWith("/") || raw.startsWith("//") || raw.includes("\\")) {
-    return "/library";
+    return "/";
   }
   return raw;
 }

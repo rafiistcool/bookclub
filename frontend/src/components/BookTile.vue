@@ -24,7 +24,8 @@ const badge = computed(() => props.hit.on_shelf);
   >
     <span class="book-tile-cover">
       <BookCover :title="hit.title" :cover-id="hit.cover_id" size="L" fluid />
-      <span v-if="badge" class="badge book-tile-badge" :class="badge">
+      <span v-if="hit.club_pick" class="badge book-tile-badge club-pick">Club</span>
+      <span v-else-if="badge" class="badge book-tile-badge" :class="badge">
         {{ STATUS_SHORT[badge] }}
       </span>
     </span>

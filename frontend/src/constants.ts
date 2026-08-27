@@ -29,6 +29,18 @@ export function coverUrl(
   return `https://covers.openlibrary.org/b/id/${coverId}-${size}.jpg`;
 }
 
+export type FinishNote = {
+  rating?: number | null;
+  take?: string;
+  dnf_reason?: string;
+  progress?: number | null;
+};
+
+export function starLabel(rating: number | null | undefined): string {
+  if (!rating) return "";
+  return "★".repeat(rating) + "☆".repeat(5 - rating);
+}
+
 export function monogram(title: string): string {
   const letter = title.trim().charAt(0);
   return letter ? letter.toUpperCase() : "?";

@@ -28,14 +28,16 @@ onUnmounted(() => document.removeEventListener("click", close));
 <template>
   <div class="shell">
     <header class="topbar">
-      <RouterLink class="wordmark" to="/library">{{ club.name }}</RouterLink>
+      <RouterLink class="wordmark" to="/">{{ club.name }}</RouterLink>
       <div class="topbar-actions">
         <button class="account-btn" type="button" @click.stop="menuOpen = !menuOpen">
           {{ session.user?.username }}
         </button>
       </div>
       <div v-if="menuOpen" class="menu">
+        <RouterLink to="/" @click="menuOpen = false">Home</RouterLink>
         <RouterLink to="/invites" @click="menuOpen = false">Invites</RouterLink>
+        <RouterLink to="/invites#backup" @click="menuOpen = false">Export backup</RouterLink>
         <button type="button" @click="logout">Log out</button>
       </div>
     </header>

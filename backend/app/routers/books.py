@@ -5,12 +5,13 @@ from typing import Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import selectinload
 from sqlmodel import Session, col, select
 
 from app.branding import open_library_ua
 from app.config import get_settings
 from app.deps import get_current_user, get_session
-from app.models import Book, ShelfEntry, User
+from app.models import Book, ClubPick, ShelfEntry, User
 from app.schemas import SearchHit, SearchPage
 
 router = APIRouter(prefix="/api/books", tags=["books"])
@@ -188,6 +189,22 @@ def _annotate_shelf(hits: list[SearchHit], user: User, session: Session) -> None
             hit.shelf_id = entry.id
 
 
+def _annotate_club_pick(hits: list[SearchHit], session: Session) -> None:
+    if not hits:
+        return
+    current = session.exec(
+        select(ClubPick)
+        .where(ClubPick.ended_at.is_(None))
+        .options(selectinload(ClubPick.book))
+        .order_by(ClubPick.id.desc())
+    ).first()
+    if current is None or current.book is None:
+        return
+    key = current.book.ol_work_key
+    for hit in hits:
+        hit.club_pick = hit.ol_work_key == key
+
+
 @router.get("/search", response_model=SearchPage)
 async def search_books(
     q: str = Query(default=""),
@@ -212,4 +229,5 @@ async def search_books(
         limit=limit,
     )
     _annotate_shelf(result.items, user, session)
+    _annotate_club_pick(result.items, session)
     return result

@@ -66,5 +66,14 @@ onMounted(load);
       </div>
       <p v-if="invites.length === 0" class="muted">No invites yet.</p>
     </div>
+
+    <section id="backup" class="backup-block">
+      <h2>Export / backup</h2>
+      <p class="muted fine" style="margin-bottom: 12px">
+        Download a copy of the club SQLite database. Keep it somewhere safe — this does not restore
+        from a file.
+      </p>
+      <a class="btn btn-ghost" href="/api/backup">Download database</a>
+    </section>
   </section>
 </template>

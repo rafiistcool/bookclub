@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     bookclub_https: str = "auto"
     bookclub_bootstrap_invite: str = "DEV-ONLY"
     database_path: Path = _REPO_ROOT / "data" / "bookclub.db"
+    bookclub_tz: str = "UTC"
     bookclub_trusted_proxies: str = "*"
     bookclub_name: str = "Bookclub"
     bookclub_theme: str = "#b44a2a"

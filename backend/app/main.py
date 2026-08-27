@@ -23,8 +23,9 @@ from app.branding import (
 from app.config import get_settings
 from app.db import ensure_bootstrap_invite, init_db
 from app.http import AutoSecureCookieMiddleware
-from app.routers import auth, books, invites, members, shelf
+from app.routers import auth, backup, books, invites, members, overlap, pick, shelf, vote
 from app.runtime import https_mode, prepare_environment, trusted_proxy_hosts
+from app.timezone import resolved_timezone
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 logger = logging.getLogger("bookclub")
@@ -99,13 +100,20 @@ def create_app() -> FastAPI:
 
     @app.get("/api/config")
     def config() -> dict[str, str]:
-        return public_config(settings)
+        current = get_settings()
+        payload = public_config(current)
+        payload["timezone"] = resolved_timezone(current.bookclub_tz)
+        return payload
 
     app.include_router(auth.router)
     app.include_router(invites.router)
     app.include_router(books.router)
     app.include_router(shelf.router)
     app.include_router(members.router)
+    app.include_router(pick.router)
+    app.include_router(overlap.router)
+    app.include_router(vote.router)
+    app.include_router(backup.router)
 
     @app.get("/manifest.webmanifest")
     def manifest() -> Response:

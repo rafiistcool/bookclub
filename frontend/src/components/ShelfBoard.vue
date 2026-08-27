@@ -8,11 +8,15 @@ import BookCard from "./BookCard.vue";
 const props = defineProps<{
   items: ShelfItem[];
   readonly?: boolean;
+  clubPickKey?: string | null;
 }>();
 
 const emit = defineEmits<{
   move: [item: ShelfItem];
   remove: [item: ShelfItem];
+  clubPick: [item: ShelfItem];
+  nominate: [item: ShelfItem];
+  progress: [item: ShelfItem];
   dropped: [item: ShelfItem, status: Status, position: number];
 }>();
 
@@ -72,12 +76,22 @@ function onDrop(status: Status, evt: { newIndex?: number }) {
           v-for="item in lists[status]"
           :key="item.id"
           :item="item"
+          :club-pick-key="clubPickKey"
           @move="emit('move', item)"
           @remove="emit('remove', item)"
+          @club-pick="emit('clubPick', item)"
+          @nominate="emit('nominate', item)"
+          @progress="emit('progress', item)"
         />
       </VueDraggable>
       <div v-else class="column-body">
-        <BookCard v-for="item in lists[status]" :key="item.id" :item="item" readonly />
+        <BookCard
+          v-for="item in lists[status]"
+          :key="item.id"
+          :item="item"
+          :club-pick-key="clubPickKey"
+          readonly
+        />
       </div>
     </section>
   </div>

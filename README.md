@@ -135,6 +135,8 @@ Or without activating:
 cd backend && .venv/bin/pytest
 ```
 
+CI (GitHub Actions) runs those backend tests plus `npx tsc --noEmit` and `npm run build` in `frontend/`.
+
 One-process run without Docker (build the Vue app, then serve API + UI from uvicorn):
 
 ```bash

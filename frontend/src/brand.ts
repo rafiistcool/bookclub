@@ -5,6 +5,7 @@ const DEFAULTS: ClubConfig = {
   theme: "#b44a2a",
   theme_dark: "#8e361c",
   public_url: "",
+  timezone: "UTC",
 };
 
 export function applyBrand(config: ClubConfig): void {

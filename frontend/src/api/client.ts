@@ -1,5 +1,24 @@
-import type { ClubConfig, Invite, Member, SearchPage, SearchParams, ShelfItem, ShelfList, User } from "../types";
-import type { Status } from "../constants";
+import type {
+  ClubConfig,
+  ClubPick,
+  ClubPickBook,
+  ClubPickCurrent,
+  GoodreadsImport,
+  Invite,
+  OverlapList,
+  Member,
+  NextUpVote,
+  PickPost,
+  PickThread,
+  VoteApplyResult,
+  VoteBook,
+  SearchPage,
+  SearchParams,
+  ShelfItem,
+  ShelfList,
+  User,
+} from "../types";
+import type { FinishNote, Status } from "../constants";
 
 export class ApiError extends Error {
   status: number;
@@ -17,7 +36,7 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
-  if (init.body && !headers.has("Content-Type")) {
+  if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
   const response = await fetch(path, {
@@ -67,16 +86,53 @@ export const api = {
     cover_id: number | null;
     year: number | null;
     status: Status;
-  }) => request<ShelfItem>("/api/shelf", { method: "POST", body: JSON.stringify(body) }),
-  patchShelf: (id: number, body: { status?: Status; position?: number }) =>
+  } & FinishNote) => request<ShelfItem>("/api/shelf", { method: "POST", body: JSON.stringify(body) }),
+  patchShelf: (id: number, body: { status?: Status; position?: number } & FinishNote) =>
     request<ShelfItem>(`/api/shelf/${id}`, {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
   removeFromShelf: (id: number) =>
     request<void>(`/api/shelf/${id}`, { method: "DELETE" }),
+  importGoodreads: (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return request<GoodreadsImport>("/api/shelf/import", { method: "POST", body });
+  },
   members: () => request<Member[]>("/api/members"),
   invites: () => request<Invite[]>("/api/invites"),
   createInvite: () =>
     request<{ code: string }>("/api/invites", { method: "POST" }),
+  clubPick: () => request<ClubPickCurrent>("/api/pick"),
+  clubPickHistory: () => request<{ items: ClubPick[]; timezone: string }>("/api/pick/history"),
+  setClubPick: (body: ClubPickBook) =>
+    request<ClubPick>("/api/pick", { method: "PUT", body: JSON.stringify(body) }),
+  clearClubPick: () => request<ClubPickCurrent>("/api/pick", { method: "DELETE" }),
+  overlap: (includeReading = false) =>
+    request<OverlapList>(
+      `/api/overlap${includeReading ? "?include_reading=true" : ""}`,
+    ),
+  pickPosts: (pickId?: number) =>
+    request<PickThread>(pickId ? `/api/pick/${pickId}/posts` : "/api/pick/posts"),
+  addPickPost: (body: string, pickId?: number) =>
+    request<PickPost>(pickId ? `/api/pick/${pickId}/posts` : "/api/pick/posts", {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    }),
+  nextUp: () => request<NextUpVote>("/api/vote"),
+  nominate: (body: VoteBook) =>
+    request<NextUpVote>("/api/vote/nominations", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  castVote: (nominationId: number) =>
+    request<NextUpVote>("/api/vote/cast", {
+      method: "POST",
+      body: JSON.stringify({ nomination_id: nominationId }),
+    }),
+  applyWinner: (nominationId: number, meetingAt?: string | null) =>
+    request<VoteApplyResult>("/api/vote/apply", {
+      method: "POST",
+      body: JSON.stringify({ nomination_id: nominationId, meeting_at: meetingAt ?? null }),
+    }),
 };

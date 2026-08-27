@@ -21,7 +21,7 @@ async function submit() {
   pending.value = true;
   try {
     await session.register(username.value, password.value, invite.value);
-    await router.replace("/library");
+    await router.replace("/");
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "Could not create account";
   } finally {

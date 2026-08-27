@@ -68,3 +68,33 @@ def place_item(
         ).all()
         for index, row in enumerate(leftovers):
             row.position = index
+
+
+def apply_finish_fields(
+    entry: ShelfEntry,
+    status: ShelfStatus,
+    *,
+    rating: int | None = None,
+    take: str | None = None,
+    dnf_reason: str | None = None,
+) -> None:
+    if status == ShelfStatus.finished:
+        entry.rating = rating
+        entry.take = (take or "").strip()
+        entry.dnf_reason = ""
+        return
+    if status == ShelfStatus.did_not_finish:
+        entry.rating = None
+        entry.take = ""
+        entry.dnf_reason = (dnf_reason or "").strip()
+        return
+    entry.rating = None
+    entry.take = ""
+    entry.dnf_reason = ""
+
+
+def apply_progress(entry: ShelfEntry, status: ShelfStatus, progress: int | None) -> None:
+    if status == ShelfStatus.currently_reading:
+        entry.progress = progress
+        return
+    entry.progress = None

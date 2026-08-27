@@ -1,0 +1,6 @@
+Book Id,Title,Author,Author l-f,Additional Authors,ISBN,ISBN13,My Rating,Average Rating,Publisher,Binding,Number of Pages,Year Published,Original Publication Year,Date Read,Date Added,Bookshelves,Bookshelves with positions,Exclusive Shelf,My Review,Spoiler,Private Notes,Read Count,Owned Copies
+123,Circe,Madeline Miller,"Miller, Madeline",,="0316556343",="9780316556347",0,4.2,Little Brown,Hardcover,393,2018,2018,,"2020-01-01",to-read,to-read (#1),to-read,,,,0,0
+456,The Song of Achilles,Madeline Miller,"Miller, Madeline",,="",="",0,4.3,Ecco,Paperback,378,2012,2011,,"2020-01-02",currently-reading,currently-reading (#1),currently-reading,,,,1,0
+789,Unmatched Novel,Nobody,"Nobody, A",,="0000000000",="9780000000002",5,3.0,None,Paperback,100,2000,2000,2020-01-03,"2020-01-03",read,read (#1),read,,,,1,0
+101,Custom Shelf Book,Someone,"Someone, A",,="1111111111",="9781111111111",0,3.0,None,Paperback,10,2001,2001,,"2020-01-04",dnf,dnf (#1),dnf,,,,0,0
+999,,Someone,"Someone, A",,="",="",0,0,,,,,,,,,to-read,,,,0,0

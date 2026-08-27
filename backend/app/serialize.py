@@ -29,4 +29,8 @@ def shelf_item_out(entry: ShelfEntry) -> ShelfItemOut:
         position=entry.position,
         updated_at=entry.updated_at,
         book=book_out(entry.book),
+        rating=entry.rating,
+        take=entry.take,
+        dnf_reason=entry.dnf_reason,
+        progress=entry.progress,
     )

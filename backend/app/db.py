@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from sqlalchemy import event
+from sqlalchemy import event, text
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlalchemy.engine import Engine
 
@@ -24,7 +24,33 @@ def init_db(path: Path) -> Engine:
         cursor.close()
 
     SQLModel.metadata.create_all(engine)
+    _ensure_club_pick_columns(engine)
+    _ensure_shelf_note_columns(engine)
     return engine
+
+
+def _ensure_club_pick_columns(engine: Engine) -> None:
+    with engine.begin() as conn:
+        rows = conn.execute(text("PRAGMA table_info(club_picks)")).fetchall()
+        names = {row[1] for row in rows}
+        if rows and "meeting_at" not in names:
+            conn.execute(text("ALTER TABLE club_picks ADD COLUMN meeting_at DATETIME"))
+
+
+def _ensure_shelf_note_columns(engine: Engine) -> None:
+    with engine.begin() as conn:
+        rows = conn.execute(text("PRAGMA table_info(shelf)")).fetchall()
+        names = {row[1] for row in rows}
+        if not rows:
+            return
+        if "rating" not in names:
+            conn.execute(text("ALTER TABLE shelf ADD COLUMN rating INTEGER"))
+        if "take" not in names:
+            conn.execute(text("ALTER TABLE shelf ADD COLUMN take VARCHAR DEFAULT ''"))
+        if "dnf_reason" not in names:
+            conn.execute(text("ALTER TABLE shelf ADD COLUMN dnf_reason VARCHAR DEFAULT ''"))
+        if "progress" not in names:
+            conn.execute(text("ALTER TABLE shelf ADD COLUMN progress INTEGER"))
 
 
 def ensure_bootstrap_invite(session: Session, settings: Settings) -> str | None:

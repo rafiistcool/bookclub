@@ -72,6 +72,10 @@ class ShelfEntry(SQLModel, table=True):
     book_id: int = Field(foreign_key="books.id")
     status: ShelfStatus = Field(index=True)
     position: int = Field(default=0)
+    rating: Optional[int] = Field(default=None)
+    take: str = Field(default="", max_length=140)
+    dnf_reason: str = Field(default="", max_length=200)
+    progress: Optional[int] = Field(default=None)
     updated_at: datetime = Field(
         default_factory=utcnow,
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -79,3 +83,106 @@ class ShelfEntry(SQLModel, table=True):
 
     user: Optional[User] = Relationship(back_populates="shelf_entries")
     book: Optional[Book] = Relationship(back_populates="shelf_entries")
+
+
+class ClubPick(SQLModel, table=True):
+    __tablename__ = "club_picks"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    book_id: int = Field(foreign_key="books.id", index=True)
+    set_by_id: int = Field(foreign_key="users.id")
+    note: str = Field(default="", max_length=280)
+    started_at: datetime = Field(
+        default_factory=utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    ended_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True, index=True),
+    )
+    meeting_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
+    book: Optional[Book] = Relationship()
+    set_by: Optional[User] = Relationship()
+    posts: list["ClubPickPost"] = Relationship(back_populates="pick")
+
+
+class ClubPickPost(SQLModel, table=True):
+    __tablename__ = "club_pick_posts"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    pick_id: int = Field(foreign_key="club_picks.id", index=True)
+    author_id: int = Field(foreign_key="users.id")
+    body: str = Field(max_length=1000)
+    created_at: datetime = Field(
+        default_factory=utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+    pick: Optional[ClubPick] = Relationship(back_populates="posts")
+    author: Optional[User] = Relationship()
+
+
+NOMINATION_LIMIT = 6
+
+
+class NextUpVote(SQLModel, table=True):
+    __tablename__ = "next_up_votes"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    started_at: datetime = Field(
+        default_factory=utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    ended_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True, index=True),
+    )
+    winner_nomination_id: Optional[int] = Field(default=None)
+
+    nominations: list["NextUpNomination"] = Relationship(back_populates="vote")
+    ballots: list["NextUpBallot"] = Relationship(back_populates="vote")
+
+
+class NextUpNomination(SQLModel, table=True):
+    __tablename__ = "next_up_nominations"
+    __table_args__ = (
+        UniqueConstraint("vote_id", "book_id", name="uq_next_up_vote_book"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    vote_id: int = Field(foreign_key="next_up_votes.id", index=True)
+    book_id: int = Field(foreign_key="books.id")
+    nominated_by_id: int = Field(foreign_key="users.id")
+    created_at: datetime = Field(
+        default_factory=utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+    vote: Optional[NextUpVote] = Relationship(back_populates="nominations")
+    book: Optional[Book] = Relationship()
+    nominated_by: Optional[User] = Relationship()
+    ballots: list["NextUpBallot"] = Relationship(back_populates="nomination")
+
+
+class NextUpBallot(SQLModel, table=True):
+    __tablename__ = "next_up_ballots"
+    __table_args__ = (
+        UniqueConstraint("vote_id", "user_id", name="uq_next_up_vote_user"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    vote_id: int = Field(foreign_key="next_up_votes.id", index=True)
+    nomination_id: int = Field(foreign_key="next_up_nominations.id", index=True)
+    user_id: int = Field(foreign_key="users.id")
+    created_at: datetime = Field(
+        default_factory=utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+    vote: Optional[NextUpVote] = Relationship(back_populates="ballots")
+    nomination: Optional[NextUpNomination] = Relationship(back_populates="ballots")
+    user: Optional[User] = Relationship()

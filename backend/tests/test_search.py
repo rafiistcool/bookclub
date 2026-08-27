@@ -105,6 +105,20 @@ def test_search_maps_and_caches(client, monkeypatch):
     )
     marked = client.get("/api/books/search", params={"q": "circe"}).json()
     assert marked["items"][0]["on_shelf"] == "currently_reading"
+    assert marked["items"][0]["club_pick"] is False
+
+    client.put(
+        "/api/pick",
+        json={
+            "ol_work_key": "/works/OL1W",
+            "title": "Circe",
+            "authors": "Madeline Miller",
+            "cover_id": 123,
+            "year": 2018,
+        },
+    )
+    picked = client.get("/api/books/search", params={"q": "circe"}).json()
+    assert picked["items"][0]["club_pick"] is True
 
 
 def test_search_forwards_page_subject_sort(client, monkeypatch):

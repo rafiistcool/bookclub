@@ -1,13 +1,27 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.deps import get_current_user, get_session
+from app.goodreads import (
+    MAX_IMPORT_BYTES,
+    SKIP_LIST_LIMIT,
+    lookup_work,
+    parse_goodreads_csv,
+)
 from app.models import ShelfEntry, User
-from app.schemas import ShelfAddIn, ShelfItemOut, ShelfListOut, ShelfPatchIn, UserOut
+from app.schemas import (
+    GoodreadsImportOut,
+    GoodreadsSkipOut,
+    ShelfAddIn,
+    ShelfItemOut,
+    ShelfListOut,
+    ShelfPatchIn,
+    UserOut,
+)
 from app.serialize import shelf_item_out
-from app.shelf_ops import place_item, upsert_book
+from app.shelf_ops import apply_finish_fields, apply_progress, place_item, upsert_book
 
 router = APIRouter(prefix="/api/shelf", tags=["shelf"])
 
@@ -88,6 +102,14 @@ def add_to_shelf(
         status=payload.status,
         position=0,
     )
+    apply_finish_fields(
+        entry,
+        payload.status,
+        rating=payload.rating,
+        take=payload.take,
+        dnf_reason=payload.dnf_reason,
+    )
+    apply_progress(entry, payload.status, payload.progress)
     session.add(entry)
     session.flush()
     place_item(session, entry, payload.status, 0)
@@ -98,6 +120,62 @@ def add_to_shelf(
     return shelf_item_out(loaded)
 
 
+@router.post("/import", response_model=GoodreadsImportOut)
+async def import_goodreads(
+    file: UploadFile = File(...),
+    me: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> GoodreadsImportOut:
+    raw = await file.read(MAX_IMPORT_BYTES + 1)
+    try:
+        rows, skips = parse_goodreads_csv(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    imported = 0
+    for row in rows:
+        hit = await lookup_work(row.isbn, row.title, row.authors)
+        if hit is None:
+            skips.append((row.title, "No match"))
+            continue
+        book = upsert_book(
+            session,
+            ol_work_key=hit.ol_work_key,
+            title=hit.title,
+            authors=hit.authors,
+            cover_id=hit.cover_id,
+            year=hit.year,
+        )
+        existing = session.exec(
+            select(ShelfEntry).where(
+                ShelfEntry.user_id == me.id, ShelfEntry.book_id == book.id
+            )
+        ).first()
+        if existing is not None:
+            skips.append((row.title, "Already on your shelf"))
+            continue
+        entry = ShelfEntry(
+            user_id=me.id or 0,
+            book_id=book.id or 0,
+            status=row.status,
+            position=0,
+        )
+        session.add(entry)
+        session.flush()
+        place_item(session, entry, row.status, 0)
+        imported += 1
+
+    session.commit()
+    return GoodreadsImportOut(
+        imported=imported,
+        skipped=len(skips),
+        skips=[
+            GoodreadsSkipOut(title=title, reason=reason)
+            for title, reason in skips[:SKIP_LIST_LIMIT]
+        ],
+    )
+
+
 @router.patch("/{entry_id}", response_model=ShelfItemOut)
 def update_shelf_item(
     entry_id: int,
@@ -105,13 +183,40 @@ def update_shelf_item(
     me: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> ShelfItemOut:
-    if payload.status is None and payload.position is None:
+    if (
+        payload.status is None
+        and payload.position is None
+        and "rating" not in payload.model_fields_set
+        and "take" not in payload.model_fields_set
+        and "dnf_reason" not in payload.model_fields_set
+        and "progress" not in payload.model_fields_set
+    ):
         raise HTTPException(status_code=400, detail="Nothing to update")
     entry = _load_entry(session, entry_id)
     if entry is None or entry.user_id != me.id:
         raise HTTPException(status_code=404, detail="Book not on your shelf")
     status = payload.status or entry.status
     position = payload.position if payload.position is not None else entry.position
+    if payload.status is not None or any(
+        field in payload.model_fields_set for field in ("rating", "take", "dnf_reason")
+    ):
+        apply_finish_fields(
+            entry,
+            status,
+            rating=payload.rating if "rating" in payload.model_fields_set else entry.rating,
+            take=payload.take if "take" in payload.model_fields_set else entry.take,
+            dnf_reason=(
+                payload.dnf_reason
+                if "dnf_reason" in payload.model_fields_set
+                else entry.dnf_reason
+            ),
+        )
+    if payload.status is not None or "progress" in payload.model_fields_set:
+        apply_progress(
+            entry,
+            status,
+            payload.progress if "progress" in payload.model_fields_set else entry.progress,
+        )
     place_item(session, entry, status, position)
     session.commit()
     loaded = _load_entry(session, entry_id)
