@@ -1,0 +1,20 @@
+{
+  "name": "Bookclub",
+  "install": "bash .cursor/install.sh",
+  "terminals": [
+    {
+      "name": "backend",
+      "command": "cd backend && .venv/bin/uvicorn app.main:app --reload --port 8000",
+      "description": "FastAPI backend on http://127.0.0.1:8000 (auto-reload). Reads the repo-root .env."
+    },
+    {
+      "name": "frontend",
+      "command": "cd frontend && npm run dev",
+      "description": "Vite dev server on http://localhost:5173. Proxies /api to the backend on :8000."
+    }
+  ],
+  "ports": [
+    { "name": "backend", "port": 8000 },
+    { "name": "frontend", "port": 5173 }
+  ]
+}
