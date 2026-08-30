@@ -1,0 +1,350 @@
+/* The four palettes, each defined for both modes.
+
+   Contract: <html data-theme="paper|slate|forest|ink" data-mode="light|dark">.
+   Every block below defines the complete token set, so no token can ever leak
+   across a palette boundary. Paper + light is also attached to :root, which
+   makes it the fallback when neither attribute has been written yet (first
+   paint before the boot script runs, or a stored value we no longer ship).
+   The theme-only and mode-only selectors cover half-applied states.
+
+   This is the only file in frontend/src/styles/ allowed to contain literal
+   colour values. */
+
+/* ---------------------------------------------------------------- Paper --
+   The original warm sepia. Light Paper is byte-for-byte the pre-token
+   palette, so the default appearance is unchanged. */
+
+:root,
+html[data-theme="paper"],
+html[data-theme="paper"][data-mode="light"] {
+  color-scheme: light;
+
+  --bg: #f6f1e8;
+  --surface: #fffdf8;
+  --surface-2: #efe6d6;
+  --surface-3: #e4d7c3;
+
+  --text: #1c1612;
+  --text-muted: #5c5248;
+  --text-subtle: #695d51;
+
+  --border: #d9cbb8;
+  --border-strong: #897860;
+
+  --accent: #b44a2a;
+  --accent-dark: #8e361c;
+  --accent-ink: #fff8f3;
+
+  --overlay: rgba(28, 22, 18, 0.35);
+  --shadow-1: 0 2px 8px rgba(28, 22, 18, 0.18);
+  --shadow-2: 0 6px 12px rgba(80, 50, 20, 0.12);
+  --shadow-3: 0 10px 24px rgba(80, 50, 20, 0.1);
+
+  --status-want-fg: #c47a2c;
+  --status-want-bg: #efe6d6;
+  --status-reading-fg: #2f6f5e;
+  --status-reading-bg: #efe6d6;
+  --status-finished-fg: #3d5a80;
+  --status-finished-bg: #efe6d6;
+  --status-dnf-fg: #7a5c58;
+  --status-dnf-bg: #efe6d6;
+
+  --danger: #9b2c2c;
+  --danger-border: #e4c4c0;
+
+  --inverse-surface: #1c1612;
+  --inverse-text: #f6f1e8;
+}
+
+html[data-mode="dark"],
+html[data-theme="paper"][data-mode="dark"] {
+  color-scheme: dark;
+
+  --bg: #15110d;
+  --surface: #1e1913;
+  --surface-2: #29221a;
+  --surface-3: #372e24;
+
+  --text: #f4eee3;
+  --text-muted: #c2b5a4;
+  --text-subtle: #a19584;
+
+  --border: #3a3127;
+  --border-strong: #847767;
+
+  --accent: #e08a5f;
+  --accent-dark: #f0a67f;
+  --accent-ink: #2a1408;
+
+  --overlay: rgba(0, 0, 0, 0.6);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.5);
+  --shadow-3: 0 2px 6px rgba(0, 0, 0, 0.55);
+
+  --status-want-fg: #eab873;
+  --status-want-bg: #33281a;
+  --status-reading-fg: #7cc9af;
+  --status-reading-bg: #172b26;
+  --status-finished-fg: #a2c1e8;
+  --status-finished-bg: #1b2635;
+  --status-dnf-fg: #ccaca6;
+  --status-dnf-bg: #2f2422;
+
+  --danger: #f09a92;
+  --danger-border: #6d322d;
+
+  --inverse-surface: #f4eee3;
+  --inverse-text: #1c1612;
+}
+
+/* ---------------------------------------------------------------- Slate --
+   Cool neutral greys with a blue accent. */
+
+html[data-theme="slate"],
+html[data-theme="slate"][data-mode="light"] {
+  color-scheme: light;
+
+  --bg: #f1f3f7;
+  --surface: #ffffff;
+  --surface-2: #e4e8ef;
+  --surface-3: #d5dbe5;
+
+  --text: #151920;
+  --text-muted: #4e5866;
+  --text-subtle: #58606b;
+
+  --border: #cad2de;
+  --border-strong: #727d8b;
+
+  --accent: #2c62ad;
+  --accent-dark: #204b87;
+  --accent-ink: #ffffff;
+
+  --overlay: rgba(13, 18, 26, 0.42);
+  --shadow-1: 0 2px 8px rgba(17, 26, 41, 0.16);
+  --shadow-2: 0 6px 12px rgba(17, 26, 41, 0.11);
+  --shadow-3: 0 10px 24px rgba(17, 26, 41, 0.1);
+
+  --status-want-fg: #8a5000;
+  --status-want-bg: #f3e7d3;
+  --status-reading-fg: #1c6350;
+  --status-reading-bg: #dbeae5;
+  --status-finished-fg: #2d5586;
+  --status-finished-bg: #dde7f4;
+  --status-dnf-fg: #56515c;
+  --status-dnf-bg: #e6e5ea;
+
+  --danger: #b02a20;
+  --danger-border: #eec3bf;
+
+  --inverse-surface: #1b2029;
+  --inverse-text: #f1f3f7;
+}
+
+html[data-theme="slate"][data-mode="dark"] {
+  color-scheme: dark;
+
+  --bg: #0e1218;
+  --surface: #161c24;
+  --surface-2: #202832;
+  --surface-3: #2b3440;
+
+  --text: #e9eef4;
+  --text-muted: #a7b2c0;
+  --text-subtle: #939ca9;
+
+  --border: #2b343f;
+  --border-strong: #737e8a;
+
+  --accent: #7db3f2;
+  --accent-dark: #a5cbf9;
+  --accent-ink: #08182c;
+
+  --overlay: rgba(0, 0, 0, 0.62);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.5);
+  --shadow-3: 0 2px 6px rgba(0, 0, 0, 0.55);
+
+  --status-want-fg: #e4b671;
+  --status-want-bg: #2f2a1a;
+  --status-reading-fg: #71c9ae;
+  --status-reading-bg: #142b26;
+  --status-finished-fg: #9cc0f2;
+  --status-finished-bg: #16243a;
+  --status-dnf-fg: #b6b2c1;
+  --status-dnf-bg: #262631;
+
+  --danger: #f19a92;
+  --danger-border: #66302c;
+
+  --inverse-surface: #e9eef4;
+  --inverse-text: #0e1218;
+}
+
+/* --------------------------------------------------------------- Forest --
+   Muted greens with a deep green accent. */
+
+html[data-theme="forest"],
+html[data-theme="forest"][data-mode="light"] {
+  color-scheme: light;
+
+  --bg: #f0f4ee;
+  --surface: #fbfdf9;
+  --surface-2: #e2ebdd;
+  --surface-3: #d1dccb;
+
+  --text: #16201a;
+  --text-muted: #4b594e;
+  --text-subtle: #55625a;
+
+  --border: #c7d3c2;
+  --border-strong: #717e6c;
+
+  --accent: #2e6a45;
+  --accent-dark: #205033;
+  --accent-ink: #f7fcf7;
+
+  --overlay: rgba(14, 25, 18, 0.4);
+  --shadow-1: 0 2px 8px rgba(24, 46, 31, 0.16);
+  --shadow-2: 0 6px 12px rgba(24, 46, 31, 0.12);
+  --shadow-3: 0 10px 24px rgba(24, 46, 31, 0.1);
+
+  --status-want-fg: #8a5000;
+  --status-want-bg: #f1e7d2;
+  --status-reading-fg: #1c6350;
+  --status-reading-bg: #dbeae4;
+  --status-finished-fg: #2f5680;
+  --status-finished-bg: #dee7f1;
+  --status-dnf-fg: #605149;
+  --status-dnf-bg: #e9e4de;
+
+  --danger: #a52d22;
+  --danger-border: #e8c4c0;
+
+  --inverse-surface: #19241c;
+  --inverse-text: #f0f4ee;
+}
+
+html[data-theme="forest"][data-mode="dark"] {
+  color-scheme: dark;
+
+  --bg: #0e130f;
+  --surface: #151c16;
+  --surface-2: #1e271f;
+  --surface-3: #2a352b;
+
+  --text: #e6efe6;
+  --text-muted: #a6b6a7;
+  --text-subtle: #909f90;
+
+  --border: #283227;
+  --border-strong: #717f6f;
+
+  --accent: #7ec89b;
+  --accent-dark: #a4dcb9;
+  --accent-ink: #062012;
+
+  --overlay: rgba(0, 0, 0, 0.6);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.5);
+  --shadow-3: 0 2px 6px rgba(0, 0, 0, 0.55);
+
+  --status-want-fg: #e2b571;
+  --status-want-bg: #302719;
+  --status-reading-fg: #74c9ac;
+  --status-reading-bg: #14291f;
+  --status-finished-fg: #9fc0e8;
+  --status-finished-bg: #18242f;
+  --status-dnf-fg: #c3b6ae;
+  --status-dnf-bg: #2b2724;
+
+  --danger: #f09a92;
+  --danger-border: #632f2b;
+
+  --inverse-surface: #e6efe6;
+  --inverse-text: #0e130f;
+}
+
+/* ------------------------------------------------------------------ Ink --
+   Maximum contrast: near-black on near-white, and the reverse. */
+
+html[data-theme="ink"],
+html[data-theme="ink"][data-mode="light"] {
+  color-scheme: light;
+
+  --bg: #fafafa;
+  --surface: #ffffff;
+  --surface-2: #ededed;
+  --surface-3: #dedede;
+
+  --text: #000000;
+  --text-muted: #333333;
+  --text-subtle: #545454;
+
+  --border: #a8a8a8;
+  --border-strong: #5c5c5c;
+
+  --accent: #0b45b0;
+  --accent-dark: #05307d;
+  --accent-ink: #ffffff;
+
+  --overlay: rgba(0, 0, 0, 0.6);
+  --shadow-1: 0 2px 6px rgba(0, 0, 0, 0.22);
+  --shadow-2: 0 4px 10px rgba(0, 0, 0, 0.18);
+  --shadow-3: 0 8px 20px rgba(0, 0, 0, 0.16);
+
+  --status-want-fg: #6f3c00;
+  --status-want-bg: #f4e6d2;
+  --status-reading-fg: #0d4f3f;
+  --status-reading-bg: #d9eae4;
+  --status-finished-fg: #143a6b;
+  --status-finished-bg: #dbe5f3;
+  --status-dnf-fg: #3d3d3d;
+  --status-dnf-bg: #e8e8e8;
+
+  --danger: #a30000;
+  --danger-border: #d9a8a8;
+
+  --inverse-surface: #000000;
+  --inverse-text: #ffffff;
+}
+
+html[data-theme="ink"][data-mode="dark"] {
+  color-scheme: dark;
+
+  --bg: #000000;
+  --surface: #0b0b0b;
+  --surface-2: #1a1a1a;
+  --surface-3: #292929;
+
+  --text: #ffffff;
+  --text-muted: #d4d4d4;
+  --text-subtle: #aeaeae;
+
+  --border: #4d4d4d;
+  --border-strong: #808080;
+
+  --accent: #86b6ff;
+  --accent-dark: #b0d0ff;
+  --accent-ink: #001233;
+
+  --overlay: rgba(0, 0, 0, 0.72);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.6);
+  --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.6);
+  --shadow-3: 0 2px 6px rgba(0, 0, 0, 0.65);
+
+  --status-want-fg: #f7cc7d;
+  --status-want-bg: #2d2410;
+  --status-reading-fg: #79dcbb;
+  --status-reading-bg: #06261e;
+  --status-finished-fg: #adcbf8;
+  --status-finished-bg: #0d1c31;
+  --status-dnf-fg: #cbcbcb;
+  --status-dnf-bg: #242424;
+
+  --danger: #ff9d95;
+  --danger-border: #7d2f2a;
+
+  --inverse-surface: #ffffff;
+  --inverse-text: #000000;
+}

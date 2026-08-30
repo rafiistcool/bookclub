@@ -1,0 +1,37 @@
+/* Palette-independent primitives and tokens derived from the palette.
+   Every colour value lives in themes.css; nothing here may hardcode one. */
+
+:root {
+  --radius: 16px;
+  --nav-h: 64px;
+  --header-h: 56px;
+  --sans: "Source Sans 3", system-ui, sans-serif;
+  --serif: "Source Serif 4", Iowan Old Style, Palatino, Georgia, serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Derived colours. These resolve against whichever palette block won on
+   <html>, so they follow theme and mode without being restated per palette. */
+:root {
+  --accent-hover: var(--accent-dark);
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  --bg-translucent: color-mix(in srgb, var(--bg) 92%, transparent);
+  --bg-translucent-strong: color-mix(in srgb, var(--bg) 94%, transparent);
+}
+
+/* Legacy aliases kept live so brand.ts and any component still reading the
+   old names keeps working. --accent and --accent-dark are real palette
+   tokens, not aliases, so an inline override on <html> still wins. */
+:root {
+  --paper: var(--bg);
+  --paper-2: var(--surface-2);
+  --paper-3: var(--surface-3);
+  --ink: var(--text);
+  --ink-soft: var(--text-muted);
+  --line: var(--border);
+  --shadow: var(--shadow-3);
+  --want: var(--status-want-fg);
+  --reading: var(--status-reading-fg);
+  --finished: var(--status-finished-fg);
+  --dnf: var(--status-dnf-fg);
+}

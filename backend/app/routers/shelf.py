@@ -57,7 +57,12 @@ def get_shelf(
         owner = me
     items = [_shelf_item_or_skip(entry) for entry in _shelf_for_user(session, owner)]
     return ShelfListOut(
-        user=UserOut(id=owner.id or 0, username=owner.username),
+        user=UserOut(
+            id=owner.id or 0,
+            username=owner.username,
+            theme=owner.theme,
+            color_mode=owner.color_mode,
+        ),
         items=[item for item in items if item is not None],
     )
 

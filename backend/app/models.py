@@ -5,6 +5,8 @@ from typing import Optional
 from sqlalchemy import Column, DateTime, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
+from app.themes import DEFAULT_COLOR_MODE, DEFAULT_THEME_ID
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -23,6 +25,8 @@ class User(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(unique=True, index=True, max_length=32)
     password_hash: str
+    theme: str = Field(default=DEFAULT_THEME_ID, max_length=32)
+    color_mode: str = Field(default=DEFAULT_COLOR_MODE, max_length=16)
     created_at: datetime = Field(
         default_factory=utcnow,
         sa_column=Column(DateTime(timezone=True), nullable=False),

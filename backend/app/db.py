@@ -7,6 +7,7 @@ from sqlalchemy.engine import Engine
 from app.config import Settings
 from app.models import Invite
 from app.security import normalize_invite_code
+from app.themes import DEFAULT_COLOR_MODE, DEFAULT_THEME_ID
 
 
 def init_db(path: Path) -> Engine:
@@ -26,6 +27,7 @@ def init_db(path: Path) -> Engine:
     SQLModel.metadata.create_all(engine)
     _ensure_club_pick_columns(engine)
     _ensure_shelf_note_columns(engine)
+    _ensure_user_preference_columns(engine)
     return engine
 
 
@@ -51,6 +53,30 @@ def _ensure_shelf_note_columns(engine: Engine) -> None:
             conn.execute(text("ALTER TABLE shelf ADD COLUMN dnf_reason VARCHAR DEFAULT ''"))
         if "progress" not in names:
             conn.execute(text("ALTER TABLE shelf ADD COLUMN progress INTEGER"))
+
+
+def _ensure_user_preference_columns(engine: Engine) -> None:
+    # SQLite fills existing rows from the DEFAULT clause, so users created before
+    # this migration read back as paper/system rather than NULL.
+    with engine.begin() as conn:
+        rows = conn.execute(text("PRAGMA table_info(users)")).fetchall()
+        names = {row[1] for row in rows}
+        if not rows:
+            return
+        if "theme" not in names:
+            conn.execute(
+                text(
+                    "ALTER TABLE users ADD COLUMN theme VARCHAR(32) "
+                    f"NOT NULL DEFAULT '{DEFAULT_THEME_ID}'"
+                )
+            )
+        if "color_mode" not in names:
+            conn.execute(
+                text(
+                    "ALTER TABLE users ADD COLUMN color_mode VARCHAR(16) "
+                    f"NOT NULL DEFAULT '{DEFAULT_COLOR_MODE}'"
+                )
+            )
 
 
 def ensure_bootstrap_invite(session: Session, settings: Settings) -> str | None:

@@ -1,0 +1,11 @@
+/* Entry stylesheet. Import this and nothing else from the app.
+
+   Order matters: themes.css supplies the palette values, tokens.css derives
+   from them and re-exports the legacy names, then the rules consume them.
+   utilities.css is last so helpers beat components at equal specificity. */
+
+@import "./tokens.css";
+@import "./themes.css";
+@import "./base.css";
+@import "./components.css";
+@import "./utilities.css";
