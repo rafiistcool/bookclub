@@ -1,19 +1,40 @@
+# Agent / editor scratch
+.cursor/
+.idea/
+.vscode/
+
+# Local env (keep the checked-in example)
 .env
+.env.*
+!.env.example
+
+# SQLite databases and WAL sidecars
 data/*
 !data/.gitkeep
-bookclub.db*
-backend/bookclub.db*
+*.db
+*.db-shm
+*.db-wal
+
+# Python
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+htmlcov/
 .venv/
 venv/
-backend/app/static/
-node_modules/
-frontend/dist/
 *.egg-info/
-.DS_Store
 uv.lock
 .python-version
+
+# Frontend / build output
+node_modules/
+frontend/dist/
+frontend/.vite/
+backend/app/static/
+
+# OS / logs
+.DS_Store
+*.log
