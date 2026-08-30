@@ -10,6 +10,10 @@ tailnet hostname at whatever machine you have.
 ## What you get
 
 - Invite-only accounts for a small group (one club per instance)
+- One current club pick on Home, with notes, an optional meeting, and a next-up vote
+- Personal shelves (Want to read / Reading / Finished / Did not finish), finish notes, ratings, and reading progress
+- TBR overlap and a Goodreads CSV import
+- Download a SQLite backup from Invites (no restore-from-upload; replace the files as below)
 - Your name and optional theme colors from env
 - Data in one directory you can copy
 - Session cookies that become `Secure` automatically behind HTTPS
@@ -138,10 +142,11 @@ docker compose exec bookclub python -m app.backup /data/bookclub-backup.db
 ```
 
 Or stop writes and copy `data/bookclub.db` plus `-wal` / `-shm` if they exist.
-Also copy `data/.secret_key` — changing it logs everyone out.
+Also copy `data/.secret_key` — changing it logs everyone out. Any signed-in
+member can also download `bookclub.db` from Invites → Export / backup.
 
 Restore: stop the container, replace the db files (and `.secret_key` if you
-want existing sessions), start again.
+want existing sessions), start again. There is no upload/restore in the UI.
 
 Update:
 

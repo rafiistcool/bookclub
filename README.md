@@ -4,7 +4,7 @@ A tiny private bookclub for 2–5 people. Each person has an account and their o
 
 **Want to read → Reading → Finished / Did not finish**
 
-Search [Open Library](https://openlibrary.org), add a book, drag it between columns (or use **Move to…**). Friends can look at each other’s shelves. Signup is invite-only.
+Search [Open Library](https://openlibrary.org), add a book, drag it between columns (or use **Move to…**). Home is the current club pick — notes, who’s reading, and a next-up vote. Friends can look at each other’s shelves and shared TBR. Signup is invite-only.
 
 No Redis, no Postgres. One Python process and a SQLite file. Anyone can self-host it.
 
@@ -156,13 +156,15 @@ Open **[http://127.0.0.1:8000](http://127.0.0.1:8000)**. Bind `0.0.0.0` only if 
 
 | Path | What it is |
 |---|---|
+| `/` | Home: current club pick, notes, who’s reading / finished, next-up vote, past picks |
 | `/login` | Sign in |
 | `/register` | Create an account with an invite |
 | `/library` | Browse and search Open Library as a cover grid, add a book |
-| `/shelf` | Your four-column board (drag and drop) |
-| `/friends` | Other members + what they’re reading |
+| `/shelf` | Your four-column board (drag and drop); Goodreads CSV import |
+| `/friends` | Other members + what they’re reading; link to TBR overlap |
 | `/friends/:username` | Their shelf, read-only |
-| `/invites` | Create / copy invite codes (any member) |
+| `/invites` | Create / copy invite codes (any member); download SQLite backup |
+| `/overlap` | Books more than one person wants to read (optional: include Reading) |
 
 On a phone, swipe the board sideways. Hold a card briefly, then drag it to another column. **Move to…** on the `···` menu does the same thing without dragging.
 
@@ -177,7 +179,7 @@ On a phone, swipe the board sideways. Hold a card briefly, then drag it to anoth
 
 Everything is in **`data/bookclub.db`** (SQLite, WAL mode).
 
-- Backup: `python -m app.backup [outfile]` (or copy the file; stop writes first if you want to be picky; WAL is usually fine).
+- Backup: `python -m app.backup [outfile]` (or copy the file; stop writes first if you want to be picky; WAL is usually fine). Any member can also download `bookclub.db` from Invites → Export / backup. There is no restore-from-upload; replace the files as below.
 - Reset local data: stop the server and delete `data/bookclub.db` plus `data/bookclub.db-wal` / `data/bookclub.db-shm` if they exist. Next start creates a fresh DB and the bootstrap invite again.
 
 Book search is proxied to Open Library (no API key). Only books someone actually adds are stored. Covers are loaded from `covers.openlibrary.org`.
@@ -206,6 +208,7 @@ Loaded from the repo-root `.env` (copy `.env.example` or `deploy/env.example`). 
 | Variable | Default | Meaning |
 |---|---|---|
 | `BOOKCLUB_NAME` | `Bookclub` | Club name in the UI, tab title, manifest, API title, and Open Library User-Agent. |
+| `BOOKCLUB_TZ` | `UTC` | IANA timezone for club-pick meeting labels. Invalid names fall back to UTC. |
 | `BOOKCLUB_THEME` | `#b44a2a` | Optional accent (`#rgb` / `#rrggbb`). |
 | `BOOKCLUB_THEME_DARK` | shaded accent | Optional darker accent. |
 | `BOOKCLUB_PUBLIC_URL` | empty | Canonical origin of this instance (`https://books.example.com`). Same-origin reverse proxy is the supported path; the UI does not talk to a split API host. Vite `localhost:5173` CORS is only when `DEBUG=1`. |
@@ -228,7 +231,7 @@ Cookie session: `bookclub_session`. Send it with `credentials: include` / curl `
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/api/health` | No auth; also pings SQLite |
-| `GET` | `/api/config` | Club name and theme (no auth) |
+| `GET` | `/api/config` | Club name, theme, timezone (no auth) |
 | `POST` | `/api/auth/register` | `{ username, password, invite_code }` — also signs you in |
 | `POST` | `/api/auth/login` | `{ username, password }` |
 | `POST` | `/api/auth/logout` | |
@@ -237,10 +240,23 @@ Cookie session: `bookclub_session`. Send it with `credentials: include` / curl `
 | `GET` | `/api/books/search` | Paginated Open Library browse/search (`q`, `subject`, `sort`, `page`, `limit`) |
 | `GET` | `/api/shelf` | Your shelf |
 | `GET` | `/api/shelf?username=` | Someone else’s shelf |
-| `POST` | `/api/shelf` | Add a book |
-| `PATCH` | `/api/shelf/{id}` | `{ status, position }` — move / reorder |
+| `POST` | `/api/shelf` | Add a book (optional rating / take / dnf_reason / progress) |
+| `PATCH` | `/api/shelf/{id}` | `{ status, position, rating, take, dnf_reason, progress }` |
+| `POST` | `/api/shelf/import` | Goodreads library export CSV |
 | `DELETE` | `/api/shelf/{id}` | Remove from *your* shelf |
 | `GET` | `/api/members` | Everyone except you |
+| `GET` | `/api/pick` | Current club pick |
+| `GET` | `/api/pick/history` | Ended picks |
+| `PUT` | `/api/pick` | Set / replace the club pick (optional meeting) |
+| `DELETE` | `/api/pick` | Clear the current pick (kept in history) |
+| `GET` / `POST` | `/api/pick/posts` | Notes on the current pick |
+| `GET` / `POST` | `/api/pick/{id}/posts` | Notes on a specific pick (posting only while open) |
+| `GET` | `/api/overlap` | Shared TBR (`include_reading`) |
+| `GET` | `/api/vote` | Open next-up vote |
+| `POST` | `/api/vote/nominations` | Nominate a book |
+| `POST` | `/api/vote/cast` | `{ nomination_id }` — one vote each |
+| `POST` | `/api/vote/apply` | Confirm a winner as the club pick |
+| `GET` | `/api/backup` | Download a SQLite copy (`bookclub.db`) |
 
 Shelf stages: `want_to_read`, `currently_reading`, `finished`, `did_not_finish`.
 
