@@ -16,8 +16,7 @@ export const useClub = defineStore("club", {
   actions: {
     async load() {
       try {
-        const config = await api.config();
-        this.$patch(config);
+        this.$patch(await api.config());
       } catch {
         this.$patch(FALLBACK);
       }

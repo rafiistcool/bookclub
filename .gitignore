@@ -1,6 +1,8 @@
 .env
 data/*
 !data/.gitkeep
+bookclub.db*
+backend/bookclub.db*
 __pycache__/
 *.py[cod]
 .pytest_cache/

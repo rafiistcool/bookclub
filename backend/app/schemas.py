@@ -119,6 +119,31 @@ class SearchPage(BaseModel):
     has_more: bool
 
 
+class BookReader(BaseModel):
+    username: str
+    status: ShelfStatus
+    rating: int | None = None
+    progress: int | None = None
+
+
+class BookDetailOut(BaseModel):
+    ol_work_key: str
+    title: str
+    authors: str = ""
+    cover_id: int | None = None
+    year: int | None = None
+    description: str = ""
+    subjects: list[str] = []
+    on_shelf: ShelfStatus | None = None
+    shelf_id: int | None = None
+    club_pick: bool = False
+    rating: int | None = None
+    take: str = ""
+    dnf_reason: str = ""
+    progress: int | None = None
+    readers: list[BookReader] = []
+
+
 class ShelfItemOut(BaseModel):
     id: int
     status: ShelfStatus

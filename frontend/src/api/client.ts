@@ -1,8 +1,10 @@
 import type {
+  BookDetail,
   ClubConfig,
   ClubPick,
   ClubPickBook,
   ClubPickCurrent,
+  ColorMode,
   GoodreadsImport,
   Invite,
   OverlapList,
@@ -10,6 +12,7 @@ import type {
   NextUpVote,
   PickPost,
   PickThread,
+  ThemeId,
   VoteApplyResult,
   VoteBook,
   SearchPage,
@@ -66,6 +69,11 @@ export const api = {
   login: (body: { username: string; password: string }) =>
     request<void>("/api/auth/login", { method: "POST", body: JSON.stringify(body) }),
   logout: () => request<void>("/api/auth/logout", { method: "POST" }),
+  savePreferences: (body: { theme?: ThemeId; color_mode?: ColorMode }) =>
+    request<User>("/api/auth/me/preferences", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   search: (params: SearchParams = {}) => {
     const query = new URLSearchParams();
     if (params.q) query.set("q", params.q);
@@ -76,6 +84,12 @@ export const api = {
     const qs = query.toString();
     return request<SearchPage>(`/api/books/search${qs ? `?${qs}` : ""}`);
   },
+  trending: (limit = 12) => request<SearchPage>(`/api/books/trending?limit=${limit}`),
+  subject: (subject: string, page = 1, limit = 12) =>
+    request<SearchPage>(
+      `/api/books/subjects/${encodeURIComponent(subject)}?page=${page}&limit=${limit}`,
+    ),
+  book: (workId: string) => request<BookDetail>(`/api/books/works/${workId}`),
   myShelf: () => request<ShelfList>("/api/shelf"),
   friendShelf: (username: string) =>
     request<ShelfList>(`/api/shelf?username=${encodeURIComponent(username)}`),

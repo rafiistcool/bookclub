@@ -2,12 +2,58 @@
    Every colour value lives in themes.css; nothing here may hardcode one. */
 
 :root {
-  --radius: 16px;
-  --nav-h: 64px;
-  --header-h: 56px;
+  /* Type. Serif carries display and book titles, sans carries UI. */
   --sans: "Source Sans 3", system-ui, sans-serif;
   --serif: "Source Serif 4", Iowan Old Style, Palatino, Georgia, serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --text-2xs: 0.7rem;
+  --text-xs: 0.78rem;
+  --text-sm: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.25rem;
+  --text-4xl: 2.875rem;
+
+  --leading-tight: 1.12;
+  --leading-snug: 1.28;
+  --leading-body: 1.55;
+
+  --tracking-tight: -0.02em;
+  --tracking-caps: 0.08em;
+
+  /* Spacing, 4px base. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 28px;
+  --space-7: 40px;
+  --space-8: 56px;
+  --space-9: 80px;
+
+  /* Radii. */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 22px;
+  --radius-pill: 999px;
+  --radius: var(--radius-lg);
+
+  /* Layout. */
+  --nav-h: 62px;
+  --header-h: 56px;
+  --sidebar-w: 244px;
+  --content-max: 1180px;
+  --tap: 44px;
+
+  /* Motion. Overridden to 0 under prefers-reduced-motion below. */
+  --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+  --dur-fast: 120ms;
+  --dur-base: 220ms;
 }
 
 /* Derived colours. These resolve against whichever palette block won on
@@ -15,8 +61,17 @@
 :root {
   --accent-hover: var(--accent-dark);
   --accent-soft: color-mix(in srgb, var(--accent) 12%, var(--surface));
-  --bg-translucent: color-mix(in srgb, var(--bg) 92%, transparent);
+  --accent-line: color-mix(in srgb, var(--accent) 42%, var(--border));
+  --bg-translucent: color-mix(in srgb, var(--bg) 88%, transparent);
   --bg-translucent-strong: color-mix(in srgb, var(--bg) 94%, transparent);
+  --skeleton: color-mix(in srgb, var(--text) 8%, var(--surface-2));
+  --skeleton-sheen: color-mix(in srgb, var(--text) 3%, var(--surface));
+
+  /* Elevation. Covers get a tighter shadow than panels so artwork reads as
+     a physical object rather than a floating card. */
+  --elev-cover: var(--shadow-2);
+  --elev-panel: var(--shadow-1);
+  --elev-float: var(--shadow-3);
 }
 
 /* Legacy aliases kept live so brand.ts and any component still reading the
@@ -34,4 +89,11 @@
   --reading: var(--status-reading-fg);
   --finished: var(--status-finished-fg);
   --dnf: var(--status-dnf-fg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+  }
 }

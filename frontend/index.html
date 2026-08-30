@@ -1,17 +1,39 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="paper" data-mode="light">
   <head>
     <meta charset="UTF-8" />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#b44a2a" />
+    <meta name="theme-color" content="#f7f4ec" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Bookclub" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>Bookclub</title>
+    <script>
+      // Paint the stored palette before the first frame. Without this the
+      // page renders Paper light, then flips once the app boots.
+      (function () {
+        try {
+          var themes = ["paper", "slate", "forest", "ink"];
+          var theme = localStorage.getItem("bookclub.theme");
+          var mode = localStorage.getItem("bookclub.mode");
+          if (themes.indexOf(theme) === -1) theme = "paper";
+          if (mode !== "light" && mode !== "dark") {
+            mode = window.matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light";
+          }
+          var root = document.documentElement;
+          root.setAttribute("data-theme", theme);
+          root.setAttribute("data-mode", mode);
+        } catch (error) {
+          /* No storage access: the :root defaults stand. */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

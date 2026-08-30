@@ -1,34 +1,32 @@
 <script setup lang="ts">
-import { computed } from "vue";
-import { STATUS_SHORT } from "../constants";
-import type { SearchHit } from "../types";
+import { bookPath, STATUS_SHORT, type Status } from "../constants";
 import BookCover from "./BookCover.vue";
 
 const props = defineProps<{
-  hit: SearchHit;
+  olWorkKey: string;
+  title: string;
+  authors?: string;
+  coverId?: number | null;
+  status?: Status | null;
+  clubPick?: boolean;
+  showAuthors?: boolean;
 }>();
-
-const emit = defineEmits<{
-  open: [];
-}>();
-
-const badge = computed(() => props.hit.on_shelf);
 </script>
 
 <template>
-  <button
-    type="button"
-    class="book-tile"
-    :aria-label="hit.title"
-    @click="emit('open')"
-  >
+  <RouterLink class="book-tile" :to="bookPath(olWorkKey)">
     <span class="book-tile-cover">
-      <BookCover :title="hit.title" :cover-id="hit.cover_id" size="L" fluid />
-      <span v-if="hit.club_pick" class="badge book-tile-badge club-pick">Club</span>
-      <span v-else-if="badge" class="badge book-tile-badge" :class="badge">
-        {{ STATUS_SHORT[badge] }}
+      <BookCover :title="title" :cover-id="coverId" />
+      <span v-if="clubPick" class="badge book-tile-badge club-pick">Club</span>
+      <span
+        v-else-if="props.status"
+        class="badge book-tile-badge"
+        :class="props.status"
+      >
+        {{ STATUS_SHORT[props.status] }}
       </span>
     </span>
-    <span class="book-tile-title">{{ hit.title }}</span>
-  </button>
+    <span class="book-tile-title">{{ title }}</span>
+    <span v-if="showAuthors && authors" class="book-tile-sub">{{ authors }}</span>
+  </RouterLink>
 </template>

@@ -62,13 +62,23 @@ async function submit() {
           </button>
         </div>
       </label>
-      <button class="btn btn-primary" type="submit" :disabled="pending">
+      <button class="btn btn-primary btn-block" type="submit" :disabled="pending">
         {{ pending ? "Signing in…" : "Sign in" }}
       </button>
     </form>
-    <p class="muted fine" style="margin-top: 18px">
+    <p class="muted fine auth-alt">
       Have an invite?
       <RouterLink to="/register">Create an account</RouterLink>
     </p>
   </main>
 </template>
+
+<style scoped>
+.lede {
+  margin: var(--space-2) 0 var(--space-6);
+}
+
+.auth-alt {
+  margin-top: var(--space-5);
+}
+</style>

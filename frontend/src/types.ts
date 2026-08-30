@@ -1,8 +1,13 @@
 import type { Status } from "./constants";
 
+export type ThemeId = "paper" | "slate" | "forest" | "ink";
+export type ColorMode = "light" | "dark" | "system";
+
 export type User = {
   id: number;
   username: string;
+  theme: ThemeId;
+  color_mode: ColorMode;
 };
 
 export type Book = {
@@ -52,6 +57,31 @@ export type SearchPage = {
   items: SearchHit[];
   page: number;
   has_more: boolean;
+};
+
+export type BookReader = {
+  username: string;
+  status: Status;
+  rating: number | null;
+  progress: number | null;
+};
+
+export type BookDetail = {
+  ol_work_key: string;
+  title: string;
+  authors: string;
+  cover_id: number | null;
+  year: number | null;
+  description: string;
+  subjects: string[];
+  on_shelf: Status | null;
+  shelf_id: number | null;
+  club_pick: boolean;
+  rating: number | null;
+  take: string;
+  dnf_reason: string;
+  progress: number | null;
+  readers: BookReader[];
 };
 
 export type ShelfList = {

@@ -3,7 +3,8 @@ import { useSession } from "./stores/session";
 
 const router = createRouter({
   history: createWebHistory(),
-  scrollBehavior() {
+  scrollBehavior(to, from, saved) {
+    if (saved) return saved;
     return { top: 0 };
   },
   routes: [
@@ -23,15 +24,26 @@ const router = createRouter({
       meta: { auth: true },
       children: [
         { path: "", component: () => import("./pages/HomePage.vue") },
-        { path: "library", component: () => import("./pages/LibraryPage.vue") },
+        { path: "discover", component: () => import("./pages/DiscoverPage.vue") },
         { path: "shelf", component: () => import("./pages/ShelfPage.vue") },
-        { path: "friends", component: () => import("./pages/FriendsPage.vue") },
+        { path: "club", component: () => import("./pages/ClubPage.vue") },
         {
-          path: "friends/:username",
-          component: () => import("./pages/FriendShelfPage.vue"),
+          path: "club/:username",
+          component: () => import("./pages/MemberShelfPage.vue"),
         },
-        { path: "invites", component: () => import("./pages/InvitesPage.vue") },
-        { path: "overlap", component: () => import("./pages/OverlapPage.vue") },
+        {
+          path: "book/:workId",
+          component: () => import("./pages/BookDetailPage.vue"),
+        },
+        { path: "settings", component: () => import("./pages/SettingsPage.vue") },
+
+        // Paths from the pre-redesign IA, kept so bookmarks and the PWA's
+        // stored start URL keep resolving.
+        { path: "library", redirect: "/discover" },
+        { path: "friends", redirect: "/club" },
+        { path: "friends/:username", redirect: (to) => `/club/${to.params.username}` },
+        { path: "overlap", redirect: "/club" },
+        { path: "invites", redirect: "/settings" },
         { path: "pick", redirect: "/" },
       ],
     },
