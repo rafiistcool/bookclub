@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
+from app import activity
 from app.deps import get_current_user, get_session
 from app.goodreads import (
     MAX_IMPORT_BYTES,
@@ -10,7 +11,7 @@ from app.goodreads import (
     lookup_work,
     parse_goodreads_csv,
 )
-from app.models import ShelfEntry, User
+from app.models import ShelfEntry, ShelfStatus, User
 from app.schemas import (
     GoodreadsImportOut,
     GoodreadsSkipOut,
@@ -24,6 +25,22 @@ from app.serialize import shelf_item_out
 from app.shelf_ops import apply_finish_fields, apply_progress, place_item, upsert_book
 
 router = APIRouter(prefix="/api/shelf", tags=["shelf"])
+
+
+def _status_event(entry: ShelfEntry, me: User, session: Session, *, added: bool) -> None:
+    """Record the activity row that matches a shelf status change."""
+    status = entry.status
+    book = entry.book
+    if status == ShelfStatus.finished:
+        activity.record(
+            session, me, "shelf_finished", book=book, rating=entry.rating, take=entry.take or None
+        )
+    elif status == ShelfStatus.did_not_finish:
+        activity.record(session, me, "shelf_dnf", book=book, reason=entry.dnf_reason or None)
+    elif added:
+        activity.record(session, me, "shelf_added", book=book, status=status.value)
+    else:
+        activity.record(session, me, "shelf_moved", book=book, status=status.value)
 
 
 def _load_entry(session: Session, entry_id: int) -> ShelfEntry | None:
@@ -113,6 +130,8 @@ def add_to_shelf(
     session.add(entry)
     session.flush()
     place_item(session, entry, payload.status, 0)
+    entry.book = book
+    _status_event(entry, me, session, added=True)
     session.commit()
     loaded = _load_entry(session, entry.id or 0)
     if loaded is None:
@@ -195,6 +214,8 @@ def update_shelf_item(
     entry = _load_entry(session, entry_id)
     if entry is None or entry.user_id != me.id:
         raise HTTPException(status_code=404, detail="Book not on your shelf")
+    previous_status = entry.status
+    previous_progress = entry.progress
     status = payload.status or entry.status
     position = payload.position if payload.position is not None else entry.position
     if payload.status is not None or any(
@@ -218,6 +239,15 @@ def update_shelf_item(
             payload.progress if "progress" in payload.model_fields_set else entry.progress,
         )
     place_item(session, entry, status, position)
+    if status != previous_status:
+        _status_event(entry, me, session, added=False)
+    elif (
+        status == ShelfStatus.currently_reading
+        and "progress" in payload.model_fields_set
+        and entry.progress is not None
+        and entry.progress != previous_progress
+    ):
+        activity.record(session, me, "progress", book=entry.book, progress=entry.progress)
     session.commit()
     loaded = _load_entry(session, entry_id)
     if loaded is None:
@@ -231,10 +261,11 @@ def remove_shelf_item(
     me: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> None:
-    entry = session.get(ShelfEntry, entry_id)
+    entry = _load_entry(session, entry_id)
     if entry is None or entry.user_id != me.id:
         raise HTTPException(status_code=404, detail="Book not on your shelf")
     status = entry.status
+    activity.record(session, me, "shelf_removed", book=entry.book, status=status.value)
     session.delete(entry)
     session.flush()
     leftovers = session.exec(

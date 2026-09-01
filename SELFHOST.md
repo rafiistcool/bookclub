@@ -13,7 +13,7 @@ tailnet hostname at whatever machine you have.
 - One current club pick on Home, with notes, an optional meeting, and a next-up vote
 - Personal shelves (Want to read / Reading / Finished / Did not finish), finish notes, ratings, and reading progress
 - TBR overlap and a Goodreads CSV import
-- Download a SQLite backup from Invites (no restore-from-upload; replace the files as below)
+- Download a SQLite backup from Settings → Backup (no restore-from-upload; replace the files as below)
 - Your name and optional theme colors from env
 - Data in one directory you can copy
 - Session cookies that become `Secure` automatically behind HTTPS
@@ -50,7 +50,7 @@ On first start the app writes two files next to the database:
 | `data/.bootstrap_invite` | First invite (generated if `BOOKCLUB_BOOTSTRAP_INVITE` is empty) |
 
 The logs print the first invite once. Share it with the first person, then mint
-more from **Invites** in the app. Treat unused codes like passwords.
+more from **Settings → Invites** in the app. Treat unused codes like passwords.
 
 `DEBUG=0` is the Compose default. Demo defaults (`DEBUG=1`, invite `DEV-ONLY`)
 are only used if you start with `docker-compose.dev.yml`.
@@ -143,7 +143,7 @@ docker compose exec bookclub python -m app.backup /data/bookclub-backup.db
 
 Or stop writes and copy `data/bookclub.db` plus `-wal` / `-shm` if they exist.
 Also copy `data/.secret_key` — changing it logs everyone out. Any signed-in
-member can also download `bookclub.db` from Invites → Export / backup.
+member can also download `bookclub.db` from Settings → Backup.
 
 Restore: stop the container, replace the db files (and `.secret_key` if you
 want existing sessions), start again. There is no upload/restore in the UI.

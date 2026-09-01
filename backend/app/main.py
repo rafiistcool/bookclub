@@ -23,7 +23,22 @@ from app.branding import (
 from app.config import get_settings
 from app.db import ensure_bootstrap_invite, init_db
 from app.http import AutoSecureCookieMiddleware
-from app.routers import auth, backup, books, invites, members, overlap, pick, shelf, vote
+from app.routers import (
+    activity,
+    auth,
+    backup,
+    books,
+    invites,
+    members,
+    milestones,
+    overlap,
+    pick,
+    push,
+    quotes,
+    shelf,
+    stats,
+    vote,
+)
 from app.runtime import https_mode, prepare_environment, trusted_proxy_hosts
 from app.timezone import resolved_timezone
 
@@ -114,6 +129,11 @@ def create_app() -> FastAPI:
     app.include_router(overlap.router)
     app.include_router(vote.router)
     app.include_router(backup.router)
+    app.include_router(activity.router)
+    app.include_router(stats.router)
+    app.include_router(milestones.router)
+    app.include_router(quotes.router)
+    app.include_router(push.router)
 
     @app.get("/manifest.webmanifest")
     def manifest() -> Response:

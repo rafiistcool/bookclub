@@ -1,51 +1,27 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
 import { api, ApiError } from "../api/client";
+import Avatar from "../components/Avatar.vue";
 import BookCover from "../components/BookCover.vue";
+import Skeleton from "../components/Skeleton.vue";
 import { STATUS_SHORT } from "../constants";
-import { useToast } from "../stores/toast";
+import { useFlow, toRef } from "../stores/flow";
 import type { OverlapBook } from "../types";
 
 const includeReading = ref(false);
-const items = ref<OverlapBook[]>([]);
+const items = ref<OverlapBook[] | null>(null);
 const error = ref("");
-const loaded = ref(false);
-const toast = useToast();
-const nominating = ref<string | null>(null);
-
-function bookHref(key: string) {
-  return `https://openlibrary.org${key}`;
-}
+const expanded = ref<string | null>(null);
+const flow = useFlow();
 
 async function load() {
-  loaded.value = false;
+  items.value = null;
   try {
-    const result = await api.overlap(includeReading.value);
-    items.value = result.items;
+    items.value = (await api.overlap(includeReading.value)).items;
     error.value = "";
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "Could not load overlap";
     items.value = [];
-  } finally {
-    loaded.value = true;
-  }
-}
-
-async function nominate(row: OverlapBook) {
-  nominating.value = row.book.ol_work_key;
-  try {
-    await api.nominate({
-      ol_work_key: row.book.ol_work_key,
-      title: row.book.title,
-      authors: row.book.authors,
-      cover_id: row.book.cover_id,
-      year: row.book.year,
-    });
-    toast.show("Nominated for next up");
-  } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : "Could not nominate that book");
-  } finally {
-    nominating.value = null;
   }
 }
 
@@ -54,55 +30,45 @@ watch(includeReading, load);
 </script>
 
 <template>
-  <section>
-    <p class="fine"><RouterLink to="/friends">← Friends</RouterLink></p>
-    <h1 style="margin-top: 8px">TBR overlap</h1>
-    <p class="lede">Books more than one of you wants to read.</p>
-    <div class="chip-row" style="margin-bottom: 16px">
-      <button
-        class="chip"
-        type="button"
-        :aria-pressed="includeReading"
-        :class="{ active: includeReading }"
-        @click="includeReading = !includeReading"
-      >
-        Include Reading
-      </button>
+  <section aria-label="Shared to-read">
+    <p class="lede fine" style="margin-bottom: 12px">Books more than one of you wants to read — the natural shortlist for the next vote.</p>
+    <div class="toggle-row" style="border: 0; padding: 0 0 12px">
+      <span class="fine">Include books someone is already reading</span>
+      <button class="switch" type="button" role="switch" :aria-checked="includeReading" @click="includeReading = !includeReading" />
     </div>
     <p v-if="error" class="error">{{ error }}</p>
-    <div v-else-if="!loaded" class="empty">Loading…</div>
+    <Skeleton v-else-if="!items" kind="cards" :count="3" />
     <div v-else-if="items.length === 0" class="empty">
-      No shared wants yet. A book only shows here when two or more of you have it on
-      Want to read{{ includeReading ? " or Reading" : "" }}.
+      <p>No shared wants yet.</p>
+      <p class="fine">A book shows here once two or more of you have it on Want to read{{ includeReading ? " or Reading" : "" }}.</p>
     </div>
-    <div v-else class="book-list">
-      <article v-for="row in items" :key="row.book.ol_work_key" class="overlap-row">
-        <BookCover :title="row.book.title" :cover-id="row.book.cover_id" size="M" />
-        <div class="book-meta">
-          <h3>{{ row.book.title }}</h3>
-          <p class="fine muted">
-            {{ row.count }} {{ row.count === 1 ? "person" : "people" }}
-          </p>
-          <p class="fine">
-            <span v-for="(member, index) in row.members" :key="member.username">
-              {{ member.username }}
-              <span class="muted">({{ STATUS_SHORT[member.status] }})</span>
-              <template v-if="index < row.members.length - 1">, </template>
-            </span>
-          </p>
-          <p class="fine">
-            <a :href="bookHref(row.book.ol_work_key)" target="_blank" rel="noreferrer">Open Library</a>
-          </p>
+    <div v-else class="list">
+      <article v-for="row in items" :key="row.book.ol_work_key" class="row-item">
+        <button type="button" style="all: unset; cursor: pointer" @click="flow.open({ kind: 'details', book: toRef(row.book) })">
+          <BookCover :title="row.book.title" :cover-id="row.book.cover_id" size="sm" />
+        </button>
+        <div class="row-body">
+          <h3 class="clamp-1">{{ row.book.title }}</h3>
+          <p class="clamp-1">{{ row.book.authors }}</p>
           <button
-            class="btn btn-ghost"
             type="button"
-            style="margin-top: 8px"
-            :disabled="nominating === row.book.ol_work_key"
-            @click="nominate(row)"
+            class="fine"
+            style="all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; margin-top: 4px"
+            :aria-expanded="expanded === row.book.ol_work_key"
+            @click="expanded = expanded === row.book.ol_work_key ? null : row.book.ol_work_key"
           >
-            Nominate for next up
+            <span class="avatar-stack">
+              <Avatar v-for="member in row.members" :key="member.username" :username="member.username" size="sm" />
+            </span>
+            <span class="muted">{{ row.count }} people</span>
           </button>
+          <p v-if="expanded === row.book.ol_work_key" class="fine muted" style="margin-top: 4px">
+            <template v-for="(member, index) in row.members" :key="member.username">
+              {{ member.username }} <span class="faint">({{ STATUS_SHORT[member.status] }})</span><template v-if="index < row.members.length - 1">, </template>
+            </template>
+          </p>
         </div>
+        <button class="btn btn-ghost btn-sm" type="button" @click="flow.nominate(toRef(row.book))">Nominate</button>
       </article>
     </div>
   </section>

@@ -1,34 +1,28 @@
 <script setup lang="ts">
-import { computed } from "vue";
-import { STATUS_SHORT } from "../constants";
-import type { SearchHit } from "../types";
+import { STATUS_SHORT, type Status } from "../constants";
 import BookCover from "./BookCover.vue";
 
-const props = defineProps<{
-  hit: SearchHit;
+defineProps<{
+  title: string;
+  authors?: string;
+  coverId: number | null;
+  status?: Status | null;
+  clubPick?: boolean;
 }>();
 
 const emit = defineEmits<{
   open: [];
 }>();
-
-const badge = computed(() => props.hit.on_shelf);
 </script>
 
 <template>
-  <button
-    type="button"
-    class="book-tile"
-    :aria-label="hit.title"
-    @click="emit('open')"
-  >
+  <button type="button" class="book-tile" :aria-label="title" @click="emit('open')">
     <span class="book-tile-cover">
-      <BookCover :title="hit.title" :cover-id="hit.cover_id" size="L" fluid />
-      <span v-if="hit.club_pick" class="badge book-tile-badge club-pick">Club</span>
-      <span v-else-if="badge" class="badge book-tile-badge" :class="badge">
-        {{ STATUS_SHORT[badge] }}
-      </span>
+      <BookCover :title="title" :cover-id="coverId" size="fluid" />
+      <span v-if="clubPick" class="badge on-cover club">Club</span>
+      <span v-else-if="status" class="badge on-cover" :class="status">{{ STATUS_SHORT[status] }}</span>
     </span>
-    <span class="book-tile-title">{{ hit.title }}</span>
+    <span class="book-tile-title clamp-2">{{ title }}</span>
+    <span v-if="authors" class="book-tile-author clamp-1">{{ authors }}</span>
   </button>
 </template>

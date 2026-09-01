@@ -62,7 +62,9 @@ def test_search_empty_q_browses(client, monkeypatch):
     assert set(body) == {"items", "page", "has_more"}
     assert body["page"] == 1
     assert body["has_more"] is True
-    assert _FakeClient.last_params["q"] == "*"
+    # A bare "*" is rejected by Open Library (422); the browse must use "*:*".
+    assert _FakeClient.last_params["q"] == "*:*"
+    assert _FakeClient.last_params["q"] != "*"
     assert _FakeClient.last_params["lang"] == "en"
     assert "language" not in _FakeClient.last_params
     assert _FakeClient.last_params["sort"] == "readinglog"

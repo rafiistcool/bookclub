@@ -2,6 +2,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
+from app import activity
 from app.models import ClubPick, ShelfEntry, ShelfStatus, User, utcnow
 from app.schemas import ClubPickOut, ClubPickReader, ClubPickSetIn
 from app.serialize import book_out
@@ -60,6 +61,15 @@ def apply_club_pick(
         meeting_at=meeting,
     )
     session.add(pick)
+    session.flush()
+    activity.record(
+        session,
+        me,
+        "pick_set",
+        book=book,
+        pick=pick,
+        meeting_at=meeting.isoformat() if meeting else None,
+    )
     session.commit()
     loaded = current_pick(session)
     if loaded is None:

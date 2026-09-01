@@ -1,77 +1,68 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
-import { STATUS_SHORT, starLabel, type Status } from "../constants";
-import type { SearchHit, ShelfItem } from "../types";
+import { computed } from "vue";
+import { STATUS_LABEL, formatDate } from "../constants";
+import { useFlow, toRef } from "../stores/flow";
+import type { ShelfItem } from "../types";
 import BookCover from "./BookCover.vue";
+import NavIcon from "./NavIcon.vue";
+import ProgressBar from "./ProgressBar.vue";
+import StarRating from "./StarRating.vue";
 
 const props = defineProps<{
-  item?: ShelfItem;
-  hit?: SearchHit;
+  item: ShelfItem;
   readonly?: boolean;
+  draggable?: boolean;
   clubPickKey?: string | null;
+  /** Show the status badge (off inside a column that already says it). */
+  showStatus?: boolean;
 }>();
 
-const emit = defineEmits<{
-  add: [];
-  move: [];
-  remove: [];
-  clubPick: [];
-  nominate: [];
-  progress: [];
-}>();
+const flow = useFlow();
+const isClubPick = computed(() => Boolean(props.clubPickKey && props.item.book.ol_work_key === props.clubPickKey));
 
-const menuOpen = ref(false);
-
-const title = computed(() => props.item?.book.title ?? props.hit?.title ?? "");
-const authors = computed(() => props.item?.book.authors ?? props.hit?.authors ?? "");
-const year = computed(() => props.item?.book.year ?? props.hit?.year ?? null);
-const coverId = computed(() => props.item?.book.cover_id ?? props.hit?.cover_id ?? null);
-const badge = computed<Status | null>(
-  () => props.item?.status ?? props.hit?.on_shelf ?? null,
-);
-
-function toggleMenu() {
-  menuOpen.value = !menuOpen.value;
+function openDetails() {
+  flow.open({ kind: "details", book: toRef(props.item.book) });
 }
 </script>
 
 <template>
-  <article class="book-card">
-    <BookCover :title="title" :cover-id="coverId" size="M" />
-    <div class="book-meta">
-      <h3>{{ title }}</h3>
-      <p v-if="authors">{{ authors }}</p>
-      <p v-if="year" class="fine">{{ year }}</p>
-      <span v-if="item?.book && clubPickKey && item.book.ol_work_key === clubPickKey" class="badge club-pick">Club</span>
-      <span v-if="badge" class="badge" :class="badge">{{ STATUS_SHORT[badge] }}</span>
-      <p v-if="item?.rating" class="finish-note">{{ starLabel(item.rating) }}</p>
-      <p v-if="item?.take" class="finish-note">{{ item.take }}</p>
-      <p v-if="item?.dnf_reason" class="finish-note">{{ item.dnf_reason }}</p>
-      <p v-if="item && item.progress != null" class="finish-note">{{ item.progress }}%</p>
-    </div>
-    <div v-if="hit && !hit.on_shelf" class="no-drag">
-      <button class="btn" type="button" @click="emit('add')">Add</button>
-    </div>
-    <div v-else-if="hit && hit.on_shelf" class="no-drag">
-      <button class="btn btn-ghost" type="button" @click="emit('move')">Move</button>
-    </div>
-    <div v-else-if="!readonly" class="no-drag" style="position: relative">
-      <button class="icon-btn" type="button" aria-label="Book actions" @click="toggleMenu">
-        ···
-      </button>
-      <div v-if="menuOpen" class="menu" style="position: absolute; right: 0; top: 40px">
-        <button type="button" @click="menuOpen = false; emit('move')">Move to…</button>
-        <button
-          v-if="item?.status === 'currently_reading'"
-          type="button"
-          @click="menuOpen = false; emit('progress')"
-        >
-          Set progress
-        </button>
-        <button type="button" @click="menuOpen = false; emit('clubPick')">Set as club pick</button>
-        <button type="button" @click="menuOpen = false; emit('nominate')">Nominate for next up</button>
-        <button type="button" @click="menuOpen = false; emit('remove')">Remove</button>
+  <article class="book-card" :class="{ draggable }">
+    <button class="cover-btn" type="button" style="border: 0; padding: 0; background: none" :aria-label="`Details for ${item.book.title}`" @click="openDetails">
+      <BookCover :title="item.book.title" :cover-id="item.book.cover_id" size="md" />
+    </button>
+    <div class="meta">
+      <h3 class="clamp-2">
+        <button type="button" style="all: unset; cursor: pointer" @click="openDetails">{{ item.book.title }}</button>
+      </h3>
+      <p class="clamp-1">
+        {{ item.book.authors }}<template v-if="item.book.year && item.book.authors"> · </template>{{ item.book.year || "" }}
+      </p>
+      <div v-if="isClubPick || showStatus" class="badges">
+        <span v-if="isClubPick" class="badge club">Club pick</span>
+        <span v-if="showStatus" class="badge" :class="item.status">{{ STATUS_LABEL[item.status] }}</span>
       </div>
+      <ProgressBar
+        v-if="item.status === 'currently_reading' && item.progress != null"
+        :value="item.progress"
+        thin
+        :label="`${item.book.title} progress`"
+      />
+      <p v-if="item.status === 'finished' && (item.rating || item.finished_at)" class="card-note" style="display: flex; gap: 8px; align-items: center">
+        <StarRating v-if="item.rating" :value="item.rating" />
+        <span v-if="item.finished_at" class="faint tiny">{{ formatDate(item.finished_at) }}</span>
+      </p>
+      <p v-if="item.take" class="card-note clamp-2">“{{ item.take }}”</p>
+      <p v-if="item.dnf_reason" class="card-note clamp-2">{{ item.dnf_reason }}</p>
     </div>
+    <button
+      v-if="!readonly"
+      class="icon-btn no-drag"
+      type="button"
+      :aria-label="`Actions for ${item.book.title}`"
+      @click="flow.open({ kind: 'actions', item })"
+    >
+      <NavIcon name="more" />
+    </button>
+    <span v-else />
   </article>
 </template>

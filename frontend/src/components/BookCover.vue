@@ -5,13 +5,24 @@ import { coverUrl, monogram } from "../constants";
 const props = defineProps<{
   title: string;
   coverId?: number | null;
-  size?: "S" | "M" | "L";
-  tiny?: boolean;
-  fluid?: boolean;
+  /** Layout width. Image resolution is picked to match. */
+  size?: "xs" | "sm" | "md" | "lg" | "fluid";
+  eager?: boolean;
 }>();
 
 const broken = ref(false);
-const src = computed(() => coverUrl(props.coverId, props.size ?? "L"));
+const resolution = computed(() => {
+  switch (props.size) {
+    case "xs":
+    case "sm":
+      return "S" as const;
+    case "md":
+      return "M" as const;
+    default:
+      return "L" as const;
+  }
+});
+const src = computed(() => coverUrl(props.coverId, resolution.value));
 
 watch(
   () => props.coverId,
@@ -22,11 +33,13 @@ watch(
 </script>
 
 <template>
-  <div class="cover" :class="{ tiny, fluid }">
+  <div class="cover" :class="size ?? 'md'">
     <img
       v-if="src && !broken"
       :src="src"
       :alt="title"
+      :loading="eager ? 'eager' : 'lazy'"
+      decoding="async"
       @error="broken = true"
     />
     <span v-else class="monogram" aria-hidden="true">{{ monogram(title) }}</span>

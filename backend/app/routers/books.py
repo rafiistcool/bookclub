@@ -11,8 +11,19 @@ from sqlmodel import Session, col, select
 from app.branding import open_library_ua
 from app.config import get_settings
 from app.deps import get_current_user, get_session
-from app.models import Book, ClubPick, ShelfEntry, User
-from app.schemas import SearchHit, SearchPage
+from app.models import Book, ClubPick, Quote, ShelfEntry, User, utcnow
+from app.openlibrary import (
+    fetch_work_details,
+    lookup_isbn,
+    normalize_isbn,
+    subjects_from_json,
+    subjects_to_json,
+)
+from app.pick_ops import current_pick
+from app.schemas import BookDetailsOut, BookMember, IsbnHitOut, SearchHit, SearchPage
+from app.serialize import cover_url
+
+DETAILS_REFRESH_DAYS = 7
 
 router = APIRouter(prefix="/api/books", tags=["books"])
 logger = logging.getLogger("bookclub.search")
@@ -85,12 +96,17 @@ def _normalize_subject(subject: str) -> str:
     return key
 
 
+# Open Library rejects a bare "*" wildcard with HTTP 422; "*:*" is the
+# Solr match-all it accepts, which keeps the default "Popular" browse alive.
+MATCH_ALL = "*:*"
+
+
 def _open_library_q(query: str, subject: str) -> str:
     if query and subject:
         return f"{query} subject_key:{subject}"
     if subject:
         return f"subject_key:{subject}"
-    return query or "*"
+    return query or MATCH_ALL
 
 
 def _num_found(payload: dict) -> int:
@@ -231,3 +247,137 @@ async def search_books(
     _annotate_shelf(result.items, user, session)
     _annotate_club_pick(result.items, session)
     return result
+
+
+def _stale(book: Book) -> bool:
+    if book.details_fetched_at is None:
+        return True
+    fetched = book.details_fetched_at
+    if fetched.tzinfo is None:
+        from datetime import timezone
+
+        fetched = fetched.replace(tzinfo=timezone.utc)
+    return (utcnow() - fetched).days >= DETAILS_REFRESH_DAYS
+
+
+@router.get("/work/{work_id}", response_model=BookDetailsOut)
+async def work_details(
+    work_id: str,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> BookDetailsOut:
+    if not re.fullmatch(r"OL\d+W", work_id):
+        raise HTTPException(status_code=400, detail="That is not an Open Library work id")
+    key = f"/works/{work_id}"
+    book = session.exec(select(Book).where(Book.ol_work_key == key)).first()
+
+    if book is not None and not _stale(book):
+        title, authors, cover_id, year = book.title, book.authors, book.cover_id, book.year
+        description, pages, subjects, ol_rating, rating_count = (
+            book.description,
+            book.pages,
+            subjects_from_json(book.subjects),
+            book.ol_rating,
+            None,
+        )
+    else:
+        details = await fetch_work_details(key)
+        title = details.title or (book.title if book else "")
+        authors = details.authors or (book.authors if book else "")
+        cover_id = details.cover_id if details.cover_id is not None else (book.cover_id if book else None)
+        year = details.year if details.year is not None else (book.year if book else None)
+        description, pages, subjects = details.description, details.pages, details.subjects
+        ol_rating, rating_count = details.ol_rating, details.ol_rating_count
+        if book is not None:
+            book.description = description
+            book.pages = pages
+            book.subjects = subjects_to_json(subjects)
+            book.ol_rating = ol_rating
+            if cover_id is not None:
+                book.cover_id = cover_id
+            book.details_fetched_at = utcnow()
+            session.add(book)
+            session.commit()
+
+    members: list[BookMember] = []
+    on_shelf = None
+    shelf_id = None
+    quote_count = 0
+    if book is not None:
+        entries = session.exec(
+            select(ShelfEntry)
+            .where(ShelfEntry.book_id == book.id)
+            .options(selectinload(ShelfEntry.user))
+            .order_by(ShelfEntry.status, ShelfEntry.id)
+        ).all()
+        for entry in entries:
+            if entry.user is None:
+                continue
+            members.append(
+                BookMember(
+                    username=entry.user.username,
+                    status=entry.status,
+                    rating=entry.rating,
+                    take=entry.take,
+                    progress=entry.progress,
+                    finished_at=entry.finished_at,
+                )
+            )
+            if entry.user_id == user.id:
+                on_shelf = entry.status
+                shelf_id = entry.id
+        members.sort(key=lambda row: (row.username != user.username, row.username))
+        quote_count = len(session.exec(select(Quote).where(Quote.book_id == book.id)).all())
+    pick = current_pick(session)
+    club_pick = bool(pick and book and pick.book_id == book.id)
+
+    return BookDetailsOut(
+        ol_work_key=key,
+        title=title,
+        authors=authors,
+        cover_id=cover_id,
+        year=year,
+        cover_url=cover_url(cover_id),
+        description=description,
+        pages=pages,
+        subjects=subjects,
+        ol_rating=ol_rating,
+        ol_rating_count=rating_count,
+        on_shelf=on_shelf,
+        shelf_id=shelf_id,
+        club_pick=club_pick,
+        members=members,
+        quote_count=quote_count,
+    )
+
+
+@router.get("/isbn/{isbn}", response_model=IsbnHitOut)
+async def isbn_lookup(
+    isbn: str,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> IsbnHitOut:
+    clean = normalize_isbn(isbn)
+    hit = await lookup_isbn(clean)
+    if hit is None:
+        raise HTTPException(status_code=404, detail="No book found for that ISBN")
+    out = IsbnHitOut(
+        isbn=hit.isbn,
+        ol_work_key=hit.ol_work_key,
+        title=hit.title,
+        authors=hit.authors,
+        cover_id=hit.cover_id,
+        year=hit.year,
+        pages=hit.pages,
+    )
+    book = session.exec(select(Book).where(Book.ol_work_key == hit.ol_work_key)).first()
+    if book is not None:
+        entry = session.exec(
+            select(ShelfEntry).where(
+                ShelfEntry.user_id == user.id, ShelfEntry.book_id == book.id
+            )
+        ).first()
+        if entry is not None:
+            out.on_shelf = entry.status
+            out.shelf_id = entry.id
+    return out

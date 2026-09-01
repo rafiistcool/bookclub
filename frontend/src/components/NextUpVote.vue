@@ -1,39 +1,40 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { api, ApiError } from "../api/client";
+import { ApiError } from "../api/client";
+import { countdown } from "../constants";
+import { useFlow, toRef } from "../stores/flow";
 import { useToast } from "../stores/toast";
-import type { NextUpVote as NextUpVoteState, VoteNomination } from "../types";
+import { useVote } from "../stores/vote";
+import type { VoteNomination } from "../types";
+import Avatar from "./Avatar.vue";
 import BookCover from "./BookCover.vue";
 import ClubPickSheet from "./ClubPickSheet.vue";
+import NavIcon from "./NavIcon.vue";
+import Sheet from "./Sheet.vue";
 
 const emit = defineEmits<{
   applied: [];
 }>();
 
-const vote = ref<NextUpVoteState | null>(null);
-const error = ref("");
-const loaded = ref(false);
-const pendingId = ref<number | null>(null);
-const applying = ref<VoteNomination | null>(null);
+const vote = useVote();
+const flow = useFlow();
 const toast = useToast();
+const pendingId = ref<number | null>(null);
+const closing = ref<VoteNomination | null>(null);
+const deadlineOpen = ref(false);
+const deadlineDraft = ref("");
+const showSuggestions = ref(false);
 
-const empty = computed(() => (vote.value?.nominations.length ?? 0) === 0);
-
-async function load() {
-  try {
-    vote.value = await api.nextUp();
-    error.value = "";
-  } catch (err) {
-    error.value = err instanceof ApiError ? err.message : "Could not load next up";
-  } finally {
-    loaded.value = true;
-  }
-}
+const data = computed(() => vote.data);
+const nominations = computed(() => data.value?.nominations ?? []);
+const leader = computed(() => nominations.value.find((row) => row.id === data.value?.leader_id) ?? null);
+const closes = computed(() => countdown(data.value?.closes_at));
+const suggestions = computed(() => vote.suggestions.data ?? []);
 
 async function cast(id: number) {
   pendingId.value = id;
   try {
-    vote.value = await api.castVote(id);
+    await vote.cast(id);
   } catch (err) {
     toast.show(err instanceof ApiError ? err.message : "Could not save that vote");
   } finally {
@@ -42,14 +43,13 @@ async function cast(id: number) {
 }
 
 async function apply(meetingAt: string | null) {
-  const row = applying.value;
-  applying.value = null;
+  const row = closing.value;
+  closing.value = null;
   if (!row) return;
   pendingId.value = row.id;
   try {
-    const result = await api.applyWinner(row.id, meetingAt);
-    vote.value = result.vote;
-    toast.show(`Set ${row.book.title} as the club pick`);
+    await vote.apply(row.id, meetingAt);
+    toast.show(`“${row.book.title}” is the club pick`);
     emit("applied");
   } catch (err) {
     toast.show(err instanceof ApiError ? err.message : "Could not set the winner");
@@ -58,70 +58,156 @@ async function apply(meetingAt: string | null) {
   }
 }
 
-onMounted(load);
+async function saveDeadline(clear = false) {
+  try {
+    await vote.setDeadline(clear ? null : deadlineDraft.value || null);
+    deadlineOpen.value = false;
+    toast.show(clear ? "Deadline removed" : "Deadline set — the leader is applied automatically");
+  } catch (err) {
+    toast.show(err instanceof ApiError ? err.message : "Could not set the deadline");
+  }
+}
 
-defineExpose({ load });
+function openDeadline() {
+  deadlineDraft.value = data.value?.closes_local ?? "";
+  deadlineOpen.value = true;
+}
+
+async function toggleSuggestions() {
+  showSuggestions.value = !showSuggestions.value;
+  if (showSuggestions.value) await vote.loadSuggestions();
+}
+
+onMounted(() => {
+  void vote.load();
+});
 </script>
 
 <template>
-  <section class="next-up">
-    <h2>Next up</h2>
-    <p class="muted fine">
-      Nominate a book, one vote each. Confirm a winner when you’re ready — it won’t replace the
-      current pick until then.
-    </p>
-    <p v-if="error" class="error">{{ error }}</p>
-    <div v-else-if="!loaded" class="empty">Loading…</div>
-    <p v-else-if="empty" class="muted fine">
-      No nominations yet. Add one from
-      <RouterLink to="/shelf">your shelf</RouterLink>,
-      <RouterLink to="/overlap">TBR overlap</RouterLink>, or
-      <RouterLink to="/library">the library</RouterLink>.
-    </p>
-    <ol v-else class="next-up-list">
-      <li v-for="row in vote?.nominations" :key="row.id" class="next-up-row">
-        <BookCover :title="row.book.title" :cover-id="row.book.cover_id" size="S" />
-        <div class="book-meta">
-          <h3>{{ row.book.title }}</h3>
-          <p v-if="row.book.authors" class="fine muted">{{ row.book.authors }}</p>
-          <p class="fine">
-            {{ row.votes }} {{ row.votes === 1 ? "vote" : "votes" }}
-            <span v-if="row.voters.length" class="muted"> · {{ row.voters.join(", ") }}</span>
-          </p>
-          <p class="fine muted">Nominated by {{ row.nominated_by }}</p>
+  <section class="section" aria-labelledby="next-up-title">
+    <div class="section-title">
+      <h2 id="next-up-title">Next up</h2>
+      <button v-if="nominations.length" class="text-btn sm" type="button" @click="openDeadline">
+        <NavIcon name="calendar" :size="16" />
+        {{ data?.closes_at ? "Deadline" : "Set deadline" }}
+      </button>
+    </div>
+
+    <p v-if="vote.error && !data" class="error fine">{{ vote.error }}</p>
+    <div v-else-if="!data" class="list" aria-busy="true">
+      <div v-for="n in 2" :key="n" class="nomination" style="border-color: transparent">
+        <div class="skeleton cover" style="width: 44px" />
+        <div style="display: grid; gap: 6px">
+          <div class="skeleton line" style="width: 70%" />
+          <div class="skeleton line" style="width: 40%; height: 0.7em" />
         </div>
-        <div class="next-up-actions">
+      </div>
+    </div>
+    <template v-else>
+      <div v-if="nominations.length" class="vote-meta" style="margin-bottom: 10px">
+        <span>{{ data.voted_count }} / {{ data.member_count }} voted</span>
+        <span v-if="data.not_voted.length" class="faint">
+          Waiting on {{ data.not_voted.join(", ") }}
+        </span>
+        <span v-if="closes" :class="{ 'error': closes.past }">
+          Closes {{ data.closes_label }} ({{ closes.label }})
+        </span>
+      </div>
+
+      <p v-if="nominations.length === 0" class="muted fine">
+        No nominations yet. Nominate from a book’s details, your shelf, or the shared to-read list.
+      </p>
+      <ol v-else class="list" style="list-style: none; padding: 0">
+        <li
+          v-for="row in nominations"
+          :key="row.id"
+          class="nomination"
+          :class="{ leader: leader?.id === row.id && row.votes > 0 }"
+        >
+          <button type="button" style="all: unset; cursor: pointer" :aria-label="`Details for ${row.book.title}`" @click="flow.open({ kind: 'details', book: toRef(row.book) })">
+            <BookCover :title="row.book.title" :cover-id="row.book.cover_id" size="sm" />
+          </button>
+          <div class="body">
+            <h3 class="clamp-1">{{ row.book.title }}</h3>
+            <p class="fine muted clamp-1">{{ row.book.authors }}</p>
+            <p class="fine" style="display: flex; align-items: center; gap: 6px; margin-top: 4px">
+              <span class="avatar-stack" v-if="row.voters.length">
+                <Avatar v-for="name in row.voters" :key="name" :username="name" size="sm" />
+              </span>
+              <span :class="row.votes ? 'strong' : 'faint'">{{ row.votes }} {{ row.votes === 1 ? "vote" : "votes" }}</span>
+              <span class="faint">· {{ row.nominated_by }}</span>
+            </p>
+          </div>
           <button
-            class="btn"
+            class="btn vote-btn"
             :class="row.mine ? 'btn-primary' : 'btn-ghost'"
             type="button"
+            :aria-pressed="row.mine"
             :disabled="pendingId === row.id"
             @click="cast(row.id)"
           >
-            {{ row.mine ? "Your vote" : "Vote" }}
+            <NavIcon v-if="row.mine" name="check" :size="18" />
+            {{ row.mine ? "Voted" : "Vote" }}
           </button>
-          <button
-            class="btn btn-ghost"
-            type="button"
-            :disabled="pendingId === row.id"
-            @click="applying = row"
-          >
-            Set as club pick
-          </button>
+        </li>
+      </ol>
+
+      <div v-if="nominations.length" class="actions" style="margin-top: 12px; justify-content: space-between">
+        <span class="fine faint">{{ nominations.length }} / {{ data.nomination_limit }} nominated</span>
+        <button
+          v-if="leader && leader.votes > 0"
+          class="btn btn-ghost btn-sm"
+          type="button"
+          :disabled="pendingId !== null"
+          @click="closing = leader"
+        >
+          Close vote · pick “{{ leader.book.title }}”
+        </button>
+      </div>
+
+      <div style="margin-top: 14px">
+        <button class="text-btn sm" type="button" :aria-expanded="showSuggestions" @click="toggleSuggestions">
+          {{ showSuggestions ? "Hide suggestions" : "Suggestions for the vote" }}
+        </button>
+        <div v-if="showSuggestions" class="card" style="margin-top: 6px; padding: 4px 12px">
+          <p v-if="vote.suggestions.pending && !suggestions.length" class="muted fine" style="padding: 8px 0">Thinking…</p>
+          <p v-else-if="suggestions.length === 0" class="muted fine" style="padding: 8px 0">
+            Nothing to suggest yet — add books to Want to read and finish a pick or two.
+          </p>
+          <div v-for="row in suggestions" :key="row.book.ol_work_key" class="suggestion">
+            <BookCover :title="row.book.title" :cover-id="row.book.cover_id" size="xs" />
+            <div style="min-width: 0">
+              <p class="strong clamp-1">{{ row.book.title }}</p>
+              <p class="fine muted clamp-1">{{ row.reasons.join(" · ") }}</p>
+            </div>
+            <button class="btn btn-ghost btn-sm" type="button" :disabled="!data.can_nominate" @click="flow.nominate(toRef(row.book))">
+              Nominate
+            </button>
+          </div>
         </div>
-      </li>
-    </ol>
-    <p v-if="vote && !empty" class="fine muted">
-      {{ vote.nominations.length }} / {{ vote.nomination_limit }} nominations
-    </p>
+      </div>
+    </template>
+
     <ClubPickSheet
-      v-if="applying"
-      title="Set winner as club pick"
-      :book-title="applying.book.title"
-      :timezone="vote?.timezone || 'UTC'"
+      v-if="closing"
+      title="Close the vote"
+      :book-title="closing.book.title"
+      :timezone="data?.timezone || 'UTC'"
       confirm-label="Confirm winner"
-      @confirm="apply"
-      @close="applying = null"
+      hide-note
+      @confirm="(meetingAt) => apply(meetingAt)"
+      @close="closing = null"
     />
+
+    <Sheet v-if="deadlineOpen" title="Vote deadline" subtitle="The leading book becomes the club pick when the deadline passes." @close="deadlineOpen = false">
+      <label class="field">
+        <span>Closes <span class="faint">({{ data?.timezone }})</span></span>
+        <input v-model="deadlineDraft" type="datetime-local" data-autofocus />
+      </label>
+      <template #foot>
+        <button class="btn btn-primary" type="button" :disabled="!deadlineDraft" @click="saveDeadline()">Save deadline</button>
+        <button v-if="data?.closes_at" class="btn btn-ghost" type="button" @click="saveDeadline(true)">Remove deadline</button>
+      </template>
+    </Sheet>
   </section>
 </template>

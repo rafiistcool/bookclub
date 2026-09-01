@@ -17,6 +17,7 @@ def book_out(book: Book) -> BookOut:
         cover_id=book.cover_id,
         year=book.year,
         cover_url=cover_url(book.cover_id),
+        pages=book.pages,
     )
 
 
@@ -28,6 +29,8 @@ def shelf_item_out(entry: ShelfEntry) -> ShelfItemOut:
         status=entry.status,
         position=entry.position,
         updated_at=entry.updated_at,
+        started_at=entry.started_at,
+        finished_at=entry.finished_at,
         book=book_out(entry.book),
         rating=entry.rating,
         take=entry.take,

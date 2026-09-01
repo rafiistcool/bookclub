@@ -1,76 +1,51 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from "vue";
-import { STATUSES, STATUS_LABEL, type FinishNote, type Status } from "../constants";
+import { computed } from "vue";
+import { STATUSES, STATUS_LABEL, STATUS_NEXT, type Status } from "../constants";
+import NavIcon from "./NavIcon.vue";
+import Sheet from "./Sheet.vue";
 
 const props = defineProps<{
   title: string;
+  bookTitle?: string;
   current?: Status | null;
-  clubPickLabel?: string;
-  nominateLabel?: string;
 }>();
 
 const emit = defineEmits<{
-  pick: [status: Status, note?: FinishNote];
-  clubPick: [];
-  nominate: [];
+  pick: [status: Status];
   close: [];
-  finish: [status: Extract<Status, "finished" | "did_not_finish">];
 }>();
 
-function onKey(event: KeyboardEvent) {
-  if (event.key === "Escape") emit("close");
-}
+// Current status is marked, never highlighted as the action. The likely next
+// step is the primary button; for a new book that is "Want to read".
+const primary = computed<Status>(() => (props.current ? STATUS_NEXT[props.current] : "want_to_read"));
 
-function choose(status: Status) {
-  if (status === "finished" || status === "did_not_finish") {
-    emit("finish", status);
-    return;
-  }
-  emit("pick", status);
-}
-
-onMounted(() => window.addEventListener("keydown", onKey));
-onUnmounted(() => window.removeEventListener("keydown", onKey));
+const HINT: Record<Status, string> = {
+  want_to_read: "Save it for later",
+  currently_reading: "Track progress",
+  finished: "Rate and leave a take",
+  did_not_finish: "Say why, optionally",
+};
 </script>
 
 <template>
-  <div class="sheet-backdrop" @click.self="emit('close')">
-    <div class="sheet" role="dialog" aria-modal="true" :aria-label="title">
-      <h2>{{ title }}</h2>
-      <div class="status-list">
-        <button
-          v-for="status in STATUSES"
-          :key="status"
-          class="btn"
-          :class="{ 'btn-primary': status === (props.current ?? 'want_to_read') }"
-          :aria-current="status === props.current ? 'true' : undefined"
-          type="button"
-          @click="choose(status)"
-        >
-          {{ STATUS_LABEL[status] }}
-        </button>
-      </div>
+  <Sheet :title="title" :subtitle="bookTitle" @close="emit('close')">
+    <div class="status-list">
       <button
-        v-if="clubPickLabel"
-        class="btn btn-ghost"
+        v-for="status in STATUSES"
+        :key="status"
+        class="btn status-option"
+        :class="{ 'btn-primary': status === primary && status !== current, 'btn-ghost': status === current }"
         type="button"
-        style="width: 100%; margin-top: 10px"
-        @click="emit('clubPick')"
+        :aria-current="status === current ? 'true' : undefined"
+        :data-autofocus="status === primary ? true : undefined"
+        @click="emit('pick', status)"
       >
-        {{ clubPickLabel }}
-      </button>
-      <button
-        v-if="nominateLabel"
-        class="btn btn-ghost"
-        type="button"
-        style="width: 100%; margin-top: 10px"
-        @click="emit('nominate')"
-      >
-        {{ nominateLabel }}
-      </button>
-      <button class="btn btn-ghost" type="button" style="width: 100%; margin-top: 10px" @click="emit('close')">
-        Cancel
+        <span>{{ STATUS_LABEL[status] }}</span>
+        <span v-if="status === current" class="hint" style="display: inline-flex; align-items: center; gap: 4px">
+          <NavIcon name="check" :size="16" /> Current
+        </span>
+        <span v-else class="hint">{{ HINT[status] }}</span>
       </button>
     </div>
-  </div>
+  </Sheet>
 </template>

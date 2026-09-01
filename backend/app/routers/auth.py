@@ -2,9 +2,17 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import update
 from sqlmodel import Session, select
 
+from app import activity
 from app.deps import get_current_user, get_session
 from app.models import Invite, User, utcnow
-from app.schemas import LoginIn, RegisterIn, UserOut
+from app.schemas import (
+    LoginIn,
+    NotificationPrefsIn,
+    NotificationPrefsOut,
+    PasswordChangeIn,
+    RegisterIn,
+    UserOut,
+)
 from app.security import (
     clear_failures,
     hash_password,
@@ -45,6 +53,7 @@ def register(
     if consumed.rowcount != 1:
         session.rollback()
         raise HTTPException(status_code=400, detail="That invite code is not valid")
+    activity.record(session, user, "member_joined")
     session.commit()
     session.refresh(user)
     _set_session(request, user)
@@ -77,3 +86,53 @@ def logout(request: Request) -> None:
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(get_current_user)) -> User:
     return user
+
+
+@router.patch("/password", status_code=204)
+def change_password(
+    payload: PasswordChangeIn,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> None:
+    if too_many_failures(user.username):
+        raise HTTPException(
+            status_code=429, detail="Too many attempts. Wait a few minutes."
+        )
+    if not verify_password(payload.current_password, user.password_hash):
+        record_failure(user.username)
+        raise HTTPException(status_code=400, detail="Current password is wrong")
+    if payload.current_password == payload.new_password:
+        raise HTTPException(status_code=400, detail="Pick a different password")
+    clear_failures(user.username)
+    user.password_hash = hash_password(payload.new_password)
+    session.add(user)
+    session.commit()
+
+
+@router.get("/notifications", response_model=NotificationPrefsOut)
+def notification_prefs(user: User = Depends(get_current_user)) -> NotificationPrefsOut:
+    return NotificationPrefsOut(
+        notify_meeting=user.notify_meeting,
+        notify_pick=user.notify_pick,
+        notify_note=user.notify_note,
+    )
+
+
+@router.patch("/notifications", response_model=NotificationPrefsOut)
+def update_notification_prefs(
+    payload: NotificationPrefsIn,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> NotificationPrefsOut:
+    for field in ("notify_meeting", "notify_pick", "notify_note"):
+        value = getattr(payload, field)
+        if value is not None:
+            setattr(user, field, value)
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return NotificationPrefsOut(
+        notify_meeting=user.notify_meeting,
+        notify_pick=user.notify_pick,
+        notify_note=user.notify_note,
+    )

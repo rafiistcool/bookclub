@@ -1,7 +1,9 @@
 <script setup lang="ts">
+/** Four-column drag-and-drop board. Used at ≥720px; phones get ShelfList. */
 import { reactive, watch } from "vue";
 import { VueDraggable } from "vue-draggable-plus";
 import { STATUSES, STATUS_LABEL, type Status } from "../constants";
+import { useFlow } from "../stores/flow";
 import type { ShelfItem } from "../types";
 import BookCard from "./BookCard.vue";
 
@@ -12,11 +14,6 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  move: [item: ShelfItem];
-  remove: [item: ShelfItem];
-  clubPick: [item: ShelfItem];
-  nominate: [item: ShelfItem];
-  progress: [item: ShelfItem];
   dropped: [item: ShelfItem, status: Status, position: number];
 }>();
 
@@ -39,6 +36,16 @@ watch(
   { immediate: true, deep: true },
 );
 
+// A drop into Finished/DNF opens a sheet; if it is dismissed without saving the
+// optimistic column move must snap back to what the store says.
+const flow = useFlow();
+watch(
+  () => flow.current,
+  (current, previous) => {
+    if (previous && !current) apply(props.items);
+  },
+);
+
 function onDrop(status: Status, evt: { newIndex?: number }) {
   const index = evt.newIndex ?? 0;
   const item = lists[status][index];
@@ -48,11 +55,8 @@ function onDrop(status: Status, evt: { newIndex?: number }) {
 </script>
 
 <template>
-  <p v-if="!readonly" class="drag-hint">
-    Drag a book to another column — or hold briefly on a phone. You can also use Move to…
-  </p>
   <div class="board">
-    <section v-for="status in STATUSES" :key="status" class="column">
+    <section v-for="status in STATUSES" :key="status" class="column" :aria-label="STATUS_LABEL[status]">
       <header>
         <h2>{{ STATUS_LABEL[status] }}</h2>
         <span class="count">{{ lists[status].length }}</span>
@@ -60,10 +64,10 @@ function onDrop(status: Status, evt: { newIndex?: number }) {
       <VueDraggable
         v-if="!readonly"
         v-model="lists[status]"
-        class="column-body"
+        class="column-body scroll"
         group="shelf"
         :animation="180"
-        :delay="180"
+        :delay="120"
         :delay-on-touch-only="true"
         :touch-start-threshold="5"
         filter=".no-drag"
@@ -72,26 +76,10 @@ function onDrop(status: Status, evt: { newIndex?: number }) {
         @add="onDrop(status, $event)"
         @update="onDrop(status, $event)"
       >
-        <BookCard
-          v-for="item in lists[status]"
-          :key="item.id"
-          :item="item"
-          :club-pick-key="clubPickKey"
-          @move="emit('move', item)"
-          @remove="emit('remove', item)"
-          @club-pick="emit('clubPick', item)"
-          @nominate="emit('nominate', item)"
-          @progress="emit('progress', item)"
-        />
+        <BookCard v-for="item in lists[status]" :key="item.id" :item="item" :club-pick-key="clubPickKey" draggable />
       </VueDraggable>
-      <div v-else class="column-body">
-        <BookCard
-          v-for="item in lists[status]"
-          :key="item.id"
-          :item="item"
-          :club-pick-key="clubPickKey"
-          readonly
-        />
+      <div v-else class="column-body scroll">
+        <BookCard v-for="item in lists[status]" :key="item.id" :item="item" :club-pick-key="clubPickKey" readonly />
       </div>
     </section>
   </div>

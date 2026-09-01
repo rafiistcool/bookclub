@@ -209,6 +209,9 @@ def test_branded_app_config_cors_and_user_agent(tmp_path, monkeypatch):
         manifest = client.get("/manifest.webmanifest").json()
         assert manifest["name"] == "Thursday Readers"
         assert manifest["theme_color"] == "#336699"
+        # Installability: Chrome needs 192 + 512 icons; one maskable.
+        sizes = {(icon["sizes"], icon["purpose"]) for icon in manifest["icons"]}
+        assert {("192x192", "any"), ("512x512", "any"), ("512x512", "maskable")} <= sizes
 
         allowed = client.options(
             "/api/health",

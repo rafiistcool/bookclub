@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { computed, ref } from "vue";
+import { clamp } from "../constants";
+import ProgressBar from "./ProgressBar.vue";
+import Sheet from "./Sheet.vue";
 
 const props = defineProps<{
-  title: string;
   bookTitle: string;
   progress?: number | null;
+  pages?: number | null;
 }>();
 
 const emit = defineEmits<{
@@ -12,66 +15,68 @@ const emit = defineEmits<{
   close: [];
 }>();
 
-const draft = ref(props.progress == null ? "" : String(props.progress));
+const value = ref<number>(props.progress ?? 0);
+const pageDraft = ref("");
 
-function onKey(event: KeyboardEvent) {
-  if (event.key === "Escape") emit("close");
+const pageEstimate = computed(() =>
+  props.pages ? Math.round((value.value / 100) * props.pages) : null,
+);
+
+function fromPage() {
+  if (!props.pages) return;
+  const page = Number(pageDraft.value);
+  if (!Number.isFinite(page)) return;
+  value.value = clamp(Math.round((page / props.pages) * 100), 0, 100);
 }
 
-function parsed(): number | null {
-  const text = draft.value.trim();
-  if (!text) return null;
-  const value = Number(text);
-  if (!Number.isInteger(value) || value < 0 || value > 100) return null;
-  return value;
-}
-
-function save() {
-  const value = parsed();
-  if (draft.value.trim() && value === null) return;
-  emit("confirm", value);
-}
-
-onMounted(() => window.addEventListener("keydown", onKey));
-onUnmounted(() => window.removeEventListener("keydown", onKey));
+const QUICK = [10, 25, 50, 75, 90];
 </script>
 
 <template>
-  <div class="sheet-backdrop" @click.self="emit('close')">
-    <div class="sheet" role="dialog" aria-modal="true" :aria-label="title">
-      <h2>{{ title }}</h2>
-      <p class="muted" style="margin-bottom: 14px">{{ bookTitle }}</p>
-      <label class="field">
-        <span>Progress (optional, 0–100)</span>
-        <input
-          v-model="draft"
-          type="number"
-          min="0"
-          max="100"
-          inputmode="numeric"
-          placeholder="e.g. 40"
-        />
-      </label>
+  <Sheet title="Reading progress" :subtitle="bookTitle" @close="emit('close')">
+    <div class="field">
+      <span class="field-label">How far along are you?</span>
+      <ProgressBar :value="value" />
+      <input
+        v-model.number="value"
+        type="range"
+        min="0"
+        max="100"
+        step="1"
+        aria-label="Progress percent"
+        style="width: 100%; accent-color: var(--accent)"
+        data-autofocus
+      />
+    </div>
+    <div class="chip-row" role="group" aria-label="Quick set">
       <button
-        v-if="draft"
-        class="text-btn"
+        v-for="q in QUICK"
+        :key="q"
+        class="chip"
         type="button"
-        style="margin: -8px 0 12px"
-        @click="draft = ''"
+        :class="{ active: value === q }"
+        @click="value = q"
       >
-        Clear
-      </button>
-      <button
-        class="btn btn-primary"
-        type="button"
-        :disabled="Boolean(draft.trim()) && parsed() === null"
-        @click="save"
-      >
-        Save
-      </button>
-      <button class="btn btn-ghost" type="button" style="width: 100%; margin-top: 10px" @click="emit('close')">
-        Cancel
+        {{ q }}%
       </button>
     </div>
-  </div>
+    <label v-if="pages" class="field" style="margin-top: 8px">
+      <span>…or the page you’re on (of {{ pages }})</span>
+      <input
+        v-model="pageDraft"
+        type="number"
+        inputmode="numeric"
+        min="0"
+        :max="pages"
+        :placeholder="pageEstimate ? `≈ page ${pageEstimate}` : 'e.g. 120'"
+        @input="fromPage"
+      />
+    </label>
+    <template #foot>
+      <button class="btn btn-primary" type="button" @click="emit('confirm', value)">Save</button>
+      <button v-if="progress != null" class="btn btn-ghost" type="button" @click="emit('confirm', null)">
+        Clear progress
+      </button>
+    </template>
+  </Sheet>
 </template>
