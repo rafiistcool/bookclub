@@ -1,35 +1,27 @@
-import type { FinishNote, Status } from "../constants";
 import type {
-  ActivityPage,
-  BookDetails,
-  BookRef,
+  BookDetail,
   ClubConfig,
   ClubPick,
   ClubPickBook,
   ClubPickCurrent,
+  ColorMode,
   GoodreadsImport,
   Invite,
-  IsbnHit,
-  Member,
-  Milestone,
-  MilestoneInput,
-  MilestoneList,
-  NextUpVote,
-  NotificationPrefs,
   OverlapList,
+  Member,
+  NextUpVote,
   PickPost,
   PickThread,
-  PushSubscriptionRow,
-  Quote,
+  ThemeId,
+  VoteApplyResult,
+  VoteBook,
   SearchPage,
   SearchParams,
   ShelfItem,
   ShelfList,
-  Stats,
   User,
-  VoteApplyResult,
-  VoteSuggestion,
 } from "../types";
+import type { FinishNote, Status } from "../constants";
 
 export class ApiError extends Error {
   status: number;
@@ -69,141 +61,92 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
-const json = (body: unknown): RequestInit["body"] => JSON.stringify(body);
-
-function qs(params: Record<string, string | number | boolean | undefined | null>): string {
-  const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value === undefined || value === null || value === "" || value === false) continue;
-    query.set(key, String(value));
-  }
-  const text = query.toString();
-  return text ? `?${text}` : "";
-}
-
 export const api = {
-  // --- config / auth ------------------------------------------------------
   config: () => request<ClubConfig>("/api/config"),
   me: () => request<User>("/api/auth/me"),
   register: (body: { username: string; password: string; invite_code: string }) =>
-    request<User>("/api/auth/register", { method: "POST", body: json(body) }),
+    request<User>("/api/auth/register", { method: "POST", body: JSON.stringify(body) }),
   login: (body: { username: string; password: string }) =>
-    request<void>("/api/auth/login", { method: "POST", body: json(body) }),
+    request<void>("/api/auth/login", { method: "POST", body: JSON.stringify(body) }),
   logout: () => request<void>("/api/auth/logout", { method: "POST" }),
-  changePassword: (body: { current_password: string; new_password: string }) =>
-    request<void>("/api/auth/password", { method: "PATCH", body: json(body) }),
-  notificationPrefs: () => request<NotificationPrefs>("/api/auth/notifications"),
-  updateNotificationPrefs: (body: Partial<NotificationPrefs>) =>
-    request<NotificationPrefs>("/api/auth/notifications", { method: "PATCH", body: json(body) }),
-
-  // --- books -----------------------------------------------------------------
-  search: (params: SearchParams = {}) =>
-    request<SearchPage>(`/api/books/search${qs(params)}`),
-  bookDetails: (olWorkKey: string) =>
-    request<BookDetails>(`/api/books/work/${encodeURIComponent(olWorkKey.replace("/works/", ""))}`),
-  isbnLookup: (isbn: string) => request<IsbnHit>(`/api/books/isbn/${encodeURIComponent(isbn)}`),
-
-  // --- shelf -----------------------------------------------------------------
+  savePreferences: (body: { theme?: ThemeId; color_mode?: ColorMode }) =>
+    request<User>("/api/auth/me/preferences", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  search: (params: SearchParams = {}) => {
+    const query = new URLSearchParams();
+    if (params.q) query.set("q", params.q);
+    if (params.subject) query.set("subject", params.subject);
+    if (params.sort) query.set("sort", params.sort);
+    if (params.page) query.set("page", String(params.page));
+    if (params.limit) query.set("limit", String(params.limit));
+    const qs = query.toString();
+    return request<SearchPage>(`/api/books/search${qs ? `?${qs}` : ""}`);
+  },
+  trending: (limit = 12) => request<SearchPage>(`/api/books/trending?limit=${limit}`),
+  subject: (subject: string, page = 1, limit = 12) =>
+    request<SearchPage>(
+      `/api/books/subjects/${encodeURIComponent(subject)}?page=${page}&limit=${limit}`,
+    ),
+  book: (workId: string) => request<BookDetail>(`/api/books/works/${workId}`),
   myShelf: () => request<ShelfList>("/api/shelf"),
   friendShelf: (username: string) =>
     request<ShelfList>(`/api/shelf?username=${encodeURIComponent(username)}`),
-  addToShelf: (body: BookRef & { status: Status } & FinishNote) =>
-    request<ShelfItem>("/api/shelf", { method: "POST", body: json(body) }),
+  addToShelf: (body: {
+    ol_work_key: string;
+    title: string;
+    authors: string;
+    cover_id: number | null;
+    year: number | null;
+    status: Status;
+  } & FinishNote) => request<ShelfItem>("/api/shelf", { method: "POST", body: JSON.stringify(body) }),
   patchShelf: (id: number, body: { status?: Status; position?: number } & FinishNote) =>
-    request<ShelfItem>(`/api/shelf/${id}`, { method: "PATCH", body: json(body) }),
-  removeFromShelf: (id: number) => request<void>(`/api/shelf/${id}`, { method: "DELETE" }),
+    request<ShelfItem>(`/api/shelf/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  removeFromShelf: (id: number) =>
+    request<void>(`/api/shelf/${id}`, { method: "DELETE" }),
   importGoodreads: (file: File) => {
     const body = new FormData();
     body.append("file", file);
     return request<GoodreadsImport>("/api/shelf/import", { method: "POST", body });
   },
-
-  // --- members / invites ---------------------------------------------------------
   members: () => request<Member[]>("/api/members"),
   invites: () => request<Invite[]>("/api/invites"),
-  createInvite: () => request<{ code: string }>("/api/invites", { method: "POST" }),
-
-  // --- club pick -----------------------------------------------------------------
+  createInvite: () =>
+    request<{ code: string }>("/api/invites", { method: "POST" }),
   clubPick: () => request<ClubPickCurrent>("/api/pick"),
   clubPickHistory: () => request<{ items: ClubPick[]; timezone: string }>("/api/pick/history"),
   setClubPick: (body: ClubPickBook) =>
-    request<ClubPick>("/api/pick", { method: "PUT", body: json(body) }),
+    request<ClubPick>("/api/pick", { method: "PUT", body: JSON.stringify(body) }),
   clearClubPick: () => request<ClubPickCurrent>("/api/pick", { method: "DELETE" }),
-  meetingIcsUrl: () => "/api/pick/meeting.ics",
-
-  // --- notes ------------------------------------------------------------------------
+  overlap: (includeReading = false) =>
+    request<OverlapList>(
+      `/api/overlap${includeReading ? "?include_reading=true" : ""}`,
+    ),
   pickPosts: (pickId?: number) =>
     request<PickThread>(pickId ? `/api/pick/${pickId}/posts` : "/api/pick/posts"),
-  addPickPost: (
-    body: { body: string; spoiler_upto?: number | null; milestone_id?: number | null },
-    pickId?: number,
-  ) =>
+  addPickPost: (body: string, pickId?: number) =>
     request<PickPost>(pickId ? `/api/pick/${pickId}/posts` : "/api/pick/posts", {
       method: "POST",
-      body: json(body),
+      body: JSON.stringify({ body }),
     }),
-  editPickPost: (postId: number, body: { body?: string; spoiler_upto?: number | null }) =>
-    request<PickPost>(`/api/pick/posts/${postId}`, { method: "PATCH", body: json(body) }),
-  deletePickPost: (postId: number) =>
-    request<void>(`/api/pick/posts/${postId}`, { method: "DELETE" }),
-  toggleReaction: (postId: number, emoji: string) =>
-    request<PickPost>(`/api/pick/posts/${postId}/reactions`, {
-      method: "POST",
-      body: json({ emoji }),
-    }),
-
-  // --- milestones -----------------------------------------------------------------------
-  milestones: (pickId: number) => request<MilestoneList>(`/api/pick/${pickId}/milestones`),
-  addMilestone: (pickId: number, body: MilestoneInput) =>
-    request<Milestone>(`/api/pick/${pickId}/milestones`, { method: "POST", body: json(body) }),
-  editMilestone: (pickId: number, milestoneId: number, body: MilestoneInput) =>
-    request<Milestone>(`/api/pick/${pickId}/milestones/${milestoneId}`, {
-      method: "PATCH",
-      body: json(body),
-    }),
-  deleteMilestone: (pickId: number, milestoneId: number) =>
-    request<void>(`/api/pick/${pickId}/milestones/${milestoneId}`, { method: "DELETE" }),
-
-  // --- overlap / vote -------------------------------------------------------------------------
-  overlap: (includeReading = false) =>
-    request<OverlapList>(`/api/overlap${includeReading ? "?include_reading=true" : ""}`),
   nextUp: () => request<NextUpVote>("/api/vote"),
-  setVoteDeadline: (closesAt: string | null) =>
-    request<NextUpVote>("/api/vote", { method: "PATCH", body: json({ closes_at: closesAt }) }),
-  nominate: (body: BookRef) =>
-    request<NextUpVote>("/api/vote/nominations", { method: "POST", body: json(body) }),
+  nominate: (body: VoteBook) =>
+    request<NextUpVote>("/api/vote/nominations", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   castVote: (nominationId: number) =>
     request<NextUpVote>("/api/vote/cast", {
       method: "POST",
-      body: json({ nomination_id: nominationId }),
+      body: JSON.stringify({ nomination_id: nominationId }),
     }),
   applyWinner: (nominationId: number, meetingAt?: string | null) =>
     request<VoteApplyResult>("/api/vote/apply", {
       method: "POST",
-      body: json({ nomination_id: nominationId, meeting_at: meetingAt ?? null }),
+      body: JSON.stringify({ nomination_id: nominationId, meeting_at: meetingAt ?? null }),
     }),
-  voteSuggestions: () => request<{ items: VoteSuggestion[] }>("/api/vote/suggestions"),
-
-  // --- activity / stats / quotes ------------------------------------------------------------------
-  activity: (params: { before?: number; limit?: number; username?: string } = {}) =>
-    request<ActivityPage>(`/api/activity${qs(params)}`),
-  stats: (year?: number) => request<Stats>(`/api/stats${qs({ year })}`),
-  quotes: (params: { work?: string; username?: string; limit?: number } = {}) =>
-    request<{ items: Quote[] }>(`/api/quotes${qs(params)}`),
-  addQuote: (body: BookRef & { body: string; page?: number | null }) =>
-    request<Quote>("/api/quotes", { method: "POST", body: json(body) }),
-  editQuote: (quoteId: number, body: { body?: string; page?: number | null }) =>
-    request<Quote>(`/api/quotes/${quoteId}`, { method: "PATCH", body: json(body) }),
-  deleteQuote: (quoteId: number) => request<void>(`/api/quotes/${quoteId}`, { method: "DELETE" }),
-
-  // --- push ---------------------------------------------------------------------------------------------
-  vapidPublicKey: () => request<{ public_key: string }>("/api/push/vapid"),
-  pushSubscriptions: () => request<{ items: PushSubscriptionRow[] }>("/api/push/subscriptions"),
-  subscribePush: (body: { endpoint: string; keys: { p256dh: string; auth: string }; user_agent?: string }) =>
-    request<PushSubscriptionRow>("/api/push/subscriptions", { method: "POST", body: json(body) }),
-  unsubscribePush: (endpoint: string) =>
-    request<void>("/api/push/subscriptions", { method: "DELETE", body: json({ endpoint }) }),
-  testPush: () => request<{ sent_to: number }>("/api/push/test", { method: "POST" }),
 };
-
-export type Api = typeof api;

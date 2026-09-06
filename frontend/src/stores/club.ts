@@ -18,17 +18,15 @@ export const useClub = defineStore("club", {
     /** Non-blocking: the app mounts with defaults and re-brands when config arrives. */
     async load() {
       try {
-        const config = await api.config();
-        this.$patch(config);
+        this.$patch(await api.config());
       } catch {
         this.$patch(FALLBACK);
       } finally {
         this.loaded = true;
       }
       applyBrand(this.$state);
-      const theme = useTheme();
-      theme.accent = this.theme || FALLBACK.theme;
-      theme.apply();
+      // Re-paint so the palette picks up the club accent that just arrived.
+      useTheme().apply();
     },
   },
 });

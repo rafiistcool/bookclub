@@ -1,40 +1,46 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { ApiError } from "../api/client";
-import { countdown } from "../constants";
-import { useFlow, toRef } from "../stores/flow";
+import { api, ApiError } from "../api/client";
+import { bookPath } from "../constants";
 import { useToast } from "../stores/toast";
-import { useVote } from "../stores/vote";
-import type { VoteNomination } from "../types";
-import Avatar from "./Avatar.vue";
+import type { NextUpVote as NextUpVoteState, VoteNomination } from "../types";
 import BookCover from "./BookCover.vue";
-import ClubPickSheet from "./ClubPickSheet.vue";
-import NavIcon from "./NavIcon.vue";
-import Sheet from "./Sheet.vue";
+import MeetingSheet from "./MeetingSheet.vue";
 
-const emit = defineEmits<{
-  applied: [];
-}>();
+const emit = defineEmits<{ applied: [] }>();
 
-const vote = useVote();
-const flow = useFlow();
-const toast = useToast();
+const vote = ref<NextUpVoteState | null>(null);
+const error = ref("");
+const loaded = ref(false);
 const pendingId = ref<number | null>(null);
-const closing = ref<VoteNomination | null>(null);
-const deadlineOpen = ref(false);
-const deadlineDraft = ref("");
-const showSuggestions = ref(false);
+const confirming = ref<VoteNomination | null>(null);
+const toast = useToast();
 
-const data = computed(() => vote.data);
-const nominations = computed(() => data.value?.nominations ?? []);
-const leader = computed(() => nominations.value.find((row) => row.id === data.value?.leader_id) ?? null);
-const closes = computed(() => countdown(data.value?.closes_at));
-const suggestions = computed(() => vote.suggestions.data ?? []);
+const nominations = computed(() =>
+  [...(vote.value?.nominations ?? [])].sort(
+    (a, b) => b.votes - a.votes || a.book.title.localeCompare(b.book.title),
+  ),
+);
 
-async function cast(id: number) {
-  pendingId.value = id;
+const totalVotes = computed(() =>
+  nominations.value.reduce((sum, row) => sum + row.votes, 0),
+);
+
+async function load() {
   try {
-    await vote.cast(id);
+    vote.value = await api.nextUp();
+    error.value = "";
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : "Could not load the vote";
+  } finally {
+    loaded.value = true;
+  }
+}
+
+async function cast(row: VoteNomination) {
+  pendingId.value = row.id;
+  try {
+    vote.value = await api.castVote(row.id);
   } catch (err) {
     toast.show(err instanceof ApiError ? err.message : "Could not save that vote");
   } finally {
@@ -42,172 +48,217 @@ async function cast(id: number) {
   }
 }
 
-async function apply(meetingAt: string | null) {
-  const row = closing.value;
-  closing.value = null;
+async function confirm(meetingAt: string | null) {
+  const row = confirming.value;
+  confirming.value = null;
   if (!row) return;
   pendingId.value = row.id;
   try {
-    await vote.apply(row.id, meetingAt);
-    toast.show(`“${row.book.title}” is the club pick`);
+    const result = await api.applyWinner(row.id, meetingAt);
+    vote.value = result.vote;
+    toast.show(`“${row.book.title}” is now the club pick`);
     emit("applied");
   } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : "Could not set the winner");
+    toast.show(err instanceof ApiError ? err.message : "Could not confirm that winner");
   } finally {
     pendingId.value = null;
   }
 }
 
-async function saveDeadline(clear = false) {
-  try {
-    await vote.setDeadline(clear ? null : deadlineDraft.value || null);
-    deadlineOpen.value = false;
-    toast.show(clear ? "Deadline removed" : "Deadline set — the leader is applied automatically");
-  } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : "Could not set the deadline");
-  }
-}
-
-function openDeadline() {
-  deadlineDraft.value = data.value?.closes_local ?? "";
-  deadlineOpen.value = true;
-}
-
-async function toggleSuggestions() {
-  showSuggestions.value = !showSuggestions.value;
-  if (showSuggestions.value) await vote.loadSuggestions();
-}
-
-onMounted(() => {
-  void vote.load();
-});
+onMounted(load);
+defineExpose({ load });
 </script>
 
 <template>
-  <section class="section" aria-labelledby="next-up-title">
-    <div class="section-title">
-      <h2 id="next-up-title">Next up</h2>
-      <button v-if="nominations.length" class="text-btn sm" type="button" @click="openDeadline">
-        <NavIcon name="calendar" :size="16" />
-        {{ data?.closes_at ? "Deadline" : "Set deadline" }}
-      </button>
+  <section aria-labelledby="next-up-heading">
+    <div class="section-head">
+      <h2 id="next-up-heading">Next-up vote</h2>
+      <span v-if="vote" class="fine subtle nums">
+        {{ nominations.length }} of {{ vote.nomination_limit }} nominations
+      </span>
     </div>
+    <p class="fine muted vote-blurb">
+      Everyone gets one vote and can change it any time — voting does not change the
+      current pick. When you're ready, one of you confirms the winner, which replaces
+      the pick for the whole club.
+    </p>
 
-    <p v-if="vote.error && !data" class="error fine">{{ vote.error }}</p>
-    <div v-else-if="!data" class="list" aria-busy="true">
-      <div v-for="n in 2" :key="n" class="nomination" style="border-color: transparent">
-        <div class="skeleton cover" style="width: 44px" />
-        <div style="display: grid; gap: 6px">
-          <div class="skeleton line" style="width: 70%" />
-          <div class="skeleton line" style="width: 40%; height: 0.7em" />
+    <p v-if="error" class="error">{{ error }}</p>
+    <div v-else-if="!loaded" class="skeleton skeleton-block" aria-hidden="true" />
+
+    <ol v-else-if="nominations.length" class="vote-list">
+      <li
+        v-for="(row, index) in nominations"
+        :key="row.id"
+        class="vote-row"
+        :class="{ leading: index === 0 && row.votes > 0 }"
+      >
+        <RouterLink class="vote-book" :to="bookPath(row.book.ol_work_key)">
+          <BookCover :title="row.book.title" :cover-id="row.book.cover_id" size="sm" />
+          <span class="vote-meta">
+            <strong>{{ row.book.title }}</strong>
+            <span v-if="row.book.authors" class="finer subtle">
+              {{ row.book.authors }}
+            </span>
+            <span class="finer subtle">Nominated by {{ row.nominated_by }}</span>
+          </span>
+        </RouterLink>
+
+        <div class="vote-tally">
+          <span class="tally-count nums">{{ row.votes }}</span>
+          <span class="finer subtle">{{ row.votes === 1 ? "vote" : "votes" }}</span>
+          <span v-if="row.voters.length" class="finer subtle clamp-2">
+            {{ row.voters.join(", ") }}
+          </span>
         </div>
-      </div>
-    </div>
-    <template v-else>
-      <div v-if="nominations.length" class="vote-meta" style="margin-bottom: 10px">
-        <span>{{ data.voted_count }} / {{ data.member_count }} voted</span>
-        <span v-if="data.not_voted.length" class="faint">
-          Waiting on {{ data.not_voted.join(", ") }}
-        </span>
-        <span v-if="closes" :class="{ 'error': closes.past }">
-          Closes {{ data.closes_label }} ({{ closes.label }})
-        </span>
-      </div>
 
-      <p v-if="nominations.length === 0" class="muted fine">
-        No nominations yet. Nominate from a book’s details, your shelf, or the shared to-read list.
-      </p>
-      <ol v-else class="list" style="list-style: none; padding: 0">
-        <li
-          v-for="row in nominations"
-          :key="row.id"
-          class="nomination"
-          :class="{ leader: leader?.id === row.id && row.votes > 0 }"
-        >
-          <button type="button" style="all: unset; cursor: pointer" :aria-label="`Details for ${row.book.title}`" @click="flow.open({ kind: 'details', book: toRef(row.book) })">
-            <BookCover :title="row.book.title" :cover-id="row.book.cover_id" size="sm" />
-          </button>
-          <div class="body">
-            <h3 class="clamp-1">{{ row.book.title }}</h3>
-            <p class="fine muted clamp-1">{{ row.book.authors }}</p>
-            <p class="fine" style="display: flex; align-items: center; gap: 6px; margin-top: 4px">
-              <span class="avatar-stack" v-if="row.voters.length">
-                <Avatar v-for="name in row.voters" :key="name" :username="name" size="sm" />
-              </span>
-              <span :class="row.votes ? 'strong' : 'faint'">{{ row.votes }} {{ row.votes === 1 ? "vote" : "votes" }}</span>
-              <span class="faint">· {{ row.nominated_by }}</span>
-            </p>
-          </div>
+        <div class="vote-actions">
           <button
-            class="btn vote-btn"
+            class="btn btn-sm"
             :class="row.mine ? 'btn-primary' : 'btn-ghost'"
             type="button"
-            :aria-pressed="row.mine"
             :disabled="pendingId === row.id"
-            @click="cast(row.id)"
+            @click="cast(row)"
           >
-            <NavIcon v-if="row.mine" name="check" :size="18" />
-            {{ row.mine ? "Voted" : "Vote" }}
+            {{ row.mine ? "Your vote" : "Vote" }}
           </button>
-        </li>
-      </ol>
-
-      <div v-if="nominations.length" class="actions" style="margin-top: 12px; justify-content: space-between">
-        <span class="fine faint">{{ nominations.length }} / {{ data.nomination_limit }} nominated</span>
-        <button
-          v-if="leader && leader.votes > 0"
-          class="btn btn-ghost btn-sm"
-          type="button"
-          :disabled="pendingId !== null"
-          @click="closing = leader"
-        >
-          Close vote · pick “{{ leader.book.title }}”
-        </button>
-      </div>
-
-      <div style="margin-top: 14px">
-        <button class="text-btn sm" type="button" :aria-expanded="showSuggestions" @click="toggleSuggestions">
-          {{ showSuggestions ? "Hide suggestions" : "Suggestions for the vote" }}
-        </button>
-        <div v-if="showSuggestions" class="card" style="margin-top: 6px; padding: 4px 12px">
-          <p v-if="vote.suggestions.pending && !suggestions.length" class="muted fine" style="padding: 8px 0">Thinking…</p>
-          <p v-else-if="suggestions.length === 0" class="muted fine" style="padding: 8px 0">
-            Nothing to suggest yet — add books to Want to read and finish a pick or two.
-          </p>
-          <div v-for="row in suggestions" :key="row.book.ol_work_key" class="suggestion">
-            <BookCover :title="row.book.title" :cover-id="row.book.cover_id" size="xs" />
-            <div style="min-width: 0">
-              <p class="strong clamp-1">{{ row.book.title }}</p>
-              <p class="fine muted clamp-1">{{ row.reasons.join(" · ") }}</p>
-            </div>
-            <button class="btn btn-ghost btn-sm" type="button" :disabled="!data.can_nominate" @click="flow.nominate(toRef(row.book))">
-              Nominate
-            </button>
-          </div>
+          <button
+            class="text-btn"
+            type="button"
+            :disabled="pendingId === row.id"
+            @click="confirming = row"
+          >
+            Confirm winner
+          </button>
         </div>
+      </li>
+    </ol>
+
+    <div v-else class="empty">
+      <h3>No nominations yet</h3>
+      <p>
+        Open any book and choose “Nominate for next up”. Books more than one of you
+        wants to read are a good place to start.
+      </p>
+      <div class="btn-row">
+        <RouterLink class="btn btn-ghost" to="/discover">Find a book</RouterLink>
       </div>
-    </template>
+    </div>
 
-    <ClubPickSheet
-      v-if="closing"
-      title="Close the vote"
-      :book-title="closing.book.title"
-      :timezone="data?.timezone || 'UTC'"
+    <p v-if="nominations.length" class="finer subtle vote-total nums">
+      {{ totalVotes }} {{ totalVotes === 1 ? "vote" : "votes" }} cast
+    </p>
+
+    <MeetingSheet
+      v-if="confirming"
+      title="Confirm as the club pick"
+      :book-title="confirming.book.title"
+      :timezone="vote?.timezone || 'UTC'"
       confirm-label="Confirm winner"
-      hide-note
-      @confirm="(meetingAt) => apply(meetingAt)"
-      @close="closing = null"
+      blurb="This ends the vote and replaces the current pick for everyone."
+      @confirm="confirm"
+      @close="confirming = null"
     />
-
-    <Sheet v-if="deadlineOpen" title="Vote deadline" subtitle="The leading book becomes the club pick when the deadline passes." @close="deadlineOpen = false">
-      <label class="field">
-        <span>Closes <span class="faint">({{ data?.timezone }})</span></span>
-        <input v-model="deadlineDraft" type="datetime-local" data-autofocus />
-      </label>
-      <template #foot>
-        <button class="btn btn-primary" type="button" :disabled="!deadlineDraft" @click="saveDeadline()">Save deadline</button>
-        <button v-if="data?.closes_at" class="btn btn-ghost" type="button" @click="saveDeadline(true)">Remove deadline</button>
-      </template>
-    </Sheet>
   </section>
 </template>
+
+<style scoped>
+.vote-blurb {
+  max-width: 62ch;
+  margin-bottom: var(--space-4);
+}
+
+.skeleton-block {
+  height: 120px;
+}
+
+.vote-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.vote-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--space-3);
+  align-items: start;
+  padding: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.vote-row.leading {
+  border-color: var(--accent-line);
+}
+
+.vote-book {
+  display: flex;
+  gap: var(--space-3);
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+.vote-meta {
+  display: grid;
+  gap: 2px;
+  align-content: start;
+  min-width: 0;
+}
+
+.vote-meta strong {
+  font-family: var(--serif);
+  font-size: var(--text-md);
+  line-height: var(--leading-snug);
+}
+
+.vote-tally {
+  grid-column: 1;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+}
+
+.tally-count {
+  font-family: var(--serif);
+  font-size: var(--text-xl);
+  font-weight: 700;
+}
+
+.vote-actions {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: grid;
+  justify-items: end;
+  align-content: start;
+  gap: var(--space-1);
+}
+
+.vote-total {
+  margin-top: var(--space-3);
+}
+
+@media (min-width: 720px) {
+  .vote-row {
+    grid-template-columns: 1fr auto auto;
+    align-items: center;
+  }
+
+  .vote-tally {
+    grid-column: 2;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0;
+  }
+
+  .vote-actions {
+    grid-column: 3;
+    grid-row: 1;
+  }
+}
+</style>

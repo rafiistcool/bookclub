@@ -35,29 +35,48 @@ describe("api client", () => {
   it("builds query strings, dropping empty values", async () => {
     await api.search({ q: "dune", subject: "", sort: "new", page: 2 });
     expect(fetchMock.mock.calls[0][0]).toBe("/api/books/search?q=dune&sort=new&page=2");
-    await api.activity({ limit: 30, username: undefined });
-    expect(fetchMock.mock.calls[1][0]).toBe("/api/activity?limit=30");
-    await api.stats();
-    expect(fetchMock.mock.calls[2][0]).toBe("/api/stats");
+    await api.search();
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/books/search");
+    await api.trending(8);
+    expect(fetchMock.mock.calls[2][0]).toBe("/api/books/trending?limit=8");
+    await api.subject("science fiction", 2, 6);
+    expect(fetchMock.mock.calls[3][0]).toBe(
+      "/api/books/subjects/science%20fiction?page=2&limit=6",
+    );
   });
 
-  it("strips the /works/ prefix for book details", async () => {
-    await api.bookDetails("/works/OL1168007W");
-    expect(fetchMock.mock.calls[0][0]).toBe("/api/books/work/OL1168007W");
+  it("addresses book detail by bare work id", async () => {
+    await api.book("OL1168007W");
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/books/works/OL1168007W");
+  });
+
+  it("patches theme preferences", async () => {
+    await api.savePreferences({ theme: "ink" });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/auth/me/preferences");
+    expect(init.method).toBe("PATCH");
+    expect(init.body).toBe(JSON.stringify({ theme: "ink" }));
   });
 
   it("returns undefined on 204 and parses JSON otherwise", async () => {
     vi.stubGlobal("fetch", mockFetch(204, undefined));
     expect(await api.logout()).toBeUndefined();
-    vi.stubGlobal("fetch", mockFetch(200, { public_key: "abc" }));
-    expect(await api.vapidPublicKey()).toEqual({ public_key: "abc" });
+    vi.stubGlobal("fetch", mockFetch(200, { name: "Club" }));
+    expect(await api.config()).toEqual({ name: "Club" });
   });
 
   it("throws ApiError with detail and the conflicting shelf item", async () => {
     const item = { id: 9, status: "finished" };
     vi.stubGlobal("fetch", mockFetch(409, { detail: "Already on your shelf", item }));
     await expect(
-      api.addToShelf({ ol_work_key: "/works/OL1W", title: "x", authors: "", cover_id: null, year: null, status: "want_to_read" }),
+      api.addToShelf({
+        ol_work_key: "/works/OL1W",
+        title: "x",
+        authors: "",
+        cover_id: null,
+        year: null,
+        status: "want_to_read",
+      }),
     ).rejects.toMatchObject({ name: "ApiError", status: 409, message: "Already on your shelf", item });
   });
 

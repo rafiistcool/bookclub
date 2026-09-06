@@ -1,9 +1,7 @@
 <script setup lang="ts">
-/** Four-column drag-and-drop board. Used at ≥720px; phones get ShelfList. */
 import { reactive, watch } from "vue";
 import { VueDraggable } from "vue-draggable-plus";
 import { STATUSES, STATUS_LABEL, type Status } from "../constants";
-import { useFlow } from "../stores/flow";
 import type { ShelfItem } from "../types";
 import BookCard from "./BookCard.vue";
 
@@ -14,6 +12,9 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
+  remove: [item: ShelfItem];
+  clubPick: [item: ShelfItem];
+  nominate: [item: ShelfItem];
   dropped: [item: ShelfItem, status: Status, position: number];
 }>();
 
@@ -30,24 +31,10 @@ function apply(items: ShelfItem[]) {
   for (const item of sorted) lists[item.status].push(item);
 }
 
-watch(
-  () => props.items,
-  (items) => apply(items),
-  { immediate: true, deep: true },
-);
+watch(() => props.items, apply, { immediate: true, deep: true });
 
-// A drop into Finished/DNF opens a sheet; if it is dismissed without saving the
-// optimistic column move must snap back to what the store says.
-const flow = useFlow();
-watch(
-  () => flow.current,
-  (current, previous) => {
-    if (previous && !current) apply(props.items);
-  },
-);
-
-function onDrop(status: Status, evt: { newIndex?: number }) {
-  const index = evt.newIndex ?? 0;
+function onDrop(status: Status, event: { newIndex?: number }) {
+  const index = event.newIndex ?? 0;
   const item = lists[status][index];
   if (!item) return;
   emit("dropped", item, status, index);
@@ -56,31 +43,94 @@ function onDrop(status: Status, evt: { newIndex?: number }) {
 
 <template>
   <div class="board">
-    <section v-for="status in STATUSES" :key="status" class="column" :aria-label="STATUS_LABEL[status]">
-      <header>
-        <h2>{{ STATUS_LABEL[status] }}</h2>
-        <span class="count">{{ lists[status].length }}</span>
+    <section v-for="status in STATUSES" :key="status" class="column">
+      <header class="column-head">
+        <h3>{{ STATUS_LABEL[status] }}</h3>
+        <span class="fine subtle nums">{{ lists[status].length }}</span>
       </header>
       <VueDraggable
         v-if="!readonly"
         v-model="lists[status]"
-        class="column-body scroll"
+        class="column-body"
         group="shelf"
         :animation="180"
-        :delay="120"
-        :delay-on-touch-only="true"
-        :touch-start-threshold="5"
         filter=".no-drag"
         ghost-class="card-ghost"
         drag-class="card-dragging"
         @add="onDrop(status, $event)"
         @update="onDrop(status, $event)"
       >
-        <BookCard v-for="item in lists[status]" :key="item.id" :item="item" :club-pick-key="clubPickKey" draggable />
+        <BookCard
+          v-for="item in lists[status]"
+          :key="item.id"
+          :item="item"
+          :club-pick-key="clubPickKey"
+          @remove="emit('remove', item)"
+          @club-pick="emit('clubPick', item)"
+          @nominate="emit('nominate', item)"
+        />
       </VueDraggable>
-      <div v-else class="column-body scroll">
-        <BookCard v-for="item in lists[status]" :key="item.id" :item="item" :club-pick-key="clubPickKey" readonly />
+      <div v-else class="column-body">
+        <BookCard
+          v-for="item in lists[status]"
+          :key="item.id"
+          :item="item"
+          :club-pick-key="clubPickKey"
+          readonly
+        />
       </div>
+      <p v-if="lists[status].length === 0" class="finer subtle column-empty">
+        {{ readonly ? "Nothing here." : "Drag a book here." }}
+      </p>
     </section>
   </div>
 </template>
+
+<style scoped>
+.board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+  align-items: start;
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--surface-2);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3);
+}
+
+.column-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.column-head h3 {
+  font-size: var(--text-md);
+}
+
+.column-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 60px;
+}
+
+.column-empty {
+  padding: var(--space-2) 0 0;
+}
+
+.card-ghost {
+  opacity: 0.35;
+}
+
+.card-dragging {
+  transform: rotate(1.5deg);
+}
+</style>

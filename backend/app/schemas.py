@@ -4,6 +4,14 @@ from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
 
 from app.models import ShelfStatus
+from app.themes import (
+    COLOR_MODES,
+    DEFAULT_COLOR_MODE,
+    DEFAULT_THEME_ID,
+    THEME_IDS,
+    is_color_mode,
+    is_theme_id,
+)
 
 USERNAME_RE = re.compile(r"^[a-z0-9_]{2,32}$")
 
@@ -11,6 +19,33 @@ USERNAME_RE = re.compile(r"^[a-z0-9_]{2,32}$")
 class UserOut(BaseModel):
     id: int
     username: str
+    theme: str = DEFAULT_THEME_ID
+    color_mode: str = DEFAULT_COLOR_MODE
+
+
+class PreferencesIn(BaseModel):
+    theme: str | None = None
+    color_mode: str | None = None
+
+    @field_validator("theme")
+    @classmethod
+    def theme_ok(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip().lower()
+        if not is_theme_id(value):
+            raise ValueError(f"theme must be one of: {', '.join(THEME_IDS)}")
+        return value
+
+    @field_validator("color_mode")
+    @classmethod
+    def color_mode_ok(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip().lower()
+        if not is_color_mode(value):
+            raise ValueError(f"color_mode must be one of: {', '.join(COLOR_MODES)}")
+        return value
 
 
 class RegisterIn(BaseModel):
@@ -147,6 +182,31 @@ class IsbnHitOut(BaseModel):
     pages: int | None
     on_shelf: ShelfStatus | None = None
     shelf_id: int | None = None
+
+
+class BookReader(BaseModel):
+    username: str
+    status: ShelfStatus
+    rating: int | None = None
+    progress: int | None = None
+
+
+class BookDetailOut(BaseModel):
+    ol_work_key: str
+    title: str
+    authors: str = ""
+    cover_id: int | None = None
+    year: int | None = None
+    description: str = ""
+    subjects: list[str] = []
+    on_shelf: ShelfStatus | None = None
+    shelf_id: int | None = None
+    club_pick: bool = False
+    rating: int | None = None
+    take: str = ""
+    dnf_reason: str = ""
+    progress: int | None = None
+    readers: list[BookReader] = []
 
 
 class ShelfItemOut(BaseModel):

@@ -1,28 +1,32 @@
 <script setup lang="ts">
-import { STATUS_SHORT, type Status } from "../constants";
+import { bookPath, STATUS_SHORT, type Status } from "../constants";
 import BookCover from "./BookCover.vue";
 
-defineProps<{
+const props = defineProps<{
+  olWorkKey: string;
   title: string;
   authors?: string;
-  coverId: number | null;
+  coverId?: number | null;
   status?: Status | null;
   clubPick?: boolean;
-}>();
-
-const emit = defineEmits<{
-  open: [];
+  showAuthors?: boolean;
 }>();
 </script>
 
 <template>
-  <button type="button" class="book-tile" :aria-label="title" @click="emit('open')">
+  <RouterLink class="book-tile" :to="bookPath(olWorkKey)">
     <span class="book-tile-cover">
-      <BookCover :title="title" :cover-id="coverId" size="fluid" />
-      <span v-if="clubPick" class="badge on-cover club">Club</span>
-      <span v-else-if="status" class="badge on-cover" :class="status">{{ STATUS_SHORT[status] }}</span>
+      <BookCover :title="title" :cover-id="coverId" />
+      <span v-if="clubPick" class="badge book-tile-badge club-pick">Club</span>
+      <span
+        v-else-if="props.status"
+        class="badge book-tile-badge"
+        :class="props.status"
+      >
+        {{ STATUS_SHORT[props.status] }}
+      </span>
     </span>
-    <span class="book-tile-title clamp-2">{{ title }}</span>
-    <span v-if="authors" class="book-tile-author clamp-1">{{ authors }}</span>
-  </button>
+    <span class="book-tile-title">{{ title }}</span>
+    <span v-if="showAuthors && authors" class="book-tile-sub">{{ authors }}</span>
+  </RouterLink>
 </template>

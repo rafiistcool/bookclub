@@ -12,7 +12,7 @@ if [ ! -f "$BACKEND/app/static/index.html" ]; then
 fi
 
 cd "$BACKEND"
-if [ -x .venv/bin/python ]; then PY=.venv/bin/python; else PY="${PYTHON:-python3}"; fi
+if [ -n "${PYTHON:-}" ]; then PY="$PYTHON"; elif [ -x .venv/bin/python ]; then PY=.venv/bin/python; else PY=python3; fi
 
 export BOOKCLUB_ENV_FILE="$DATA/no-env"
 export DATABASE_PATH="$DATA/e2e.db"

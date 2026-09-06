@@ -10,6 +10,7 @@ from app.schemas import (
     NotificationPrefsIn,
     NotificationPrefsOut,
     PasswordChangeIn,
+    PreferencesIn,
     RegisterIn,
     UserOut,
 )
@@ -85,6 +86,22 @@ def logout(request: Request) -> None:
 
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(get_current_user)) -> User:
+    return user
+
+
+@router.patch("/me/preferences", response_model=UserOut)
+def update_preferences(
+    payload: PreferencesIn,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> User:
+    if payload.theme is not None:
+        user.theme = payload.theme
+    if payload.color_mode is not None:
+        user.color_mode = payload.color_mode
+    session.add(user)
+    session.commit()
+    session.refresh(user)
     return user
 
 

@@ -1,33 +1,38 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { useRouter } from "vue-router";
 import { api, ApiError } from "../api/client";
-import Avatar from "../components/Avatar.vue";
-import NavIcon from "../components/NavIcon.vue";
-import { usePush } from "../stores/push";
+import { MODES, THEMES, useTheme } from "../stores/theme";
 import { useSession } from "../stores/session";
-import { useShelf } from "../stores/shelf";
-import { useTheme, type ThemePref } from "../stores/theme";
 import { useToast } from "../stores/toast";
-import type { GoodreadsImport, Invite, NotificationPrefs } from "../types";
+import type { GoodreadsImport, Invite } from "../types";
 
-const session = useSession();
-const theme = useTheme();
-const push = usePush();
-const shelf = useShelf();
-const toast = useToast();
 const router = useRouter();
-const route = useRoute();
+const theme = useTheme();
+const session = useSession();
+const toast = useToast();
 
-// --- invites ---
 const invites = ref<Invite[]>([]);
+const invitesError = ref("");
+const invitesLoaded = ref(false);
 const minting = ref(false);
+
+const importFile = ref<File | null>(null);
+const importing = ref(false);
+const importResult = ref<GoodreadsImport | null>(null);
+
+const username = computed(() => session.user?.username ?? "");
+const unusedInvites = computed(() => invites.value.filter((row) => !row.used).length);
 
 async function loadInvites() {
   try {
     invites.value = await api.invites();
+    invitesError.value = "";
   } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : "Could not load invites");
+    invitesError.value =
+      err instanceof ApiError ? err.message : "Could not load invites";
+  } finally {
+    invitesLoaded.value = true;
   }
 }
 
@@ -47,80 +52,11 @@ async function mint() {
 async function copy(code: string) {
   try {
     await navigator.clipboard.writeText(code);
-    toast.show("Invite copied");
+    toast.show("Invite code copied");
   } catch {
     toast.show(code);
   }
 }
-
-const unusedInvites = computed(() => invites.value.filter((row) => !row.used));
-const usedInvites = computed(() => invites.value.filter((row) => row.used));
-
-// --- notifications ---
-const prefs = ref<NotificationPrefs | null>(null);
-
-async function loadPrefs() {
-  try {
-    prefs.value = await api.notificationPrefs();
-  } catch {
-    prefs.value = null;
-  }
-}
-
-async function togglePref(key: keyof NotificationPrefs) {
-  if (!prefs.value) return;
-  const next = !prefs.value[key];
-  prefs.value = { ...prefs.value, [key]: next };
-  try {
-    prefs.value = await api.updateNotificationPrefs({ [key]: next });
-  } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : "Could not save");
-    await loadPrefs();
-  }
-}
-
-async function togglePush() {
-  if (push.subscribed) await push.unsubscribe();
-  else await push.subscribe();
-  if (push.error) toast.show(push.error);
-  else toast.show(push.subscribed ? "Notifications on for this device" : "Notifications off for this device");
-}
-
-async function testPush() {
-  try {
-    await api.testPush();
-    toast.show("Test sent — it should arrive in a moment");
-  } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : "Could not send a test");
-  }
-}
-
-// --- password ---
-const currentPassword = ref("");
-const newPassword = ref("");
-const showPasswords = ref(false);
-const passwordPending = ref(false);
-const passwordError = ref("");
-
-async function changePassword() {
-  passwordError.value = "";
-  passwordPending.value = true;
-  try {
-    await api.changePassword({ current_password: currentPassword.value, new_password: newPassword.value });
-    currentPassword.value = "";
-    newPassword.value = "";
-    toast.show("Password changed");
-  } catch (err) {
-    passwordError.value = err instanceof ApiError ? err.message : "Could not change the password";
-  } finally {
-    passwordPending.value = false;
-  }
-}
-
-// --- import ---
-const importFile = ref<File | null>(null);
-const importing = ref(false);
-const importResult = ref<GoodreadsImport | null>(null);
 
 function onImportFile(event: Event) {
   const input = event.target as HTMLInputElement;
@@ -135,8 +71,15 @@ async function importCsv() {
   try {
     const result = await api.importGoodreads(file);
     importResult.value = result;
-    await shelf.refresh();
-    toast.show(result.imported ? `Imported ${result.imported}` : "Nothing to import");
+    if (result.imported) {
+      toast.show(
+        result.skipped
+          ? `Imported ${result.imported}. Skipped ${result.skipped}.`
+          : `Imported ${result.imported} books`,
+      );
+    } else {
+      toast.show(result.skipped ? `Skipped ${result.skipped}` : "Nothing to import");
+    }
   } catch (err) {
     toast.show(err instanceof ApiError ? err.message : "Could not import that file");
   } finally {
@@ -149,160 +92,360 @@ async function logout() {
   await router.push("/login");
 }
 
-const THEMES: { value: ThemePref; label: string; icon: "sun" | "moon" | "check" }[] = [
-  { value: "system", label: "System", icon: "check" },
-  { value: "light", label: "Light", icon: "sun" },
-  { value: "dark", label: "Dark", icon: "moon" },
-];
-
-onMounted(async () => {
-  await Promise.all([loadInvites(), loadPrefs(), push.init()]);
-  if (route.hash) {
-    document.querySelector(route.hash)?.scrollIntoView({ block: "start" });
-  }
-});
+onMounted(loadInvites);
 </script>
 
 <template>
-  <section aria-label="Settings">
-    <header style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px">
-      <Avatar :username="session.user?.username ?? '?'" size="lg" />
-      <div style="flex: 1">
-        <h1 style="font-size: var(--text-xl)">{{ session.user?.username }}</h1>
-        <p class="fine muted">Member</p>
-      </div>
-      <button class="btn btn-ghost btn-sm" type="button" @click="logout">Log out</button>
-    </header>
+  <section>
+    <div class="page-head">
+      <h1>Settings</h1>
+      <p class="lede">Signed in as {{ username }}.</p>
+    </div>
 
-    <section class="settings-group" aria-labelledby="theme-title">
-      <h2 id="theme-title">Appearance</h2>
-      <div class="segmented" role="radiogroup" aria-label="Theme">
+    <section aria-labelledby="appearance">
+      <div class="section-head">
+        <h2 id="appearance">Appearance</h2>
+      </div>
+
+      <div class="mode-row">
+        <div class="segmented" role="group" aria-label="Colour mode">
+          <button
+            v-for="option in MODES"
+            :key="option.id"
+            type="button"
+            :aria-pressed="theme.mode === option.id"
+            @click="theme.setMode(option.id)"
+          >
+            {{ option.label }}
+          </button>
+        </div>
+        <p class="fine subtle">
+          <template v-if="theme.mode === 'system'">
+            Following your device, currently {{ theme.resolvedMode }}.
+          </template>
+          <template v-else>Always {{ theme.mode }}.</template>
+        </p>
+      </div>
+
+      <div class="theme-grid">
         <button
           v-for="option in THEMES"
-          :key="option.value"
+          :key="option.id"
+          class="theme-card"
+          :class="{ active: theme.theme === option.id }"
           type="button"
-          role="radio"
-          :aria-checked="theme.pref === option.value"
-          :aria-selected="theme.pref === option.value"
-          @click="theme.set(option.value)"
+          :aria-pressed="theme.theme === option.id"
+          @click="theme.setTheme(option.id)"
         >
-          <span style="display: inline-flex; gap: 6px; align-items: center">
-            <NavIcon v-if="option.icon !== 'check'" :name="option.icon" :size="16" />
-            {{ option.label }}
+          <span
+            class="theme-preview"
+            :class="`pal-${option.id}-${theme.resolvedMode}`"
+            aria-hidden="true"
+          >
+            <span class="tp-card">
+              <span class="tp-cover" />
+              <span class="tp-text">
+                <span class="tp-title" />
+                <span class="tp-line" />
+                <span class="tp-line short" />
+              </span>
+            </span>
+            <span class="tp-accent" />
           </span>
+          <span class="theme-name">
+            {{ option.label }}
+            <span v-if="theme.theme === option.id" class="badge club-pick">Active</span>
+          </span>
+          <span class="fine subtle">{{ option.blurb }}</span>
         </button>
       </div>
     </section>
 
-    <section id="notifications" class="settings-group" aria-labelledby="notify-title">
-      <h2 id="notify-title">Notifications</h2>
-      <div class="card">
-        <div class="toggle-row">
-          <div>
-            <p class="strong">Push on this device</p>
-            <p class="fine muted">
-              <template v-if="!push.supported">Not supported in this browser. On iPhone, add the app to your Home Screen first.</template>
-              <template v-else-if="push.permission === 'denied'">Blocked in browser settings.</template>
-              <template v-else>New picks, notes, and a reminder the day before a meeting.</template>
-            </p>
-          </div>
-          <button
-            class="switch"
-            type="button"
-            role="switch"
-            :aria-checked="push.subscribed"
-            :disabled="!push.supported || push.busy || push.permission === 'denied'"
-            @click="togglePush"
-          />
-        </div>
-        <template v-if="prefs">
-          <div class="toggle-row">
-            <span>Meeting reminders</span>
-            <button class="switch" type="button" role="switch" :aria-checked="prefs.notify_meeting" @click="togglePref('notify_meeting')" />
-          </div>
-          <div class="toggle-row">
-            <span>New club pick</span>
-            <button class="switch" type="button" role="switch" :aria-checked="prefs.notify_pick" @click="togglePref('notify_pick')" />
-          </div>
-          <div class="toggle-row">
-            <span>New notes</span>
-            <button class="switch" type="button" role="switch" :aria-checked="prefs.notify_note" @click="togglePref('notify_note')" />
-          </div>
-        </template>
-        <button v-if="push.subscribed" class="text-btn sm" type="button" style="margin-top: 6px" @click="testPush">Send a test</button>
+    <section class="section" aria-labelledby="invites">
+      <div class="section-head">
+        <h2 id="invites">Invites</h2>
+        <span class="fine subtle nums">{{ unusedInvites }} unused</span>
       </div>
-    </section>
-
-    <section id="invites" class="settings-group" aria-labelledby="invites-title">
-      <h2 id="invites-title">Invites</h2>
-      <p class="fine muted" style="margin-bottom: 10px">Anyone with a code can join. Treat unused codes like passwords.</p>
-      <button class="btn btn-primary" type="button" :disabled="minting" @click="mint">
-        <NavIcon name="plus" :size="18" /> {{ minting ? "Creating…" : "Create invite" }}
+      <p class="fine muted">
+        Anyone with a code can make an account. Treat them like passwords.
+      </p>
+      <button
+        class="btn btn-primary mint-btn"
+        type="button"
+        :disabled="minting"
+        @click="mint"
+      >
+        {{ minting ? "Creating…" : "Create invite" }}
       </button>
-      <div v-if="unusedInvites.length" class="list" style="margin-top: 12px">
-        <div v-for="invite in unusedInvites" :key="invite.code" class="row-item">
-          <span />
-          <div class="row-body">
-            <div class="invite-code">{{ invite.code }}</div>
-            <p>Unused</p>
-          </div>
-          <button class="btn btn-ghost btn-sm" type="button" @click="copy(invite.code)">Copy</button>
-        </div>
-      </div>
-      <details v-if="usedInvites.length" style="margin-top: 10px">
-        <summary class="fine muted" style="cursor: pointer">{{ usedInvites.length }} used</summary>
-        <ul class="fine muted" style="margin: 8px 0 0; padding-left: 18px">
-          <li v-for="invite in usedInvites" :key="invite.code"><span class="invite-code">{{ invite.code }}</span> · {{ invite.used_by }}</li>
-        </ul>
-      </details>
-    </section>
-
-    <section id="password" class="settings-group" aria-labelledby="password-title">
-      <h2 id="password-title">Password</h2>
-      <form class="card" @submit.prevent="changePassword">
-        <p v-if="passwordError" class="error fine" style="margin-bottom: 10px">{{ passwordError }}</p>
-        <label class="field">
-          <span>Current password</span>
-          <input v-model="currentPassword" :type="showPasswords ? 'text' : 'password'" autocomplete="current-password" required />
-        </label>
-        <label class="field">
-          <span>New password</span>
-          <input v-model="newPassword" :type="showPasswords ? 'text' : 'password'" autocomplete="new-password" minlength="8" required />
-          <span class="field-hint">At least 8 characters.</span>
-        </label>
-        <div class="actions">
-          <button class="btn btn-primary" type="submit" :disabled="passwordPending || newPassword.length < 8 || !currentPassword">
-            {{ passwordPending ? "Saving…" : "Change password" }}
+      <p v-if="invitesError" class="error">{{ invitesError }}</p>
+      <ul v-else-if="invites.length" class="invite-list">
+        <li v-for="invite in invites" :key="invite.code" class="invite-row">
+          <span>
+            <code class="invite-code">{{ invite.code }}</code>
+            <span class="fine subtle invite-state">
+              <template v-if="invite.used">Used by {{ invite.used_by }}</template>
+              <template v-else>Unused</template>
+            </span>
+          </span>
+          <button
+            v-if="!invite.used"
+            class="btn btn-ghost btn-sm"
+            type="button"
+            @click="copy(invite.code)"
+          >
+            Copy
           </button>
-          <button class="text-btn sm" type="button" @click="showPasswords = !showPasswords">{{ showPasswords ? "Hide" : "Show" }}</button>
-        </div>
-      </form>
+        </li>
+      </ul>
+      <ul v-else-if="!invitesLoaded" class="invite-list" aria-hidden="true">
+        <li v-for="n in 2" :key="n" class="invite-row">
+          <span class="skeleton skeleton-line" />
+        </li>
+      </ul>
+      <p v-else class="fine subtle">No invites yet.</p>
     </section>
 
-    <section id="import" class="settings-group" aria-labelledby="import-title">
-      <h2 id="import-title">Import from Goodreads</h2>
-      <p class="fine muted" style="margin-bottom: 10px">
-        Upload your Goodreads library export CSV. Exclusive shelves map to Want to read, Reading, and Finished.
+    <section class="section" aria-labelledby="import">
+      <div class="section-head">
+        <h2 id="import">Import from Goodreads</h2>
+      </div>
+      <p class="fine muted">
+        Upload a Goodreads library export CSV. Exclusive shelves map to Want to read,
+        Reading, and Finished. Rows we cannot match are skipped.
       </p>
       <label class="import-file">
         <input type="file" accept=".csv,text/csv" @change="onImportFile" />
-        <span>{{ importFile ? importFile.name : "Choose CSV…" }}</span>
+        <span>{{ importFile ? importFile.name : "Choose CSV" }}</span>
       </label>
-      <button class="btn btn-ghost" type="button" style="margin-top: 10px" :disabled="!importFile || importing" @click="importCsv">
-        {{ importing ? "Importing…" : "Import" }}
+      <button
+        class="btn btn-ghost"
+        type="button"
+        :disabled="!importFile || importing"
+        @click="importCsv"
+      >
+        {{ importing ? "Importing…" : "Import CSV" }}
       </button>
-      <p v-if="importResult" class="fine muted" style="margin-top: 10px">
-        Imported {{ importResult.imported }}. Skipped {{ importResult.skipped }}.
-      </p>
-      <ul v-if="importResult?.skips.length" class="fine muted" style="margin: 8px 0 0; padding-left: 18px">
-        <li v-for="(skip, index) in importResult.skips" :key="index">{{ skip.title || "Untitled" }} — {{ skip.reason }}</li>
-      </ul>
+      <template v-if="importResult">
+        <p class="fine muted import-summary">
+          Imported {{ importResult.imported }}. Skipped {{ importResult.skipped }}.
+        </p>
+        <ul v-if="importResult.skips.length" class="import-skips">
+          <li v-for="(skip, index) in importResult.skips" :key="index">
+            {{ skip.title || "Untitled" }} — {{ skip.reason }}
+          </li>
+        </ul>
+      </template>
     </section>
 
-    <section id="backup" class="settings-group" aria-labelledby="backup-title">
-      <h2 id="backup-title">Backup</h2>
-      <p class="fine muted" style="margin-bottom: 10px">Download a copy of the club’s SQLite database. Restoring means replacing the file on the server.</p>
-      <a class="btn btn-ghost" href="/api/backup">Download database</a>
+    <section class="section" aria-labelledby="backup">
+      <div class="section-head">
+        <h2 id="backup">Backup</h2>
+      </div>
+      <p class="fine muted">
+        Download a copy of the club's SQLite database. Keep it somewhere safe — this
+        does not restore from a file.
+      </p>
+      <a class="btn btn-ghost backup-btn" href="/api/backup">Download database</a>
     </section>
+
+    <hr class="divider" />
+
+    <button class="btn btn-danger" type="button" @click="logout">Log out</button>
   </section>
 </template>
+
+<style scoped>
+.mode-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+
+.mode-row .segmented {
+  flex: 0 1 300px;
+}
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-3);
+}
+
+.theme-card {
+  display: grid;
+  gap: var(--space-1);
+  text-align: left;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: inherit;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.theme-card:hover {
+  border-color: var(--border-strong);
+}
+
+.theme-card.active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.theme-name {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-family: var(--serif);
+  font-size: var(--text-lg);
+  font-weight: 650;
+  margin-top: var(--space-2);
+}
+
+/* A miniature of the app, painted in the palette the .pal-* class supplies.
+   Every value below resolves against that palette, not the active one. */
+.theme-preview {
+  display: block;
+  position: relative;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.tp-card {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.tp-cover {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 33px;
+  border-radius: 2px;
+  background: var(--surface-3);
+}
+
+.tp-text {
+  flex: 1;
+  display: grid;
+  align-content: center;
+  gap: 5px;
+}
+
+.tp-title {
+  height: 7px;
+  border-radius: 2px;
+  background: var(--text);
+}
+
+.tp-line {
+  height: 5px;
+  border-radius: 2px;
+  background: var(--text-muted);
+  opacity: 0.55;
+}
+
+.tp-line.short {
+  width: 55%;
+}
+
+.tp-accent {
+  display: block;
+  width: 38px;
+  height: 9px;
+  margin-top: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+.mint-btn {
+  margin: var(--space-3) 0;
+}
+
+.invite-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.invite-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.invite-code {
+  font-family: var(--mono);
+  letter-spacing: 0.08em;
+  display: block;
+}
+
+.invite-state {
+  display: block;
+}
+
+.import-file {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: var(--tap);
+  padding: var(--space-3);
+  margin: var(--space-3) 0;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.import-file:hover {
+  border-color: var(--accent);
+}
+
+.import-file input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.import-summary {
+  margin-top: var(--space-3);
+}
+
+.import-skips {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-5);
+  color: var(--text-subtle);
+  font-size: var(--text-sm);
+}
+
+.backup-btn {
+  margin-top: var(--space-3);
+}
+
+@media (min-width: 720px) {
+  .mint-btn,
+  .backup-btn,
+  .import-file {
+    max-width: 320px;
+  }
+}
+</style>

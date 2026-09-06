@@ -7,6 +7,7 @@ from sqlalchemy.engine import Engine
 from app.config import Settings
 from app.models import Invite
 from app.security import normalize_invite_code
+from app.themes import DEFAULT_COLOR_MODE, DEFAULT_THEME_ID
 
 
 def init_db(path: Path) -> Engine:
@@ -33,6 +34,10 @@ def init_db(path: Path) -> Engine:
 # SQLite needs. Order within a table does not matter; entries are idempotent.
 COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {
     "users": {
+        # SQLite fills existing rows from the DEFAULT clause, so users created
+        # before this migration read back as paper/system rather than NULL.
+        "theme": f"VARCHAR(32) NOT NULL DEFAULT '{DEFAULT_THEME_ID}'",
+        "color_mode": f"VARCHAR(16) NOT NULL DEFAULT '{DEFAULT_COLOR_MODE}'",
         "notify_meeting": "BOOLEAN NOT NULL DEFAULT 1",
         "notify_pick": "BOOLEAN NOT NULL DEFAULT 1",
         "notify_note": "BOOLEAN NOT NULL DEFAULT 1",
