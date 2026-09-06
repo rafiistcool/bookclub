@@ -207,6 +207,9 @@ class BookDetailOut(BaseModel):
     dnf_reason: str = ""
     progress: int | None = None
     readers: list[BookReader] = []
+    # Mean of every finished reader's stars (the viewer included), one decimal.
+    club_rating: float | None = None
+    rating_count: int = 0
 
 
 class ShelfItemOut(BaseModel):
@@ -486,6 +489,92 @@ class PickPostListOut(BaseModel):
     my_progress: int | None = None
     my_status: ShelfStatus | None = None
     items: list[PickPostOut]
+    timezone: str
+
+
+class DiaryBookIn(BaseModel):
+    """Enough of a book to create its row the first time anyone writes about it."""
+
+    title: str
+    authors: str = ""
+    cover_id: int | None = None
+    year: int | None = None
+
+    @field_validator("title")
+    @classmethod
+    def title_ok(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("A title is required")
+        return value[:500]
+
+
+class DiaryEntryIn(BaseModel):
+    body: str
+    # Percent of the book this entry is safe up to (None = no spoiler flag).
+    spoiler_upto: int | None = Field(default=None, ge=0, le=100)
+    parent_id: int | None = None
+    book: DiaryBookIn | None = None
+
+    @field_validator("body")
+    @classmethod
+    def body_ok(cls, value: str) -> str:
+        return _post_body_ok(value)
+
+
+class DiaryEntryPatchIn(BaseModel):
+    body: str | None = None
+    spoiler_upto: int | None = Field(default=None, ge=0, le=100)
+
+    @field_validator("body")
+    @classmethod
+    def body_ok(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _post_body_ok(value)
+
+
+class DiaryEntryOut(BaseModel):
+    id: int
+    author: str
+    mine: bool
+    body: str
+    deleted: bool = False
+    spoiler_upto: int | None = None
+    progress_at: int | None = None
+    status_at: ShelfStatus | None = None
+    # The author's current shelf rating for this book, so a "Finished" entry
+    # can show their stars without a second request.
+    author_rating: int | None = None
+    parent_id: int | None = None
+    created_at: datetime
+    created_label: str
+    edited: bool = False
+    reactions: list[ReactionOut] = []
+    replies: list["DiaryEntryOut"] = []
+
+
+class DiaryOut(BaseModel):
+    ol_work_key: str
+    book_id: int | None = None
+    # The viewer's own position on this book, so the client can shield
+    # entries flagged past where they are.
+    my_progress: int | None = None
+    my_status: ShelfStatus | None = None
+    items: list[DiaryEntryOut]
+    timezone: str
+
+
+class DiaryFeedItemOut(BaseModel):
+    entry: DiaryEntryOut
+    book: BookOut
+    # Set when the entry is a reply, so the feed can say who it answers.
+    parent_author: str | None = None
+
+
+class DiaryFeedOut(BaseModel):
+    items: list[DiaryFeedItemOut]
+    has_more: bool
     timezone: str
 
 

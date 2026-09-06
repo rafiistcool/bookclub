@@ -5,13 +5,15 @@ import type {
   ClubPickBook,
   ClubPickCurrent,
   ColorMode,
+  Diary,
+  DiaryEntry,
+  DiaryEntryIn,
+  DiaryFeed,
   GoodreadsImport,
   Invite,
   OverlapList,
   Member,
   NextUpVote,
-  PickPost,
-  PickThread,
   ThemeId,
   VoteApplyResult,
   VoteBook,
@@ -126,13 +128,22 @@ export const api = {
     request<OverlapList>(
       `/api/overlap${includeReading ? "?include_reading=true" : ""}`,
     ),
-  pickPosts: (pickId?: number) =>
-    request<PickThread>(pickId ? `/api/pick/${pickId}/posts` : "/api/pick/posts"),
-  addPickPost: (body: string, pickId?: number) =>
-    request<PickPost>(pickId ? `/api/pick/${pickId}/posts` : "/api/pick/posts", {
+  diary: (workId: string) => request<Diary>(`/api/books/works/${workId}/posts`),
+  addDiaryEntry: (workId: string, body: DiaryEntryIn) =>
+    request<DiaryEntry>(`/api/books/works/${workId}/posts`, {
       method: "POST",
-      body: JSON.stringify({ body }),
+      body: JSON.stringify(body),
     }),
+  editDiaryEntry: (id: number, body: { body?: string; spoiler_upto?: number | null }) =>
+    request<DiaryEntry>(`/api/posts/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteDiaryEntry: (id: number) => request<void>(`/api/posts/${id}`, { method: "DELETE" }),
+  reactToEntry: (id: number, emoji: string) =>
+    request<DiaryEntry>(`/api/posts/${id}/reactions`, {
+      method: "POST",
+      body: JSON.stringify({ emoji }),
+    }),
+  diaryFeed: (before?: number | null, limit = 8) =>
+    request<DiaryFeed>(`/api/diary?limit=${limit}${before ? `&before=${before}` : ""}`),
   nextUp: () => request<NextUpVote>("/api/vote"),
   nominate: (body: VoteBook) =>
     request<NextUpVote>("/api/vote/nominations", {

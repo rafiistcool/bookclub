@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { bookPath, STATUS_SHORT, type Status } from "../constants";
+import { bookPath, STATUS_SHORT, starLabel, type Status } from "../constants";
 import BookCover from "./BookCover.vue";
 
 const props = defineProps<{
@@ -10,6 +10,8 @@ const props = defineProps<{
   status?: Status | null;
   clubPick?: boolean;
   showAuthors?: boolean;
+  /** The owner's stars, shown under the title for finished books. */
+  rating?: number | null;
 }>();
 </script>
 
@@ -28,5 +30,12 @@ const props = defineProps<{
     </span>
     <span class="book-tile-title">{{ title }}</span>
     <span v-if="showAuthors && authors" class="book-tile-sub">{{ authors }}</span>
+    <span
+      v-if="rating && status === 'finished'"
+      class="book-tile-sub stars"
+      :aria-label="`Rated ${rating} of 5`"
+    >
+      {{ starLabel(rating) }}
+    </span>
   </RouterLink>
 </template>

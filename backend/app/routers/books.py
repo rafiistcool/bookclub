@@ -12,7 +12,7 @@ from sqlmodel import Session, col, select
 from app.branding import open_library_ua
 from app.config import get_settings
 from app.deps import get_current_user, get_session
-from app.models import Book, ClubPick, Quote, ShelfEntry, User, utcnow
+from app.models import Book, ClubPick, Quote, ShelfEntry, ShelfStatus, User, utcnow
 from app.openlibrary import (
     fetch_work_details,
     lookup_isbn,
@@ -542,6 +542,14 @@ async def book_detail(
         .where(ShelfEntry.book_id == book.id)
         .options(selectinload(ShelfEntry.user))
     ).all()
+    ratings = [
+        entry.rating
+        for entry in entries
+        if entry.status == ShelfStatus.finished and entry.rating is not None
+    ]
+    if ratings:
+        detail.club_rating = round(sum(ratings) / len(ratings), 1)
+        detail.rating_count = len(ratings)
     for entry in entries:
         if entry.user_id == user.id:
             detail.on_shelf = entry.status

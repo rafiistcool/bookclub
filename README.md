@@ -4,7 +4,7 @@ A tiny private bookclub for 2–5 people. Each person has an account and their o
 
 **Want to read → Reading → Finished / Did not finish**
 
-Search [Open Library](https://openlibrary.org) (or scan a barcode), open a book to see the synopsis and who in the club has it, add it, move it between columns. Home is the current club pick — meeting countdown with calendar export, a reading schedule, everyone’s progress, spoiler-safe notes with reactions, and a next-up vote with a deadline. The club page is an activity feed; there is a year-in-review, saved quotes, dark mode, and Web Push for new picks, notes, and meeting reminders. Signup is invite-only.
+Search [Open Library](https://openlibrary.org), open a book to see the synopsis, the club’s rating, and who has it, add it, move it between columns. Every book has a **reading diary** the whole club can see: short entries written at a reading position (“at 45%”, “Finished ★★★★☆”), spoiler-shielded for members who are behind, with one level of replies and emoji reactions. Home is the current club pick — meeting countdown, everyone’s progress, and that book’s diary; Club shows who is here, what you have in common, what was written recently, and the next-up vote. Four palettes in light and dark, per member. Signup is invite-only.
 
 No Redis, no Postgres. One Python process and a SQLite file. Anyone can self-host it.
 
@@ -156,17 +156,17 @@ Open **[http://127.0.0.1:8000](http://127.0.0.1:8000)**. Bind `0.0.0.0` only if 
 
 | Path | What it is |
 |---|---|
-| `/` | Home: club pick with meeting countdown and `.ics` export, where everyone is (progress bars, ratings), reading schedule (milestones with their own note threads), notes with spoiler flags and reactions, next-up vote with deadline and suggestions, recent activity, past picks |
+| `/` | Home: club pick hero with meeting countdown, where everyone is (progress, ratings, takes), the pick's diary (latest three entries), next-up vote card, past picks |
 | `/login` | Sign in |
-| `/register` | Create an account with an invite (`?invite=CODE` prefills) |
-| `/library` | Search first, subject chips, sort/filter sheet, barcode scan; tapping a cover opens the book detail sheet |
-| `/shelf` | Phone: segmented list (Want / Reading / Done / DNF). ≥720px: four-column drag-and-drop board |
-| `/friends` | Club: member avatars + the activity feed; links to shared to-read, year in review, quotes |
-| `/friends/:username` | A member: their shelf, finished list with ratings, their activity |
-| `/overlap` | Books more than one person wants to read; nominate straight from here |
-| `/stats` | Year in review: finished / pages / ratings per member, per-month chart, club picks ranked |
-| `/quotes` | Saved quotes across the club (`?work=/works/…` filters to one book) |
-| `/settings` | Appearance (light / dark / system), notifications (Web Push + per-kind toggles), invites, change password, Goodreads import, SQLite backup |
+| `/register` | Create an account with an invite |
+| `/discover` | Permanent search field, trending row, curated subject shelves |
+| `/book/:workId` | Book detail: synopsis, club rating, inline shelf status / progress / stars / take, club-pick and nominate actions, the full diary with composer, other readers |
+| `/shelf` | Phone: segmented status filter over a cover grid (stars on finished books). Desktop: drag columns |
+| `/club` | Members, recently written diary entries across all books, TBR overlap, next-up vote |
+| `/club/:username` | A member's shelf with their ratings |
+| `/settings` | Palette and light / dark / system per member, invites, Goodreads import, export, logout |
+
+Old paths (`/library`, `/friends`, `/overlap`, `/invites`, `/pick`) redirect to their new homes.
 
 Every book action — add, move, rate, progress, set as club pick, nominate, save a quote, remove — runs through the same bottom sheet, so it behaves identically on Home, Library, Shelf, the feed, and the detail sheet. Destructive moves show an **Undo** in the toast for a few seconds. Tapping a shelf card’s `···` opens the same sheet; on the desktop board you can also drag.
 
@@ -260,10 +260,12 @@ Cookie session: `bookclub_session`. Send it with `credentials: include` / curl `
 | `PUT` | `/api/pick` | Set / replace the club pick (optional meeting) |
 | `DELETE` | `/api/pick` | Clear the current pick (kept in history) |
 | `GET` | `/api/pick/meeting.ics` | Calendar file for the current meeting |
-| `GET` / `POST` | `/api/pick/posts` | Notes on the current pick (`body`, optional `spoiler_upto` 0–100, `milestone_id`); the list includes `my_progress` so the client can blur |
-| `PATCH` / `DELETE` | `/api/pick/posts/{id}` | Edit / delete your own note |
-| `POST` | `/api/pick/posts/{id}/reactions` | Toggle `{ emoji }` (❤️ 👍 😂 😮 🔥 📚) |
-| `GET` / `POST` | `/api/pick/{id}/posts` | Notes on a specific pick (posting only while open) |
+| `GET` | `/api/books/works/{OL…W}/posts` | The book’s diary: top-level entries oldest first with nested `replies`, plus `my_progress` / `my_status` so the client can shield entries flagged past where you are |
+| `POST` | `/api/books/works/{OL…W}/posts` | New entry `{ body, spoiler_upto?, parent_id?, book? }`. `book` (title/authors/cover/year) creates the book row if nobody has shelved it yet; `parent_id` must be a top-level entry on the same book. Snapshots your progress and status |
+| `PATCH` / `DELETE` | `/api/posts/{id}` | Edit / delete your own entry. Deleting one that has replies leaves a `deleted` tombstone |
+| `POST` | `/api/posts/{id}/reactions` | Toggle `{ emoji }` (❤️ 👍 😂 😮 🔥 📚) |
+| `GET` | `/api/diary?before&limit` | Club-wide feed of recent entries across all books, newest first (`before` = entry id cursor) |
+| `GET` / `POST` | `/api/pick/posts`, `/api/pick/{id}/posts` | Legacy pick notes, imported into the diary on start; no longer used by the UI |
 | `GET` / `POST` | `/api/pick/{id}/milestones` | Reading schedule; `PATCH` / `DELETE` `/api/pick/{id}/milestones/{mid}` |
 | `GET` | `/api/overlap` | Shared TBR (`include_reading`) |
 | `GET` | `/api/vote` | Open next-up vote (with `closes_at`, `not_voted`, `leader_id`); a passed deadline applies the leader |

@@ -50,6 +50,27 @@ describe("api client", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("/api/books/works/OL1168007W");
   });
 
+  it("addresses the diary by work id and entries by id", async () => {
+    await api.diary("OL1W");
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/books/works/OL1W/posts");
+    await api.addDiaryEntry("OL1W", { body: "hi", spoiler_upto: 40, parent_id: 7 });
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/books/works/OL1W/posts");
+    expect(fetchMock.mock.calls[1][1].body).toBe(
+      JSON.stringify({ body: "hi", spoiler_upto: 40, parent_id: 7 }),
+    );
+    await api.editDiaryEntry(7, { body: "edited" });
+    expect(fetchMock.mock.calls[2][0]).toBe("/api/posts/7");
+    expect(fetchMock.mock.calls[2][1].method).toBe("PATCH");
+    await api.deleteDiaryEntry(7);
+    expect(fetchMock.mock.calls[3][1].method).toBe("DELETE");
+    await api.reactToEntry(7, "❤️");
+    expect(fetchMock.mock.calls[4][0]).toBe("/api/posts/7/reactions");
+    await api.diaryFeed();
+    expect(fetchMock.mock.calls[5][0]).toBe("/api/diary?limit=8");
+    await api.diaryFeed(42, 5);
+    expect(fetchMock.mock.calls[6][0]).toBe("/api/diary?limit=5&before=42");
+  });
+
   it("patches theme preferences", async () => {
     await api.savePreferences({ theme: "ink" });
     const [url, init] = fetchMock.mock.calls[0];

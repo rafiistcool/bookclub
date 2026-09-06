@@ -82,6 +82,8 @@ export type BookDetail = {
   dnf_reason: string;
   progress: number | null;
   readers: BookReader[];
+  club_rating: number | null;
+  rating_count: number;
 };
 
 export type ShelfList = {
@@ -167,18 +169,63 @@ export type OverlapList = {
   include_reading: boolean;
 };
 
-export type PickPost = {
-  id: number;
-  author: string;
-  body: string;
-  created_at: string;
-  created_label: string;
+export type Reaction = {
+  emoji: string;
+  count: number;
+  mine: boolean;
+  users: string[];
 };
 
-export type PickThread = {
-  pick_id: number;
-  can_post: boolean;
-  items: PickPost[];
+export type DiaryEntry = {
+  id: number;
+  author: string;
+  mine: boolean;
+  body: string;
+  deleted: boolean;
+  spoiler_upto: number | null;
+  progress_at: number | null;
+  status_at: Status | null;
+  author_rating: number | null;
+  parent_id: number | null;
+  created_at: string;
+  created_label: string;
+  edited: boolean;
+  reactions: Reaction[];
+  replies: DiaryEntry[];
+};
+
+export type Diary = {
+  ol_work_key: string;
+  book_id: number | null;
+  my_progress: number | null;
+  my_status: Status | null;
+  items: DiaryEntry[];
+  timezone: string;
+};
+
+export type DiaryBookIn = {
+  title: string;
+  authors: string;
+  cover_id: number | null;
+  year: number | null;
+};
+
+export type DiaryEntryIn = {
+  body: string;
+  spoiler_upto?: number | null;
+  parent_id?: number | null;
+  book?: DiaryBookIn;
+};
+
+export type DiaryFeedItem = {
+  entry: DiaryEntry;
+  book: Book;
+  parent_author: string | null;
+};
+
+export type DiaryFeed = {
+  items: DiaryFeedItem[];
+  has_more: boolean;
   timezone: string;
 };
 

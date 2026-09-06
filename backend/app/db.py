@@ -5,7 +5,14 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from sqlalchemy.engine import Engine
 
 from app.config import Settings
-from app.models import Invite
+from app.models import (
+    BookPost,
+    BookPostReaction,
+    ClubPick,
+    ClubPickPost,
+    Invite,
+    PostReaction,
+)
 from app.security import normalize_invite_code
 from app.themes import DEFAULT_COLOR_MODE, DEFAULT_THEME_ID
 
@@ -26,6 +33,7 @@ def init_db(path: Path) -> Engine:
 
     SQLModel.metadata.create_all(engine)
     apply_migrations(engine)
+    import_legacy_pick_posts(engine)
     return engine
 
 
@@ -98,6 +106,58 @@ def apply_migrations(engine: Engine) -> None:
                 if name in present:
                     continue
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+
+
+def import_legacy_pick_posts(engine: Engine) -> int:
+    """Copy pre-diary club pick notes into the per-book diary, once.
+
+    Notes used to hang off a club pick (`club_pick_posts`); the diary hangs
+    off the book. Each legacy row becomes a top-level entry on the pick's
+    book with the pick as context, and its reactions come along. The
+    `legacy_post_id` marker makes this safe to run on every start.
+    """
+    with Session(engine) as session:
+        done = {
+            row
+            for row in session.exec(
+                select(BookPost.legacy_post_id).where(BookPost.legacy_post_id.is_not(None))
+            ).all()
+        }
+        pending = session.exec(
+            select(ClubPickPost, ClubPick)
+            .join(ClubPick, ClubPick.id == ClubPickPost.pick_id)
+            .order_by(ClubPickPost.created_at, ClubPickPost.id)
+        ).all()
+        imported = 0
+        for legacy, pick in pending:
+            if legacy.id in done:
+                continue
+            post = BookPost(
+                book_id=pick.book_id,
+                author_id=legacy.author_id,
+                body=legacy.body,
+                spoiler_upto=legacy.spoiler_upto,
+                pick_id=pick.id,
+                legacy_post_id=legacy.id,
+                created_at=legacy.created_at,
+                updated_at=legacy.updated_at,
+            )
+            session.add(post)
+            session.flush()
+            for reaction in session.exec(
+                select(PostReaction).where(PostReaction.post_id == legacy.id)
+            ).all():
+                session.add(
+                    BookPostReaction(
+                        post_id=post.id or 0,
+                        user_id=reaction.user_id,
+                        emoji=reaction.emoji,
+                        created_at=reaction.created_at,
+                    )
+                )
+            imported += 1
+        session.commit()
+    return imported
 
 
 def ensure_bootstrap_invite(session: Session, settings: Settings) -> str | None:

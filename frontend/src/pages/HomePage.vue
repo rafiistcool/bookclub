@@ -2,8 +2,8 @@
 import { computed, onMounted, ref } from "vue";
 import { api, ApiError } from "../api/client";
 import BookCover from "../components/BookCover.vue";
+import BookDiary from "../components/BookDiary.vue";
 import MeetingSheet from "../components/MeetingSheet.vue";
-import PickThread from "../components/PickThread.vue";
 import {
   bookPath,
   relativeDay,
@@ -223,7 +223,12 @@ onMounted(load);
       </section>
 
       <section class="section thread-section">
-        <PickThread :pick-id="pick.id" :preview="3" />
+        <BookDiary
+          :work-key="pick.book.ol_work_key"
+          :book="pick.book"
+          :preview="3"
+          heading="Diary"
+        />
       </section>
     </template>
 

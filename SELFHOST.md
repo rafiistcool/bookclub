@@ -10,8 +10,11 @@ tailnet hostname at whatever machine you have.
 ## What you get
 
 - Invite-only accounts for a small group (one club per instance)
-- One current club pick on Home, with notes, an optional meeting, and a next-up vote
-- Personal shelves (Want to read / Reading / Finished / Did not finish), finish notes, ratings, and reading progress
+- One current club pick on Home, with an optional meeting and a next-up vote
+- A reading diary on every book: entries carry the writer's position, are
+  spoiler-shielded for members who are behind, and take replies and reactions
+- Personal shelves (Want to read / Reading / Finished / Did not finish), ratings
+  with a club average per book, and reading progress
 - TBR overlap and a Goodreads CSV import
 - Download a SQLite backup from Settings → Backup (no restore-from-upload; replace the files as below)
 - Your name and optional theme colors from env
