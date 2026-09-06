@@ -103,6 +103,7 @@ watch(() => route.params.username, load);
           :authors="item.book.authors"
           :cover-id="item.book.cover_id"
           :status="item.status"
+          :rating="item.rating"
           show-authors
         />
       </div>

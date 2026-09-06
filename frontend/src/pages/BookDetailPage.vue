@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { api, ApiError } from "../api/client";
 import BookCover from "../components/BookCover.vue";
+import BookDiary from "../components/BookDiary.vue";
 import MeetingSheet from "../components/MeetingSheet.vue";
 import {
   openLibraryUrl,
@@ -29,6 +30,7 @@ const clubTimezone = ref("UTC");
 const takeDraft = ref("");
 const reasonDraft = ref("");
 const progressDraft = ref(0);
+const diary = ref<InstanceType<typeof BookDiary> | null>(null);
 
 const workId = computed(() => String(route.params.workId || ""));
 const longDescription = computed(() => (book.value?.description.length ?? 0) > 420);
@@ -98,6 +100,7 @@ async function setStatus(status: Status) {
 async function patch(
   body: Parameters<typeof api.patchShelf>[1],
   message: string,
+  action?: { label: string; run: () => void | Promise<void> },
 ) {
   const detail = book.value;
   if (!detail?.shelf_id || busy.value) return;
@@ -109,12 +112,40 @@ async function patch(
     detail.dnf_reason = item.dnf_reason;
     detail.progress = item.progress;
     syncDrafts(detail);
-    toast.show(message);
+    toast.show(message, action);
+    if ("rating" in body) void refreshClubRating();
   } catch (err) {
     toast.show(err instanceof ApiError ? err.message : "Could not save that");
   } finally {
     busy.value = false;
   }
+}
+
+/** The club average moved with my stars; pull it without disturbing the page. */
+async function refreshClubRating() {
+  const detail = book.value;
+  if (!detail) return;
+  try {
+    const fresh = await api.book(workId.value);
+    detail.club_rating = fresh.club_rating;
+    detail.rating_count = fresh.rating_count;
+    detail.readers = fresh.readers;
+  } catch {
+    /* Cosmetic; the next load catches up. */
+  }
+}
+
+function rate(value: number) {
+  const detail = book.value;
+  if (!detail) return;
+  if (detail.rating === value) {
+    void patch({ rating: null }, "Rating cleared");
+    return;
+  }
+  void patch({ rating: value }, `Rated ${value} of 5`, {
+    label: "Write a few lines",
+    run: () => diary.value?.focusComposer(),
+  });
 }
 
 async function remove() {
@@ -238,6 +269,14 @@ watch(workId, load);
             <p v-if="book.club_pick" class="kicker">Current club pick</p>
             <h1 class="display">{{ book.title }}</h1>
             <p v-if="book.authors" class="detail-authors">{{ book.authors }}</p>
+            <p v-if="book.rating_count" class="club-rating">
+              <span class="stars" aria-hidden="true">★</span>
+              <strong class="nums">{{ book.club_rating?.toFixed(1) }}</strong>
+              <span class="fine subtle">
+                club rating · {{ book.rating_count }}
+                {{ book.rating_count === 1 ? "rating" : "ratings" }}
+              </span>
+            </p>
             <p v-if="book.year" class="fine subtle nums">First published {{ book.year }}</p>
             <p class="fine">
               <a :href="openLibraryUrl(book.ol_work_key)" target="_blank" rel="noreferrer">
@@ -293,12 +332,7 @@ watch(workId, load);
                   :aria-label="`${value} of 5`"
                   :aria-pressed="book.rating === value"
                   :disabled="busy"
-                  @click="
-                    patch(
-                      { rating: book.rating === value ? null : value },
-                      book.rating === value ? 'Rating cleared' : `Rated ${value} of 5`,
-                    )
-                  "
+                  @click="rate(value)"
                 >
                   {{ book.rating && book.rating >= value ? "★" : "☆" }}
                 </button>
@@ -383,6 +417,19 @@ watch(workId, load);
         >
           {{ expanded ? "Show less" : "Read more" }}
         </button>
+      </section>
+
+      <section class="section">
+        <BookDiary
+          ref="diary"
+          :work-key="book.ol_work_key"
+          :book="{
+            title: book.title,
+            authors: book.authors,
+            cover_id: book.cover_id,
+            year: book.year,
+          }"
+        />
       </section>
 
       <section v-if="book.subjects.length" class="section">
@@ -476,6 +523,17 @@ watch(workId, load);
 
 .detail-authors {
   color: var(--text-muted);
+  font-size: var(--text-lg);
+}
+
+.club-rating {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+
+.club-rating strong {
   font-size: var(--text-lg);
 }
 

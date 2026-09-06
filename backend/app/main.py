@@ -28,6 +28,7 @@ from app.routers import (
     auth,
     backup,
     books,
+    diary,
     invites,
     members,
     milestones,
@@ -123,6 +124,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(invites.router)
     app.include_router(books.router)
+    app.include_router(diary.router)
     app.include_router(shelf.router)
     app.include_router(members.router)
     app.include_router(pick.router)

@@ -213,6 +213,7 @@ onMounted(load);
             :authors="item.book.authors"
             :cover-id="item.book.cover_id"
             :status="item.status"
+            :rating="item.rating"
             :club-pick="item.book.ol_work_key === clubPick?.book.ol_work_key"
             show-authors
           />

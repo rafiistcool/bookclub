@@ -3,10 +3,11 @@ import { onMounted, ref, watch } from "vue";
 import { api, ApiError } from "../api/client";
 import BookCover from "../components/BookCover.vue";
 import NextUpVote from "../components/NextUpVote.vue";
-import { bookPath, STATUS_SHORT } from "../constants";
+import { bookPath, STATUS_SHORT, workId } from "../constants";
+import { excerpt, positionMarker } from "../diary";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
-import type { Member, OverlapBook } from "../types";
+import type { DiaryFeedItem, Member, OverlapBook } from "../types";
 
 const session = useSession();
 const toast = useToast();
@@ -22,6 +23,33 @@ const includeReading = ref(false);
 const nominating = ref<string | null>(null);
 
 const voteSection = ref<InstanceType<typeof NextUpVote> | null>(null);
+
+const feed = ref<DiaryFeedItem[]>([]);
+const feedError = ref("");
+const feedLoaded = ref(false);
+const feedHasMore = ref(false);
+const feedBusy = ref(false);
+
+async function loadFeed(more = false) {
+  if (feedBusy.value) return;
+  feedBusy.value = true;
+  try {
+    const before = more ? feed.value[feed.value.length - 1]?.entry.id : undefined;
+    const page = await api.diaryFeed(before);
+    feed.value = more ? [...feed.value, ...page.items] : page.items;
+    feedHasMore.value = page.has_more;
+    feedError.value = "";
+  } catch (err) {
+    feedError.value = err instanceof ApiError ? err.message : "Could not load the diary";
+  } finally {
+    feedLoaded.value = true;
+    feedBusy.value = false;
+  }
+}
+
+function entryPath(item: DiaryFeedItem): string {
+  return `${bookPath(item.book.ol_work_key)}#entry-${item.entry.id}`;
+}
 
 async function loadMembers() {
   try {
@@ -70,6 +98,7 @@ async function nominate(row: OverlapBook) {
 
 onMounted(() => {
   void loadMembers();
+  void loadFeed();
   void loadOverlap();
 });
 
@@ -130,6 +159,66 @@ watch(includeReading, loadOverlap);
           </RouterLink>
         </li>
       </ul>
+    </section>
+
+    <section class="section" aria-labelledby="written">
+      <div class="section-head">
+        <h2 id="written">Recently written</h2>
+      </div>
+      <p v-if="feedError" class="error">{{ feedError }}</p>
+      <div v-else-if="!feedLoaded" class="skeleton member-skeleton" aria-hidden="true" />
+      <p v-else-if="feed.length === 0" class="fine subtle">
+        Nothing written yet. Open a book and leave the first note.
+      </p>
+      <template v-else>
+        <ol class="feed-list">
+          <li v-for="item in feed" :key="item.entry.id">
+            <RouterLink class="feed-row" :to="entryPath(item)">
+              <BookCover :title="item.book.title" :cover-id="item.book.cover_id" size="xs" />
+              <span class="feed-meta">
+                <span class="feed-head">
+                  <strong>{{ item.entry.author }}</strong>
+                  <span class="finer subtle">
+                    <template v-if="item.parent_author">
+                      replied to {{ item.parent_author }} on
+                    </template>
+                    <template v-else>on</template>
+                    {{ item.book.title }}
+                  </span>
+                </span>
+                <span class="feed-body clamp-2">
+                  <span
+                    v-if="item.entry.spoiler_upto != null"
+                    class="badge"
+                    :title="`Safe up to ${item.entry.spoiler_upto}%`"
+                  >
+                    spoiler-flagged
+                  </span>
+                  {{ excerpt(item.entry.body) }}
+                </span>
+                <span class="finer subtle feed-foot">
+                  <template v-if="positionMarker(item.entry)">
+                    {{ positionMarker(item.entry) }} ·
+                  </template>
+                  {{ item.entry.created_label }}
+                  <template v-if="item.entry.reactions.length">
+                    · {{ item.entry.reactions.map((r) => `${r.emoji} ${r.count}`).join(" ") }}
+                  </template>
+                </span>
+              </span>
+            </RouterLink>
+          </li>
+        </ol>
+        <button
+          v-if="feedHasMore"
+          class="text-btn"
+          type="button"
+          :disabled="feedBusy"
+          @click="loadFeed(true)"
+        >
+          Show more
+        </button>
+      </template>
     </section>
 
     <section class="section" aria-labelledby="overlap">
@@ -252,6 +341,62 @@ watch(includeReading, loadOverlap);
 .overlap-blurb {
   max-width: 62ch;
   margin-bottom: var(--space-3);
+}
+
+.feed-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.feed-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  color: inherit;
+  text-decoration: none;
+}
+
+.feed-row:hover {
+  border-color: var(--border-strong);
+}
+
+.feed-meta {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.feed-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+}
+
+.feed-body {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.feed-body .badge {
+  margin-right: var(--space-1);
+  vertical-align: middle;
+}
+
+.feed-foot {
+  margin-top: 2px;
+}
+
+.section .text-btn {
+  justify-self: start;
 }
 
 .overlap-row {

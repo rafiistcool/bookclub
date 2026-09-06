@@ -206,6 +206,75 @@ class PostReaction(SQLModel, table=True):
     user: Optional[User] = Relationship()
 
 
+class BookPost(SQLModel, table=True):
+    """A reading-diary entry on a book, visible to the whole club.
+
+    Entries are written at a reading position: `progress_at` / `status_at`
+    snapshot where the author was, so an old note keeps its context after
+    they finish. Replies are one level deep (`parent_id` always points at a
+    top-level entry). Deleting an entry that has replies leaves a tombstone
+    (`deleted_at` set, body cleared) so the replies keep their anchor.
+    """
+
+    __tablename__ = "book_posts"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    book_id: int = Field(foreign_key="books.id", index=True)
+    author_id: int = Field(foreign_key="users.id", index=True)
+    parent_id: Optional[int] = Field(default=None, foreign_key="book_posts.id", index=True)
+    body: str = Field(max_length=1000)
+    # Percentage of the book this entry is safe up to; None = no spoiler flag.
+    spoiler_upto: Optional[int] = Field(default=None)
+    progress_at: Optional[int] = Field(default=None)
+    status_at: Optional[ShelfStatus] = Field(default=None)
+    # The club pick that was running when this was written, if it was this book.
+    pick_id: Optional[int] = Field(default=None, foreign_key="club_picks.id")
+    # Set when the row was imported from the pre-diary club_pick_posts table.
+    legacy_post_id: Optional[int] = Field(default=None, unique=True)
+    deleted_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    created_at: datetime = Field(
+        default_factory=utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True),
+    )
+    updated_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
+    book: Optional[Book] = Relationship()
+    author: Optional[User] = Relationship()
+    replies: list["BookPost"] = Relationship(
+        sa_relationship_kwargs={
+            "primaryjoin": "BookPost.id == BookPost.parent_id",
+            "remote_side": "BookPost.parent_id",
+            "order_by": "BookPost.created_at",
+        }
+    )
+    reactions: list["BookPostReaction"] = Relationship(back_populates="post")
+
+
+class BookPostReaction(SQLModel, table=True):
+    __tablename__ = "book_post_reactions"
+    __table_args__ = (
+        UniqueConstraint("post_id", "user_id", "emoji", name="uq_book_reaction_post_user_emoji"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    post_id: int = Field(foreign_key="book_posts.id", index=True)
+    user_id: int = Field(foreign_key="users.id")
+    emoji: str = Field(max_length=16)
+    created_at: datetime = Field(
+        default_factory=utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+    post: Optional[BookPost] = Relationship(back_populates="reactions")
+    user: Optional[User] = Relationship()
+
+
 class Event(SQLModel, table=True):
     """Append-only club activity log feeding the activity feed."""
 
