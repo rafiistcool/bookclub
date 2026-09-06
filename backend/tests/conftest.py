@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import get_settings
+from app.openlibrary import clear_details_cache
 from app.routers.books import clear_search_cache
 from app.security import reset_rate_limits
 
@@ -17,9 +18,11 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("BOOKCLUB_THEME", "#b44a2a")
     monkeypatch.setenv("BOOKCLUB_PUBLIC_URL", "")
     monkeypatch.setenv("BOOKCLUB_TRUSTED_PROXIES", "*")
+    monkeypatch.setenv("BOOKCLUB_TZ", "UTC")
     get_settings.cache_clear()
     reset_rate_limits()
     clear_search_cache()
+    clear_details_cache()
     from app.main import create_app
 
     with TestClient(create_app()) as test_client:

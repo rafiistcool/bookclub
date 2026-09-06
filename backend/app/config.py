@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     bookclub_theme: str = "#b44a2a"
     bookclub_theme_dark: str = ""
     bookclub_public_url: str = ""
+    # Web Push. Empty private key => generated into <data>/.vapid_private.pem.
+    vapid_private_key: str = ""
+    vapid_subject: str = ""
 
     @field_validator("bookclub_public_url")
     @classmethod

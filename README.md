@@ -4,7 +4,7 @@ A tiny private bookclub for 2–5 people. Each person has an account and their o
 
 **Want to read → Reading → Finished / Did not finish**
 
-Search [Open Library](https://openlibrary.org), add a book, drag it between columns (or use **Move to…**). Home is the current club pick — notes, who’s reading, and a next-up vote. Friends can look at each other’s shelves and shared TBR. Signup is invite-only.
+Search [Open Library](https://openlibrary.org) (or scan a barcode), open a book to see the synopsis and who in the club has it, add it, move it between columns. Home is the current club pick — meeting countdown with calendar export, a reading schedule, everyone’s progress, spoiler-safe notes with reactions, and a next-up vote with a deadline. The club page is an activity feed; there is a year-in-review, saved quotes, dark mode, and Web Push for new picks, notes, and meeting reminders. Signup is invite-only.
 
 No Redis, no Postgres. One Python process and a SQLite file. Anyone can self-host it.
 
@@ -24,7 +24,7 @@ docker compose up --build -d
 docker compose logs bookclub
 ```
 
-Open `http://<host>:8000`. Register with the first-run invite (logs and `data/.bootstrap_invite`), then mint more from **Invites**. `DEBUG=0` is the Compose default, so `/api/docs` stays closed.
+Open `http://<host>:8000`. Register with the first-run invite (logs and `data/.bootstrap_invite`), then mint more from **Settings → Invites**. `DEBUG=0` is the Compose default, so `/api/docs` stays closed.
 
 Put a reverse proxy on the **same host** as the UI (the Vue app calls relative `/api`; `BOOKCLUB_PUBLIC_URL` is this instance’s public origin, not a split frontend). Leave `BOOKCLUB_HTTPS=auto`. Bundled Caddy does **not** publish `:8000`:
 
@@ -106,7 +106,7 @@ Open **[http://localhost:5173](http://localhost:5173)** — not port 8000. That�
 3. Username: `a–z`, `0–9`, `_`, 2–32 characters.
 4. Password: at least 8 characters.
 
-After that, `DEV-ONLY` is spent. Mint more codes from the account menu → **Invites**, or:
+After that, `DEV-ONLY` is spent. Mint more codes from **Settings → Invites**, or:
 
 ```bash
 cd backend
@@ -123,19 +123,26 @@ That prints a new code.
 | Python | Uvicorn `--reload` restarts the API |
 | `.env` | Restart uvicorn; settings are read at process start |
 
-Tests (from `backend/` with the venv active):
+### Tests
+
+Backend (from `backend/`, venv active):
 
 ```bash
 pytest
 ```
 
-Or without activating:
+Frontend (from `frontend/`):
 
 ```bash
-cd backend && .venv/bin/pytest
+npm run typecheck   # vue-tsc, includes templates
+npm test            # Vitest: stores, API client, Sheet, StatusSheet, spoiler shield
+npm run build
+npm run test:e2e    # Playwright smoke at 390px against a real API with a throwaway DB
 ```
 
-CI (GitHub Actions) runs those backend tests plus `npx tsc --noEmit` and `npm run build` in `frontend/`.
+The smoke run starts uvicorn itself (`e2e/serve.sh`) with a temp SQLite file and the invite `E2E-INVITE`; Open Library calls are route-mocked so it never touches the network. It needs `npm run build` first and a Chromium (`npx playwright install chromium`).
+
+CI (GitHub Actions) runs pytest, the frontend typecheck + unit tests + build, and then the smoke job.
 
 One-process run without Docker (build the Vue app, then serve API + UI from uvicorn):
 
@@ -156,22 +163,24 @@ Open **[http://127.0.0.1:8000](http://127.0.0.1:8000)**. Bind `0.0.0.0` only if 
 
 | Path | What it is |
 |---|---|
-| `/` | Home: current club pick, notes, who’s reading / finished, next-up vote, past picks |
+| `/` | Home: club pick with meeting countdown and `.ics` export, where everyone is (progress bars, ratings), reading schedule (milestones with their own note threads), notes with spoiler flags and reactions, next-up vote with deadline and suggestions, recent activity, past picks |
 | `/login` | Sign in |
-| `/register` | Create an account with an invite |
-| `/library` | Browse and search Open Library as a cover grid, add a book |
-| `/shelf` | Your four-column board (drag and drop); Goodreads CSV import |
-| `/friends` | Other members + what they’re reading; link to TBR overlap |
-| `/friends/:username` | Their shelf, read-only |
-| `/invites` | Create / copy invite codes (any member); download SQLite backup |
-| `/overlap` | Books more than one person wants to read (optional: include Reading) |
+| `/register` | Create an account with an invite (`?invite=CODE` prefills) |
+| `/library` | Search first, subject chips, sort/filter sheet, barcode scan; tapping a cover opens the book detail sheet |
+| `/shelf` | Phone: segmented list (Want / Reading / Done / DNF). ≥720px: four-column drag-and-drop board |
+| `/friends` | Club: member avatars + the activity feed; links to shared to-read, year in review, quotes |
+| `/friends/:username` | A member: their shelf, finished list with ratings, their activity |
+| `/overlap` | Books more than one person wants to read; nominate straight from here |
+| `/stats` | Year in review: finished / pages / ratings per member, per-month chart, club picks ranked |
+| `/quotes` | Saved quotes across the club (`?work=/works/…` filters to one book) |
+| `/settings` | Appearance (light / dark / system), notifications (Web Push + per-kind toggles), invites, change password, Goodreads import, SQLite backup |
 
-On a phone, swipe the board sideways. Hold a card briefly, then drag it to another column. **Move to…** on the `···` menu does the same thing without dragging.
+Every book action — add, move, rate, progress, set as club pick, nominate, save a quote, remove — runs through the same bottom sheet, so it behaves identically on Home, Library, Shelf, the feed, and the detail sheet. Destructive moves show an **Undo** in the toast for a few seconds. Tapping a shelf card’s `···` opens the same sheet; on the desktop board you can also drag.
 
 ### Accounts
 
-- Invite-only. No email, no password reset.
-- Any signed-in member can mint invites (account menu → **Invites**).
+- Invite-only. No email. Members change their own password under **Settings → Password**; there is no reset link (see Troubleshooting).
+- Any signed-in member can mint invites (**Settings → Invites**).
 - Treat unused codes like passwords.
 - The first unused invite is created only when the database has none (`BOOKCLUB_BOOTSTRAP_INVITE` or a generated `data/.bootstrap_invite`).
 
@@ -179,7 +188,7 @@ On a phone, swipe the board sideways. Hold a card briefly, then drag it to anoth
 
 Everything is in **`data/bookclub.db`** (SQLite, WAL mode).
 
-- Backup: `python -m app.backup [outfile]` (or copy the file; stop writes first if you want to be picky; WAL is usually fine). Any member can also download `bookclub.db` from Invites → Export / backup. There is no restore-from-upload; replace the files as below.
+- Backup: `python -m app.backup [outfile]` (or copy the file; stop writes first if you want to be picky; WAL is usually fine). Any member can also download `bookclub.db` from **Settings → Backup**. There is no restore-from-upload; replace the files as below.
 - Reset local data: stop the server and delete `data/bookclub.db` plus `data/bookclub.db-wal` / `data/bookclub.db-shm` if they exist. Next start creates a fresh DB and the bootstrap invite again.
 
 Book search is proxied to Open Library (no API key). Only books someone actually adds are stored. Covers are loaded from `covers.openlibrary.org`.
@@ -192,7 +201,10 @@ backend/           FastAPI app, tests, venv
   tests/           pytest
 frontend/          Vue 3 + Vite + Pinia
   src/pages/       Screens
-  src/components/  Cards, board, sheets
+  src/components/  Sheet, cards, board/list, thread, vote, feed, detail sheet
+  src/stores/      Pinia: session, club, theme, toast, pick/vote/shelf (SWR), flow (book sheets), push
+  e2e/             Playwright smoke run (390px)
+  public/sw.js     Service worker: offline shell, cover cache, Web Push
 deploy/            Self-host templates (Caddy, systemd, env example)
 data/              SQLite file (gitignored except .gitkeep)
 ```
@@ -218,6 +230,8 @@ Loaded from the repo-root `.env` (copy `.env.example` or `deploy/env.example`). 
 | `BOOKCLUB_HTTPS` | `auto` | `auto`: session cookie is `Secure` only on HTTPS (including `X-Forwarded-Proto`). `1`: always. `0`: never. |
 | `BOOKCLUB_TRUSTED_PROXIES` | `*` | Who may set `X-Forwarded-*`. `*` is correct behind a private reverse proxy. |
 | `DATABASE_PATH` | `<repo>/data/bookclub.db` | Absolute path if you want it elsewhere. Docker uses `/data/bookclub.db`. |
+| `VAPID_PRIVATE_KEY` | empty | PEM private key for Web Push. Empty: a key pair is generated into `data/.vapid_private.pem` on first use. Changing it invalidates every device subscription. |
+| `VAPID_SUBJECT` | `BOOKCLUB_PUBLIC_URL` or `mailto:bookclub@localhost` | Contact claim sent to push services (`mailto:` or `https://`). |
 | `BOOKCLUB_PORT` | `8000` | Host port published by Compose. |
 | `BOOKCLUB_DOMAIN` | (required for proxy file) | Hostname for `docker-compose.proxy.yml`. Not localhost. |
 | `PUID` / `PGID` | `1000` | Runtime user for bind-mounted `./data`. |
@@ -236,9 +250,13 @@ Cookie session: `bookclub_session`. Send it with `credentials: include` / curl `
 | `POST` | `/api/auth/login` | `{ username, password }` |
 | `POST` | `/api/auth/logout` | |
 | `GET` | `/api/auth/me` | Current user |
+| `PATCH` | `/api/auth/password` | `{ current_password, new_password }` |
+| `GET` / `PATCH` | `/api/auth/notifications` | Per-user push toggles (`notify_meeting`, `notify_pick`, `notify_note`) |
 | `GET` / `POST` | `/api/invites` | List yours / mint one |
 | `GET` | `/api/books/search` | Paginated Open Library browse/search (`q`, `subject`, `sort`, `page`, `limit`) |
-| `GET` | `/api/shelf` | Your shelf |
+| `GET` | `/api/books/work/{OL…W}` | Synopsis, pages, subjects, OL rating, club members who have it (cached on the book row for 7 days) |
+| `GET` | `/api/books/isbn/{isbn}` | Resolve an ISBN-10/13 to a work |
+| `GET` | `/api/shelf` | Your shelf (items carry `started_at` / `finished_at`) |
 | `GET` | `/api/shelf?username=` | Someone else’s shelf |
 | `POST` | `/api/shelf` | Add a book (optional rating / take / dnf_reason / progress) |
 | `PATCH` | `/api/shelf/{id}` | `{ status, position, rating, take, dnf_reason, progress }` |
@@ -249,13 +267,25 @@ Cookie session: `bookclub_session`. Send it with `credentials: include` / curl `
 | `GET` | `/api/pick/history` | Ended picks |
 | `PUT` | `/api/pick` | Set / replace the club pick (optional meeting) |
 | `DELETE` | `/api/pick` | Clear the current pick (kept in history) |
-| `GET` / `POST` | `/api/pick/posts` | Notes on the current pick |
+| `GET` | `/api/pick/meeting.ics` | Calendar file for the current meeting |
+| `GET` / `POST` | `/api/pick/posts` | Notes on the current pick (`body`, optional `spoiler_upto` 0–100, `milestone_id`); the list includes `my_progress` so the client can blur |
+| `PATCH` / `DELETE` | `/api/pick/posts/{id}` | Edit / delete your own note |
+| `POST` | `/api/pick/posts/{id}/reactions` | Toggle `{ emoji }` (❤️ 👍 😂 😮 🔥 📚) |
 | `GET` / `POST` | `/api/pick/{id}/posts` | Notes on a specific pick (posting only while open) |
+| `GET` / `POST` | `/api/pick/{id}/milestones` | Reading schedule; `PATCH` / `DELETE` `/api/pick/{id}/milestones/{mid}` |
 | `GET` | `/api/overlap` | Shared TBR (`include_reading`) |
-| `GET` | `/api/vote` | Open next-up vote |
+| `GET` | `/api/vote` | Open next-up vote (with `closes_at`, `not_voted`, `leader_id`); a passed deadline applies the leader |
+| `PATCH` | `/api/vote` | `{ closes_at }` set / clear the deadline |
 | `POST` | `/api/vote/nominations` | Nominate a book |
 | `POST` | `/api/vote/cast` | `{ nomination_id }` — one vote each |
 | `POST` | `/api/vote/apply` | Confirm a winner as the club pick |
+| `GET` | `/api/vote/suggestions` | Candidates scored from shared TBR and past-pick subjects |
+| `GET` | `/api/activity` | Club feed (`before`, `limit`, `username`) |
+| `GET` | `/api/stats` | Year in review (`year`) |
+| `GET` / `POST` | `/api/quotes` | Saved quotes (`work`, `username`); `PATCH` / `DELETE` `/api/quotes/{id}` |
+| `GET` | `/api/push/vapid` | Public key for `PushManager.subscribe` |
+| `GET` / `POST` / `DELETE` | `/api/push/subscriptions` | This device’s subscriptions |
+| `POST` | `/api/push/test` | Send yourself a test notification |
 | `GET` | `/api/backup` | Download a SQLite copy (`bookclub.db`) |
 
 Shelf stages: `want_to_read`, `currently_reading`, `finished`, `did_not_finish`.
@@ -289,4 +319,10 @@ Need outbound HTTPS. The shelf still works if search is down.
 If the DB already has users, run `python -m app.create_invite` from `backend/` (or `docker compose exec bookclub python -m app.create_invite`). If it has *no* users and no invites, set `BOOKCLUB_BOOTSTRAP_INVITE` and restart.
 
 **Lost your password**  
-There is no reset. Delete that row (or the whole DB on a toy install) and register again with a new invite.
+Signed in somewhere? Change it under Settings → Password. Otherwise there is no reset link: delete that row (or the whole DB on a toy install) and register again with a new invite.
+
+**Push notifications never arrive**  
+Web Push needs HTTPS (or `localhost`) and, on iPhone, the app added to the Home Screen first. Check Settings → Notifications → *Send a test*. If you rotated `VAPID_PRIVATE_KEY`, every device has to turn notifications off and on again.
+
+**Upgrading from an older database**  
+Just start the new version. Missing columns and tables are added on boot (`app/db.py` → `COLUMN_MIGRATIONS`); existing rows keep working. Reading dates (`started_at` / `finished_at`) are only known for books moved after the upgrade.

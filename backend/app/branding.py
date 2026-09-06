@@ -121,13 +121,24 @@ def brand_index_html(html: str, settings: Settings) -> str:
     return html
 
 
-def manifest_payload(settings: Settings) -> dict[str, str]:
+MANIFEST_ICONS = [
+    {"src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+]
+
+
+def manifest_payload(settings: Settings) -> dict[str, object]:
     cfg = public_config(settings)
     return {
         "name": cfg["name"],
         "short_name": cfg["name"][:32],
+        "description": "A tiny private bookclub: one pick, everyone's shelves, a vote for what's next.",
         "start_url": "/",
+        "scope": "/",
         "display": "standalone",
+        "orientation": "portrait",
         "background_color": "#f6f1e8",
         "theme_color": cfg["theme"],
+        "icons": MANIFEST_ICONS,
     }

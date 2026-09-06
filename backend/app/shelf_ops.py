@@ -53,6 +53,7 @@ def place_item(
     siblings.insert(insert_at, item)
     item.status = status
     item.updated_at = utcnow()
+    apply_reading_dates(item, status, changed=source_changed)
     for index, row in enumerate(siblings):
         row.position = index
 
@@ -98,3 +99,27 @@ def apply_progress(entry: ShelfEntry, status: ShelfStatus, progress: int | None)
         entry.progress = progress
         return
     entry.progress = None
+
+
+def apply_reading_dates(entry: ShelfEntry, status: ShelfStatus, *, changed: bool) -> None:
+    """Stamp started_at / finished_at on status transitions.
+
+    started_at is set the first time a book enters Reading (or lands directly
+    in Finished / DNF without passing through Reading) and survives later
+    moves so a re-read keeps its original start. finished_at only exists
+    while the book sits in Finished. Moving back to Want to read clears both
+    so the book reads as fresh again.
+    """
+    now = utcnow()
+    if status == ShelfStatus.want_to_read:
+        if changed:
+            entry.started_at = None
+            entry.finished_at = None
+        return
+    if entry.started_at is None:
+        entry.started_at = now
+    if status == ShelfStatus.finished:
+        if changed or entry.finished_at is None:
+            entry.finished_at = now
+        return
+    entry.finished_at = None

@@ -81,6 +81,30 @@ class LoginIn(BaseModel):
         return value.strip().lower()
 
 
+class PasswordChangeIn(BaseModel):
+    current_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def password_ok(cls, value: str) -> str:
+        if len(value) < 8:
+            raise ValueError("New password must be at least 8 characters")
+        return value
+
+
+class NotificationPrefsIn(BaseModel):
+    notify_meeting: bool | None = None
+    notify_pick: bool | None = None
+    notify_note: bool | None = None
+
+
+class NotificationPrefsOut(BaseModel):
+    notify_meeting: bool
+    notify_pick: bool
+    notify_note: bool
+
+
 class InviteOut(BaseModel):
     code: str
     used: bool
@@ -100,6 +124,7 @@ class BookOut(BaseModel):
     cover_id: int | None
     year: int | None
     cover_url: str | None
+    pages: int | None = None
 
 
 class SearchHit(BaseModel):
@@ -117,6 +142,46 @@ class SearchPage(BaseModel):
     items: list[SearchHit]
     page: int
     has_more: bool
+
+
+class BookMember(BaseModel):
+    username: str
+    status: ShelfStatus
+    rating: int | None = None
+    take: str = ""
+    progress: int | None = None
+    finished_at: datetime | None = None
+
+
+class BookDetailsOut(BaseModel):
+    ol_work_key: str
+    title: str
+    authors: str
+    cover_id: int | None
+    year: int | None
+    cover_url: str | None
+    description: str
+    pages: int | None
+    subjects: list[str]
+    ol_rating: float | None = None
+    ol_rating_count: int | None = None
+    on_shelf: ShelfStatus | None = None
+    shelf_id: int | None = None
+    club_pick: bool = False
+    members: list[BookMember] = []
+    quote_count: int = 0
+
+
+class IsbnHitOut(BaseModel):
+    isbn: str
+    ol_work_key: str
+    title: str
+    authors: str
+    cover_id: int | None
+    year: int | None
+    pages: int | None
+    on_shelf: ShelfStatus | None = None
+    shelf_id: int | None = None
 
 
 class BookReader(BaseModel):
@@ -149,6 +214,8 @@ class ShelfItemOut(BaseModel):
     status: ShelfStatus
     position: int
     updated_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
     book: BookOut
     rating: int | None = None
     take: str = ""
@@ -343,31 +410,81 @@ class OverlapOut(BaseModel):
     include_reading: bool
 
 
+def _post_body_ok(value: str) -> str:
+    value = value.strip()
+    if not value:
+        raise ValueError("Write a short take, quote, or meeting note")
+    if len(value) > 1000:
+        raise ValueError("Keep it to 1000 characters")
+    return value
+
+
 class PickPostIn(BaseModel):
     body: str
+    # Percent of the book this note is safe up to (None = no spoiler flag).
+    spoiler_upto: int | None = Field(default=None, ge=0, le=100)
+    milestone_id: int | None = None
 
     @field_validator("body")
     @classmethod
     def body_ok(cls, value: str) -> str:
+        return _post_body_ok(value)
+
+
+class PickPostPatchIn(BaseModel):
+    body: str | None = None
+    spoiler_upto: int | None = Field(default=None, ge=0, le=100)
+
+    @field_validator("body")
+    @classmethod
+    def body_ok(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _post_body_ok(value)
+
+
+REACTIONS = ("❤️", "👍", "😂", "😮", "🔥", "📚")
+
+
+class ReactionIn(BaseModel):
+    emoji: str
+
+    @field_validator("emoji")
+    @classmethod
+    def emoji_ok(cls, value: str) -> str:
         value = value.strip()
-        if not value:
-            raise ValueError("Write a short take, quote, or meeting note")
-        if len(value) > 1000:
-            raise ValueError("Keep it to 1000 characters")
+        if value not in REACTIONS:
+            raise ValueError("Pick one of the club reactions")
         return value
+
+
+class ReactionOut(BaseModel):
+    emoji: str
+    count: int
+    mine: bool
+    users: list[str]
 
 
 class PickPostOut(BaseModel):
     id: int
     author: str
+    mine: bool
     body: str
+    spoiler_upto: int | None = None
+    milestone_id: int | None = None
     created_at: datetime
     created_label: str
+    edited: bool = False
+    reactions: list[ReactionOut] = []
 
 
 class PickPostListOut(BaseModel):
     pick_id: int
     can_post: bool
+    # The viewer's own reading progress for this pick, so the client can blur
+    # notes flagged past where they are.
+    my_progress: int | None = None
+    my_status: ShelfStatus | None = None
     items: list[PickPostOut]
     timezone: str
 
@@ -421,8 +538,31 @@ class VoteOut(BaseModel):
     nomination_limit: int
     can_nominate: bool
     timezone: str
+    closes_at: datetime | None = None
+    closes_local: str | None = None
+    closes_label: str | None = None
+    # Members who have not cast a ballot in the open vote.
+    not_voted: list[str] = []
+    voted_count: int = 0
+    member_count: int = 0
+    # Nomination currently in the lead (None on a tie at zero or no nominations).
+    leader_id: int | None = None
+
+
+class VoteDeadlineIn(BaseModel):
+    closes_at: str | None = None
 
 
 class VoteApplyOut(BaseModel):
     pick: ClubPickOut
     vote: VoteOut
+
+
+class VoteSuggestionOut(BaseModel):
+    book: BookOut
+    score: int
+    reasons: list[str]
+
+
+class VoteSuggestionsOut(BaseModel):
+    items: list[VoteSuggestionOut]

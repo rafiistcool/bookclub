@@ -9,7 +9,12 @@
 **/*.egg-info
 **/node_modules
 frontend/dist
+frontend/e2e
+frontend/test-results
+frontend/playwright-report
+frontend/playwright.config.ts
 backend/app/static
+backend/tests
 data/*
 !data/.gitkeep
 *.md

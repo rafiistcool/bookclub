@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { fileURLToPath, URL } from "node:url";
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
@@ -18,5 +19,12 @@ export default defineConfig({
   build: {
     outDir: "../backend/app/static",
     emptyOutDir: true,
+  },
+  test: {
+    environment: "jsdom",
+    include: ["src/**/*.test.ts"],
+    setupFiles: ["src/test/setup.ts"],
+    css: false,
+    restoreMocks: true,
   },
 });

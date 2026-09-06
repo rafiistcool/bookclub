@@ -33,6 +33,9 @@ uv.lock
 node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/test-results/
+frontend/playwright-report/
+frontend/.playwright-cli/
 backend/app/static/
 
 # OS / logs

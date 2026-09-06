@@ -25,58 +25,79 @@ def init_db(path: Path) -> Engine:
         cursor.close()
 
     SQLModel.metadata.create_all(engine)
-    _ensure_club_pick_columns(engine)
-    _ensure_shelf_note_columns(engine)
-    _ensure_user_preference_columns(engine)
+    apply_migrations(engine)
     return engine
 
 
-def _ensure_club_pick_columns(engine: Engine) -> None:
+# Columns added after a table first shipped. `create_all` only creates missing
+# tables, so every new column on an existing table is listed here with the DDL
+# SQLite needs. Order within a table does not matter; entries are idempotent.
+COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {
+    "users": {
+        # SQLite fills existing rows from the DEFAULT clause, so users created
+        # before this migration read back as paper/system rather than NULL.
+        "theme": f"VARCHAR(32) NOT NULL DEFAULT '{DEFAULT_THEME_ID}'",
+        "color_mode": f"VARCHAR(16) NOT NULL DEFAULT '{DEFAULT_COLOR_MODE}'",
+        "notify_meeting": "BOOLEAN NOT NULL DEFAULT 1",
+        "notify_pick": "BOOLEAN NOT NULL DEFAULT 1",
+        "notify_note": "BOOLEAN NOT NULL DEFAULT 1",
+    },
+    "books": {
+        "description": "VARCHAR NOT NULL DEFAULT ''",
+        "pages": "INTEGER",
+        "subjects": "VARCHAR NOT NULL DEFAULT '[]'",
+        "ol_rating": "FLOAT",
+        "details_fetched_at": "DATETIME",
+    },
+    "shelf": {
+        "rating": "INTEGER",
+        "take": "VARCHAR DEFAULT ''",
+        "dnf_reason": "VARCHAR DEFAULT ''",
+        "progress": "INTEGER",
+        "started_at": "DATETIME",
+        "finished_at": "DATETIME",
+    },
+    "club_picks": {
+        "meeting_at": "DATETIME",
+        "reminder_sent_at": "DATETIME",
+    },
+    "club_pick_posts": {
+        "spoiler_upto": "INTEGER",
+        "milestone_id": "INTEGER REFERENCES pick_milestones(id)",
+        "updated_at": "DATETIME",
+    },
+    "next_up_votes": {
+        "closes_at": "DATETIME",
+    },
+}
+
+
+def missing_columns(engine: Engine) -> dict[str, list[str]]:
+    """Report columns from COLUMN_MIGRATIONS that the live schema lacks."""
+    missing: dict[str, list[str]] = {}
     with engine.begin() as conn:
-        rows = conn.execute(text("PRAGMA table_info(club_picks)")).fetchall()
-        names = {row[1] for row in rows}
-        if rows and "meeting_at" not in names:
-            conn.execute(text("ALTER TABLE club_picks ADD COLUMN meeting_at DATETIME"))
+        for table, columns in COLUMN_MIGRATIONS.items():
+            rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+            if not rows:
+                continue
+            present = {row[1] for row in rows}
+            absent = [name for name in columns if name not in present]
+            if absent:
+                missing[table] = absent
+    return missing
 
 
-def _ensure_shelf_note_columns(engine: Engine) -> None:
+def apply_migrations(engine: Engine) -> None:
     with engine.begin() as conn:
-        rows = conn.execute(text("PRAGMA table_info(shelf)")).fetchall()
-        names = {row[1] for row in rows}
-        if not rows:
-            return
-        if "rating" not in names:
-            conn.execute(text("ALTER TABLE shelf ADD COLUMN rating INTEGER"))
-        if "take" not in names:
-            conn.execute(text("ALTER TABLE shelf ADD COLUMN take VARCHAR DEFAULT ''"))
-        if "dnf_reason" not in names:
-            conn.execute(text("ALTER TABLE shelf ADD COLUMN dnf_reason VARCHAR DEFAULT ''"))
-        if "progress" not in names:
-            conn.execute(text("ALTER TABLE shelf ADD COLUMN progress INTEGER"))
-
-
-def _ensure_user_preference_columns(engine: Engine) -> None:
-    # SQLite fills existing rows from the DEFAULT clause, so users created before
-    # this migration read back as paper/system rather than NULL.
-    with engine.begin() as conn:
-        rows = conn.execute(text("PRAGMA table_info(users)")).fetchall()
-        names = {row[1] for row in rows}
-        if not rows:
-            return
-        if "theme" not in names:
-            conn.execute(
-                text(
-                    "ALTER TABLE users ADD COLUMN theme VARCHAR(32) "
-                    f"NOT NULL DEFAULT '{DEFAULT_THEME_ID}'"
-                )
-            )
-        if "color_mode" not in names:
-            conn.execute(
-                text(
-                    "ALTER TABLE users ADD COLUMN color_mode VARCHAR(16) "
-                    f"NOT NULL DEFAULT '{DEFAULT_COLOR_MODE}'"
-                )
-            )
+        for table, columns in COLUMN_MIGRATIONS.items():
+            rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+            if not rows:
+                continue
+            present = {row[1] for row in rows}
+            for name, ddl in columns.items():
+                if name in present:
+                    continue
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
 
 
 def ensure_bootstrap_invite(session: Session, settings: Settings) -> str | None:
