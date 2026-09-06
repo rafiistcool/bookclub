@@ -131,14 +131,11 @@ Frontend (from `frontend/`):
 
 ```bash
 npm run typecheck   # vue-tsc, includes templates
-npm test            # Vitest: stores, API client, Sheet, StatusSheet, spoiler shield
+npm test            # Vitest: API client, constants
 npm run build
-npm run test:e2e    # Playwright smoke at 390px against a real API with a throwaway DB
 ```
 
-The smoke run starts uvicorn itself (`e2e/serve.sh`) with a temp SQLite file and the invite `E2E-INVITE`; Open Library calls are route-mocked so it never touches the network. It needs `npm run build` first and a Chromium (`npx playwright install chromium`).
-
-CI (GitHub Actions) runs pytest, the frontend typecheck + unit tests + build, and then the smoke job.
+CI (GitHub Actions) runs pytest and the frontend typecheck + unit tests + build on every push and pull request.
 
 One-process run without Docker (build the Vue app, then serve API + UI from uvicorn):
 
@@ -199,7 +196,6 @@ frontend/          Vue 3 + Vite + Pinia
   src/pages/       Screens
   src/components/  Sheet, cards, board/list, thread, vote, feed, detail sheet
   src/stores/      Pinia: session, club, theme, toast, pick/vote/shelf (SWR), flow (book sheets), push
-  e2e/             Playwright smoke run (390px)
   public/sw.js     Service worker: offline shell, cover cache, Web Push
 deploy/            Self-host templates (container entrypoint, systemd unit, env example)
 .github/workflows/ ci.yml (tests on push/PR), release.yml (image to GHCR on v* tags)
