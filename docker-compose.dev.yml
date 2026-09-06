@@ -1,7 +1,10 @@
-# Local demo overlay. Do not use this on a shared host.
-# docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+# Build-from-source overlay for contributors and local demos. Do not use this
+# on a shared host: it turns on DEBUG and a well-known invite code.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 services:
   bookclub:
+    build: .
+    image: bookclub:dev
     environment:
       DEBUG: "1"
       BOOKCLUB_HTTPS: "0"
