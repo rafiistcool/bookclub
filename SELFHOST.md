@@ -24,22 +24,31 @@ tailnet hostname at whatever machine you have.
 - Docker Engine with Compose v2, **or** Python 3.12+ and Node 20+ (bare metal)
 - Outbound HTTPS so [Open Library](https://openlibrary.org) search works
 - A place for `./data` (a few megabytes)
+- Your own reverse proxy if you want HTTPS (see below). The image does not
+  bundle one.
 
-Works on amd64 and arm64 (Raspberry Pi 4+, most NAS boxes).
+The image is published for amd64 and arm64 (Raspberry Pi 4+, most NAS boxes).
 
 ## 2. Docker Compose (recommended)
 
-From the repo root:
+Releases are published to `ghcr.io/rafiistcool/bookclub`. You do not need to
+clone the repository: the compose file in the repo is an example to copy and
+edit. In an empty directory:
 
 ```bash
-cp .env.example .env
+curl -fsSLO https://raw.githubusercontent.com/rafiistcool/bookclub/main/docker-compose.yml
+curl -fsSL  https://raw.githubusercontent.com/rafiistcool/bookclub/main/.env.example -o .env
 # set BOOKCLUB_NAME (and optional BOOKCLUB_THEME / BOOKCLUB_PUBLIC_URL)
 # set SECRET_KEY and BOOKCLUB_BOOTSTRAP_INVITE, or leave them empty
-docker compose up --build -d
+docker compose up -d
 docker compose logs -f bookclub
 ```
 
 Open `http://<that-machine>:8000`.
+
+The example pins `ghcr.io/rafiistcool/bookclub:latest`. To control when you
+take upgrades, pin a minor (`:0.1`) or an exact version (`:0.1.0`) instead;
+see [Releases](#7-releases) for how tags are produced.
 
 On first start the app writes two files next to the database:
 
@@ -53,41 +62,37 @@ The logs print the first invite once. Share it with the first person, then mint
 more from **Settings → Invites** in the app. Treat unused codes like passwords.
 
 `DEBUG=0` is the Compose default. Demo defaults (`DEBUG=1`, invite `DEV-ONLY`)
-are only used if you start with `docker-compose.dev.yml`.
+are only used if you build from source with `docker-compose.dev.yml`.
 
-### Optional HTTPS with Caddy
+### Reverse proxy and HTTPS (your job)
 
-If the machine has a public DNS name:
+The container serves plain HTTP on `:8000` and ships no TLS. Put whatever
+you already run in front of it — Caddy, nginx, Traefik, Tailscale Serve, a
+Cloudflare Tunnel — and manage certificates there. Rules that make it work:
 
-```bash
-# in .env
-BOOKCLUB_DOMAIN=books.example.com
-BOOKCLUB_PUBLIC_URL=https://books.example.com
-```
+- **Same origin.** The UI calls relative `/api`, so the browser must reach the
+  app and the API through one hostname. Set `BOOKCLUB_PUBLIC_URL` to that
+  public origin (`https://books.example.com`).
+- **Forward the scheme.** Send `X-Forwarded-Proto: https` and leave
+  `BOOKCLUB_HTTPS=auto`; the session cookie becomes `Secure` automatically.
+- **Name the proxy.** `BOOKCLUB_TRUSTED_PROXIES` is who may set
+  `X-Forwarded-*`. `*` is fine when `:8000` is not reachable from the internet;
+  use `127.0.0.1` if the proxy shares the host.
+- **Do not expose `:8000` publicly.** If the proxy runs on the same machine,
+  bind the port to loopback in your compose file:
+  `ports: ["127.0.0.1:8000:8000"]`. If it runs in the same Compose project,
+  drop `ports` and proxy to `bookclub:8000` on the Compose network.
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.proxy.yml up --build -d
-```
+Where the proxy lives is up to you:
 
-Caddy listens on 80/443 and proxies to the app on the Docker network.
-`:8000` is **not** published on the host. Set A/AAAA records to the server
-and open 80/443. Let's Encrypt is automatic. `BOOKCLUB_DOMAIN` must be the
-real hostname (not `localhost`) — this file binds 80/443.
-
-You can also put your own reverse proxy in front of port 8000 on the same
-host. The UI calls relative `/api`, so the browser must see one origin.
-Send `X-Forwarded-Proto: https` and leave `BOOKCLUB_HTTPS=auto` so the
-session cookie is marked `Secure`. Set `BOOKCLUB_TRUSTED_PROXIES` to the
-proxy (or `127.0.0.1` if it shares the host).
-
-### LAN, Tailscale, Cloudflare Tunnel
-
-- **LAN only:** keep port 8000, leave `BOOKCLUB_HTTPS=auto` (or `0` if you
-  want to force non-Secure cookies).
-- **Tailscale Serve / Funnel:** proxy to `http://127.0.0.1:8000`. Serve
-  provides HTTPS; Funnel exposes it on the internet.
-- **Cloudflare Tunnel / nginx / Caddy on the host:** same as any other
-  reverse proxy. Do not set a hardcoded hostname in this repo.
+- **LAN only, no proxy:** keep `:8000` published, leave `BOOKCLUB_HTTPS=auto`
+  (or `0` to force non-Secure cookies).
+- **Tailscale Serve / Funnel:** `tailscale serve 8000`. Serve provides HTTPS
+  on the tailnet; Funnel exposes it on the internet.
+- **Cloudflare Tunnel:** point the tunnel at `http://127.0.0.1:8000`.
+- **Caddy / nginx / Traefik:** a one-line `reverse_proxy 127.0.0.1:8000`
+  (or the equivalent) with automatic certificates. Configure and run it the
+  way you do for your other services; nothing in this repo needs to match it.
 
 ### NAS / Unraid / home server
 
@@ -151,11 +156,13 @@ want existing sessions), start again. There is no upload/restore in the UI.
 Update:
 
 ```bash
-git pull
-docker compose up --build -d
+docker compose pull
+docker compose up -d
 ```
 
-The data directory is a bind mount; rebuilding the image does not wipe it.
+The data directory is a bind mount; a new image does not wipe it. Schema
+changes are applied on start (`COLUMN_MIGRATIONS` in `backend/app/db.py`),
+so take a backup before a major-version bump.
 
 Reset a toy install: stop the app and delete `data/bookclub.db*` (keep or
 delete `.secret_key` / `.bootstrap_invite` as you prefer). An empty database
@@ -188,3 +195,28 @@ See `.env.example` and the table in the README. Important production rules:
   expose 8000 at all.
 - The image drops to uid `PUID` after fixing `/data` ownership. Do not run
   extra sidecars that write into that directory as root unless you chown.
+
+## 7. Releases
+
+Images are built by `.github/workflows/release.yml` only when a `v*` git tag
+is pushed — branch pushes and pull requests never publish anything. A tag
+`v1.2.3` produces these tags on `ghcr.io/rafiistcool/bookclub`:
+
+| Tag | Moves when |
+|---|---|
+| `1.2.3` | never |
+| `1.2` | the next patch release of 1.2 |
+| `1` | any 1.x release (not produced while the major is `0`) |
+| `latest` | any stable release (pre-releases such as `v1.3.0-rc.1` only get their exact version) |
+
+Cutting a release from `main`:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow runs the backend and frontend test suites first, then builds
+and pushes a multi-arch image. `backend/pyproject.toml` carries a `version`
+for the Python package; it is informational and does not have to match the
+tag.

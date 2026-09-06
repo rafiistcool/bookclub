@@ -12,31 +12,27 @@ No Redis, no Postgres. One Python process and a SQLite file. Anyone can self-hos
 
 ## Self-host
 
-One named club per instance. A stranger can stand this up with Compose:
+One named club per instance. Releases are published as a container image at
+`ghcr.io/rafiistcool/bookclub` (amd64 + arm64). No clone needed — grab the
+example compose file and an env file:
 
 ```bash
-git clone <this-repo>
-cd bookclub
-cp .env.example .env
+mkdir bookclub && cd bookclub
+curl -fsSLO https://raw.githubusercontent.com/rafiistcool/bookclub/main/docker-compose.yml
+curl -fsSL  https://raw.githubusercontent.com/rafiistcool/bookclub/main/.env.example -o .env
 # set BOOKCLUB_NAME, and either set SECRET_KEY + BOOKCLUB_BOOTSTRAP_INVITE
 # or leave them empty to generate files under ./data
-docker compose up --build -d
+docker compose up -d
 docker compose logs bookclub
 ```
 
-Open `http://<host>:8000`. Register with the first-run invite (logs and `data/.bootstrap_invite`), then mint more from **Settings → Invites**. `DEBUG=0` is the Compose default, so `/api/docs` stays closed.
+Open `http://<host>:8000`. Register with the first-run invite (logs and `data/.bootstrap_invite`), then mint more from **Settings → Invites**. `DEBUG=0` is the Compose default, so `/api/docs` stays closed. Update with `docker compose pull && docker compose up -d`.
 
-Put a reverse proxy on the **same host** as the UI (the Vue app calls relative `/api`; `BOOKCLUB_PUBLIC_URL` is this instance’s public origin, not a split frontend). Leave `BOOKCLUB_HTTPS=auto`. Bundled Caddy does **not** publish `:8000`:
+HTTPS is yours to provide: put any reverse proxy (Caddy, nginx, Tailscale Serve, Cloudflare Tunnel) on the **same host** as the UI in front of `:8000`, forward `X-Forwarded-Proto`, and leave `BOOKCLUB_HTTPS=auto`. The Vue app calls relative `/api`, so there is no split frontend/API origin; `BOOKCLUB_PUBLIC_URL` is this instance’s public origin.
 
-```bash
-# in .env: BOOKCLUB_DOMAIN=books.example.com
-#          BOOKCLUB_PUBLIC_URL=https://books.example.com
-docker compose -f docker-compose.yml -f docker-compose.proxy.yml up --build -d
-```
+Full notes (reverse proxy, LAN, NAS `PUID`/`PGID`, bare metal, backup, systemd, releases): **[SELFHOST.md](SELFHOST.md)**.
 
-Full notes (LAN, NAS `PUID`/`PGID`, bare metal, backup, systemd): **[SELFHOST.md](SELFHOST.md)**.
-
-Local demo overlay (debug docs + invite `DEV-ONLY` — not for a shared host):
+Building the image from source (contributors; also turns on debug docs and invite `DEV-ONLY` — not for a shared host):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
@@ -205,7 +201,8 @@ frontend/          Vue 3 + Vite + Pinia
   src/stores/      Pinia: session, club, theme, toast, pick/vote/shelf (SWR), flow (book sheets), push
   e2e/             Playwright smoke run (390px)
   public/sw.js     Service worker: offline shell, cover cache, Web Push
-deploy/            Self-host templates (Caddy, systemd, env example)
+deploy/            Self-host templates (container entrypoint, systemd unit, env example)
+.github/workflows/ ci.yml (tests on push/PR), release.yml (image to GHCR on v* tags)
 data/              SQLite file (gitignored except .gitkeep)
 ```
 
@@ -233,7 +230,6 @@ Loaded from the repo-root `.env` (copy `.env.example` or `deploy/env.example`). 
 | `VAPID_PRIVATE_KEY` | empty | PEM private key for Web Push. Empty: a key pair is generated into `data/.vapid_private.pem` on first use. Changing it invalidates every device subscription. |
 | `VAPID_SUBJECT` | `BOOKCLUB_PUBLIC_URL` or `mailto:bookclub@localhost` | Contact claim sent to push services (`mailto:` or `https://`). |
 | `BOOKCLUB_PORT` | `8000` | Host port published by Compose. |
-| `BOOKCLUB_DOMAIN` | (required for proxy file) | Hostname for `docker-compose.proxy.yml`. Not localhost. |
 | `PUID` / `PGID` | `1000` | Runtime user for bind-mounted `./data`. |
 
 ---

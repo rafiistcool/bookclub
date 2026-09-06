@@ -6,6 +6,11 @@ COPY frontend/ .
 RUN npm run build
 
 FROM python:3.12-slim
+# `image.source` ties the GHCR package to this repository (README, visibility,
+# link back from the package page). Version/revision labels come from CI.
+LABEL org.opencontainers.image.source="https://github.com/rafiistcool/bookclub" \
+      org.opencontainers.image.title="Bookclub" \
+      org.opencontainers.image.description="Invite-only book club with shared shelves, one club pick, and a next-up vote. One container, one SQLite file."
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 

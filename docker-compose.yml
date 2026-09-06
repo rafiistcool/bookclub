@@ -1,15 +1,26 @@
-# Production / self-host. Publishes :8000 on the host.
-# TLS in front (does not publish 8000):
-#   docker compose -f docker-compose.yml -f docker-compose.proxy.yml up --build -d
-# Local demo overlay:
+# Example self-host compose. Copy this file and .env.example next to each
+# other, edit .env, then:
+#   docker compose up -d
+#   docker compose logs -f bookclub      # first-run invite is printed once
+# Update:
+#   docker compose pull && docker compose up -d
+#
+# The app listens on :8000 and is published on the host below. Put your own
+# reverse proxy (Caddy, nginx, Tailscale Serve, Cloudflare Tunnel) in front
+# for HTTPS; forward X-Forwarded-Proto and leave BOOKCLUB_HTTPS=auto. If the
+# proxy runs on this host, you can bind the port to loopback:
+#   ports: ["127.0.0.1:8000:8000"]
+#
+# Contributors building from source:
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 services:
   bookclub:
-    build: .
+    # Images are published from v* git tags. `latest` is the newest release;
+    # pin a minor (`:0.1`) or an exact version (`:0.1.0`) if you prefer.
+    # See https://github.com/rafiistcool/bookclub/pkgs/container/bookclub
+    image: ghcr.io/rafiistcool/bookclub:latest
     restart: unless-stopped
     init: true
-    expose:
-      - "8000"
     ports:
       - "${BOOKCLUB_PORT:-8000}:8000"
     environment:
@@ -21,6 +32,7 @@ services:
       BOOKCLUB_THEME: ${BOOKCLUB_THEME:-}
       BOOKCLUB_THEME_DARK: ${BOOKCLUB_THEME_DARK:-}
       BOOKCLUB_PUBLIC_URL: ${BOOKCLUB_PUBLIC_URL:-}
+      BOOKCLUB_TZ: ${BOOKCLUB_TZ:-UTC}
       DEBUG: ${DEBUG:-0}
       DATABASE_PATH: /data/bookclub.db
       PUID: ${PUID:-1000}
