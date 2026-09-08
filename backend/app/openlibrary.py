@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import re
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from time import time
 
@@ -22,8 +23,10 @@ logger = logging.getLogger("bookclub.openlibrary")
 WORK_URL = "https://openlibrary.org{key}.json"
 SEARCH_URL = "https://openlibrary.org/search.json"
 _TIMEOUT = 8.0
-_DETAILS_TTL = 300.0
-_details_cache: dict[str, tuple[float, "WorkDetails"]] = {}
+_DETAILS_TTL = 18 * 3600.0
+_DETAILS_MAX_KEYS = 64
+_details_cache: OrderedDict[str, tuple[float, "WorkDetails"]] = OrderedDict()
+_details_inflight: dict[str, asyncio.Future["WorkDetails"]] = {}
 _ISBN_RE = re.compile(r"^(?:\d{9}[\dXx]|\d{13})$")
 MAX_SUBJECTS = 12
 
@@ -55,6 +58,26 @@ class IsbnHit:
 
 def clear_details_cache() -> None:
     _details_cache.clear()
+    _details_inflight.clear()
+
+
+def _details_cache_get(key: str) -> WorkDetails | None:
+    hit = _details_cache.get(key)
+    if hit is None:
+        return None
+    expires, value = hit
+    if expires <= time():
+        _details_cache.pop(key, None)
+        return None
+    _details_cache.move_to_end(key)
+    return value
+
+
+def _details_cache_set(key: str, value: WorkDetails) -> None:
+    _details_cache[key] = (time() + _DETAILS_TTL, value)
+    _details_cache.move_to_end(key)
+    while len(_details_cache) > _DETAILS_MAX_KEYS:
+        _details_cache.popitem(last=False)
 
 
 def normalize_isbn(raw: str) -> str:
@@ -116,10 +139,7 @@ async def _get(client: httpx.AsyncClient, url: str, params: dict | None = None) 
     return payload if isinstance(payload, dict) else {}
 
 
-async def fetch_work_details(ol_work_key: str) -> WorkDetails:
-    cached = _details_cache.get(ol_work_key)
-    if cached is not None and cached[0] > time():
-        return cached[1]
+async def _load_work_details(ol_work_key: str) -> WorkDetails:
     search_params = {
         "q": f"key:{ol_work_key}",
         "fields": "key,title,author_name,cover_i,first_publish_year,number_of_pages_median,ratings_average,ratings_count,subject",
@@ -139,7 +159,7 @@ async def fetch_work_details(ol_work_key: str) -> WorkDetails:
 
     doc = (search.get("docs") or [{}])[0] if isinstance(search.get("docs"), list) else {}
     subjects = _clean_subjects(work.get("subjects")) or _clean_subjects(doc.get("subject"))
-    details = WorkDetails(
+    return WorkDetails(
         ol_work_key=ol_work_key,
         title=str(work.get("title") or doc.get("title") or "").strip(),
         authors=", ".join(str(name) for name in (doc.get("author_name") or []) if name),
@@ -151,8 +171,40 @@ async def fetch_work_details(ol_work_key: str) -> WorkDetails:
         ol_rating=_float(doc.get("ratings_average")),
         ol_rating_count=_int(doc.get("ratings_count")),
     )
-    _details_cache[ol_work_key] = (time() + _DETAILS_TTL, details)
-    return details
+
+
+async def fetch_work_details(ol_work_key: str, *, bypass_cache: bool = False) -> WorkDetails:
+    if not bypass_cache:
+        cached = _details_cache_get(ol_work_key)
+        if cached is not None:
+            return cached
+        inflight = _details_inflight.get(ol_work_key)
+        if inflight is not None:
+            return await asyncio.shield(inflight)
+
+    loop = asyncio.get_running_loop()
+    pending: asyncio.Future[WorkDetails] = loop.create_future()
+    _details_inflight[ol_work_key] = pending
+    try:
+        details = await _load_work_details(ol_work_key)
+        _details_cache_set(ol_work_key, details)
+        pending.set_result(details)
+        return details
+    except Exception as exc:
+        if not pending.done():
+            pending.set_exception(exc)
+        raise
+    finally:
+        # CancelledError is a BaseException, so the except above misses it.
+        # Resolve waiters parked on shield() or they hang after we drop _inflight.
+        if not pending.done():
+            pending.set_exception(
+                HTTPException(
+                    status_code=502, detail="Could not load that book right now. Try again."
+                )
+            )
+        if _details_inflight.get(ol_work_key) is pending:
+            del _details_inflight[ol_work_key]
 
 
 async def lookup_isbn(isbn: str) -> IsbnHit | None:

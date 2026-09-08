@@ -245,8 +245,11 @@ Cookie session: `bookclub_session`. Send it with `credentials: include` / curl `
 | `PATCH` | `/api/auth/password` | `{ current_password, new_password }` |
 | `GET` / `PATCH` | `/api/auth/notifications` | Per-user push toggles (`notify_meeting`, `notify_pick`, `notify_note`) |
 | `GET` / `POST` | `/api/invites` | List yours / mint one |
-| `GET` | `/api/books/search` | Paginated Open Library browse/search (`q`, `subject`, `sort`, `page`, `limit`) |
-| `GET` | `/api/books/work/{OL…W}` | Synopsis, pages, subjects, OL rating, club members who have it (cached on the book row for 7 days) |
+| `GET` | `/api/books/search` | Paginated Open Library browse/search (`q`, `subject`, `sort`, `page`, `limit`); RAM-cached ~18h |
+| `GET` | `/api/books/works/{OL…W}` | Book page. Local SQLite when the work is already in the club DB; Open Library only for an unknown work (then imported) |
+| `POST` | `/api/books/works/{OL…W}/refresh` | Re-fetch Open Library metadata into the local Book row |
+| `GET` | `/api/books/work/{OL…W}` | Richer details (pages, OL rating, members). Local when the book is known; no automatic refresh |
+| `POST` | `/api/books/work/{OL…W}/refresh` | Same, explicit refresh |
 | `GET` | `/api/books/isbn/{isbn}` | Resolve an ISBN-10/13 to a work |
 | `GET` | `/api/shelf` | Your shelf (items carry `started_at` / `finished_at`) |
 | `GET` | `/api/shelf?username=` | Someone else’s shelf |

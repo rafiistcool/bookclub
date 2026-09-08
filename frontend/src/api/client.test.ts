@@ -48,6 +48,9 @@ describe("api client", () => {
   it("addresses book detail by bare work id", async () => {
     await api.book("OL1168007W");
     expect(fetchMock.mock.calls[0][0]).toBe("/api/books/works/OL1168007W");
+    await api.refreshBook("OL1168007W");
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/books/works/OL1168007W/refresh");
+    expect(fetchMock.mock.calls[1][1].method).toBe("POST");
   });
 
   it("addresses the diary by work id and entries by id", async () => {

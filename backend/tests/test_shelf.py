@@ -16,6 +16,23 @@ def _add(client, **overrides):
     return client.post("/api/shelf", json=payload)
 
 
+def test_shelving_without_authors_does_not_clear_existing_authors(client):
+    register(client, "ada")
+    first = _add(client, authors="Madeline Miller")
+    assert first.status_code == 201
+    assert first.json()["book"]["authors"] == "Madeline Miller"
+
+    invite = client.post("/api/invites").json()["code"]
+    client.post("/api/auth/logout")
+    register(client, "grace", invite=invite)
+    second = _add(client, authors="")
+    assert second.status_code == 201
+    assert second.json()["book"]["authors"] == "Madeline Miller"
+
+    ada = client.get("/api/shelf", params={"username": "ada"}).json()["items"][0]
+    assert ada["book"]["authors"] == "Madeline Miller"
+
+
 def test_add_move_remove_and_unique(client):
     register(client, "ada")
     created = _add(client)

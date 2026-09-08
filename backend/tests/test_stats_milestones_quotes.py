@@ -172,10 +172,8 @@ def test_quotes_crud_and_filters(client):
     assert client.patch(f"/api/quotes/{quote['id']}", json={}).status_code == 400
 
     details = client.get("/api/books/work/OL1W")
-    # Details come from Open Library normally; here the book row exists so the
-    # count is available even if the upstream call is mocked away in other tests.
-    if details.status_code == 200:
-        assert details.json()["quote_count"] == 1
+    assert details.status_code == 200
+    assert details.json()["quote_count"] == 1
 
     _add_member(client, "grace")
     assert client.get("/api/quotes", params={"username": "ada"}).json()["items"][0]["mine"] is False

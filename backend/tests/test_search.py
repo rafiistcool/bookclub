@@ -11,6 +11,9 @@ SEARCH_DOCS = [
         "author_name": ["Madeline Miller"],
         "cover_i": 123,
         "first_publish_year": 2018,
+        "number_of_pages_median": 393,
+        "ratings_average": 4.27,
+        "ratings_count": 812,
     },
     {"key": "/books/OL9M", "title": "An edition, skip"},
     {"key": "/works/OL1W", "title": "Circe duplicate work"},
@@ -66,6 +69,7 @@ class _FakeClient:
     calls: list[tuple[str, dict | None]] = []
     work_payload: dict = {}
     missing: set[str] = set()
+    author_name: str = "Madeline Miller"
 
     def __init__(self, *args, **kwargs):
         pass
@@ -80,6 +84,7 @@ class _FakeClient:
     def reset(cls) -> None:
         cls.calls = []
         cls.missing = set()
+        cls.author_name = "Madeline Miller"
         cls.work_payload = {
             "title": "Circe",
             "description": "A plain string description.",
@@ -113,7 +118,7 @@ class _FakeClient:
         if "/subjects/" in url:
             return _FakeResponse({"work_count": 40, "works": SUBJECT_WORKS}, url)
         if "/authors/" in url:
-            return _FakeResponse({"name": "Madeline Miller"}, url)
+            return _FakeResponse({"name": _FakeClient.author_name}, url)
         if "/works/" in url:
             return _FakeResponse(_FakeClient.work_payload, url)
         raise AssertionError(f"unexpected url {url}")
@@ -190,6 +195,11 @@ def test_search_maps_and_caches(ol):
 
     second = ol.get("/api/books/search", params={"q": "circe"})
     assert second.status_code == 200
+    assert len(_FakeClient.params_for("search.json")) == 1
+
+    # Case and extra spaces share the cache key.
+    ol.get("/api/books/search", params={"q": "Circe"})
+    ol.get("/api/books/search", params={"q": "  CIRCE  "})
     assert len(_FakeClient.params_for("search.json")) == 1
 
     _shelve(ol)
@@ -300,6 +310,14 @@ def test_book_detail_resolves_description_subjects_and_authors(ol):
     assert body["on_shelf"] is None
     assert body["readers"] == []
 
+    # First view imports the work; later reads are local even after the RAM cache is cleared.
+    books_router.clear_search_cache()
+    calls = len(_FakeClient.calls)
+    again = ol.get("/api/books/works/OL1W").json()
+    assert again["description"] == "A plain string description."
+    assert again["subjects"] == ["Mythology", "Greek literature"]
+    assert len(_FakeClient.calls) == calls
+
 
 def test_book_detail_accepts_dict_description(ol):
     _FakeClient.work_payload = {
@@ -309,7 +327,8 @@ def test_book_detail_accepts_dict_description(ol):
     body = ol.get("/api/books/works/OL1W").json()
     assert body["description"] == "A dict description."
     assert body["subjects"] == []
-    assert body["cover_id"] is None
+    # Work JSON has no covers; the search.json doc still has cover_i.
+    assert body["cover_id"] == 123
 
 
 def test_book_detail_flattens_markdown_in_description(ol):
@@ -348,15 +367,20 @@ def test_book_detail_includes_own_shelf_state_and_other_readers(ol):
     _shelve(ol, status="finished")
     ol.patch("/api/shelf/2", json={"rating": 5, "take": "Loved it"})
 
+    _FakeClient.calls = []
     body = ol.get("/api/books/works/OL1W").json()
+    assert _FakeClient.calls == []
     assert body["on_shelf"] == "finished"
     assert body["rating"] == 5
     assert body["take"] == "Loved it"
     assert [reader["username"] for reader in body["readers"]] == ["ada"]
     assert body["readers"][0]["status"] == "currently_reading"
     assert body["readers"][0]["progress"] == 40
-    # year comes from the stored Book, since the work payload has no year.
+    # Known book: local fields only (search metadata from the shelf add).
     assert body["year"] == 2018
+    assert body["cover_id"] == 123
+    assert body["title"] == "Circe"
+    assert body["description"] == ""
 
 
 def test_book_detail_rejects_malformed_work_id(ol):
@@ -383,4 +407,161 @@ def test_detail_survives_author_lookup_failure(ol):
     _FakeClient.missing = {"/authors/"}
     body = ol.get("/api/books/works/OL1W").json()
     assert body["title"] == "Circe"
-    assert body["authors"] == ""
+    # Author API failed; the search.json doc still has the name.
+    assert body["authors"] == "Madeline Miller"
+
+
+def test_book_detail_refresh_updates_local_row(ol):
+    created = ol.post(
+        "/api/shelf",
+        json={
+            "ol_work_key": "/works/OL1W",
+            "title": "Circe",
+            "status": "currently_reading",
+        },
+    )
+    assert created.status_code == 201
+    _FakeClient.calls = []
+    local = ol.get("/api/books/works/OL1W").json()
+    assert local["description"] == ""
+    assert local["year"] is None
+    assert _FakeClient.calls == []
+
+    refreshed = ol.post("/api/books/works/OL1W/refresh")
+    assert refreshed.status_code == 200, refreshed.text
+    body = refreshed.json()
+    assert body["description"] == "A plain string description."
+    assert body["subjects"] == ["Mythology", "Greek literature"]
+    assert body["cover_id"] == 555
+    assert body["year"] == 2018
+    assert any("/works/" in url for url, _ in _FakeClient.calls)
+    assert any("search.json" in url for url, _ in _FakeClient.calls)
+
+    shelf = ol.get("/api/shelf").json()["items"][0]
+    assert shelf["book"]["pages"] == 393
+    rich = ol.get("/api/books/work/OL1W").json()
+    assert rich["pages"] == 393
+    assert rich["ol_rating"] == 4.27
+    assert rich["year"] == 2018
+
+    _FakeClient.calls = []
+    books_router.clear_search_cache()
+    again = ol.get("/api/books/works/OL1W").json()
+    assert again["description"] == "A plain string description."
+    assert again["year"] == 2018
+    assert _FakeClient.calls == []
+
+
+def test_refresh_bypasses_author_cache(ol):
+    first = ol.get("/api/books/works/OL1W").json()
+    assert first["authors"] == "Madeline Miller"
+    _FakeClient.author_name = "M. Miller"
+    refreshed = ol.post("/api/books/works/OL1W/refresh").json()
+    assert refreshed["authors"] == "M. Miller"
+
+
+def test_search_cache_is_bounded(monkeypatch):
+    books_router.clear_search_cache()
+    monkeypatch.setattr(books_router, "_CACHE_MAX_KEYS", 2)
+    books_router._cache_set("a", {"n": 1})
+    books_router._cache_set("b", {"n": 2})
+    books_router._cache_set("c", {"n": 3})
+    assert books_router._cache_get("a") is None
+    assert books_router._cache_get("b") == {"n": 2}
+    assert books_router._cache_get("c") == {"n": 3}
+    books_router.clear_search_cache()
+
+
+def test_identical_inflight_searches_share_one_request(monkeypatch):
+    import asyncio
+
+    books_router.clear_search_cache()
+    _FakeClient.reset()
+    release = asyncio.Event()
+    entered = asyncio.Event()
+    original_get = _FakeClient.get
+
+    async def slow_get(self, url, params=None, headers=None):
+        entered.set()
+        await release.wait()
+        return await original_get(self, url, params, headers)
+
+    monkeypatch.setattr(_FakeClient, "get", slow_get)
+    monkeypatch.setattr(books_router.httpx, "AsyncClient", _FakeClient)
+
+    async def run():
+        first = asyncio.create_task(
+            books_router.fetch_open_library(
+                "circe", subject="", sort="relevance", page=1, limit=24
+            )
+        )
+        await entered.wait()
+        second = asyncio.create_task(
+            books_router.fetch_open_library(
+                "CIRCE", subject="", sort="relevance", page=1, limit=24
+            )
+        )
+        await asyncio.sleep(0)
+        release.set()
+        return await asyncio.gather(first, second)
+
+    pages = asyncio.run(run())
+    assert pages[0].items[0].title == "Circe"
+    assert pages[1].items[0].title == "Circe"
+    assert len(_FakeClient.params_for("search.json")) == 1
+
+
+def test_search_cache_ttl_is_at_least_half_a_day():
+    assert books_router._CACHE_TTL >= 12 * 3600
+
+
+def test_cancelled_fetch_unblocks_coalesced_waiters(monkeypatch):
+    import asyncio
+
+    from fastapi import HTTPException
+
+    books_router.clear_search_cache()
+    _FakeClient.reset()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original_get = _FakeClient.get
+
+    async def slow_get(self, url, params=None, headers=None):
+        entered.set()
+        await release.wait()
+        return await original_get(self, url, params, headers)
+
+    monkeypatch.setattr(_FakeClient, "get", slow_get)
+    monkeypatch.setattr(books_router.httpx, "AsyncClient", _FakeClient)
+
+    async def run():
+        owner = asyncio.create_task(
+            books_router.fetch_open_library(
+                "circe", subject="", sort="relevance", page=1, limit=24
+            )
+        )
+        await entered.wait()
+        follower = asyncio.create_task(
+            books_router.fetch_open_library(
+                "CIRCE", subject="", sort="relevance", page=1, limit=24
+            )
+        )
+        await asyncio.sleep(0)
+        owner.cancel()
+        owner_exc = None
+        try:
+            await owner
+        except asyncio.CancelledError as exc:
+            owner_exc = exc
+        follower_exc = None
+        try:
+            await asyncio.wait_for(follower, timeout=1)
+        except HTTPException as exc:
+            follower_exc = exc
+        return owner_exc, follower_exc
+
+    owner_exc, follower_exc = asyncio.run(run())
+    assert isinstance(owner_exc, asyncio.CancelledError)
+    assert follower_exc is not None
+    assert follower_exc.status_code == 502
+    assert books_router._inflight == {}

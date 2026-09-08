@@ -92,6 +92,8 @@ export const api = {
       `/api/books/subjects/${encodeURIComponent(subject)}?page=${page}&limit=${limit}`,
     ),
   book: (workId: string) => request<BookDetail>(`/api/books/works/${workId}`),
+  refreshBook: (workId: string) =>
+    request<BookDetail>(`/api/books/works/${workId}/refresh`, { method: "POST" }),
   myShelf: () => request<ShelfList>("/api/shelf"),
   friendShelf: (username: string) =>
     request<ShelfList>(`/api/shelf?username=${encodeURIComponent(username)}`),
