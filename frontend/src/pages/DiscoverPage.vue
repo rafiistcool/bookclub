@@ -232,7 +232,8 @@ async function loadPage(nextPage: number, reset: boolean) {
     errorKind.value = "";
     moreError.value = "";
     popularUnavailable.value = false;
-    items.value = [];
+    // Keep the current tiles on screen until this request lands. Clearing
+    // here flashes an empty grid, which is obvious on a cached refetch.
     page.value = 0;
     hasMore.value = true;
   } else {
@@ -259,11 +260,15 @@ async function loadPage(nextPage: number, reset: boolean) {
       }
     }
     if (seq !== requestSeq) return;
-    const seen = new Set(items.value.map((hit) => hit.ol_work_key));
-    for (const hit of result.items) {
-      if (seen.has(hit.ol_work_key)) continue;
-      items.value.push(hit);
-      seen.add(hit.ol_work_key);
+    if (reset) {
+      items.value = result.items;
+    } else {
+      const seen = new Set(items.value.map((hit) => hit.ol_work_key));
+      for (const hit of result.items) {
+        if (seen.has(hit.ol_work_key)) continue;
+        items.value.push(hit);
+        seen.add(hit.ol_work_key);
+      }
     }
     page.value = result.page;
     hasMore.value = result.has_more && result.items.length > 0;

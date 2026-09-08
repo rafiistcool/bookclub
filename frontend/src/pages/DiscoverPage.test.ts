@@ -1,13 +1,13 @@
-import { flushPromises, mount } from "@vue/test-utils";
+import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
+import { createMemoryHistory, createRouter } from "vue-router";
+import { nextTick } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SearchHit, SearchPage } from "../types";
 
 const search = vi.fn();
 const trending = vi.fn();
 const subject = vi.fn();
-const replace = vi.fn();
-const routeQuery = { q: "" as string, subject: "" as string };
 
 vi.mock("../api/client", () => ({
   ApiError: class ApiError extends Error {
@@ -22,11 +22,6 @@ vi.mock("../api/client", () => ({
     trending: (...args: unknown[]) => trending(...args),
     subject: (...args: unknown[]) => subject(...args),
   },
-}));
-
-vi.mock("vue-router", () => ({
-  useRoute: () => ({ query: routeQuery }),
-  useRouter: () => ({ replace }),
 }));
 
 import { ApiError } from "../api/client";
@@ -49,31 +44,70 @@ function page(items: SearchHit[], extras: Partial<SearchPage> = {}): SearchPage 
   return { items, page: 1, has_more: false, ...extras };
 }
 
-async function mountDiscover() {
-  const wrapper = mount(DiscoverPage, {
-    global: { plugins: [createPinia()] },
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
   });
+  return { promise, resolve, reject };
+}
+
+const bookTileStub = {
+  props: ["title"],
+  template: "<div class='tile'>{{ title }}</div>",
+};
+
+async function mountDiscover(initial = "/discover") {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    scrollBehavior() {
+      return { top: 0 };
+    },
+    routes: [
+      {
+        path: "/",
+        component: { template: "<router-view />" },
+        children: [{ path: "discover", component: DiscoverPage }],
+      },
+    ],
+  });
+  await router.push(initial);
+  await router.isReady();
+  const wrapper = mount(
+    { template: "<router-view />" },
+    {
+      global: {
+        plugins: [createPinia(), router],
+        stubs: { BookTile: bookTileStub, AddBookSheet: true },
+      },
+    },
+  );
   await flushPromises();
-  return wrapper;
+  return { wrapper, router };
+}
+
+async function submitQuery(wrapper: VueWrapper, q: string) {
+  const input = wrapper.get("input[type='search']");
+  await input.setValue(q);
+  await wrapper.get("form").trigger("submit");
+  await nextTick();
 }
 
 describe("DiscoverPage", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
-    routeQuery.q = "";
-    routeQuery.subject = "";
     search.mockReset();
     trending.mockReset();
     subject.mockReset();
-    replace.mockReset();
     trending.mockResolvedValue(page([hit({ ol_work_key: "/works/OL7W", title: "Atomic Habits" })]));
     subject.mockResolvedValue(page([hit()]));
   });
 
   it("does not load browse shelves when a query is already in the URL", async () => {
-    routeQuery.q = "circe";
     search.mockResolvedValue(page([hit()]));
-    const wrapper = await mountDiscover();
+    const { wrapper } = await mountDiscover("/discover?q=circe");
     expect(trending).not.toHaveBeenCalled();
     expect(subject).not.toHaveBeenCalled();
     expect(search).toHaveBeenCalled();
@@ -82,9 +116,8 @@ describe("DiscoverPage", () => {
   });
 
   it("shows a short-query state for It and does not call search", async () => {
-    const wrapper = await mountDiscover();
-    await wrapper.get("input").setValue("it");
-    await wrapper.get("form").trigger("submit");
+    const { wrapper } = await mountDiscover();
+    await submitQuery(wrapper, "it");
     await flushPromises();
     expect(search).not.toHaveBeenCalled();
     expect(wrapper.text()).toContain("That search is too short");
@@ -93,34 +126,30 @@ describe("DiscoverPage", () => {
   });
 
   it("keeps visible hits when a later page fails", async () => {
-    routeQuery.q = "circe";
     search
       .mockResolvedValueOnce(page([hit()], { has_more: true }))
       .mockRejectedValueOnce(
-        new ApiError("Could not search the library right now. Try again.", 502, "unavailable"),
+        new ApiError("Could not search the library right now. Try again.", 502),
       );
-    const wrapper = await mountDiscover();
+    const { wrapper } = await mountDiscover("/discover?q=circe");
     expect(wrapper.text()).toContain("Circe");
     expect(wrapper.text()).toContain("Couldn't load more");
     expect(wrapper.text()).not.toContain("The library is unavailable");
   });
 
   it("distinguishes a rate-limit from a miss", async () => {
-    routeQuery.q = "circe";
     search.mockRejectedValue(
-      new ApiError("The library is busy. Try again in 20 seconds.", 429, "rate"),
+      new ApiError("The library is busy. Try again in 20 seconds.", 429),
     );
-    const wrapper = await mountDiscover();
+    const { wrapper } = await mountDiscover("/discover?q=circe");
     expect(wrapper.text()).toContain("The library is busy");
     expect(wrapper.text()).toContain("20 seconds");
     expect(wrapper.text()).not.toContain("Nothing matched");
   });
 
   it("offers to clear the subject filter and add a book on a true miss", async () => {
-    routeQuery.q = "circe";
-    routeQuery.subject = "fantasy";
     search.mockResolvedValue(page([]));
-    const wrapper = await mountDiscover();
+    const { wrapper } = await mountDiscover("/discover?q=circe&subject=fantasy");
     expect(wrapper.text()).toContain("Nothing matched");
     expect(wrapper.text()).toContain("Clear Fantasy");
     expect(wrapper.text()).toContain("Add your own book");
@@ -129,7 +158,7 @@ describe("DiscoverPage", () => {
 
   it("retries a failed subject shelf instead of only offering search", async () => {
     subject.mockRejectedValueOnce(new Error("down"));
-    const wrapper = await mountDiscover();
+    const { wrapper } = await mountDiscover();
     expect(wrapper.text()).toContain("Try again");
     expect(wrapper.text()).toContain("Search it instead");
     subject.mockResolvedValue(page([hit({ title: "Dune" })]));
@@ -137,5 +166,154 @@ describe("DiscoverPage", () => {
     await retry!.trigger("click");
     await flushPromises();
     expect(wrapper.text()).toContain("Dune");
+  });
+});
+
+describe("DiscoverPage search results", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    search.mockReset();
+    trending.mockReset();
+    subject.mockReset();
+    trending.mockResolvedValue(page([hit({ ol_work_key: "/works/OLT", title: "Trending Book" })]));
+    subject.mockResolvedValue(page([]));
+  });
+
+  it("does not empty visible results after they land while the route catches up", async () => {
+    const first = deferred<SearchPage>();
+    search.mockImplementationOnce(() => first.promise);
+
+    const { wrapper, router } = await mountDiscover();
+    const titles = () => wrapper.findAll(".tile").map((n) => n.text());
+
+    await submitQuery(wrapper, "dune");
+    expect(search).toHaveBeenCalledTimes(1);
+    expect(titles()).not.toContain("Dune");
+
+    first.resolve(page([hit({ ol_work_key: "/works/OL1W", title: "Dune" })]));
+    await flushPromises();
+    await nextTick();
+
+    const afterFirst = titles();
+    expect(afterFirst).toContain("Dune");
+
+    // Let vue-router finish replace({ path, query }) and any follow-up watchers.
+    await flushPromises();
+    await nextTick();
+    await router.isReady();
+    await flushPromises();
+
+    const afterRoute = titles();
+    const pageOneCalls = search.mock.calls.filter((call) => {
+      const params = (call[0] ?? {}) as { page?: number; q?: string };
+      return (params.page ?? 1) === 1;
+    });
+
+    expect(afterRoute).toContain("Dune");
+    expect(afterRoute).toEqual(afterFirst);
+    expect(pageOneCalls).toHaveLength(1);
+    expect(trending).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the current result list visible when a newer search is in flight", async () => {
+    const dune = deferred<SearchPage>();
+    const circe = deferred<SearchPage>();
+    search.mockImplementationOnce(() => dune.promise).mockImplementationOnce(() => circe.promise);
+
+    const { wrapper } = await mountDiscover();
+    await submitQuery(wrapper, "dune");
+    dune.resolve(page([hit({ ol_work_key: "/works/OL1W", title: "Dune" })]));
+    await flushPromises();
+    expect(wrapper.text()).toContain("Dune");
+
+    await submitQuery(wrapper, "circe");
+    await nextTick();
+    expect(wrapper.text()).toContain("Dune");
+    expect(wrapper.text()).not.toContain("Nothing matched");
+
+    circe.resolve(page([hit({ ol_work_key: "/works/OL2W", title: "Circe" })]));
+    await flushPromises();
+    expect(wrapper.text()).toContain("Circe");
+    expect(wrapper.text()).not.toContain("Dune");
+  });
+
+  it("does not flash a previous search after Clear", async () => {
+    const dune = deferred<SearchPage>();
+    const circe = deferred<SearchPage>();
+    search.mockImplementationOnce(() => dune.promise).mockImplementationOnce(() => circe.promise);
+
+    const { wrapper } = await mountDiscover();
+    await submitQuery(wrapper, "dune");
+    dune.resolve(page([hit({ ol_work_key: "/works/OL1W", title: "Dune" })]));
+    await flushPromises();
+    expect(wrapper.text()).toContain("Dune");
+
+    await wrapper.get("button.text-btn").trigger("click");
+    await nextTick();
+    expect(wrapper.text()).not.toContain("Dune");
+
+    await submitQuery(wrapper, "circe");
+    await nextTick();
+    expect(wrapper.text()).not.toContain("Dune");
+    expect(wrapper.text()).not.toContain("Circe");
+
+    circe.resolve(page([hit({ ol_work_key: "/works/OL2W", title: "Circe" })]));
+    await flushPromises();
+    expect(wrapper.text()).toContain("Circe");
+  });
+
+  it("still shows the empty state when a reset search returns nothing", async () => {
+    search.mockResolvedValue(page([]));
+    const { wrapper } = await mountDiscover();
+    await submitQuery(wrapper, "xyzzy");
+    await flushPromises();
+    expect(wrapper.text()).toContain("Nothing matched");
+    expect(wrapper.findAll(".tile")).toHaveLength(0);
+  });
+
+  it("keeps current hits visible while a sort change refetches", async () => {
+    const relevance = deferred<SearchPage>();
+    const popular = deferred<SearchPage>();
+    search.mockImplementationOnce(() => relevance.promise).mockImplementationOnce(() => popular.promise);
+
+    const { wrapper } = await mountDiscover();
+    await submitQuery(wrapper, "dune");
+    relevance.resolve(page([hit({ ol_work_key: "/works/OL1W", title: "Dune" })]));
+    await flushPromises();
+
+    const popularChip = wrapper.findAll("button.chip").find((chip) => chip.text() === "Popular");
+    expect(popularChip).toBeTruthy();
+    await popularChip!.trigger("click");
+    await nextTick();
+    expect(wrapper.text()).toContain("Dune");
+
+    popular.resolve(
+      page([
+        hit({ ol_work_key: "/works/OL1W", title: "Dune" }),
+        hit({ ol_work_key: "/works/OL3W", title: "Dune Messiah" }),
+      ]),
+    );
+    await flushPromises();
+    expect(wrapper.text()).toContain("Dune");
+    expect(wrapper.text()).toContain("Dune Messiah");
+  });
+
+  it("ignores a stale slower response after a newer search", async () => {
+    const dune = deferred<SearchPage>();
+    const circe = deferred<SearchPage>();
+    search.mockImplementationOnce(() => dune.promise).mockImplementationOnce(() => circe.promise);
+
+    const { wrapper } = await mountDiscover();
+    await submitQuery(wrapper, "dune");
+    await submitQuery(wrapper, "circe");
+
+    circe.resolve(page([hit({ ol_work_key: "/works/OL2W", title: "Circe" })]));
+    await flushPromises();
+    expect(wrapper.text()).toContain("Circe");
+
+    dune.resolve(page([hit({ ol_work_key: "/works/OL1W", title: "Dune" })]));
+    await flushPromises();
+    expect(wrapper.text()).toContain("Circe");
+    expect(wrapper.text()).not.toContain("Dune");
   });
 });
