@@ -26,7 +26,8 @@ def upsert_book(
         session.flush()
         return book
     book.title = title
-    book.authors = authors
+    if authors:
+        book.authors = authors
     if cover_id is not None:
         book.cover_id = cover_id
     if year is not None:

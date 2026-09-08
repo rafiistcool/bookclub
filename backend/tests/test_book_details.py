@@ -177,3 +177,44 @@ def test_isbn_lookup(client, ol):
 def test_isbn10_with_x_check_digit_is_accepted(client, ol):
     register(client, "ada")
     assert client.get("/api/books/isbn/080442957X").status_code == 200
+
+
+def test_cancelled_work_details_unblocks_coalesced_waiters(monkeypatch):
+    import asyncio
+
+    from fastapi import HTTPException
+
+    openlibrary.clear_details_cache()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_get(client, url, params=None):
+        entered.set()
+        await release.wait()
+        return {}
+
+    monkeypatch.setattr(openlibrary, "_get", slow_get)
+
+    async def run():
+        owner = asyncio.create_task(openlibrary.fetch_work_details("/works/OL1W"))
+        await entered.wait()
+        follower = asyncio.create_task(openlibrary.fetch_work_details("/works/OL1W"))
+        await asyncio.sleep(0)
+        owner.cancel()
+        owner_exc = None
+        try:
+            await owner
+        except asyncio.CancelledError as exc:
+            owner_exc = exc
+        follower_exc = None
+        try:
+            await asyncio.wait_for(follower, timeout=1)
+        except HTTPException as exc:
+            follower_exc = exc
+        return owner_exc, follower_exc
+
+    owner_exc, follower_exc = asyncio.run(run())
+    assert isinstance(owner_exc, asyncio.CancelledError)
+    assert follower_exc is not None
+    assert follower_exc.status_code == 502
+    assert openlibrary._details_inflight == {}

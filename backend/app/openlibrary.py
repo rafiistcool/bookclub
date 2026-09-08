@@ -195,6 +195,14 @@ async def fetch_work_details(ol_work_key: str, *, bypass_cache: bool = False) ->
             pending.set_exception(exc)
         raise
     finally:
+        # CancelledError is a BaseException, so the except above misses it.
+        # Resolve waiters parked on shield() or they hang after we drop _inflight.
+        if not pending.done():
+            pending.set_exception(
+                HTTPException(
+                    status_code=502, detail="Could not load that book right now. Try again."
+                )
+            )
         if _details_inflight.get(ol_work_key) is pending:
             del _details_inflight[ol_work_key]
 

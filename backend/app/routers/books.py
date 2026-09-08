@@ -65,6 +65,10 @@ WORK_URL = "https://openlibrary.org/works/{work_id}.json"
 AUTHOR_URL = "https://openlibrary.org/authors/{author_id}.json"
 
 SEARCH_FIELDS = "key,title,author_name,cover_i,first_publish_year"
+WORK_SEARCH_FIELDS = (
+    "key,title,author_name,cover_i,first_publish_year,"
+    "number_of_pages_median,ratings_average,ratings_count,subject"
+)
 SEARCH_UNAVAILABLE = "Could not search the library right now. Try again."
 BROWSE_UNAVAILABLE = "Could not load the library right now. Try again."
 # Open Library rejects any q shorter than 3 characters, so an empty search box
@@ -188,6 +192,10 @@ async def _fetch_json(
             pending.set_exception(exc)
         raise
     finally:
+        # CancelledError is a BaseException, so the except above misses it.
+        # Resolve waiters parked on shield() or they hang after we drop _inflight.
+        if not pending.done():
+            pending.set_exception(HTTPException(status_code=502, detail=detail))
         if _inflight.get(cache_key) is pending:
             del _inflight[cache_key]
 
@@ -204,6 +212,13 @@ def _cover_id(value: Any) -> int | None:
 def _year(value: Any) -> int | None:
     try:
         return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _rating(value: Any) -> float | None:
+    try:
+        return round(float(value), 2) if value is not None else None
     except (TypeError, ValueError):
         return None
 
@@ -419,12 +434,13 @@ def _author_ids(payload: dict) -> list[str]:
     return ids
 
 
-async def _author_name(author_id: str) -> str:
+async def _author_name(author_id: str, *, bypass_cache: bool = False) -> str:
     try:
         author = await _fetch_json(
             AUTHOR_URL.format(author_id=author_id),
             cache_key=f"author|{author_id}",
             detail=BROWSE_UNAVAILABLE,
+            bypass_cache=bypass_cache,
         )
     except HTTPException:
         return ""
@@ -432,12 +448,14 @@ async def _author_name(author_id: str) -> str:
     return name.strip() if isinstance(name, str) else ""
 
 
-async def _author_names(payload: dict) -> str:
+async def _author_names(payload: dict, *, bypass_cache: bool = False) -> str:
     """Resolve work author refs to names. Best effort: refs carry no names."""
     author_ids = _author_ids(payload)
     if not author_ids:
         return ""
-    names = await asyncio.gather(*(_author_name(one) for one in author_ids))
+    names = await asyncio.gather(
+        *(_author_name(one, bypass_cache=bypass_cache) for one in author_ids)
+    )
     return ", ".join(name for name in names if name)
 
 
@@ -661,8 +679,34 @@ def _work_details_from_local(
     )
 
 
+async def _work_search_doc(work_id: str, work_key: str, *, bypass_cache: bool) -> dict:
+    """Best-effort search.json hit for year / pages / rating / author names."""
+    try:
+        payload = await _fetch_json(
+            OPEN_LIBRARY_URL,
+            cache_key=f"work-search|{work_id}",
+            detail=BROWSE_UNAVAILABLE,
+            params={
+                "q": f"key:{work_key}",
+                "fields": WORK_SEARCH_FIELDS,
+                "limit": 1,
+            },
+            bypass_cache=bypass_cache,
+        )
+    except HTTPException:
+        return {}
+    docs = payload.get("docs") or []
+    doc = docs[0] if docs and isinstance(docs[0], dict) else {}
+    return doc
+
+
 async def _import_work_payload(session: Session, work_id: str, *, bypass_cache: bool = False) -> Book:
-    """Fetch a work from Open Library and upsert it into the local Book row."""
+    """Fetch a work from Open Library and upsert it into the local Book row.
+
+    Merges `works/{id}.json` (description, subjects, covers) with the
+    `search.json key:` doc (year, pages, rating, author names), same fields
+    `_load_work_details` uses for the `/work/` path.
+    """
     work_key = f"/works/{work_id}"
     payload = await _fetch_json(
         WORK_URL.format(work_id=work_id),
@@ -671,11 +715,21 @@ async def _import_work_payload(session: Session, work_id: str, *, bypass_cache: 
         missing_detail="No such book.",
         bypass_cache=bypass_cache,
     )
+    doc = await _work_search_doc(work_id, work_key, bypass_cache=bypass_cache)
     covers = [
         cover for cover in (_cover_id(raw) for raw in payload.get("covers") or []) if cover
     ]
-    title = str(payload.get("title") or "").strip()
-    authors = await _author_names(payload)
+    title = str(payload.get("title") or doc.get("title") or "").strip()
+    authors = await _author_names(payload, bypass_cache=bypass_cache)
+    if not authors:
+        authors = ", ".join(str(name) for name in (doc.get("author_name") or []) if name)
+    cover_id = covers[0] if covers else _cover_id(doc.get("cover_i"))
+    year = _year(doc.get("first_publish_year"))
+    pages = _year(doc.get("number_of_pages_median"))
+    ol_rating = _rating(doc.get("ratings_average"))
+    subjects = _work_subjects(payload)
+    if not subjects:
+        subjects = _work_subjects({"subjects": doc.get("subject") or []})
     book = _book_by_key(session, work_key)
     if book is None:
         book = upsert_book(
@@ -683,16 +737,19 @@ async def _import_work_payload(session: Session, work_id: str, *, bypass_cache: 
             ol_work_key=work_key,
             title=title or work_id,
             authors=authors,
-            cover_id=covers[0] if covers else None,
-            year=None,
+            cover_id=cover_id,
+            year=year,
         )
     apply_book_details(
         book,
         title=title,
         authors=authors,
-        cover_id=covers[0] if covers else None,
+        cover_id=cover_id,
+        year=year,
         description=_work_description(payload),
-        subjects=_work_subjects(payload),
+        pages=pages,
+        subjects=subjects,
+        ol_rating=ol_rating,
     )
     session.add(book)
     session.commit()
