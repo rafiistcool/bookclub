@@ -93,7 +93,7 @@ def test_work_details_for_unknown_book(client, ol):
     assert body["on_shelf"] is None
     assert body["members"] == []
     assert body["club_pick"] is False
-    assert body["cover_url"].endswith("/123-L.jpg")
+    assert body["cover_url"].endswith("/123-L.jpg?default=false")
     assert len(ol.calls) == 2
 
     # First view imports the work; later reads are local even after the RAM cache is cleared.
@@ -177,6 +177,44 @@ def test_isbn_lookup(client, ol):
 def test_isbn10_with_x_check_digit_is_accepted(client, ol):
     register(client, "ada")
     assert client.get("/api/books/isbn/080442957X").status_code == 200
+
+
+def test_work_details_skips_leading_negative_cover(client, monkeypatch):
+    register(client, "ada")
+    search = {
+        "numFound": 1,
+        "docs": [
+            {
+                "key": "/works/OL1W",
+                "title": "Circe",
+                "author_name": ["Madeline Miller"],
+                "cover_i": -1,
+                "first_publish_year": 2018,
+            }
+        ],
+    }
+    work = {**WORK_JSON, "covers": [-1, 0, 555]}
+
+    class Client(_Client):
+        async def get(self, url, params=None, headers=None):
+            _Client.calls.append(url)
+            if url.endswith("/search.json"):
+                return _Resp(search)
+            return _Resp(work)
+
+    monkeypatch.setattr(openlibrary.httpx, "AsyncClient", Client)
+    body = client.get("/api/books/work/OL1W").json()
+    assert body["cover_id"] == 555
+    assert body["cover_url"].endswith("/555-L.jpg?default=false")
+
+
+def test_positive_cover_id_rejects_placeholders():
+    assert openlibrary.positive_cover_id(-1) is None
+    assert openlibrary.positive_cover_id(0) is None
+    assert openlibrary.positive_cover_id(None) is None
+    assert openlibrary.first_positive_cover(-1, [0, -1, 99], 12) == 99
+    assert openlibrary.extract_isbn("978-0-316-76948-8") == "9780316769488"
+    assert openlibrary.extract_isbn("it") is None
 
 
 def test_cancelled_work_details_unblocks_coalesced_waiters(monkeypatch):

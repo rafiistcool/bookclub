@@ -31,6 +31,38 @@ _ISBN_RE = re.compile(r"^(?:\d{9}[\dXx]|\d{13})$")
 MAX_SUBJECTS = 12
 
 
+def extract_isbn(raw: str) -> str | None:
+    """Return a normalized ISBN-10/13, or None if `raw` is not ISBN-shaped."""
+    cleaned = re.sub(r"[\s-]", "", raw or "").upper()
+    if not _ISBN_RE.fullmatch(cleaned):
+        return None
+    return cleaned
+
+
+def positive_cover_id(value: object) -> int | None:
+    """Open Library uses -1 / 0 for 'no cover'. Only a positive id is usable."""
+    try:
+        cover = int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+    return cover if cover is not None and cover > 0 else None
+
+
+def first_positive_cover(*values: object) -> int | None:
+    """First usable cover id, walking lists (work `covers[]`) and scalars."""
+    for value in values:
+        if isinstance(value, list):
+            for item in value:
+                cover = positive_cover_id(item)
+                if cover is not None:
+                    return cover
+            continue
+        cover = positive_cover_id(value)
+        if cover is not None:
+            return cover
+    return None
+
+
 @dataclass
 class WorkDetails:
     ol_work_key: str
@@ -163,7 +195,7 @@ async def _load_work_details(ol_work_key: str) -> WorkDetails:
         ol_work_key=ol_work_key,
         title=str(work.get("title") or doc.get("title") or "").strip(),
         authors=", ".join(str(name) for name in (doc.get("author_name") or []) if name),
-        cover_id=_int(doc.get("cover_i")) or _int((work.get("covers") or [None])[0]),
+        cover_id=first_positive_cover(doc.get("cover_i"), work.get("covers")),
         year=_int(doc.get("first_publish_year")),
         description=_clean_description(work.get("description")),
         pages=_int(doc.get("number_of_pages_median")),
@@ -232,7 +264,7 @@ async def lookup_isbn(isbn: str) -> IsbnHit | None:
             ol_work_key=key,
             title=title,
             authors=", ".join(str(name) for name in (doc.get("author_name") or []) if name),
-            cover_id=_int(doc.get("cover_i")),
+            cover_id=positive_cover_id(doc.get("cover_i")),
             year=_int(doc.get("first_publish_year")),
             pages=_int(doc.get("number_of_pages_median")),
         )

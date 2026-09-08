@@ -4,6 +4,10 @@ from app.models import Book, ShelfEntry, ShelfStatus, utcnow
 from app.openlibrary import subjects_to_json
 
 
+def _usable_cover(cover_id: int | None) -> int | None:
+    return cover_id if cover_id is not None and cover_id > 0 else None
+
+
 def upsert_book(
     session: Session,
     *,
@@ -13,6 +17,7 @@ def upsert_book(
     cover_id: int | None,
     year: int | None,
 ) -> Book:
+    cover_id = _usable_cover(cover_id)
     book = session.exec(select(Book).where(Book.ol_work_key == ol_work_key)).first()
     if book is None:
         book = Book(
@@ -52,6 +57,7 @@ def apply_book_details(
         book.title = title
     if authors:
         book.authors = authors
+    cover_id = _usable_cover(cover_id)
     if cover_id is not None:
         book.cover_id = cover_id
     if year is not None:

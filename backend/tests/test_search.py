@@ -44,10 +44,11 @@ SUBJECT_WORKS = [
 
 
 class _FakeResponse:
-    def __init__(self, payload, url, status_code=200):
+    def __init__(self, payload, url, status_code=200, headers=None):
         self._payload = payload
         self._url = url
         self.status_code = status_code
+        self.headers = httpx.Headers(headers or {})
 
     def raise_for_status(self) -> None:
         if self.status_code < 400:
@@ -56,7 +57,9 @@ class _FakeResponse:
         raise httpx.HTTPStatusError(
             f"{self.status_code}",
             request=request,
-            response=httpx.Response(self.status_code, request=request),
+            response=httpx.Response(
+                self.status_code, request=request, headers=self.headers
+            ),
         )
 
     def json(self):
@@ -69,6 +72,8 @@ class _FakeClient:
     calls: list[tuple[str, dict | None]] = []
     work_payload: dict = {}
     missing: set[str] = set()
+    status_for: dict[str, int] = {}
+    retry_after: str | None = None
     author_name: str = "Madeline Miller"
 
     def __init__(self, *args, **kwargs):
@@ -84,6 +89,8 @@ class _FakeClient:
     def reset(cls) -> None:
         cls.calls = []
         cls.missing = set()
+        cls.status_for = {}
+        cls.retry_after = None
         cls.author_name = "Madeline Miller"
         cls.work_payload = {
             "title": "Circe",
@@ -107,11 +114,32 @@ class _FakeClient:
         _FakeClient.calls.append((url, params))
         assert "Bookclub/1.0" in (headers or {}).get("User-Agent", "")
 
+        for marker, code in _FakeClient.status_for.items():
+            if marker in url:
+                extra = {}
+                if _FakeClient.retry_after:
+                    extra["Retry-After"] = _FakeClient.retry_after
+                return _FakeResponse(None, url, status_code=code, headers=extra)
+
         for marker in _FakeClient.missing:
             if marker in url:
                 return _FakeResponse(None, url, status_code=404)
 
         if "search.json" in url:
+            q = str((params or {}).get("q") or "")
+            if q == "zzzzempty" or q.startswith("zzzzempty ") or q.endswith(":zzzzempty"):
+                return _FakeResponse({"numFound": 0, "docs": []}, url)
+            if q.startswith("title:obscurexyz") or q.startswith("author:obscurexyz"):
+                return _FakeResponse({"numFound": 1, "docs": [SEARCH_DOCS[0]]}, url)
+            if q == "obscurexyz" or q.startswith("obscurexyz "):
+                return _FakeResponse({"numFound": 0, "docs": []}, url)
+            if "isbn:" in q:
+                isbn_doc = {
+                    **SEARCH_DOCS[0],
+                    "isbn": ["9780316769488"],
+                    "cover_edition_key": "OL1M",
+                }
+                return _FakeResponse({"numFound": 1, "docs": [isbn_doc]}, url)
             return _FakeResponse({"numFound": 50, "docs": SEARCH_DOCS}, url)
         if "trending" in url:
             return _FakeResponse({"works": TRENDING_WORKS}, url)
@@ -565,3 +593,95 @@ def test_cancelled_fetch_unblocks_coalesced_waiters(monkeypatch):
     assert follower_exc is not None
     assert follower_exc.status_code == 502
     assert books_router._inflight == {}
+
+
+def test_short_query_is_a_400_and_never_hits_open_library(ol):
+    response = ol.get("/api/books/search", params={"q": "it"})
+    assert response.status_code == 400
+    assert "3 characters" in response.json()["detail"]
+    assert _FakeClient.params_for("search.json") == []
+
+    two = ol.get("/api/books/search", params={"q": "ab"})
+    assert two.status_code == 400
+    assert _FakeClient.params_for("search.json") == []
+
+
+def test_upstream_422_is_a_helpful_400(ol):
+    _FakeClient.status_for = {"search.json": 422}
+    response = ol.get("/api/books/search", params={"q": "circe"})
+    assert response.status_code == 400
+    assert "3 characters" in response.json()["detail"]
+
+
+def test_upstream_429_is_a_429_with_retry_hint(ol):
+    _FakeClient.status_for = {"search.json": 429}
+    _FakeClient.retry_after = "20"
+    response = ol.get("/api/books/search", params={"q": "circe"})
+    assert response.status_code == 429
+    assert "20 seconds" in response.json()["detail"]
+
+
+def test_isbn_query_uses_isbn_field(ol):
+    response = ol.get("/api/books/search", params={"q": "978-0-316-76948-8"})
+    assert response.status_code == 200
+    sent = _FakeClient.params_for("search.json")[-1]
+    assert sent["q"] == "isbn:9780316769488"
+    hit = response.json()["items"][0]
+    assert hit["title"] == "Circe"
+    assert hit["isbn"] == "9780316769488"
+    assert hit["cover_edition_key"] == "OL1M"
+
+
+def test_empty_search_pages_are_not_cached(ol):
+    first = ol.get("/api/books/search", params={"q": "zzzzempty"})
+    assert first.status_code == 200
+    assert first.json()["items"] == []
+    first_calls = len(_FakeClient.params_for("search.json"))
+    assert first_calls >= 1
+
+    second = ol.get("/api/books/search", params={"q": "zzzzempty"})
+    assert second.status_code == 200
+    assert len(_FakeClient.params_for("search.json")) > first_calls
+
+
+def test_title_fallback_when_raw_query_misses(ol):
+    response = ol.get("/api/books/search", params={"q": "obscurexyz"})
+    assert response.status_code == 200
+    qs = [params["q"] for params in _FakeClient.params_for("search.json")]
+    assert "obscurexyz" in qs
+    assert any(q.startswith("title:obscurexyz") for q in qs)
+    assert response.json()["items"][0]["title"] == "Circe"
+
+
+def test_local_catalog_is_searched_without_open_library_for_custom_books(ol):
+    created = ol.post(
+        "/api/books/custom",
+        json={"title": "My Zine", "authors": "Ada", "year": 2024},
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["custom"] is True
+    assert body["title"] == "My Zine"
+    assert body["ol_work_key"].startswith("/works/BC")
+    work_id = body["ol_work_key"].rsplit("/", 1)[-1]
+
+    _FakeClient.calls = []
+    local = ol.get("/api/books/works/" + work_id)
+    assert local.status_code == 200
+    assert local.json()["custom"] is True
+    assert _FakeClient.calls == []
+
+    _FakeClient.calls = []
+    search = ol.get("/api/books/search", params={"q": "zine"}).json()
+    keys = [hit["ol_work_key"] for hit in search["items"]]
+    assert body["ol_work_key"] in keys
+    assert search["items"][0]["custom"] is True
+
+    refresh = ol.post("/api/books/works/" + work_id + "/refresh")
+    assert refresh.status_code == 400
+    assert "Open Library" in refresh.json()["detail"]
+
+
+def test_custom_book_requires_a_title(ol):
+    response = ol.post("/api/books/custom", json={"title": "   ", "authors": "Ada"})
+    assert response.status_code in {400, 422}

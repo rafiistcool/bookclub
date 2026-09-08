@@ -136,6 +136,9 @@ class SearchHit(BaseModel):
     on_shelf: ShelfStatus | None = None
     shelf_id: int | None = None
     club_pick: bool = False
+    cover_edition_key: str | None = None
+    isbn: str | None = None
+    custom: bool = False
 
 
 class SearchPage(BaseModel):
@@ -210,6 +213,8 @@ class BookDetailOut(BaseModel):
     # Mean of every finished reader's stars (the viewer included), one decimal.
     club_rating: float | None = None
     rating_count: int = 0
+    # True for books a member typed in because Open Library missed them (#7).
+    custom: bool = False
 
 
 class ShelfItemOut(BaseModel):
@@ -224,6 +229,31 @@ class ShelfItemOut(BaseModel):
     take: str = ""
     dnf_reason: str = ""
     progress: int | None = None
+
+
+class CustomBookIn(BaseModel):
+    title: str
+    authors: str = ""
+    year: int | None = Field(default=None, ge=1, le=3000)
+    description: str = ""
+
+    @field_validator("title")
+    @classmethod
+    def title_ok(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("A title is required")
+        return value[:500]
+
+    @field_validator("authors")
+    @classmethod
+    def authors_ok(cls, value: str) -> str:
+        return value.strip()[:300]
+
+    @field_validator("description")
+    @classmethod
+    def description_ok(cls, value: str) -> str:
+        return value.strip()[:4000]
 
 
 class ShelfAddIn(BaseModel):
@@ -243,7 +273,7 @@ class ShelfAddIn(BaseModel):
     def work_key_ok(cls, value: str) -> str:
         value = value.strip()
         if not value.startswith("/works/"):
-            raise ValueError("ol_work_key must be an Open Library work key")
+            raise ValueError("ol_work_key must be a /works/ key")
         return value
 
     @field_validator("title")

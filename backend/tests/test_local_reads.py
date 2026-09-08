@@ -65,7 +65,7 @@ def test_shelving_persists_search_metadata_for_later_local_reads(client, monkeyp
     assert book["authors"] == "Madeline Miller"
     assert book["cover_id"] == 123
     assert book["year"] == 2018
-    assert book["cover_url"].endswith("/123-L.jpg")
+    assert book["cover_url"].endswith("/123-L.jpg?default=false")
 
     monkeypatch.setattr(books_router.httpx, "AsyncClient", _Boom)
     monkeypatch.setattr(openlibrary.httpx, "AsyncClient", _Boom)

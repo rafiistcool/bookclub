@@ -3,9 +3,9 @@ from app.schemas import BookOut, ShelfItemOut
 
 
 def cover_url(cover_id: int | None) -> str | None:
-    if cover_id is None:
+    if cover_id is None or cover_id <= 0:
         return None
-    return f"https://covers.openlibrary.org/b/id/{cover_id}-L.jpg"
+    return f"https://covers.openlibrary.org/b/id/{cover_id}-L.jpg?default=false"
 
 
 def book_out(book: Book) -> BookOut:

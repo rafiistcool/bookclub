@@ -5,8 +5,6 @@ whatever they are reading. The current pick's discussion on Home is simply
 that book's diary.
 """
 
-import re
-
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, col, select
@@ -36,10 +34,10 @@ from app.schemas import (
 from app.serialize import book_out
 from app.shelf_ops import upsert_book
 from app.timezone import meeting_label, resolved_timezone
+from app.works import is_work_id, work_key
 
 router = APIRouter(tags=["diary"])
 
-_WORK_ID_RE = re.compile(r"^OL\d+W$")
 FEED_DEFAULT = 10
 FEED_MAX = 50
 
@@ -49,9 +47,9 @@ def _timezone() -> str:
 
 
 def _work_key(work_id: str) -> str:
-    if not _WORK_ID_RE.fullmatch(work_id):
+    if not is_work_id(work_id):
         raise HTTPException(status_code=404, detail="No such book.")
-    return f"/works/{work_id}"
+    return work_key(work_id)
 
 
 def _position(entry: ShelfEntry | None) -> tuple[int | None, ShelfStatus | None]:
