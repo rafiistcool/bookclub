@@ -31,7 +31,8 @@ async function submit() {
   busy.value = true;
   error.value = "";
   try {
-    const parsedYear = year.value.trim() ? Number(year.value) : null;
+    const yearRaw = String(year.value ?? "").trim();
+    const parsedYear = yearRaw ? Number(yearRaw) : null;
     const book = await api.createCustomBook({
       title: trimmed,
       authors: authors.value.trim(),
