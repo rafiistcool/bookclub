@@ -1,6 +1,7 @@
 from sqlmodel import Session, col, select
 
 from app.models import Book, ShelfEntry, ShelfStatus, utcnow
+from app.openlibrary import subjects_to_json
 
 
 def upsert_book(
@@ -26,8 +27,43 @@ def upsert_book(
         return book
     book.title = title
     book.authors = authors
-    book.cover_id = cover_id
-    book.year = year
+    if cover_id is not None:
+        book.cover_id = cover_id
+    if year is not None:
+        book.year = year
+    return book
+
+
+def apply_book_details(
+    book: Book,
+    *,
+    title: str = "",
+    authors: str = "",
+    cover_id: int | None = None,
+    year: int | None = None,
+    description: str | None = None,
+    pages: int | None = None,
+    subjects: list[str] | None = None,
+    ol_rating: float | None = None,
+) -> Book:
+    """Copy Open Library metadata onto a local Book. Empty strings do not wipe title/authors."""
+    if title:
+        book.title = title
+    if authors:
+        book.authors = authors
+    if cover_id is not None:
+        book.cover_id = cover_id
+    if year is not None:
+        book.year = year
+    if description is not None:
+        book.description = description
+    if pages is not None:
+        book.pages = pages
+    if subjects is not None:
+        book.subjects = subjects_to_json(subjects)
+    if ol_rating is not None:
+        book.ol_rating = ol_rating
+    book.details_fetched_at = utcnow()
     return book
 
 

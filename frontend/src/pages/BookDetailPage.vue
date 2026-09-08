@@ -23,6 +23,7 @@ const book = ref<BookDetail | null>(null);
 const error = ref("");
 const loaded = ref(false);
 const busy = ref(false);
+const refreshing = ref(false);
 const expanded = ref(false);
 const settingPick = ref(false);
 const clubTimezone = ref("UTC");
@@ -215,6 +216,21 @@ async function confirmClubPick(meetingAt: string | null) {
   }
 }
 
+async function refreshDetails() {
+  if (refreshing.value) return;
+  refreshing.value = true;
+  try {
+    const detail = await api.refreshBook(workId.value);
+    book.value = detail;
+    syncDrafts(detail);
+    toast.show("Details updated from Open Library");
+  } catch (err) {
+    toast.show(err instanceof ApiError ? err.message : "Could not refresh that book");
+  } finally {
+    refreshing.value = false;
+  }
+}
+
 async function nominate() {
   const detail = book.value;
   if (!detail) return;
@@ -282,6 +298,15 @@ watch(workId, load);
               <a :href="openLibraryUrl(book.ol_work_key)" target="_blank" rel="noreferrer">
                 View on Open Library
               </a>
+              <span class="subtle"> · </span>
+              <button
+                class="text-btn"
+                type="button"
+                :disabled="refreshing"
+                @click="refreshDetails"
+              >
+                {{ refreshing ? "Refreshing…" : "Refresh details" }}
+              </button>
             </p>
           </div>
 
@@ -577,6 +602,15 @@ watch(workId, load);
 .panel-actions {
   padding-top: var(--space-3);
   border-top: 1px solid var(--border);
+}
+
+.detail-intro .text-btn {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent);
 }
 
 .description {

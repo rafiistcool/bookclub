@@ -96,7 +96,8 @@ def test_work_details_for_unknown_book(client, ol):
     assert body["cover_url"].endswith("/123-L.jpg")
     assert len(ol.calls) == 2
 
-    # Second call within TTL hits the in-memory cache.
+    # First view imports the work; later reads are local even after the RAM cache is cleared.
+    openlibrary.clear_details_cache()
     client.get("/api/books/work/OL1W")
     assert len(ol.calls) == 2
 
@@ -110,7 +111,9 @@ def test_work_details_persist_on_known_book_and_list_members(client, ol):
     client.post("/api/shelf", json={**CIRCE, "status": "currently_reading", "progress": 40})
     client.put("/api/pick", json=CIRCE)
 
+    calls_before = len(ol.calls)
     body = client.get("/api/books/work/OL1W").json()
+    assert len(ol.calls) == calls_before
     assert body["club_pick"] is True
     assert body["on_shelf"] == "currently_reading"
     assert body["shelf_id"] is not None
@@ -124,12 +127,14 @@ def test_work_details_persist_on_known_book_and_list_members(client, ol):
         "finished_at": body["members"][1]["finished_at"],
     }
     assert body["members"][0]["progress"] == 40
+    assert body["pages"] is None
 
-    # Details were stored on the Book row, so the shelf now carries pages.
+    refreshed = client.post("/api/books/work/OL1W/refresh")
+    assert refreshed.status_code == 200, refreshed.text
+    assert refreshed.json()["pages"] == 393
     shelf = client.get("/api/shelf").json()["items"][0]
     assert shelf["book"]["pages"] == 393
 
-    # Stored details are served without another upstream call.
     openlibrary.clear_details_cache()
     calls_before = len(ol.calls)
     client.get("/api/books/work/OL1W")
