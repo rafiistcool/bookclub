@@ -6,6 +6,7 @@ import BookCover from "../components/BookCover.vue";
 import BookDiary from "../components/BookDiary.vue";
 import MeetingSheet from "../components/MeetingSheet.vue";
 import {
+  isClubWorkId,
   openLibraryUrl,
   STATUSES,
   STATUS_LABEL,
@@ -35,6 +36,12 @@ const diary = ref<InstanceType<typeof BookDiary> | null>(null);
 
 const workId = computed(() => String(route.params.workId || ""));
 const longDescription = computed(() => (book.value?.description.length ?? 0) > 420);
+const customBook = computed(
+  () => book.value?.custom === true || isClubWorkId(workId.value),
+);
+const catalogUrl = computed(() =>
+  book.value ? openLibraryUrl(book.value.ol_work_key) : null,
+);
 
 function syncDrafts(detail: BookDetail) {
   takeDraft.value = detail.take;
@@ -278,7 +285,7 @@ watch(workId, load);
     <template v-else-if="book">
       <div class="detail-hero">
         <div class="hero-cover">
-          <BookCover :title="book.title" :cover-id="book.cover_id" />
+          <BookCover :title="book.title" :cover-id="book.cover_id" eager />
         </div>
         <div class="detail-side">
           <div class="detail-intro">
@@ -294,11 +301,19 @@ watch(workId, load);
               </span>
             </p>
             <p v-if="book.year" class="fine subtle nums">First published {{ book.year }}</p>
-            <p class="fine">
-              <a :href="openLibraryUrl(book.ol_work_key)" target="_blank" rel="noreferrer">
+            <p v-if="customBook" class="fine subtle">
+              Added by the club — not on Open Library.
+            </p>
+            <p v-else class="fine">
+              <a
+                v-if="catalogUrl"
+                :href="catalogUrl"
+                target="_blank"
+                rel="noreferrer"
+              >
                 View on Open Library
               </a>
-              <span class="subtle"> · </span>
+              <span v-if="catalogUrl" class="subtle"> · </span>
               <button
                 class="text-btn"
                 type="button"
@@ -306,6 +321,17 @@ watch(workId, load);
                 @click="refreshDetails"
               >
                 {{ refreshing ? "Refreshing…" : "Refresh details" }}
+              </button>
+            </p>
+            <p v-if="!book.cover_id && !customBook" class="fine">
+              No cover stored.
+              <button
+                class="text-btn"
+                type="button"
+                :disabled="refreshing"
+                @click="refreshDetails"
+              >
+                Refresh from Open Library
               </button>
             </p>
           </div>

@@ -41,6 +41,9 @@ export type SearchHit = {
   on_shelf: Status | null;
   shelf_id: number | null;
   club_pick?: boolean;
+  cover_edition_key?: string | null;
+  isbn?: string | null;
+  custom?: boolean;
 };
 
 export type SearchSort = "readinglog" | "new" | "title" | "relevance";
@@ -84,6 +87,7 @@ export type BookDetail = {
   readers: BookReader[];
   club_rating: number | null;
   rating_count: number;
+  custom?: boolean;
 };
 
 export type ShelfList = {
@@ -271,4 +275,11 @@ export type GoodreadsImport = {
   imported: number;
   skipped: number;
   skips: GoodreadsSkip[];
+};
+
+export type CustomBookIn = {
+  title: string;
+  authors?: string;
+  year?: number | null;
+  description?: string;
 };

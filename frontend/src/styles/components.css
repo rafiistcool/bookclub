@@ -406,7 +406,8 @@
   --cover-w: 104px;
   width: 104px;
 }
-.cover.size-fluid {
+.cover.size-fluid,
+.cover.size-tile {
   --cover-w: 100px;
   width: 100%;
 }
