@@ -154,7 +154,8 @@ async function loadPage(nextPage: number, reset: boolean) {
   pending.value = true;
   error.value = "";
   if (reset) {
-    items.value = [];
+    // Keep the current tiles on screen until this request lands. Clearing
+    // here flashes an empty grid, which is obvious on a cached refetch.
     page.value = 0;
     hasMore.value = true;
   }
@@ -166,11 +167,15 @@ async function loadPage(nextPage: number, reset: boolean) {
       page: nextPage,
     });
     if (seq !== requestSeq) return;
-    const seen = new Set(items.value.map((hit) => hit.ol_work_key));
-    for (const hit of result.items) {
-      if (seen.has(hit.ol_work_key)) continue;
-      items.value.push(hit);
-      seen.add(hit.ol_work_key);
+    if (reset) {
+      items.value = result.items;
+    } else {
+      const seen = new Set(items.value.map((hit) => hit.ol_work_key));
+      for (const hit of result.items) {
+        if (seen.has(hit.ol_work_key)) continue;
+        items.value.push(hit);
+        seen.add(hit.ol_work_key);
+      }
     }
     page.value = result.page;
     hasMore.value = result.has_more && result.items.length > 0;
