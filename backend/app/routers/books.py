@@ -66,8 +66,9 @@ _CACHE_MAX_KEYS = 256
 _cache: OrderedDict[str, tuple[float, Any]] = OrderedDict()
 _inflight: dict[str, asyncio.Future[dict]] = {}
 # Open Library's trending and subject endpoints regularly take well over 8s to
-# respond, so the read budget is generous while connect stays short.
-_TIMEOUT = httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
+# respond. Connect is a little longer than a LAN hop so a slow TLS handshake
+# is not reported as "the library is down."
+_TIMEOUT = httpx.Timeout(connect=10.0, read=15.0, write=5.0, pool=5.0)
 
 OPEN_LIBRARY_URL = "https://openlibrary.org/search.json"
 TRENDING_URL = "https://openlibrary.org/trending/daily.json"
