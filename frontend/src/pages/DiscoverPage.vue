@@ -248,6 +248,7 @@ watch(
 watch([submittedQuery, subject, sortPick], () => {
   if (browsing.value) {
     requestSeq += 1;
+    items.value = [];
     hasMore.value = true;
     pending.value = false;
     error.value = "";

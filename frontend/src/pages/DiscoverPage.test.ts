@@ -153,6 +153,31 @@ describe("DiscoverPage search results", () => {
     expect(wrapper.text()).not.toContain("Dune");
   });
 
+  it("does not flash a previous search after Clear", async () => {
+    const dune = deferred<SearchPage>();
+    const circe = deferred<SearchPage>();
+    search.mockImplementationOnce(() => dune.promise).mockImplementationOnce(() => circe.promise);
+
+    const { wrapper } = await mountDiscover();
+    await submitQuery(wrapper, "dune");
+    dune.resolve(pageOf([hit("OL1W", "Dune")]));
+    await flushPromises();
+    expect(wrapper.text()).toContain("Dune");
+
+    await wrapper.get("button.text-btn").trigger("click");
+    await nextTick();
+    expect(wrapper.text()).not.toContain("Dune");
+
+    await submitQuery(wrapper, "circe");
+    await nextTick();
+    expect(wrapper.text()).not.toContain("Dune");
+    expect(wrapper.text()).not.toContain("Circe");
+
+    circe.resolve(pageOf([hit("OL2W", "Circe")]));
+    await flushPromises();
+    expect(wrapper.text()).toContain("Circe");
+  });
+
   it("still shows the empty state when a reset search returns nothing", async () => {
     search.mockResolvedValue(pageOf([]));
     const { wrapper } = await mountDiscover();
