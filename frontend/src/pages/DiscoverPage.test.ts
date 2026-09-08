@@ -12,7 +12,7 @@ const subject = vi.fn();
 vi.mock("../api/client", () => ({
   ApiError: class ApiError extends Error {
     status: number;
-    constructor(message: string, status: number) {
+    constructor(message: string, status: number, _detail?: unknown) {
       super(message);
       this.status = status;
     }
@@ -129,7 +129,7 @@ describe("DiscoverPage", () => {
     search
       .mockResolvedValueOnce(page([hit()], { has_more: true }))
       .mockRejectedValueOnce(
-        new ApiError("Could not search the library right now. Try again.", 502),
+        new ApiError("Could not search the library right now. Try again.", 502, "unavailable"),
       );
     const { wrapper } = await mountDiscover("/discover?q=circe");
     expect(wrapper.text()).toContain("Circe");
@@ -139,7 +139,7 @@ describe("DiscoverPage", () => {
 
   it("distinguishes a rate-limit from a miss", async () => {
     search.mockRejectedValue(
-      new ApiError("The library is busy. Try again in 20 seconds.", 429),
+      new ApiError("The library is busy. Try again in 20 seconds.", 429, "rate"),
     );
     const { wrapper } = await mountDiscover("/discover?q=circe");
     expect(wrapper.text()).toContain("The library is busy");
