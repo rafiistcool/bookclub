@@ -245,7 +245,8 @@ Cookie session: `bookclub_session`. Send it with `credentials: include` / curl `
 | `PATCH` | `/api/auth/password` | `{ current_password, new_password }` |
 | `GET` / `PATCH` | `/api/auth/notifications` | Per-user push toggles (`notify_meeting`, `notify_pick`, `notify_note`) |
 | `GET` / `POST` | `/api/invites` | List yours / mint one |
-| `GET` | `/api/books/search` | Paginated Open Library browse/search (`q`, `subject`, `sort`, `page`, `limit`); RAM-cached ~18h |
+| `GET` | `/api/books/search` | Paginated Open Library browse/search (`q`, `subject`, `sort`, `page`, `limit`); RAM-cached ~18h (empty pages not cached). Short `q` is 400, rate limits 429, other OL failures 502. ISBN-shaped `q` uses `isbn:`. |
+| `POST` | `/api/books/custom` | Add a club-only book when Open Library misses (`title`, optional `authors` / `year` / `description`). Key is `/works/BC…` |
 | `GET` | `/api/books/works/{OL…W}` | Book page. Local SQLite when the work is already in the club DB; Open Library only for an unknown work (then imported) |
 | `POST` | `/api/books/works/{OL…W}/refresh` | Re-fetch Open Library metadata into the local Book row |
 | `GET` | `/api/books/work/{OL…W}` | Richer details (pages, OL rating, members). Local when the book is known; no automatic refresh |

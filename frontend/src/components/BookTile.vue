@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { bookPath, STATUS_SHORT, starLabel, type Status } from "../constants";
+import { bookPath, STATUS_SHORT, starLabel, type CoverSize, type Status } from "../constants";
 import BookCover from "./BookCover.vue";
 
 const props = defineProps<{
@@ -7,18 +7,29 @@ const props = defineProps<{
   title: string;
   authors?: string;
   coverId?: number | null;
+  coverEditionKey?: string | null;
+  isbn?: string | null;
   status?: Status | null;
   clubPick?: boolean;
   showAuthors?: boolean;
   /** The owner's stars, shown under the title for finished books. */
   rating?: number | null;
+  size?: CoverSize;
+  eager?: boolean;
 }>();
 </script>
 
 <template>
   <RouterLink class="book-tile" :to="bookPath(olWorkKey)">
     <span class="book-tile-cover">
-      <BookCover :title="title" :cover-id="coverId" />
+      <BookCover
+        :title="title"
+        :cover-id="coverId"
+        :cover-edition-key="coverEditionKey"
+        :isbn="isbn"
+        :size="size ?? 'tile'"
+        :eager="eager"
+      />
       <span v-if="clubPick" class="badge book-tile-badge club-pick">Club</span>
       <span
         v-else-if="props.status"

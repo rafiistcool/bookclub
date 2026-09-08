@@ -2,6 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   bookPath,
   coverUrl,
+  editionCoverUrl,
+  extractIsbn,
+  isbnCoverUrl,
+  isClubWorkId,
   monogram,
   openLibraryUrl,
   relativeDay,
@@ -11,11 +15,30 @@ import {
 
 describe("covers and links", () => {
   it("maps our sizes onto Open Library's image tiers", () => {
-    expect(coverUrl(123, "xs")).toBe("https://covers.openlibrary.org/b/id/123-S.jpg");
-    expect(coverUrl(123, "md")).toBe("https://covers.openlibrary.org/b/id/123-M.jpg");
-    expect(coverUrl(123)).toBe("https://covers.openlibrary.org/b/id/123-L.jpg");
+    expect(coverUrl(123, "xs")).toBe(
+      "https://covers.openlibrary.org/b/id/123-S.jpg?default=false",
+    );
+    expect(coverUrl(123, "md")).toBe(
+      "https://covers.openlibrary.org/b/id/123-M.jpg?default=false",
+    );
+    expect(coverUrl(123, "tile")).toBe(
+      "https://covers.openlibrary.org/b/id/123-M.jpg?default=false",
+    );
+    expect(coverUrl(123)).toBe("https://covers.openlibrary.org/b/id/123-L.jpg?default=false");
     expect(coverUrl(null)).toBeNull();
     expect(coverUrl(0)).toBeNull();
+    expect(coverUrl(-1)).toBeNull();
+  });
+
+  it("builds edition and ISBN fallbacks", () => {
+    expect(editionCoverUrl("OL1M", "sm")).toBe(
+      "https://covers.openlibrary.org/b/olid/OL1M-S.jpg?default=false",
+    );
+    expect(isbnCoverUrl("978-0-316-76948-8", "md")).toBe(
+      "https://covers.openlibrary.org/b/isbn/9780316769488-M.jpg?default=false",
+    );
+    expect(extractIsbn("9780316769488")).toBe("9780316769488");
+    expect(extractIsbn("it")).toBeNull();
   });
 
   it("derives the detail route and Open Library link from a work key", () => {
@@ -23,6 +46,8 @@ describe("covers and links", () => {
     expect(workId("OL1W")).toBe("OL1W");
     expect(bookPath("/works/OL1W")).toBe("/book/OL1W");
     expect(openLibraryUrl("/works/OL1W")).toBe("https://openlibrary.org/works/OL1W");
+    expect(isClubWorkId("BCdeadbeef01")).toBe(true);
+    expect(openLibraryUrl("/works/BCdeadbeef01")).toBeNull();
   });
 });
 

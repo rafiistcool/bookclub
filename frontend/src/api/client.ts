@@ -1,5 +1,6 @@
 import type {
   BookDetail,
+  CustomBookIn,
   ClubConfig,
   ClubPick,
   ClubPickBook,
@@ -94,6 +95,11 @@ export const api = {
   book: (workId: string) => request<BookDetail>(`/api/books/works/${workId}`),
   refreshBook: (workId: string) =>
     request<BookDetail>(`/api/books/works/${workId}/refresh`, { method: "POST" }),
+  createCustomBook: (body: CustomBookIn) =>
+    request<BookDetail>("/api/books/custom", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   myShelf: () => request<ShelfList>("/api/shelf"),
   friendShelf: (username: string) =>
     request<ShelfList>(`/api/shelf?username=${encodeURIComponent(username)}`),

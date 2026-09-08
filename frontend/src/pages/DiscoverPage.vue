@@ -2,8 +2,11 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api, ApiError } from "../api/client";
+import AddBookSheet from "../components/AddBookSheet.vue";
 import BookTile from "../components/BookTile.vue";
 import TileSkeleton from "../components/TileSkeleton.vue";
+import { extractIsbn } from "../constants";
+import { useToast } from "../stores/toast";
 import type { SearchHit, SearchSort } from "../types";
 
 const SUBJECTS = [
@@ -33,15 +36,22 @@ const SORTS = [
   { label: "Title", value: "title" },
 ] as const;
 
+const SHORT_QUERY =
+  "Open Library needs at least 3 characters. Add the author, or paste an ISBN.";
+
+type ErrorKind = "" | "short" | "rate" | "unavailable" | "generic";
+
 type Row = {
   subject: string;
   label: string;
   items: SearchHit[];
   pending: boolean;
+  error: string;
 };
 
 const route = useRoute();
 const router = useRouter();
+const toast = useToast();
 
 const query = ref("");
 const submittedQuery = ref("");
@@ -54,12 +64,17 @@ const page = ref(0);
 const hasMore = ref(true);
 const pending = ref(false);
 const error = ref("");
+const errorKind = ref<ErrorKind>("");
+const moreError = ref("");
+const popularUnavailable = ref(false);
+const addingBook = ref(false);
 const sentinel = ref<HTMLElement | null>(null);
 
 const trending = ref<SearchHit[]>([]);
 const rows = ref<Row[]>([]);
-const browsePending = ref(true);
+const browsePending = ref(false);
 const browseError = ref("");
+const browseStarted = ref(false);
 
 let requestSeq = 0;
 let observer: IntersectionObserver | null = null;
@@ -76,11 +91,18 @@ const visibleItems = computed(() =>
   hideOnShelf.value ? items.value.filter((hit) => !hit.on_shelf) : items.value,
 );
 
+const activeSubject = computed(() => SUBJECTS.find((entry) => entry.value === subject.value));
+
 const resultsLabel = computed(() => {
-  const chip = SUBJECTS.find((entry) => entry.value === subject.value);
+  const chip = activeSubject.value;
   if (submittedQuery.value && chip) return `“${submittedQuery.value}” in ${chip.label}`;
   if (submittedQuery.value) return `“${submittedQuery.value}”`;
   return chip?.label ?? "Results";
+});
+
+const shortQuery = computed(() => {
+  const q = submittedQuery.value.trim();
+  return q.length > 0 && q.length < 3 && !extractIsbn(q) && !subject.value;
 });
 
 function subjectLabel(value: string) {
@@ -90,11 +112,29 @@ function subjectLabel(value: string) {
   );
 }
 
+function classifyError(err: unknown): { message: string; kind: ErrorKind } {
+  if (err instanceof ApiError) {
+    if (err.status === 400) return { message: err.message, kind: "short" };
+    if (err.status === 429) return { message: err.message, kind: "rate" };
+    if (err.status === 502) return { message: err.message, kind: "unavailable" };
+    return { message: err.message, kind: "generic" };
+  }
+  return { message: "Search failed", kind: "generic" };
+}
+
+function errorTitle(kind: ErrorKind) {
+  if (kind === "short") return "That search is too short";
+  if (kind === "rate") return "The library is busy";
+  if (kind === "unavailable") return "The library is unavailable";
+  return "That search did not come back";
+}
+
 /**
  * Trending and every subject shelf load independently so that one upstream
  * failure leaves the rest of the browse surface usable.
  */
 async function loadBrowse() {
+  browseStarted.value = true;
   browsePending.value = true;
   browseError.value = "";
   rows.value = BROWSE_ROWS.map((value) => ({
@@ -102,6 +142,7 @@ async function loadBrowse() {
     label: subjectLabel(value),
     items: [],
     pending: true,
+    error: "",
   }));
   await Promise.all([
     (async () => {
@@ -121,14 +162,22 @@ async function loadBrowse() {
       for (const row of rows.value) {
         try {
           row.items = (await api.subject(row.subject, 1, 14)).items;
-        } catch {
+          row.error = "";
+        } catch (err) {
           row.items = [];
+          row.error =
+            err instanceof ApiError ? err.message : "Could not load this shelf.";
         } finally {
           row.pending = false;
         }
       }
     })(),
   ]);
+}
+
+function ensureBrowse() {
+  if (browseStarted.value) return;
+  void loadBrowse();
 }
 
 function retryTrending() {
@@ -148,24 +197,68 @@ function retryTrending() {
     });
 }
 
+function retryRow(row: Row) {
+  row.pending = true;
+  row.error = "";
+  void api
+    .subject(row.subject, 1, 14)
+    .then((result) => {
+      row.items = result.items;
+    })
+    .catch((err) => {
+      row.items = [];
+      row.error = err instanceof ApiError ? err.message : "Could not load this shelf.";
+    })
+    .finally(() => {
+      row.pending = false;
+    });
+}
+
+async function requestSearch(nextPage: number, sort: SearchSort) {
+  return api.search({
+    q: submittedQuery.value || undefined,
+    subject: subject.value || undefined,
+    sort,
+    page: nextPage,
+  });
+}
+
 async function loadPage(nextPage: number, reset: boolean) {
   if (!reset && (pending.value || !hasMore.value)) return;
   const seq = ++requestSeq;
   pending.value = true;
-  error.value = "";
   if (reset) {
+    error.value = "";
+    errorKind.value = "";
+    moreError.value = "";
+    popularUnavailable.value = false;
     // Keep the current tiles on screen until this request lands. Clearing
     // here flashes an empty grid, which is obvious on a cached refetch.
     page.value = 0;
     hasMore.value = true;
+  } else {
+    moreError.value = "";
   }
   try {
-    const result = await api.search({
-      q: submittedQuery.value || undefined,
-      subject: subject.value || undefined,
-      sort: effectiveSort.value,
-      page: nextPage,
-    });
+    let usedSort = effectiveSort.value;
+    let result;
+    try {
+      result = await requestSearch(nextPage, usedSort);
+    } catch (err) {
+      const classified = classifyError(err);
+      if (
+        reset &&
+        nextPage === 1 &&
+        usedSort === "readinglog" &&
+        classified.kind === "unavailable"
+      ) {
+        result = await requestSearch(nextPage, "relevance");
+        usedSort = "relevance";
+        popularUnavailable.value = true;
+      } else {
+        throw err;
+      }
+    }
     if (seq !== requestSeq) return;
     if (reset) {
       items.value = result.items;
@@ -181,9 +274,16 @@ async function loadPage(nextPage: number, reset: boolean) {
     hasMore.value = result.has_more && result.items.length > 0;
   } catch (err) {
     if (seq !== requestSeq) return;
-    error.value = err instanceof ApiError ? err.message : "Search failed";
-    if (reset) items.value = [];
-    hasMore.value = false;
+    const classified = classifyError(err);
+    if (reset) {
+      error.value = classified.message;
+      errorKind.value = classified.kind;
+      items.value = [];
+      hasMore.value = false;
+    } else {
+      moreError.value = classified.message;
+      toast.show("Couldn't load more");
+    }
   } finally {
     if (seq === requestSeq) {
       pending.value = false;
@@ -193,7 +293,9 @@ async function loadPage(nextPage: number, reset: boolean) {
 }
 
 function maybeLoadMore() {
-  if (browsing.value || pending.value || !hasMore.value) return;
+  if (browsing.value || pending.value || !hasMore.value || shortQuery.value || moreError.value) {
+    return;
+  }
   const el = sentinel.value;
   if (!el) return;
   if (el.getBoundingClientRect().top < window.innerHeight + 240) {
@@ -216,6 +318,11 @@ function submitSearch() {
 function clearSearch() {
   query.value = "";
   submittedQuery.value = "";
+  syncRoute();
+}
+
+function clearSubject() {
+  subject.value = "";
   syncRoute();
 }
 
@@ -252,6 +359,20 @@ watch([submittedQuery, subject, sortPick], () => {
     hasMore.value = true;
     pending.value = false;
     error.value = "";
+    errorKind.value = "";
+    moreError.value = "";
+    popularUnavailable.value = false;
+    ensureBrowse();
+    return;
+  }
+  if (shortQuery.value) {
+    requestSeq += 1;
+    pending.value = false;
+    items.value = [];
+    hasMore.value = false;
+    error.value = SHORT_QUERY;
+    errorKind.value = "short";
+    moreError.value = "";
     return;
   }
   void loadPage(1, true);
@@ -271,8 +392,8 @@ onMounted(() => {
     { rootMargin: "240px 0px" },
   );
   const willFetch = readRoute();
-  void loadBrowse();
-  if (!willFetch && !browsing.value) void loadPage(1, true);
+  if (browsing.value) ensureBrowse();
+  if (!willFetch && !browsing.value && !shortQuery.value) void loadPage(1, true);
 });
 
 onUnmounted(() => {
@@ -280,6 +401,8 @@ onUnmounted(() => {
   observer = null;
   requestSeq += 1;
 });
+
+defineExpose({ loadPage });
 </script>
 
 <template>
@@ -309,7 +432,7 @@ onUnmounted(() => {
             v-model="query"
             type="search"
             inputmode="search"
-            placeholder="Title or author"
+            placeholder="Title, author, or ISBN"
             aria-label="Search books"
           />
           <button
@@ -323,7 +446,7 @@ onUnmounted(() => {
         </span>
         <button class="btn btn-primary" type="submit">Search</button>
       </form>
-      <div class="chip-row scroll" role="group" aria-label="Subject">
+      <div class="chip-row scroll" role="group" aria-label="Subject filter">
         <button
           v-for="chip in SUBJECTS"
           :key="chip.value"
@@ -347,15 +470,18 @@ onUnmounted(() => {
         <div v-if="browsePending || trending.length" class="rail">
           <TileSkeleton v-if="browsePending" :count="7" />
           <BookTile
-            v-for="hit in trending"
+            v-for="(hit, index) in trending"
             v-else
             :key="hit.ol_work_key"
             :ol-work-key="hit.ol_work_key"
             :title="hit.title"
             :authors="hit.authors"
             :cover-id="hit.cover_id"
+            :cover-edition-key="hit.cover_edition_key"
+            :isbn="hit.isbn"
             :status="hit.on_shelf"
             :club-pick="hit.club_pick"
+            :eager="index < 6"
             show-authors
           />
         </div>
@@ -376,20 +502,24 @@ onUnmounted(() => {
         <div v-if="row.pending || row.items.length" class="rail">
           <TileSkeleton v-if="row.pending" :count="7" />
           <BookTile
-            v-for="hit in row.items"
+            v-for="(hit, index) in row.items"
             v-else
             :key="hit.ol_work_key"
             :ol-work-key="hit.ol_work_key"
             :title="hit.title"
             :authors="hit.authors"
             :cover-id="hit.cover_id"
+            :cover-edition-key="hit.cover_edition_key"
+            :isbn="hit.isbn"
             :status="hit.on_shelf"
             :club-pick="hit.club_pick"
+            :eager="index < 6"
             show-authors
           />
         </div>
         <p v-else class="fine subtle row-fallback">
-          Could not load this shelf.
+          {{ row.error || "Could not load this shelf." }}
+          <button class="text-btn" type="button" @click="retryRow(row)">Try again</button>
           <button class="text-btn" type="button" @click="toggleSubject(row.subject)">
             Search it instead
           </button>
@@ -425,56 +555,120 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <div v-if="error" class="empty">
-        <h3>That search did not come back</h3>
-        <p>{{ error }}</p>
-        <div class="btn-row">
-          <button class="btn btn-ghost" type="button" @click="loadPage(1, true)">
+      <p v-if="activeSubject" class="filter-banner">
+        Filtered to <strong>{{ activeSubject.label }}</strong>
+        <button class="text-btn" type="button" @click="clearSubject">Clear filter</button>
+      </p>
+      <p v-if="popularUnavailable" class="fine subtle">
+        Popular is unavailable right now. Showing relevance instead.
+      </p>
+
+      <div
+        class="results"
+        aria-live="polite"
+        :aria-busy="pending"
+      >
+        <div v-if="error && !visibleItems.length" class="empty">
+          <h3>{{ errorTitle(errorKind) }}</h3>
+          <p>{{ error }}</p>
+          <div class="btn-row">
+            <button
+              v-if="errorKind !== 'short'"
+              class="btn btn-ghost"
+              type="button"
+              @click="loadPage(1, true)"
+            >
+              Try again
+            </button>
+            <button
+              v-if="activeSubject"
+              class="btn btn-ghost"
+              type="button"
+              @click="clearSubject"
+            >
+              Clear {{ activeSubject.label }}
+            </button>
+            <button class="btn btn-ghost" type="button" @click="clearSearch">
+              Back to browsing
+            </button>
+            <button class="btn btn-primary" type="button" @click="addingBook = true">
+              Add your own book
+            </button>
+          </div>
+        </div>
+
+        <div v-else-if="visibleItems.length || pending" class="book-grid">
+          <BookTile
+            v-for="(hit, index) in visibleItems"
+            :key="hit.ol_work_key"
+            :ol-work-key="hit.ol_work_key"
+            :title="hit.title"
+            :authors="hit.authors"
+            :cover-id="hit.cover_id"
+            :cover-edition-key="hit.cover_edition_key"
+            :isbn="hit.isbn"
+            :status="hit.on_shelf"
+            :club-pick="hit.club_pick"
+            :eager="index < 6"
+            show-authors
+          />
+          <TileSkeleton v-if="pending" :count="visibleItems.length ? 6 : 12" />
+        </div>
+
+        <div v-else-if="items.length && hideOnShelf" class="empty">
+          <h3>All of these are already yours</h3>
+          <p>Every loaded result is on your shelf.</p>
+          <div class="btn-row">
+            <button class="btn btn-ghost" type="button" @click="hideOnShelf = false">
+              Show them anyway
+            </button>
+          </div>
+        </div>
+
+        <div v-else class="empty">
+          <h3>Nothing matched</h3>
+          <p>
+            Try the title plus the author, or paste an ISBN.
+            <template v-if="activeSubject">
+              The {{ activeSubject.label }} filter may be hiding it.
+            </template>
+            Open Library misses some obscure and self-published titles — you can add
+            those yourself.
+          </p>
+          <div class="btn-row">
+            <button
+              v-if="activeSubject"
+              class="btn btn-ghost"
+              type="button"
+              @click="clearSubject"
+            >
+              Clear {{ activeSubject.label }}
+            </button>
+            <button class="btn btn-ghost" type="button" @click="clearSearch">
+              Back to browsing
+            </button>
+            <button class="btn btn-primary" type="button" @click="addingBook = true">
+              Add your own book
+            </button>
+          </div>
+        </div>
+
+        <p v-if="moreError" class="fine subtle row-fallback more-error">
+          Couldn't load more. {{ moreError }}
+          <button class="text-btn" type="button" @click="loadPage(page + 1, false)">
             Try again
           </button>
-          <button class="btn btn-ghost" type="button" @click="clearSearch">
-            Back to browsing
-          </button>
-        </div>
-      </div>
-
-      <div v-else-if="visibleItems.length || pending" class="book-grid">
-        <BookTile
-          v-for="hit in visibleItems"
-          :key="hit.ol_work_key"
-          :ol-work-key="hit.ol_work_key"
-          :title="hit.title"
-          :authors="hit.authors"
-          :cover-id="hit.cover_id"
-          :status="hit.on_shelf"
-          :club-pick="hit.club_pick"
-          show-authors
-        />
-        <TileSkeleton v-if="pending" :count="visibleItems.length ? 6 : 12" />
-      </div>
-
-      <div v-else-if="items.length && hideOnShelf" class="empty">
-        <h3>All of these are already yours</h3>
-        <p>Every loaded result is on your shelf.</p>
-        <div class="btn-row">
-          <button class="btn btn-ghost" type="button" @click="hideOnShelf = false">
-            Show them anyway
-          </button>
-        </div>
-      </div>
-
-      <div v-else class="empty">
-        <h3>Nothing matched</h3>
-        <p>Try a shorter title, an author's name, or another subject.</p>
-        <div class="btn-row">
-          <button class="btn btn-ghost" type="button" @click="clearSearch">
-            Back to browsing
-          </button>
-        </div>
+        </p>
       </div>
 
       <div ref="sentinel" class="sentinel" aria-hidden="true" />
     </template>
+
+    <AddBookSheet
+      v-if="addingBook"
+      :initial-title="submittedQuery"
+      @close="addingBook = false"
+    />
   </section>
 </template>
 
@@ -539,11 +733,25 @@ onUnmounted(() => {
   font-size: var(--text-lg);
 }
 
-.row-fallback {
+.filter-banner {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: var(--space-2);
+  margin: calc(-1 * var(--space-2)) 0 var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.row-fallback,
+.more-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.more-error {
+  margin-top: var(--space-4);
 }
 
 .sentinel {

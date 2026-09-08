@@ -16,9 +16,12 @@ from app.deps import get_current_user, get_session
 from app.models import Book, ClubPick, Quote, ShelfEntry, ShelfStatus, User
 from app.openlibrary import (
     WorkDetails,
+    extract_isbn,
     fetch_work_details,
+    first_positive_cover,
     lookup_isbn,
     normalize_isbn,
+    positive_cover_id,
     subjects_from_json,
 )
 from app.pick_ops import current_pick
@@ -27,18 +30,26 @@ from app.schemas import (
     BookDetailsOut,
     BookMember,
     BookReader,
+    CustomBookIn,
     IsbnHitOut,
     SearchHit,
     SearchPage,
 )
 from app.serialize import cover_url
 from app.shelf_ops import apply_book_details, upsert_book
+from app.works import (
+    is_club_work_id,
+    is_club_work_key,
+    is_open_library_work_id,
+    is_work_id,
+    new_club_work_id,
+    work_key,
+)
 
 router = APIRouter(prefix="/api/books", tags=["books"])
 logger = logging.getLogger("bookclub.search")
 
 _SUBJECT_KEY_RE = re.compile(r"^[a-z0-9_]+$")
-_WORK_ID_RE = re.compile(r"^OL\d+W$")
 _AUTHOR_ID_RE = re.compile(r"^OL\d+A$")
 # Markdown leftovers in Open Library descriptions, which we render as text.
 _REF_DEFINITION_RE = re.compile(r"^[ \t]*\[[^\]]+\]:[ \t]*\S+.*$", re.MULTILINE)
@@ -55,8 +66,9 @@ _CACHE_MAX_KEYS = 256
 _cache: OrderedDict[str, tuple[float, Any]] = OrderedDict()
 _inflight: dict[str, asyncio.Future[dict]] = {}
 # Open Library's trending and subject endpoints regularly take well over 8s to
-# respond, so the read budget is generous while connect stays short.
-_TIMEOUT = httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
+# respond. Connect is a little longer than a LAN hop so a slow TLS handshake
+# is not reported as "the library is down."
+_TIMEOUT = httpx.Timeout(connect=10.0, read=15.0, write=5.0, pool=5.0)
 
 OPEN_LIBRARY_URL = "https://openlibrary.org/search.json"
 TRENDING_URL = "https://openlibrary.org/trending/daily.json"
@@ -64,16 +76,24 @@ SUBJECT_URL = "https://openlibrary.org/subjects/{subject}.json"
 WORK_URL = "https://openlibrary.org/works/{work_id}.json"
 AUTHOR_URL = "https://openlibrary.org/authors/{author_id}.json"
 
-SEARCH_FIELDS = "key,title,author_name,cover_i,first_publish_year"
+# isbn is omitted: OL returns every edition ISBN and ~10× the payload.
+# cover_edition_key already covers the /b/olid/ fallback.
+SEARCH_FIELDS = "key,title,author_name,cover_i,first_publish_year,cover_edition_key"
 WORK_SEARCH_FIELDS = (
     "key,title,author_name,cover_i,first_publish_year,"
     "number_of_pages_median,ratings_average,ratings_count,subject"
 )
 SEARCH_UNAVAILABLE = "Could not search the library right now. Try again."
 BROWSE_UNAVAILABLE = "Could not load the library right now. Try again."
+QUERY_TOO_SHORT = (
+    "Open Library needs at least 3 characters. Add the author, or paste an ISBN."
+)
+RATE_LIMITED = "The library is busy. Wait a few seconds and try again."
+CUSTOM_NO_REFRESH = "This book was added by the club, not Open Library."
 # Open Library rejects any q shorter than 3 characters, so an empty search box
 # cannot be expressed as a search query at all. Browse falls back to trending.
 MAX_DETAIL_AUTHORS = 3
+_TITLE_BY_AUTHOR_RE = re.compile(r"^(.+?)\s+by\s+(.+)$", re.IGNORECASE)
 
 Sort = Literal["readinglog", "new", "title", "relevance"]
 
@@ -111,6 +131,34 @@ def _cache_set(key: str, value: Any) -> None:
         _cache.popitem(last=False)
 
 
+def _retry_after_detail(response: httpx.Response) -> str:
+    raw = response.headers.get("Retry-After")
+    try:
+        seconds = int(raw) if raw is not None else 0
+    except (TypeError, ValueError):
+        seconds = 0
+    if seconds > 0:
+        return f"The library is busy. Try again in {seconds} seconds."
+    return RATE_LIMITED
+
+
+def _classify_open_library_status(
+    status: int,
+    *,
+    detail: str,
+    missing_detail: str | None,
+    response: httpx.Response | None = None,
+) -> HTTPException:
+    if status == 422:
+        return HTTPException(status_code=400, detail=QUERY_TOO_SHORT)
+    if status == 429:
+        hint = _retry_after_detail(response) if response is not None else RATE_LIMITED
+        return HTTPException(status_code=429, detail=hint)
+    if status == 404 and missing_detail is not None:
+        return HTTPException(status_code=404, detail=missing_detail)
+    return HTTPException(status_code=502, detail=detail)
+
+
 async def _fetch_json_uncached(
     url: str,
     *,
@@ -126,8 +174,24 @@ async def _fetch_json_uncached(
                 params=params,
                 headers={"User-Agent": open_library_ua(get_settings())},
             )
-            response.raise_for_status()
-            payload = response.json()
+        status = response.status_code
+        if status >= 400:
+            elapsed_ms = int((monotonic() - started) * 1000)
+            logger.warning(
+                "open library request failed url=%s status=%s latency_ms=%s err=HTTPStatus",
+                url,
+                status,
+                elapsed_ms,
+            )
+            raise _classify_open_library_status(
+                status,
+                detail=detail,
+                missing_detail=missing_detail,
+                response=response,
+            )
+        payload = response.json()
+    except HTTPException:
+        raise
     except httpx.HTTPError as exc:
         elapsed_ms = int((monotonic() - started) * 1000)
         status = getattr(getattr(exc, "response", None), "status_code", None)
@@ -138,8 +202,6 @@ async def _fetch_json_uncached(
             elapsed_ms,
             exc.__class__.__name__,
         )
-        if status == 404 and missing_detail is not None:
-            raise HTTPException(status_code=404, detail=missing_detail) from exc
         raise HTTPException(status_code=502, detail=detail) from exc
 
     if not isinstance(payload, dict):
@@ -154,6 +216,11 @@ async def _fetch_json_uncached(
     return payload
 
 
+def _empty_search_docs(payload: dict) -> bool:
+    docs = payload.get("docs")
+    return isinstance(docs, list) and len(docs) == 0
+
+
 async def _fetch_json(
     url: str,
     *,
@@ -162,12 +229,15 @@ async def _fetch_json(
     params: dict[str, str | int] | None = None,
     missing_detail: str | None = None,
     bypass_cache: bool = False,
+    cache_empty: bool = True,
 ) -> dict:
     """GET JSON from Open Library, cached by `cache_key`.
 
     Identical in-flight requests share one upstream call. Raises 502 on
     transport or status errors, or 404 when `missing_detail` is set and Open
-    Library reports the resource does not exist.
+    Library reports the resource does not exist. Successful empty `search.json`
+    pages are not cached when `cache_empty` is false (a lucky-empty 200 must
+    not freeze for 18 hours).
     """
     if not bypass_cache:
         cached = _cache_get(cache_key)
@@ -184,7 +254,8 @@ async def _fetch_json(
         payload = await _fetch_json_uncached(
             url, detail=detail, params=params, missing_detail=missing_detail
         )
-        _cache_set(cache_key, payload)
+        if cache_empty or not _empty_search_docs(payload):
+            _cache_set(cache_key, payload)
         pending.set_result(payload)
         return payload
     except Exception as exc:
@@ -201,12 +272,25 @@ async def _fetch_json(
 
 
 def _cover_id(value: Any) -> int | None:
-    # Open Library uses -1 for "no cover" in some payloads.
-    try:
-        cover = int(value)
-    except (TypeError, ValueError):
+    return positive_cover_id(value)
+
+
+def _doc_isbn(doc: dict) -> str | None:
+    raw = doc.get("isbn")
+    if isinstance(raw, str):
+        return extract_isbn(raw)
+    if not isinstance(raw, list):
         return None
-    return cover if cover > 0 else None
+    for item in raw:
+        isbn = extract_isbn(str(item or ""))
+        if isbn:
+            return isbn
+    return None
+
+
+def _doc_edition_key(doc: dict) -> str | None:
+    raw = str(doc.get("cover_edition_key") or "").strip()
+    return raw or None
 
 
 def _year(value: Any) -> int | None:
@@ -245,6 +329,8 @@ def map_open_library_docs(docs: list[dict]) -> list[SearchHit]:
                 cover_id=_cover_id(doc.get("cover_i")),
                 year=_year(doc.get("first_publish_year")),
                 on_shelf=None,
+                cover_edition_key=_doc_edition_key(doc),
+                isbn=_doc_isbn(doc),
             )
         )
         seen.add(key)
@@ -298,6 +384,31 @@ def _open_library_q(query: str, subject: str) -> str:
     return query
 
 
+def _search_candidates(query: str, subject: str) -> list[str]:
+    """Primary OL `q` plus title/author fallbacks for a true miss."""
+    isbn = extract_isbn(query)
+    if isbn:
+        return [f"isbn:{isbn}"]
+    if not query:
+        return [_open_library_q(query, subject)]
+    primary = _open_library_q(query, subject)
+    by_match = _TITLE_BY_AUTHOR_RE.fullmatch(query)
+    if by_match:
+        title, author = by_match.group(1).strip(), by_match.group(2).strip()
+        fielded = f'title:"{title}" author:"{author}"'
+        if subject:
+            fielded = f"{fielded} subject_key:{subject}"
+        # Raw query first. "Stand by Me" must not become title:"Stand" author:"Me"
+        # before the plain q, or junk fielded hits short-circuit the real title.
+        return [primary, fielded]
+    title_q = f"title:{query}"
+    author_q = f"author:{query}"
+    if subject:
+        title_q = f"{title_q} subject_key:{subject}"
+        author_q = f"{author_q} subject_key:{subject}"
+    return [primary, title_q, author_q]
+
+
 def _num_found(payload: dict) -> int:
     raw = payload.get("num_found")
     if raw is None:
@@ -308,6 +419,35 @@ def _num_found(payload: dict) -> int:
         return 0
 
 
+async def _search_ol_page(
+    q: str,
+    *,
+    sort: Sort,
+    page: int,
+    limit: int,
+    lang_en: bool,
+) -> tuple[list[SearchHit], int]:
+    params: dict[str, str | int] = {
+        "q": q,
+        "page": page,
+        "limit": limit,
+        "fields": SEARCH_FIELDS,
+    }
+    if lang_en:
+        params["lang"] = "en"
+    if sort != "relevance":
+        params["sort"] = sort
+    cache_key = f"search|{normalize_search_query(q)}|{sort}|{page}|{limit}"
+    payload = await _fetch_json(
+        OPEN_LIBRARY_URL,
+        cache_key=cache_key,
+        detail=SEARCH_UNAVAILABLE,
+        params=params,
+        cache_empty=False,
+    )
+    return map_open_library_docs(payload.get("docs") or []), _num_found(payload)
+
+
 async def fetch_open_library(
     query: str,
     *,
@@ -316,29 +456,25 @@ async def fetch_open_library(
     page: int,
     limit: int,
 ) -> SearchPage:
-    params: dict[str, str | int] = {
-        "q": _open_library_q(query, subject),
-        "page": page,
-        "limit": limit,
-        "fields": SEARCH_FIELDS,
-    }
-    if not query:
-        params["lang"] = "en"
-    if sort != "relevance":
-        params["sort"] = sort
-
-    cache_key = f"search|{normalize_search_query(str(params['q']))}|{sort}|{page}|{limit}"
-    payload = await _fetch_json(
-        OPEN_LIBRARY_URL,
-        cache_key=cache_key,
-        detail=SEARCH_UNAVAILABLE,
-        params=params,
-    )
-    items = map_open_library_docs(payload.get("docs") or [])
+    candidates = _search_candidates(query, subject)
+    lang_en = not query
+    items: list[SearchHit] = []
+    num_found = 0
+    for index, q in enumerate(candidates):
+        use_page = page if index == 0 else 1
+        if index > 0 and (items or page > 1):
+            break
+        batch, found = await _search_ol_page(
+            q, sort=sort, page=use_page, limit=limit, lang_en=lang_en
+        )
+        items = batch
+        num_found = found
+        if items:
+            break
     return SearchPage(
         items=items,
         page=page,
-        has_more=page * limit < _num_found(payload),
+        has_more=page * limit < num_found,
     )
 
 
@@ -512,6 +648,48 @@ def _annotate(page: SearchPage, user: User, session: Session) -> SearchPage:
     return page
 
 
+def _local_catalog_hits(session: Session, query: str, limit: int) -> list[SearchHit]:
+    """Club-local title/author matches, including books members added themselves."""
+    needle = query.casefold()
+    if len(needle) < 2:
+        return []
+    hits: list[SearchHit] = []
+    books = session.exec(select(Book).order_by(Book.id)).all()
+    for book in books:
+        haystack = f"{book.title} {book.authors}".casefold()
+        if needle not in haystack:
+            continue
+        hits.append(
+            SearchHit(
+                ol_work_key=book.ol_work_key,
+                title=book.title,
+                authors=book.authors,
+                cover_id=_cover_id(book.cover_id),
+                year=book.year,
+                custom=is_club_work_key(book.ol_work_key),
+            )
+        )
+        if len(hits) >= limit:
+            break
+    return hits
+
+
+def _merge_local_hits(page: SearchPage, local: list[SearchHit], limit: int) -> SearchPage:
+    if not local:
+        return page
+    seen = {hit.ol_work_key for hit in local}
+    merged = list(local)
+    for hit in page.items:
+        if hit.ol_work_key in seen:
+            continue
+        merged.append(hit)
+        seen.add(hit.ol_work_key)
+        if len(merged) >= limit:
+            break
+    page.items = merged
+    return page
+
+
 @router.get("/search", response_model=SearchPage)
 async def search_books(
     q: str = Query(default=""),
@@ -532,14 +710,29 @@ async def search_books(
     if not query and not subject:
         return _annotate(await fetch_trending(limit), user, session)
 
+    isbn = extract_isbn(query)
+    if query and len(query) < 3 and not isbn and not subject:
+        raise HTTPException(status_code=400, detail=QUERY_TOO_SHORT)
+
     resolved_sort: Sort = sort or ("relevance" if query else "readinglog")
-    result = await fetch_open_library(
-        query,
-        subject=subject,
-        sort=resolved_sort,
-        page=page,
-        limit=limit,
-    )
+    local = _local_catalog_hits(session, query, limit) if (query and page == 1) else []
+    try:
+        result = await fetch_open_library(
+            query,
+            subject=subject,
+            sort=resolved_sort,
+            page=page,
+            limit=limit,
+        )
+    except HTTPException:
+        if local:
+            return _annotate(
+                SearchPage(items=local, page=page, has_more=False),
+                user,
+                session,
+            )
+        raise
+    result = _merge_local_hits(result, local, limit)
     return _annotate(result, user, session)
 
 
@@ -618,6 +811,7 @@ def _book_detail_from_local(book: Book, user: User, session: Session) -> BookDet
         description=book.description,
         subjects=subjects_from_json(book.subjects),
         club_pick=_current_pick_key(session) == book.ol_work_key,
+        custom=is_club_work_key(book.ol_work_key),
     )
     return _annotate_book_detail(detail, book, user, session)
 
@@ -716,14 +910,11 @@ async def _import_work_payload(session: Session, work_id: str, *, bypass_cache: 
         bypass_cache=bypass_cache,
     )
     doc = await _work_search_doc(work_id, work_key, bypass_cache=bypass_cache)
-    covers = [
-        cover for cover in (_cover_id(raw) for raw in payload.get("covers") or []) if cover
-    ]
     title = str(payload.get("title") or doc.get("title") or "").strip()
     authors = await _author_names(payload, bypass_cache=bypass_cache)
     if not authors:
         authors = ", ".join(str(name) for name in (doc.get("author_name") or []) if name)
-    cover_id = covers[0] if covers else _cover_id(doc.get("cover_i"))
+    cover_id = first_positive_cover(payload.get("covers"), doc.get("cover_i"))
     year = _year(doc.get("first_publish_year"))
     pages = _year(doc.get("number_of_pages_median"))
     ol_rating = _rating(doc.get("ratings_average"))
@@ -790,18 +981,41 @@ def _import_work_details(session: Session, work_id: str, details: WorkDetails) -
     return loaded
 
 
+@router.post("/custom", response_model=BookDetailOut, status_code=201)
+def create_custom_book(
+    payload: CustomBookIn,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> BookDetailOut:
+    """Add a book that Open Library does not have (#7). Never calls OL."""
+    created_id = new_club_work_id()
+    book = Book(
+        ol_work_key=work_key(created_id),
+        title=payload.title,
+        authors=payload.authors,
+        year=payload.year,
+        description=payload.description,
+    )
+    session.add(book)
+    session.commit()
+    session.refresh(book)
+    return _book_detail_from_local(book, user, session)
+
+
 @router.get("/works/{work_id}", response_model=BookDetailOut)
 async def book_detail(
     work_id: str = Path(...),
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> BookDetailOut:
-    if not _WORK_ID_RE.fullmatch(work_id):
+    if not is_work_id(work_id):
         raise HTTPException(status_code=404, detail="No such book.")
-    work_key = f"/works/{work_id}"
-    book = _book_by_key(session, work_key)
+    key = work_key(work_id)
+    book = _book_by_key(session, key)
     if book is not None:
         return _book_detail_from_local(book, user, session)
+    if is_club_work_id(work_id) or not is_open_library_work_id(work_id):
+        raise HTTPException(status_code=404, detail="No such book.")
     book = await _import_work_payload(session, work_id)
     return _book_detail_from_local(book, user, session)
 
@@ -812,7 +1026,9 @@ async def refresh_book_detail(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> BookDetailOut:
-    if not _WORK_ID_RE.fullmatch(work_id):
+    if is_club_work_id(work_id):
+        raise HTTPException(status_code=400, detail=CUSTOM_NO_REFRESH)
+    if not is_open_library_work_id(work_id):
         raise HTTPException(status_code=404, detail="No such book.")
     book = await _import_work_payload(session, work_id, bypass_cache=True)
     return _book_detail_from_local(book, user, session)
@@ -824,9 +1040,15 @@ async def work_details(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> BookDetailsOut:
-    if not re.fullmatch(r"OL\d+W", work_id):
+    if is_club_work_id(work_id):
+        key = work_key(work_id)
+        book = _book_by_key(session, key)
+        if book is None:
+            raise HTTPException(status_code=404, detail="No such book.")
+        return _work_details_from_local(book, user, session)
+    if not is_open_library_work_id(work_id):
         raise HTTPException(status_code=400, detail="That is not an Open Library work id")
-    key = f"/works/{work_id}"
+    key = work_key(work_id)
     book = _book_by_key(session, key)
     if book is not None:
         return _work_details_from_local(book, user, session)
@@ -841,9 +1063,11 @@ async def refresh_work_details(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> BookDetailsOut:
-    if not re.fullmatch(r"OL\d+W", work_id):
+    if is_club_work_id(work_id):
+        raise HTTPException(status_code=400, detail=CUSTOM_NO_REFRESH)
+    if not is_open_library_work_id(work_id):
         raise HTTPException(status_code=400, detail="That is not an Open Library work id")
-    key = f"/works/{work_id}"
+    key = work_key(work_id)
     details = await fetch_work_details(key, bypass_cache=True)
     book = _import_work_details(session, work_id, details)
     return _work_details_from_local(book, user, session, ol_rating_count=details.ol_rating_count)

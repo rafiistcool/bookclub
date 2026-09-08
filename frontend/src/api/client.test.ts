@@ -51,6 +51,9 @@ describe("api client", () => {
     await api.refreshBook("OL1168007W");
     expect(fetchMock.mock.calls[1][0]).toBe("/api/books/works/OL1168007W/refresh");
     expect(fetchMock.mock.calls[1][1].method).toBe("POST");
+    await api.createCustomBook({ title: "My Zine", authors: "Ada" });
+    expect(fetchMock.mock.calls[2][0]).toBe("/api/books/custom");
+    expect(fetchMock.mock.calls[2][1].method).toBe("POST");
   });
 
   it("addresses the diary by work id and entries by id", async () => {

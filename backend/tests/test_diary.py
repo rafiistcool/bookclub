@@ -338,3 +338,25 @@ def test_club_rating_averages_finished_readers(client, monkeypatch):
     fresh = client.get("/api/books/works/OL2W").json()
     assert fresh["club_rating"] is None
     assert fresh["rating_count"] == 0
+
+
+def test_custom_book_has_a_diary_without_open_library(client, monkeypatch):
+    register(client, "ada")
+    created = client.post(
+        "/api/books/custom",
+        json={"title": "Kitchen Zine", "authors": "Ada"},
+    )
+    assert created.status_code == 201
+    work_id = created.json()["ol_work_key"].rsplit("/", 1)[-1]
+
+    class Boom:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("Open Library should not be contacted")
+
+    monkeypatch.setattr(books_router.httpx, "AsyncClient", Boom)
+    path = f"/api/books/works/{work_id}/posts"
+    empty = client.get(path).json()
+    assert empty["ol_work_key"].endswith(work_id)
+    posted = client.post(path, json={"body": "First issue is out."})
+    assert posted.status_code == 201, posted.text
+    assert client.get(path).json()["items"][0]["body"] == "First issue is out."

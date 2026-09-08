@@ -138,7 +138,7 @@ onMounted(load);
     <template v-else-if="pick">
       <article class="hero">
         <RouterLink class="hero-cover" :to="bookPath(pick.book.ol_work_key)">
-          <BookCover :title="pick.book.title" :cover-id="pick.book.cover_id" />
+          <BookCover :title="pick.book.title" :cover-id="pick.book.cover_id" eager />
         </RouterLink>
         <div class="hero-body">
           <p class="kicker">Reading now</p>
