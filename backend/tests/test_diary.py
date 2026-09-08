@@ -226,6 +226,50 @@ def test_entry_on_the_current_pick_records_the_pick(client):
         assert row is not None and row.pick_id is None
 
 
+def test_feed_exposes_viewer_position_for_spoiler_shield(client):
+    register(client, "ada")
+    _shelve(client)
+    client.patch("/api/shelf/1", json={"progress": 80})
+    spoiler = "The coconut pillow on p. 237 is a tell."
+    client.post(DIARY, json={"body": spoiler, "spoiler_upto": 70})
+    client.post(
+        "/api/books/works/OL2W/posts",
+        json={"body": "Plain note", "book": {"title": "The Song of Achilles"}},
+    )
+
+    own = {row["book"]["title"]: row for row in client.get("/api/diary").json()["items"]}
+    assert own["Circe"]["my_progress"] == 80
+    assert own["Circe"]["my_status"] == "currently_reading"
+    assert own["Circe"]["entry"]["mine"] is True
+    assert own["Circe"]["entry"]["body"] == spoiler
+    assert own["The Song of Achilles"]["my_progress"] is None
+    assert own["The Song of Achilles"]["my_status"] is None
+
+    _second_member(client)
+    unshelved = {row["book"]["title"]: row for row in client.get("/api/diary").json()["items"]}
+    assert unshelved["Circe"]["my_progress"] is None
+    assert unshelved["Circe"]["my_status"] is None
+    assert unshelved["Circe"]["entry"]["mine"] is False
+    assert unshelved["Circe"]["entry"]["spoiler_upto"] == 70
+
+    _shelve(client)
+    client.patch("/api/shelf/2", json={"progress": 25})
+    behind = {row["book"]["title"]: row for row in client.get("/api/diary").json()["items"]}
+    assert behind["Circe"]["my_progress"] == 25
+    assert behind["Circe"]["my_status"] == "currently_reading"
+    assert behind["The Song of Achilles"]["my_progress"] is None
+
+    client.patch("/api/shelf/2", json={"status": "finished", "rating": 4})
+    done = {row["book"]["title"]: row for row in client.get("/api/diary").json()["items"]}
+    assert done["Circe"]["my_progress"] == 100
+    assert done["Circe"]["my_status"] == "finished"
+
+    client.patch("/api/shelf/2", json={"status": "did_not_finish"})
+    dnf = {row["book"]["title"]: row for row in client.get("/api/diary").json()["items"]}
+    assert dnf["Circe"]["my_progress"] is None
+    assert dnf["Circe"]["my_status"] == "did_not_finish"
+
+
 def test_feed_is_newest_first_across_books_and_pages(client):
     register(client, "ada")
     root = client.post(DIARY, json={"body": "Circe 1", "book": CIRCE_BOOK}).json()

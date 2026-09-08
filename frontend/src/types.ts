@@ -221,6 +221,8 @@ export type DiaryFeedItem = {
   entry: DiaryEntry;
   book: Book;
   parent_author: string | null;
+  my_progress: number | null;
+  my_status: Status | null;
 };
 
 export type DiaryFeed = {

@@ -570,6 +570,10 @@ class DiaryFeedItemOut(BaseModel):
     book: BookOut
     # Set when the entry is a reply, so the feed can say who it answers.
     parent_author: str | None = None
+    # The viewer's own position on this item's book, so Club can shield
+    # spoiler-flagged excerpts the same way the book diary does.
+    my_progress: int | None = None
+    my_status: ShelfStatus | None = None
 
 
 class DiaryFeedOut(BaseModel):

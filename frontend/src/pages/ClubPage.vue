@@ -4,7 +4,7 @@ import { api, ApiError } from "../api/client";
 import BookCover from "../components/BookCover.vue";
 import NextUpVote from "../components/NextUpVote.vue";
 import { bookPath, STATUS_SHORT, workId } from "../constants";
-import { excerpt, positionMarker } from "../diary";
+import { clubFeedPreview, isShielded, positionMarker } from "../diary";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import type { DiaryFeedItem, Member, OverlapBook } from "../types";
@@ -186,7 +186,12 @@ watch(includeReading, loadOverlap);
                     {{ item.book.title }}
                   </span>
                 </span>
-                <span class="feed-body clamp-2">
+                <span
+                  class="feed-body clamp-2"
+                  :class="{
+                    shielded: isShielded(item.entry, item.my_progress, item.my_status),
+                  }"
+                >
                   <span
                     v-if="item.entry.spoiler_upto != null"
                     class="badge"
@@ -194,7 +199,7 @@ watch(includeReading, loadOverlap);
                   >
                     spoiler-flagged
                   </span>
-                  {{ excerpt(item.entry.body) }}
+                  {{ clubFeedPreview(item) }}
                 </span>
                 <span class="finer subtle feed-foot">
                   <template v-if="positionMarker(item.entry)">
@@ -389,6 +394,10 @@ watch(includeReading, loadOverlap);
 .feed-body .badge {
   margin-right: var(--space-1);
   vertical-align: middle;
+}
+
+.feed-body.shielded {
+  font-style: italic;
 }
 
 .feed-foot {

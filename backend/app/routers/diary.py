@@ -379,6 +379,7 @@ def diary_feed(
             shelf = _shelf_by_user(session, row.book_id)
             shelf_cache[row.book_id] = shelf
         parent = parents.get(row.parent_id or 0) if row.parent_id is not None else None
+        my_progress, my_status = _position(shelf.get(me.id or 0))
         items.append(
             DiaryFeedItemOut(
                 entry=_entry_out(row, me, tz_name, shelf),
@@ -386,6 +387,8 @@ def diary_feed(
                 parent_author=(
                     parent.author.username if parent is not None and parent.author else None
                 ),
+                my_progress=my_progress,
+                my_status=my_status,
             )
         )
     return DiaryFeedOut(items=items, has_more=has_more, timezone=tz_name)

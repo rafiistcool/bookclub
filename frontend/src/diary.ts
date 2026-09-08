@@ -58,6 +58,23 @@ export function excerpt(body: string, max = 140): string {
   return `${flat.slice(0, max - 1).trimEnd()}…`;
 }
 
+/**
+ * Club → Recently written preview. Shielded items never leak the body;
+ * the badge already says they are spoiler-flagged.
+ */
+export function clubFeedPreview(
+  item: {
+    entry: { body: string; spoiler_upto: number | null; deleted: boolean; mine: boolean };
+    my_progress: number | null;
+    my_status: Status | null;
+  },
+): string {
+  if (isShielded(item.entry, item.my_progress, item.my_status)) {
+    return "Spoiler-flagged note";
+  }
+  return excerpt(item.entry.body);
+}
+
 export function countEntries(items: DiaryEntry[]): number {
   return items.reduce(
     (sum, entry) => sum + (entry.deleted ? 0 : 1) + entry.replies.length,

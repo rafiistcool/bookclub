@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  clubFeedPreview,
   countEntries,
   defaultSpoilerUpto,
   excerpt,
@@ -7,7 +8,7 @@ import {
   positionMarker,
   spoilerLabel,
 } from "./diary";
-import type { DiaryEntry } from "./types";
+import type { DiaryEntry, DiaryFeedItem } from "./types";
 
 function entry(overrides: Partial<DiaryEntry> = {}): DiaryEntry {
   return {
@@ -73,6 +74,44 @@ describe("composer defaults", () => {
     expect(spoilerLabel(null)).toBe("No spoiler flag");
     expect(spoilerLabel(100)).toBe("Whole book");
     expect(spoilerLabel(35)).toBe("Safe up to 35%");
+  });
+});
+
+describe("clubFeedPreview", () => {
+  const secret = "The coconut pillow on p. 237 is a tell.";
+
+  function feedItem(
+    overrides: {
+      entry?: Partial<DiaryEntry>;
+      my_progress?: number | null;
+      my_status?: DiaryFeedItem["my_status"];
+    } = {},
+  ): Pick<DiaryFeedItem, "entry" | "my_progress" | "my_status"> {
+    return {
+      entry: entry({ body: secret, spoiler_upto: 80, ...overrides.entry }),
+      my_progress: overrides.my_progress ?? null,
+      my_status: overrides.my_status ?? null,
+    };
+  }
+
+  it("hides the excerpt when the viewer is behind or has not shelved the book", () => {
+    expect(clubFeedPreview(feedItem({ my_progress: 20, my_status: "currently_reading" }))).toBe(
+      "Spoiler-flagged note",
+    );
+    expect(clubFeedPreview(feedItem())).toBe("Spoiler-flagged note");
+    expect(clubFeedPreview(feedItem({ my_progress: null, my_status: "want_to_read" }))).toBe(
+      "Spoiler-flagged note",
+    );
+  });
+
+  it("shows the excerpt to the writer, finished or DNF readers, and readers past the flag", () => {
+    expect(clubFeedPreview(feedItem({ entry: { mine: true }, my_progress: 10 }))).toBe(secret);
+    expect(clubFeedPreview(feedItem({ my_status: "finished" }))).toBe(secret);
+    expect(clubFeedPreview(feedItem({ my_progress: 5, my_status: "did_not_finish" }))).toBe(secret);
+    expect(clubFeedPreview(feedItem({ my_progress: 80, my_status: "currently_reading" }))).toBe(
+      secret,
+    );
+    expect(clubFeedPreview(feedItem({ entry: { spoiler_upto: null } }))).toBe(secret);
   });
 });
 
