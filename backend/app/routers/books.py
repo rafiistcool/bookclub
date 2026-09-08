@@ -76,7 +76,9 @@ SUBJECT_URL = "https://openlibrary.org/subjects/{subject}.json"
 WORK_URL = "https://openlibrary.org/works/{work_id}.json"
 AUTHOR_URL = "https://openlibrary.org/authors/{author_id}.json"
 
-SEARCH_FIELDS = "key,title,author_name,cover_i,first_publish_year,isbn,cover_edition_key"
+# isbn is omitted: OL returns every edition ISBN and ~10× the payload.
+# cover_edition_key already covers the /b/olid/ fallback.
+SEARCH_FIELDS = "key,title,author_name,cover_i,first_publish_year,cover_edition_key"
 WORK_SEARCH_FIELDS = (
     "key,title,author_name,cover_i,first_publish_year,"
     "number_of_pages_median,ratings_average,ratings_count,subject"
@@ -396,7 +398,9 @@ def _search_candidates(query: str, subject: str) -> list[str]:
         fielded = f'title:"{title}" author:"{author}"'
         if subject:
             fielded = f"{fielded} subject_key:{subject}"
-        return [fielded, primary]
+        # Raw query first. "Stand by Me" must not become title:"Stand" author:"Me"
+        # before the plain q, or junk fielded hits short-circuit the real title.
+        return [primary, fielded]
     title_q = f"title:{query}"
     author_q = f"author:{query}"
     if subject:
@@ -711,15 +715,24 @@ async def search_books(
         raise HTTPException(status_code=400, detail=QUERY_TOO_SHORT)
 
     resolved_sort: Sort = sort or ("relevance" if query else "readinglog")
-    result = await fetch_open_library(
-        query,
-        subject=subject,
-        sort=resolved_sort,
-        page=page,
-        limit=limit,
-    )
-    if query and page == 1:
-        result = _merge_local_hits(result, _local_catalog_hits(session, query, limit), limit)
+    local = _local_catalog_hits(session, query, limit) if (query and page == 1) else []
+    try:
+        result = await fetch_open_library(
+            query,
+            subject=subject,
+            sort=resolved_sort,
+            page=page,
+            limit=limit,
+        )
+    except HTTPException:
+        if local:
+            return _annotate(
+                SearchPage(items=local, page=page, has_more=False),
+                user,
+                session,
+            )
+        raise
+    result = _merge_local_hits(result, local, limit)
     return _annotate(result, user, session)
 
 
