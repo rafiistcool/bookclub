@@ -28,6 +28,21 @@ describe("BookCover", () => {
     expect(wrapper.text()).toContain("C");
   });
 
+  it("ignores an Open Library CDN imageUrl so xs tiles stay on the S tier", () => {
+    const wrapper = mount(BookCover, {
+      props: {
+        title: "Circe",
+        coverId: 123,
+        workKey: "/works/OL1W",
+        imageUrl: "https://covers.openlibrary.org/b/id/123-L.jpg?default=false",
+        size: "xs",
+      },
+    });
+    expect(wrapper.get("img").attributes("src")).toBe(
+      "https://covers.openlibrary.org/b/id/123-S.jpg?default=false",
+    );
+  });
+
   it("renders an https cover URL and skips Open Library sources", () => {
     const wrapper = mount(BookCover, {
       props: {

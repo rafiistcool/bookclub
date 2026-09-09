@@ -1,5 +1,5 @@
 from app.config import get_settings
-from app.covers import normalize_cover_image_url
+from app.covers import storable_cover_image_url
 from app.models import Book, ShelfEntry
 from app.schemas import BookOut, ShelfItemOut
 from app.works import isbn_from_work_key
@@ -10,7 +10,7 @@ def cover_url(
     ol_work_key: str | None = None,
     cover_image_url: str | None = None,
 ) -> str | None:
-    remote = normalize_cover_image_url(cover_image_url)
+    remote = storable_cover_image_url(cover_image_url)
     if remote:
         return remote
     if cover_id is not None and cover_id > 0:

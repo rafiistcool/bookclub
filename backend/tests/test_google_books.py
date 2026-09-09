@@ -125,6 +125,7 @@ class _FakeClient:
     gb_items: list[dict] = [CIRCE_VOLUME]
     gb_total: int = 1
     gb_status: int | None = None
+    gb_error: dict | None = None
     ol_status: int | None = None
     ol_docs: list[dict] = [OL_CIRCE]
     volumes: dict[str, dict] = {}
@@ -144,6 +145,7 @@ class _FakeClient:
         cls.gb_items = [CIRCE_VOLUME]
         cls.gb_total = 1
         cls.gb_status = None
+        cls.gb_error = None
         cls.ol_status = None
         cls.ol_docs = [OL_CIRCE]
         cls.volumes = {
@@ -167,7 +169,9 @@ class _FakeClient:
             assert "key" not in (params or {})
             assert (headers or {}).get("X-Goog-Api-Key") == "test-gb-key"
             if _FakeClient.gb_status:
-                return _FakeResponse(None, url, status_code=_FakeClient.gb_status)
+                return _FakeResponse(
+                    _FakeClient.gb_error, url, status_code=_FakeClient.gb_status
+                )
             if url.rstrip("/").endswith("/volumes"):
                 q = str((params or {}).get("q") or "")
                 items = list(_FakeClient.gb_items)
@@ -180,7 +184,7 @@ class _FakeClient:
                 elif "Song of Achilles" in q:
                     items = [ACHILLES_VOLUME]
                 return _FakeResponse(
-                    {"totalItems": 0 if not items else _FakeClient.gb_total, "items": items},
+                    {"totalItems": _FakeClient.gb_total, "items": items},
                     url,
                 )
             volume_id = url.rsplit("/", 1)[-1]
@@ -533,6 +537,16 @@ def test_cover_url_from_image_links_https_and_zoom():
     assert normalize_cover_image_url("http://books.google.com/books/content?id=x") == (
         "https://books.google.com/books/content?id=x"
     )
+    from app.covers import storable_cover_image_url
+
+    assert storable_cover_image_url(CIRCE_COVER) == CIRCE_COVER
+    assert (
+        storable_cover_image_url(
+            "https://covers.openlibrary.org/b/id/123-L.jpg?default=false"
+        )
+        is None
+    )
+    assert storable_cover_image_url("https://attacker.example/pixel.gif") is None
 
 
 def test_isbn_cover_url_from_work_key(monkeypatch):
@@ -694,4 +708,142 @@ def test_goodreads_import_prefers_google(gb):
     assert _open_library_urls() == []
     covers = {row["book"]["ol_work_key"]: row["book"]["cover_url"] for row in shelf}
     assert covers["/works/ISBN9780316769488"] == CIRCE_COVER
+
+
+def _book_row(client, key: str):
+    from sqlmodel import Session, select
+
+    from app.models import Book
+
+    with Session(client.app.state.engine) as session:
+        return session.exec(select(Book).where(Book.ol_work_key == key)).first()
+
+
+def test_pick_does_not_persist_ol_cdn_cover_url(client):
+    register(client, "ada")
+    ol_cdn = "https://covers.openlibrary.org/b/id/123-L.jpg?default=false"
+    response = client.put(
+        "/api/pick",
+        json={
+            "ol_work_key": "/works/OL1W",
+            "title": "Circe",
+            "cover_id": 123,
+            "cover_url": ol_cdn,
+        },
+    )
+    assert response.status_code == 200, response.text
+    book = _book_row(client, "/works/OL1W")
+    assert book is not None
+    assert book.cover_image_url is None
+    assert book.cover_id == 123
+
+
+def test_shelf_rejects_non_google_cover_url(client):
+    register(client, "ada")
+    response = client.post(
+        "/api/shelf",
+        json={
+            "ol_work_key": "/works/OL1W",
+            "title": "Circe",
+            "cover_id": 123,
+            "cover_url": "https://attacker.example/pixel.gif?u=1",
+            "status": "want_to_read",
+        },
+    )
+    assert response.status_code == 201, response.text
+    book = _book_row(client, "/works/OL1W")
+    assert book is not None
+    assert book.cover_image_url is None
+    assert book.cover_id == 123
+
+
+def test_shelf_isbn_x_and_X_are_the_same_row(gb):
+    first = gb.post(
+        "/api/shelf",
+        json={
+            "ol_work_key": "/works/ISBN080442957X",
+            "title": "Circe",
+            "status": "want_to_read",
+        },
+    )
+    assert first.status_code == 201, first.text
+    second = gb.post(
+        "/api/shelf",
+        json={
+            "ol_work_key": "/works/ISBN080442957x",
+            "title": "Circe",
+            "status": "want_to_read",
+        },
+    )
+    assert second.status_code == 409
+    keys = {row["book"]["ol_work_key"] for row in gb.get("/api/shelf").json()["items"]}
+    assert keys == {"/works/ISBN080442957X"}
+
+
+def test_google_403_access_not_configured_is_502(gb):
+    _FakeClient.gb_status = 403
+    _FakeClient.gb_error = {
+        "error": {
+            "message": "Books API has not been used in project 123 before or it is disabled.",
+            "errors": [{"reason": "accessNotConfigured"}],
+        }
+    }
+    response = gb.get("/api/books/search", params={"q": "circe"})
+    assert response.status_code == 502
+    assert "busy" not in response.json()["detail"].lower()
+
+    _FakeClient.gb_status = None
+    _FakeClient.gb_error = None
+    _FakeClient.calls = []
+    again = gb.get("/api/books/search", params={"q": "other"})
+    assert again.status_code == 200
+    assert _FakeClient.params_for("googleapis.com/books")
+
+
+def test_google_403_quota_cools_down(gb):
+    _FakeClient.gb_status = 403
+    _FakeClient.gb_error = {
+        "error": {
+            "message": "Quota exceeded",
+            "errors": [{"reason": "rateLimitExceeded"}],
+        }
+    }
+    response = gb.get("/api/books/search", params={"q": "circe"})
+    assert response.status_code == 429
+
+    _FakeClient.gb_status = None
+    _FakeClient.gb_error = None
+    _FakeClient.calls = []
+    again = gb.get("/api/books/search", params={"q": "other"})
+    assert again.status_code == 429
+    assert _FakeClient.params_for("googleapis.com/books") == []
+
+
+def test_goodreads_import_while_cooling_down(gb):
+    from pathlib import Path
+
+    _FakeClient.gb_status = 429
+    gb.get("/api/books/search", params={"q": "circe"})
+    _FakeClient.gb_status = None
+    _FakeClient.calls = []
+    raw = (Path(__file__).parent / "fixtures" / "goodreads.csv").read_bytes()
+    response = gb.post(
+        "/api/shelf/import",
+        files={"file": ("goodreads.csv", raw, "text/csv")},
+    )
+    assert response.status_code == 429
+    assert "busy" in response.json()["detail"].lower()
+    assert _FakeClient.params_for("googleapis.com/books") == []
+
+
+def test_later_empty_google_page_has_more_false_when_total_stays_high(gb):
+    _FakeClient.gb_total = 50
+    page1 = gb.get("/api/books/search", params={"q": "circe", "page": 1})
+    assert page1.json()["has_more"] is True
+    _FakeClient.gb_items = []
+    page2 = gb.get("/api/books/search", params={"q": "circe", "page": 2})
+    assert page2.status_code == 200
+    assert page2.json()["items"] == []
+    assert page2.json()["has_more"] is False
+    assert _open_library_urls() == []
 

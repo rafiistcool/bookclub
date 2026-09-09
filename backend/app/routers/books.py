@@ -19,6 +19,7 @@ from app.googlebooks import (
     VolumeDetails,
     fetch_volume,
     google_books_enabled,
+    google_http_exception,
     lookup_isbn as lookup_isbn_google,
     search_volumes,
 )
@@ -502,9 +503,7 @@ async def fetch_open_library(
 
 
 def _google_http_error(exc: GoogleBooksError, *, detail: str) -> HTTPException:
-    if exc.status in {429, 403}:
-        return HTTPException(status_code=429, detail=RATE_LIMITED)
-    return HTTPException(status_code=502, detail=detail)
+    return google_http_exception(exc, detail=detail)
 
 
 def _google_sort(sort: Sort) -> str:
@@ -527,7 +526,9 @@ async def fetch_google_catalog(
         )
     except GoogleBooksError as exc:
         raise _google_http_error(exc, detail=detail) from exc
-    return SearchPage(items=items, page=page, has_more=page * limit < total)
+    return SearchPage(
+        items=items, page=page, has_more=bool(items) and page * limit < total
+    )
 
 
 async def fetch_catalog(

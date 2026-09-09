@@ -10,6 +10,7 @@ empty key means this module is not called.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from collections import OrderedDict
@@ -50,12 +51,59 @@ _COOLDOWN_SEC = 120.0
 _cooldown_until = 0.0
 
 
-class GoogleBooksError(Exception):
-    """Upstream Google Books failed (transport, 429, or 5xx)."""
+_QUOTA_REASONS = frozenset(
+    {
+        "rateLimitExceeded",
+        "dailyLimitExceeded",
+        "userRateLimitExceeded",
+    }
+)
 
-    def __init__(self, message: str = "google books unavailable", status: int | None = None):
+
+class GoogleBooksError(Exception):
+    """Upstream Google Books failed (transport, quota, or 5xx)."""
+
+    def __init__(
+        self,
+        message: str = "google books unavailable",
+        status: int | None = None,
+        reason: str | None = None,
+        quota: bool = False,
+    ):
         super().__init__(message)
         self.status = status
+        self.reason = reason
+        self.quota = quota
+
+
+def _is_quota(status: int | None, reason: str | None) -> bool:
+    return status == 429 or (status == 403 and reason in _QUOTA_REASONS)
+
+
+def _google_error_meta(response: httpx.Response) -> tuple[str | None, str | None]:
+    try:
+        payload = response.json()
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return None, None
+    if not isinstance(payload, dict):
+        return None, None
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return None, None
+    message = str(error.get("message") or "").strip() or None
+    reason = None
+    errors = error.get("errors")
+    if isinstance(errors, list) and errors and isinstance(errors[0], dict):
+        reason = str(errors[0].get("reason") or "").strip() or None
+    return message, reason
+
+
+def google_http_exception(exc: GoogleBooksError, *, detail: str) -> HTTPException:
+    if exc.status == 404:
+        return HTTPException(status_code=404, detail="No such book.")
+    if exc.quota or exc.status == 429:
+        return HTTPException(status_code=429, detail=RATE_LIMITED)
+    return HTTPException(status_code=502, detail=detail)
 
 
 @dataclass
@@ -94,10 +142,9 @@ def google_books_cooling_down() -> bool:
     return time() < _cooldown_until
 
 
-def _trip_cooldown(status: int | None) -> None:
+def _trip_cooldown() -> None:
     global _cooldown_until
-    if status in {429, 403}:
-        _cooldown_until = time() + _COOLDOWN_SEC
+    _cooldown_until = time() + _COOLDOWN_SEC
 
 
 def _cache_get(key: str) -> dict | None:
@@ -281,7 +328,7 @@ def _google_headers() -> dict[str, str]:
 
 async def _fetch_json_uncached(url: str, params: dict[str, str | int]) -> dict:
     if google_books_cooling_down():
-        raise GoogleBooksError(status=429)
+        raise GoogleBooksError(status=429, quota=True)
     started = monotonic()
     try:
         async with httpx.AsyncClient(timeout=GB_TIMEOUT) as client:
@@ -292,30 +339,43 @@ async def _fetch_json_uncached(url: str, params: dict[str, str | int]) -> dict:
             )
         status = response.status_code
         if status >= 400:
-            _trip_cooldown(status)
+            message, reason = _google_error_meta(response)
+            quota = _is_quota(status, reason)
+            if quota:
+                _trip_cooldown()
             elapsed_ms = int((monotonic() - started) * 1000)
             logger.warning(
-                "google books request failed url=%s status=%s latency_ms=%s",
+                "google books request failed url=%s status=%s latency_ms=%s "
+                "reason=%s message=%s",
                 url,
                 status,
                 elapsed_ms,
+                reason,
+                message,
             )
-            raise GoogleBooksError(status=status)
+            raise GoogleBooksError(status=status, reason=reason, quota=quota)
         payload = response.json()
     except GoogleBooksError:
         raise
     except httpx.HTTPError as exc:
         elapsed_ms = int((monotonic() - started) * 1000)
-        status = getattr(getattr(exc, "response", None), "status_code", None)
-        _trip_cooldown(status)
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+        reason = None
+        if response is not None:
+            _message, reason = _google_error_meta(response)
+        quota = _is_quota(status, reason)
+        if quota:
+            _trip_cooldown()
         logger.warning(
-            "google books request failed url=%s status=%s latency_ms=%s err=%s",
+            "google books request failed url=%s status=%s latency_ms=%s err=%s reason=%s",
             url,
             status,
             elapsed_ms,
             exc.__class__.__name__,
+            reason,
         )
-        raise GoogleBooksError(status=status) from exc
+        raise GoogleBooksError(status=status, reason=reason, quota=quota) from exc
     except ValueError as exc:
         raise GoogleBooksError() from exc
 
@@ -417,12 +477,8 @@ async def fetch_volume(volume_id: str, *, bypass_cache: bool = False) -> VolumeD
             bypass_cache=bypass_cache,
         )
     except GoogleBooksError as exc:
-        if exc.status == 404:
-            raise HTTPException(status_code=404, detail="No such book.") from exc
-        if exc.status == 429:
-            raise HTTPException(status_code=429, detail=RATE_LIMITED) from exc
-        raise HTTPException(
-            status_code=502, detail="Could not load that book right now. Try again."
+        raise google_http_exception(
+            exc, detail="Could not load that book right now. Try again."
         ) from exc
     details = volume_details(payload)
     if details is None:

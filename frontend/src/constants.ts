@@ -78,7 +78,22 @@ export function isbnCoverUrl(
   return coverSrc("isbn", cleaned, size);
 }
 
-/** Google Books (or any https) cover. Rewrite http→https; reject non-URLs. */
+function isOpenLibraryCoverHost(host: string): boolean {
+  return (
+    host === "covers.openlibrary.org" || host.endsWith(".covers.openlibrary.org")
+  );
+}
+
+function isAllowedCoverHost(host: string): boolean {
+  return (
+    host === "books.google.com" ||
+    host.endsWith(".books.google.com") ||
+    host === "googleusercontent.com" ||
+    host.endsWith(".googleusercontent.com")
+  );
+}
+
+/** Google Books https cover. OL CDN URLs fall through to size-aware coverId. */
 export function remoteCoverUrl(url: string | null | undefined): string | null {
   const text = (url || "").trim();
   if (!text) return null;
@@ -87,6 +102,9 @@ export function remoteCoverUrl(url: string | null | undefined): string | null {
   try {
     const parsed = new URL(https);
     if (parsed.protocol !== "https:") return null;
+    if (isOpenLibraryCoverHost(parsed.hostname) || !isAllowedCoverHost(parsed.hostname)) {
+      return null;
+    }
     return https;
   } catch {
     return null;

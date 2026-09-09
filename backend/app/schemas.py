@@ -3,7 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.covers import normalize_cover_image_url
+from app.covers import storable_cover_image_url
 from app.models import ShelfStatus
 from app.themes import (
     COLOR_MODES,
@@ -20,7 +20,7 @@ USERNAME_RE = re.compile(r"^[a-z0-9_]{2,32}$")
 def optional_cover_url(value: str | None) -> str | None:
     if value is None:
         return None
-    return normalize_cover_image_url(value.strip())
+    return storable_cover_image_url(value.strip())
 
 
 class UserOut(BaseModel):

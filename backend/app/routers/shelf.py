@@ -159,9 +159,9 @@ async def import_goodreads(
 
     imported = 0
     looked_up = await lookup_catalog(rows)
-    for row, hit in looked_up:
+    for row, hit, reason in looked_up:
         if hit is None:
-            skips.append((row.title, "No match"))
+            skips.append((row.title, reason or "No match"))
             continue
         book = upsert_book(
             session,

@@ -66,6 +66,10 @@ describe("covers and links", () => {
       "https://books.google.com/books/content?id=x",
     );
     expect(remoteCoverUrl("javascript:alert(1)")).toBeNull();
+    expect(
+      remoteCoverUrl("https://covers.openlibrary.org/b/id/123-L.jpg?default=false"),
+    ).toBeNull();
+    expect(remoteCoverUrl("https://attacker.example/pixel.gif")).toBeNull();
     expect(isbnFromWorkKey("/works/ISBN9780316769488")).toBe("9780316769488");
     expect(isbnFromWorkKey("/works/ISBN080442957x")).toBe("080442957X");
     expect(openLibraryUrl("/works/ISBN9780316769488")).toBeNull();
