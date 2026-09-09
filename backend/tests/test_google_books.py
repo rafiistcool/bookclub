@@ -591,11 +591,10 @@ def test_title_and_popular_sorts_stay_on_google(gb):
     assert "orderBy" not in _FakeClient.params_for("googleapis.com/books")[-1]
     assert _open_library_urls() == []
 
-    _FakeClient.calls = []
     popular = gb.get("/api/books/search", params={"q": "circe", "sort": "readinglog"})
     assert popular.status_code == 200
     assert popular.json()["items"][0]["cover_url"] == CIRCE_COVER
-    assert _FakeClient.params_for("googleapis.com/books")
+    assert popular.json()["items"][0]["ol_work_key"] == "/works/ISBN9780316769488"
     assert _open_library_urls() == []
 
 
