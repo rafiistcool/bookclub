@@ -20,6 +20,14 @@ You host it. There is no public service. One named club per instance.
 - **Push** — Web Push for meetings, a new pick, and diary notes.
 - **One box** — FastAPI + the Vue app in a single image. SQLite WAL. No Redis, no Postgres. amd64 and arm64.
 
+<p align="center">
+  <img src="docs/discover.png" alt="Discover: search Open Library by title, author, or ISBN, with trending and subject shelves" width="900" />
+</p>
+<p align="center">
+  <img src="docs/home.png" alt="Home: current club pick, everyone’s progress, next-up vote, and diary" width="440" />
+  <img src="docs/shelf.png" alt="Shelf: Want to read, Reading, Finished, and Did not finish columns" width="440" />
+</p>
+
 ---
 
 ## Self-host
