@@ -41,13 +41,21 @@ export const useSession = defineStore("session", {
       await api.login({ username, password });
       this.user = await api.me();
       useTheme().adopt(this.user);
-      useLocale().adopt(this.user);
+      const locale = useLocale();
+      if (locale.explicit) {
+        // Auth-screen EN|DE was an explicit choice; keep it (existing
+        // members are backfilled to `en`, so adopt() would undo the toggle).
+        void locale.persist();
+      } else {
+        locale.adopt(this.user);
+      }
     },
     async logout() {
       try {
         await api.logout();
       } finally {
         this.user = null;
+        useLocale().clearExplicit();
       }
     },
   },

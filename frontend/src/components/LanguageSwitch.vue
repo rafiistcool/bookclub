@@ -18,7 +18,7 @@ const locale = useLocale();
       :key="id"
       type="button"
       :aria-pressed="locale.locale === id"
-      @click="locale.setLocale(id)"
+      @click="locale.choose(id)"
     >
       {{ compact ? id.toUpperCase() : t(`locale.${id}`) }}
     </button>

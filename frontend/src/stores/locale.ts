@@ -11,6 +11,9 @@ import type { User } from "../types";
 export const useLocale = defineStore("locale", {
   state: () => ({
     locale: detectLocale() as Locale,
+    // True when the user picked EN|DE on the auth screens this session.
+    // Login persists that instead of snapping to a backfilled server value.
+    explicit: false,
   }),
   actions: {
     init() {
@@ -19,7 +22,16 @@ export const useLocale = defineStore("locale", {
     adopt(user: User | null) {
       if (!user || !isLocale(user.locale)) return;
       this.locale = user.locale;
+      this.explicit = false;
       applyLocale(this.locale);
+    },
+    /** Auth-screen toggle: counts even if this locale is already showing. */
+    choose(locale: Locale) {
+      this.explicit = true;
+      this.setLocale(locale);
+    },
+    clearExplicit() {
+      this.explicit = false;
     },
     setLocale(locale: Locale) {
       if (locale === this.locale) return;
@@ -30,6 +42,7 @@ export const useLocale = defineStore("locale", {
     async persist() {
       try {
         await api.savePreferences({ locale: this.locale });
+        this.explicit = false;
       } catch {
         /* Logged out or offline; localStorage keeps the choice. */
       }
