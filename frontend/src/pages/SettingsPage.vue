@@ -102,7 +102,7 @@ async function onAvatarFile(event: Event) {
   const file = input.files?.[0];
   input.value = "";
   if (!file || avatarBusy.value) return;
-  if (file.size > 2 * 1024 * 1024) {
+  if (file.size > 50 * 1024 * 1024) {
     toast.show(t("errors.pictureTooLarge"));
     return;
   }

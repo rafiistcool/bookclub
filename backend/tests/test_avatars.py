@@ -4,7 +4,13 @@ from PIL import Image
 from sqlalchemy import inspect as sa_inspect
 from sqlmodel import Session, select
 
-from app.avatars import TOO_LARGE, TOO_MANY_PIXELS, oversize_content_length
+from app.avatars import (
+    MAX_UPLOAD_BYTES,
+    TOO_LARGE,
+    TOO_MANY_PIXELS,
+    UPLOAD_LENGTH_SLACK,
+    oversize_content_length,
+)
 from app.models import User
 from app.serialize import avatar_url_for
 from tests.conftest import login, register
@@ -71,15 +77,16 @@ def test_rejects_non_image_and_oversize(client):
     register(client, "ada")
     not_image = _upload(client, b"<svg xmlns='http://www.w3.org/2000/svg'></svg>", "x.svg")
     assert not_image.status_code == 400
-    huge = _upload(client, b"\xff\xd8\xff" + b"x" * (2 * 1024 * 1024), "big.jpg")
+    huge = _upload(client, b"\xff\xd8\xff" + b"x" * MAX_UPLOAD_BYTES, "big.jpg")
     assert huge.status_code == 400
+    assert huge.json()["detail"] == TOO_LARGE
     assert client.get("/api/auth/me").json()["avatar_url"] is None
 
 
 def test_rejects_small_file_with_too_many_pixels(client):
     register(client, "ada")
     bomb = _png(size=6000)
-    assert len(bomb) < 2 * 1024 * 1024
+    assert len(bomb) < MAX_UPLOAD_BYTES
     assert Image.open(BytesIO(bomb)).size == (6000, 6000)
     response = _upload(client, bomb)
     assert response.status_code == 400
@@ -91,13 +98,14 @@ def test_oversize_content_length_is_rejected_before_read(client):
     register(client, "ada")
     assert oversize_content_length(None) is False
     assert oversize_content_length("100") is False
-    assert oversize_content_length(str(3 * 1024 * 1024)) is True
+    assert oversize_content_length(str(MAX_UPLOAD_BYTES + UPLOAD_LENGTH_SLACK)) is False
+    assert oversize_content_length(str(MAX_UPLOAD_BYTES + UPLOAD_LENGTH_SLACK + 1)) is True
     response = client.put(
         "/api/auth/me/avatar",
         content=b"ignored",
         headers={
             "Content-Type": "multipart/form-data; boundary=x",
-            "Content-Length": str(3 * 1024 * 1024),
+            "Content-Length": str(MAX_UPLOAD_BYTES + UPLOAD_LENGTH_SLACK + 1),
         },
     )
     assert response.status_code == 413

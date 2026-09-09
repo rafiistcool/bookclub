@@ -6,13 +6,13 @@ from io import BytesIO
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-MAX_UPLOAD_BYTES = 2 * 1024 * 1024
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 MAX_SOURCE_PIXELS = 25_000_000  # ~5000×5000, far above anything that ends up at 256px
 UPLOAD_LENGTH_SLACK = 4096
 OUTPUT_SIZE = 256
 JPEG_QUALITY = 85
 AVATAR_MIME = "image/jpeg"
-TOO_LARGE = "That picture is too large (2 MB max)"
+TOO_LARGE = "That picture is too large (50 MB max)"
 TOO_MANY_PIXELS = "That picture has too many pixels"
 NOT_A_PICTURE = "That file is not a picture"
 UNSUPPORTED_TYPE = "Use a JPEG, PNG, WebP, or GIF"

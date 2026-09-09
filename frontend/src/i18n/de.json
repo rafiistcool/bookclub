@@ -426,7 +426,7 @@
     "wrongCredentials": "Falscher Benutzername oder Passwort",
     "currentPasswordWrong": "Aktuelles Passwort ist falsch",
     "differentPassword": "Wähle ein anderes Passwort",
-    "pictureTooLarge": "Das Bild ist zu groß (höchstens 2 MB)",
+    "pictureTooLarge": "Das Bild ist zu groß (höchstens 50 MB)",
     "pictureTooManyPixels": "Das Bild hat zu viele Pixel",
     "usePicture": "Nimm ein JPEG, PNG, WebP oder GIF",
     "notAPicture": "Das ist keine Bilddatei",

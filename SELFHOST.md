@@ -104,8 +104,8 @@ Where the proxy lives is up to you:
   (or the equivalent) with automatic certificates. Configure and run it the
   way you do for your other services; nothing in this repo needs to match it.
   nginx defaults `client_max_body_size` to 1 MB, but the app accepts profile
-  pictures up to 2 MB — raise the proxy limit (for example
-  `client_max_body_size 4m;`) or nginx will 413 a photo the app would accept.
+  pictures up to 50 MB — raise the proxy limit (for example
+  `client_max_body_size 52m;`) or nginx will 413 a photo the app would accept.
 
 ### NAS / Unraid / home server
 
