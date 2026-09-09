@@ -2,7 +2,7 @@ import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { nextTick } from "vue";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SearchHit, SearchPage } from "../types";
 
 const search = vi.fn();
@@ -26,6 +26,7 @@ vi.mock("../api/client", () => ({
 
 import { ApiError } from "../api/client";
 import DiscoverPage from "./DiscoverPage.vue";
+import { resetDiscoverBrowseCache } from "./discoverCache";
 
 function hit(overrides: Partial<SearchHit> = {}): SearchHit {
   return {
@@ -98,6 +99,7 @@ async function submitQuery(wrapper: VueWrapper, q: string) {
 describe("DiscoverPage", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
+    resetDiscoverBrowseCache();
     search.mockReset();
     trending.mockReset();
     subject.mockReset();
@@ -156,6 +158,43 @@ describe("DiscoverPage", () => {
     expect(wrapper.text()).toContain("ISBN");
   });
 
+  it("starts two subject shelves before waiting on the rest", async () => {
+    const fiction = deferred<SearchPage>();
+    const scifi = deferred<SearchPage>();
+    const mystery = deferred<SearchPage>();
+    subject.mockImplementation((name: string) => {
+      if (name === "fiction") return fiction.promise;
+      if (name === "science_fiction") return scifi.promise;
+      if (name === "mystery") return mystery.promise;
+      return Promise.resolve(page([]));
+    });
+    await mountDiscover();
+    expect(subject.mock.calls.map((call) => call[0])).toEqual(["fiction", "science_fiction"]);
+    fiction.resolve(page([hit({ title: "Circe" })]));
+    await flushPromises();
+    expect(subject.mock.calls.map((call) => call[0])).toEqual([
+      "fiction",
+      "science_fiction",
+      "mystery",
+    ]);
+  });
+
+  it("keeps browse tiles visible when remounting Discover", async () => {
+    const { wrapper } = await mountDiscover();
+    expect(wrapper.text()).toContain("Atomic Habits");
+    wrapper.unmount();
+
+    const refresh = deferred<SearchPage>();
+    trending.mockReset();
+    trending.mockImplementation(() => refresh.promise);
+    const { wrapper: again } = await mountDiscover();
+    expect(again.text()).toContain("Atomic Habits");
+    expect(again.text()).not.toContain("Still loading shelves");
+    refresh.resolve(page([hit({ ol_work_key: "/works/OL7W", title: "Atomic Habits" })]));
+    await flushPromises();
+    expect(again.text()).toContain("Atomic Habits");
+  });
+
   it("retries a failed subject shelf instead of only offering search", async () => {
     subject.mockRejectedValueOnce(new Error("down"));
     const { wrapper } = await mountDiscover();
@@ -172,11 +211,16 @@ describe("DiscoverPage", () => {
 describe("DiscoverPage search results", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
+    resetDiscoverBrowseCache();
     search.mockReset();
     trending.mockReset();
     subject.mockReset();
     trending.mockResolvedValue(page([hit({ ol_work_key: "/works/OLT", title: "Trending Book" })]));
     subject.mockResolvedValue(page([]));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("does not empty visible results after they land while the route catches up", async () => {
@@ -296,6 +340,23 @@ describe("DiscoverPage search results", () => {
     await flushPromises();
     expect(wrapper.text()).toContain("Dune");
     expect(wrapper.text()).toContain("Dune Messiah");
+  });
+
+  it("says still searching after a couple of seconds", async () => {
+    vi.useFakeTimers();
+    const first = deferred<SearchPage>();
+    search.mockImplementation(() => first.promise);
+    const { wrapper } = await mountDiscover("/discover?q=circe");
+    expect(wrapper.text()).not.toContain("Still searching");
+    await vi.advanceTimersByTimeAsync(2100);
+    await nextTick();
+    expect(wrapper.text()).toContain("Still searching the library");
+    expect(wrapper.text()).toContain("2s so far");
+    first.resolve(page([hit()]));
+    await flushPromises();
+    expect(wrapper.text()).toContain("Circe");
+    expect(wrapper.text()).not.toContain("Still searching");
+    vi.useRealTimers();
   });
 
   it("ignores a stale slower response after a newer search", async () => {

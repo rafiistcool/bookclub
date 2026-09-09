@@ -43,6 +43,9 @@ describe("api client", () => {
     expect(fetchMock.mock.calls[3][0]).toBe(
       "/api/books/subjects/science%20fiction?page=2&limit=6",
     );
+    const controller = new AbortController();
+    await api.search({ q: "circe" }, { signal: controller.signal });
+    expect(fetchMock.mock.calls[4][1].signal).toBe(controller.signal);
   });
 
   it("addresses book detail by bare work id", async () => {

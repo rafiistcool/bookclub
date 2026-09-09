@@ -8,7 +8,7 @@ from app.deps import get_current_user, get_session
 from app.goodreads import (
     MAX_IMPORT_BYTES,
     SKIP_LIST_LIMIT,
-    lookup_work,
+    lookup_catalog,
     parse_goodreads_csv,
 )
 from app.models import ShelfEntry, ShelfStatus, User
@@ -157,8 +157,8 @@ async def import_goodreads(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     imported = 0
-    for row in rows:
-        hit = await lookup_work(row.isbn, row.title, row.authors)
+    looked_up = await lookup_catalog(rows)
+    for row, hit in looked_up:
         if hit is None:
             skips.append((row.title, "No match"))
             continue

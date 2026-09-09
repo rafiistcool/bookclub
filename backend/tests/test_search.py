@@ -347,6 +347,12 @@ def test_subject_rejects_invalid_key(ol):
     assert _FakeClient.params_for("/subjects/") == []
 
 
+def test_first_import_skips_author_api_when_search_has_names(ol):
+    body = ol.get("/api/books/works/OL1W").json()
+    assert body["authors"] == "Madeline Miller"
+    assert [url for url, _ in _FakeClient.calls if "/authors/" in url] == []
+
+
 def test_book_detail_resolves_description_subjects_and_authors(ol):
     body = ol.get("/api/books/works/OL1W").json()
     assert body["ol_work_key"] == "/works/OL1W"
@@ -565,6 +571,13 @@ def test_search_cache_ttl_is_at_least_half_a_day():
     assert books_router._CACHE_TTL >= 12 * 3600
 
 
+def test_open_library_connect_timeout_is_short():
+    assert books_router._TIMEOUT.connect == 8.0
+    assert books_router._TIMEOUT.read == 15.0
+    assert books_router.OL_TIMEOUT.connect == 8.0
+    assert books_router._TIMEOUT.connect < 10.0
+
+
 def test_cancelled_fetch_unblocks_coalesced_waiters(monkeypatch):
     import asyncio
 
@@ -672,6 +685,7 @@ def test_title_fallback_when_raw_query_misses(ol):
     qs = [params["q"] for params in _FakeClient.params_for("search.json")]
     assert "obscurexyz" in qs
     assert any(q.startswith("title:obscurexyz") for q in qs)
+    assert any(q.startswith("author:obscurexyz") for q in qs)
     assert response.json()["items"][0]["title"] == "Circe"
 
 

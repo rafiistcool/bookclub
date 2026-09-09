@@ -6,8 +6,18 @@ import AddBookSheet from "../components/AddBookSheet.vue";
 import BookTile from "../components/BookTile.vue";
 import TileSkeleton from "../components/TileSkeleton.vue";
 import { extractIsbn } from "../constants";
+import {
+  readBrowseSnapshot,
+  writeBrowseSnapshot,
+} from "./discoverCache";
 import { useToast } from "../stores/toast";
 import type { SearchHit, SearchSort } from "../types";
+
+/** Two in flight shortens the browse waterfall. A same-host probe of five
+ *  subjects at concurrency 2 still produced a connect timeout after a warm-up,
+ *  so we do not fire the rails as one burst. */
+const SHELF_CONCURRENCY = 2;
+const STILL_WAITING_AFTER_SEC = 2;
 
 const SUBJECTS = [
   { label: "Fiction", value: "fiction" },
@@ -75,9 +85,15 @@ const rows = ref<Row[]>([]);
 const browsePending = ref(false);
 const browseError = ref("");
 const browseStarted = ref(false);
+const searchWaitSec = ref(0);
+const browseWaitSec = ref(0);
 
 let requestSeq = 0;
 let observer: IntersectionObserver | null = null;
+let searchAbort: AbortController | null = null;
+let browseAbort: AbortController | null = null;
+let searchClock: ReturnType<typeof setInterval> | null = null;
+let browseClock: ReturnType<typeof setInterval> | null = null;
 
 /** Browse is the default surface; a query or subject switches to results. */
 const browsing = computed(() => !submittedQuery.value && !subject.value);
@@ -105,6 +121,17 @@ const shortQuery = computed(() => {
   return q.length > 0 && q.length < 3 && !extractIsbn(q) && !subject.value;
 });
 
+const stillSearching = computed(
+  () => pending.value && searchWaitSec.value >= STILL_WAITING_AFTER_SEC,
+);
+
+const stillBrowsing = computed(
+  () =>
+    browsing.value &&
+    (browsePending.value || rows.value.some((row) => row.pending)) &&
+    browseWaitSec.value >= STILL_WAITING_AFTER_SEC,
+);
+
 function subjectLabel(value: string) {
   return (
     SUBJECTS.find((entry) => entry.value === value)?.label ??
@@ -129,55 +156,160 @@ function errorTitle(kind: ErrorKind) {
   return "That search did not come back";
 }
 
-/**
- * Trending and every subject shelf load independently so that one upstream
- * failure leaves the rest of the browse surface usable.
- */
-async function loadBrowse() {
-  browseStarted.value = true;
-  browsePending.value = true;
-  browseError.value = "";
-  rows.value = BROWSE_ROWS.map((value) => ({
+function isAbortError(err: unknown) {
+  return (
+    (err instanceof DOMException && err.name === "AbortError") ||
+    (err instanceof Error && err.name === "AbortError")
+  );
+}
+
+function startClock(which: "search" | "browse") {
+  const started = Date.now();
+  const tick = () => {
+    const sec = Math.floor((Date.now() - started) / 1000);
+    if (which === "search") searchWaitSec.value = sec;
+    else browseWaitSec.value = sec;
+  };
+  stopClock(which);
+  tick();
+  const id = window.setInterval(tick, 500);
+  if (which === "search") searchClock = id;
+  else browseClock = id;
+}
+
+function stopClock(which: "search" | "browse") {
+  if (which === "search") {
+    if (searchClock !== null) clearInterval(searchClock);
+    searchClock = null;
+    searchWaitSec.value = 0;
+  } else {
+    if (browseClock !== null) clearInterval(browseClock);
+    browseClock = null;
+    browseWaitSec.value = 0;
+  }
+}
+
+function emptyRows(): Row[] {
+  return BROWSE_ROWS.map((value) => ({
     subject: value,
     label: subjectLabel(value),
     items: [],
     pending: true,
     error: "",
   }));
+}
+
+function persistBrowse() {
+  writeBrowseSnapshot({
+    trending: trending.value,
+    browseError: browseError.value,
+    rows: rows.value.map((row) => ({
+      subject: row.subject,
+      label: row.label,
+      items: row.items,
+      error: row.error,
+    })),
+  });
+}
+
+function hydrateBrowse(): boolean {
+  const snap = readBrowseSnapshot();
+  if (!snap) return false;
+  trending.value = [...snap.trending];
+  browseError.value = snap.browseError;
+  rows.value = BROWSE_ROWS.map((value) => {
+    const cached = snap.rows.find((row) => row.subject === value);
+    return {
+      subject: value,
+      label: subjectLabel(value),
+      items: cached ? [...cached.items] : [],
+      pending: !cached || (!cached.items.length && !cached.error),
+      error: cached?.error ?? "",
+    };
+  });
+  browseStarted.value = true;
+  browsePending.value = trending.value.length === 0 && !browseError.value;
+  return true;
+}
+
+async function mapPool<T>(items: T[], limit: number, worker: (item: T) => Promise<void>) {
+  const executing = new Set<Promise<void>>();
+  for (const item of items) {
+    const task = worker(item).finally(() => executing.delete(task));
+    executing.add(task);
+    if (executing.size >= limit) await Promise.race(executing);
+  }
+  await Promise.all(executing);
+}
+
+async function loadShelfRow(row: Row, signal: AbortSignal, quiet: boolean) {
+  if (!quiet || !row.items.length) row.pending = true;
+  try {
+    const result = await api.subject(row.subject, 1, 14, { signal });
+    if (signal.aborted) return;
+    row.items = result.items;
+    row.error = "";
+  } catch (err) {
+    if (isAbortError(err) || signal.aborted) return;
+    if (quiet && row.items.length) return;
+    row.items = [];
+    row.error = err instanceof ApiError ? err.message : "Could not load this shelf.";
+  } finally {
+    if (!signal.aborted) row.pending = false;
+  }
+}
+
+/**
+ * Trending and every subject shelf load independently so that one upstream
+ * failure leaves the rest of the browse surface usable. Shelves run two at a
+ * time — serial was a multi-second waterfall, a full burst timed out OL.
+ */
+async function loadBrowse(quiet = false) {
+  browseStarted.value = true;
+  browseAbort?.abort();
+  const controller = new AbortController();
+  browseAbort = controller;
+  const { signal } = controller;
+  startClock("browse");
+  if (!quiet) {
+    browsePending.value = true;
+    browseError.value = "";
+    rows.value = emptyRows();
+  } else if (!trending.value.length && !browseError.value) {
+    browsePending.value = true;
+  }
   await Promise.all([
     (async () => {
       try {
-        trending.value = (await api.trending(14)).items;
+        const result = await api.trending(14, { signal });
+        if (signal.aborted) return;
+        trending.value = result.items;
+        browseError.value = "";
       } catch (err) {
+        if (isAbortError(err) || signal.aborted) return;
+        if (quiet && trending.value.length) return;
         trending.value = [];
         browseError.value =
           err instanceof ApiError ? err.message : "Could not reach Open Library";
       } finally {
-        browsePending.value = false;
+        if (!signal.aborted) browsePending.value = false;
       }
     })(),
-    // Open Library throttles bursts, so the shelves queue up behind each other
-    // instead of firing all at once. Each one reveals itself as it lands.
-    (async () => {
-      for (const row of rows.value) {
-        try {
-          row.items = (await api.subject(row.subject, 1, 14)).items;
-          row.error = "";
-        } catch (err) {
-          row.items = [];
-          row.error =
-            err instanceof ApiError ? err.message : "Could not load this shelf.";
-        } finally {
-          row.pending = false;
-        }
-      }
-    })(),
+    mapPool(rows.value, SHELF_CONCURRENCY, (row) => loadShelfRow(row, signal, quiet)),
   ]);
+  if (!signal.aborted) {
+    persistBrowse();
+    stopClock("browse");
+  }
 }
 
 function ensureBrowse() {
   if (browseStarted.value) return;
-  void loadBrowse();
+  if (hydrateBrowse()) {
+    void loadBrowse(true);
+    return;
+  }
+  void loadBrowse(false);
 }
 
 function retryTrending() {
@@ -187,6 +319,7 @@ function retryTrending() {
     .trending(14)
     .then((result) => {
       trending.value = result.items;
+      persistBrowse();
     })
     .catch((err) => {
       browseError.value =
@@ -204,6 +337,7 @@ function retryRow(row: Row) {
     .subject(row.subject, 1, 14)
     .then((result) => {
       row.items = result.items;
+      persistBrowse();
     })
     .catch((err) => {
       row.items = [];
@@ -214,19 +348,26 @@ function retryRow(row: Row) {
     });
 }
 
-async function requestSearch(nextPage: number, sort: SearchSort) {
-  return api.search({
-    q: submittedQuery.value || undefined,
-    subject: subject.value || undefined,
-    sort,
-    page: nextPage,
-  });
+async function requestSearch(nextPage: number, sort: SearchSort, signal: AbortSignal) {
+  return api.search(
+    {
+      q: submittedQuery.value || undefined,
+      subject: subject.value || undefined,
+      sort,
+      page: nextPage,
+    },
+    { signal },
+  );
 }
 
 async function loadPage(nextPage: number, reset: boolean) {
   if (!reset && (pending.value || !hasMore.value)) return;
   const seq = ++requestSeq;
+  searchAbort?.abort();
+  const controller = new AbortController();
+  searchAbort = controller;
   pending.value = true;
+  startClock("search");
   if (reset) {
     error.value = "";
     errorKind.value = "";
@@ -243,8 +384,9 @@ async function loadPage(nextPage: number, reset: boolean) {
     let usedSort = effectiveSort.value;
     let result;
     try {
-      result = await requestSearch(nextPage, usedSort);
+      result = await requestSearch(nextPage, usedSort, controller.signal);
     } catch (err) {
+      if (isAbortError(err) || seq !== requestSeq) return;
       const classified = classifyError(err);
       if (
         reset &&
@@ -252,7 +394,7 @@ async function loadPage(nextPage: number, reset: boolean) {
         usedSort === "readinglog" &&
         classified.kind === "unavailable"
       ) {
-        result = await requestSearch(nextPage, "relevance");
+        result = await requestSearch(nextPage, "relevance", controller.signal);
         usedSort = "relevance";
         popularUnavailable.value = true;
       } else {
@@ -273,7 +415,7 @@ async function loadPage(nextPage: number, reset: boolean) {
     page.value = result.page;
     hasMore.value = result.has_more && result.items.length > 0;
   } catch (err) {
-    if (seq !== requestSeq) return;
+    if (isAbortError(err) || seq !== requestSeq) return;
     const classified = classifyError(err);
     if (reset) {
       error.value = classified.message;
@@ -287,6 +429,7 @@ async function loadPage(nextPage: number, reset: boolean) {
   } finally {
     if (seq === requestSeq) {
       pending.value = false;
+      stopClock("search");
       queueMicrotask(maybeLoadMore);
     }
   }
@@ -400,6 +543,10 @@ onUnmounted(() => {
   observer?.disconnect();
   observer = null;
   requestSeq += 1;
+  searchAbort?.abort();
+  browseAbort?.abort();
+  stopClock("search");
+  stopClock("browse");
 });
 
 defineExpose({ loadPage });
@@ -463,6 +610,9 @@ defineExpose({ loadPage });
 
     <!-- Browse surface -->
     <template v-if="browsing">
+      <p v-if="stillBrowsing" class="fine subtle wait-note" aria-live="polite">
+        Still loading shelves… {{ browseWaitSec }}s so far.
+      </p>
       <section aria-labelledby="trending">
         <div class="section-head">
           <h2 id="trending">Trending today</h2>
@@ -481,7 +631,7 @@ defineExpose({ loadPage });
             :isbn="hit.isbn"
             :status="hit.on_shelf"
             :club-pick="hit.club_pick"
-            :eager="index < 6"
+            :eager="index < 4"
             show-authors
           />
         </div>
@@ -513,7 +663,7 @@ defineExpose({ loadPage });
             :isbn="hit.isbn"
             :status="hit.on_shelf"
             :club-pick="hit.club_pick"
-            :eager="index < 6"
+            :eager="row.subject === BROWSE_ROWS[0] && index < 2"
             show-authors
           />
         </div>
@@ -561,6 +711,9 @@ defineExpose({ loadPage });
       </p>
       <p v-if="popularUnavailable" class="fine subtle">
         Popular is unavailable right now. Showing relevance instead.
+      </p>
+      <p v-if="stillSearching" class="fine subtle wait-note" aria-live="polite">
+        Still searching the library… {{ searchWaitSec }}s so far.
       </p>
 
       <div
@@ -752,6 +905,10 @@ defineExpose({ loadPage });
 
 .more-error {
   margin-top: var(--space-4);
+}
+
+.wait-note {
+  margin: 0 0 var(--space-3);
 }
 
 .sentinel {

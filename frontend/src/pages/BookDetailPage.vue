@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { api, ApiError } from "../api/client";
 import BookCover from "../components/BookCover.vue";
@@ -23,6 +23,7 @@ const toast = useToast();
 const book = ref<BookDetail | null>(null);
 const error = ref("");
 const loaded = ref(false);
+const loadWaitSec = ref(0);
 const busy = ref(false);
 const refreshing = ref(false);
 const expanded = ref(false);
@@ -49,19 +50,50 @@ function syncDrafts(detail: BookDetail) {
   progressDraft.value = detail.progress ?? 0;
 }
 
+let loadClock: ReturnType<typeof setInterval> | null = null;
+let loadAbort: AbortController | null = null;
+
+function stopLoadClock() {
+  if (loadClock !== null) clearInterval(loadClock);
+  loadClock = null;
+  loadWaitSec.value = 0;
+}
+
+function startLoadClock() {
+  const started = Date.now();
+  stopLoadClock();
+  loadClock = window.setInterval(() => {
+    loadWaitSec.value = Math.floor((Date.now() - started) / 1000);
+  }, 500);
+}
+
 async function load() {
   loaded.value = false;
   error.value = "";
   expanded.value = false;
+  loadAbort?.abort();
+  const controller = new AbortController();
+  loadAbort = controller;
+  startLoadClock();
   try {
-    const detail = await api.book(workId.value);
+    const detail = await api.book(workId.value, { signal: controller.signal });
+    if (controller.signal.aborted) return;
     book.value = detail;
     syncDrafts(detail);
   } catch (err) {
+    if (
+      (err instanceof DOMException && err.name === "AbortError") ||
+      (err instanceof Error && err.name === "AbortError")
+    ) {
+      return;
+    }
     book.value = null;
     error.value = err instanceof ApiError ? err.message : "Could not load that book";
   } finally {
-    loaded.value = true;
+    if (!controller.signal.aborted) {
+      loaded.value = true;
+      stopLoadClock();
+    }
   }
   try {
     clubTimezone.value = (await api.clubPick()).timezone;
@@ -256,6 +288,10 @@ async function nominate() {
 }
 
 onMounted(load);
+onUnmounted(() => {
+  loadAbort?.abort();
+  stopLoadClock();
+});
 watch(workId, load);
 </script>
 
@@ -265,13 +301,18 @@ watch(workId, load);
       <RouterLink to="/discover">← Discover</RouterLink>
     </p>
 
-    <div v-if="!loaded" class="detail-hero" aria-hidden="true">
-      <span class="skeleton hero-cover-skeleton" />
-      <div class="detail-intro">
-        <span class="skeleton skeleton-line" />
-        <span class="skeleton skeleton-line short" />
+    <template v-if="!loaded">
+      <div class="detail-hero" aria-hidden="true">
+        <span class="skeleton hero-cover-skeleton" />
+        <div class="detail-intro">
+          <span class="skeleton skeleton-line" />
+          <span class="skeleton skeleton-line short" />
+        </div>
       </div>
-    </div>
+      <p v-if="loadWaitSec >= 2" class="fine subtle" aria-live="polite">
+        Still loading this book… {{ loadWaitSec }}s so far.
+      </p>
+    </template>
 
     <div v-else-if="error" class="empty">
       <h3>Could not load that book</h3>

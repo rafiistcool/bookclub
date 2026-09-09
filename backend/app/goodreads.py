@@ -1,3 +1,4 @@
+import asyncio
 import csv
 import io
 import re
@@ -7,8 +8,11 @@ import httpx
 from app.branding import open_library_ua
 from app.config import get_settings
 from app.models import ShelfStatus
+from app.openlibrary import OL_TIMEOUT
 from app.routers.books import OPEN_LIBRARY_URL, map_open_library_docs
 from app.schemas import SearchHit
+
+LOOKUP_CONCURRENCY = 2
 
 MAX_IMPORT_BYTES = 1_500_000
 MAX_IMPORT_ROWS = 400
@@ -88,27 +92,40 @@ def parse_goodreads_csv(raw: bytes) -> tuple[list[GoodreadsRow], list[tuple[str,
     return rows, skips
 
 
-async def _search_first(query: str) -> SearchHit | None:
+async def _search_first(
+    query: str, client: httpx.AsyncClient | None = None
+) -> SearchHit | None:
+    own = False
+    if client is None:
+        client = httpx.AsyncClient(timeout=OL_TIMEOUT)
+        own = True
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            response = await client.get(
-                OPEN_LIBRARY_URL,
-                params={
-                    "q": query,
-                    "limit": 5,
-                    "fields": "key,title,author_name,cover_i,first_publish_year",
-                },
-                headers={"User-Agent": open_library_ua(get_settings())},
-            )
-            response.raise_for_status()
-            payload = response.json()
+        response = await client.get(
+            OPEN_LIBRARY_URL,
+            params={
+                "q": query,
+                "limit": 5,
+                "fields": "key,title,author_name,cover_i,first_publish_year",
+            },
+            headers={"User-Agent": open_library_ua(get_settings())},
+        )
+        response.raise_for_status()
+        payload = response.json()
     except (httpx.HTTPError, ValueError, TypeError):
         return None
+    finally:
+        if own:
+            await client.aclose()
     hits = map_open_library_docs(payload.get("docs") or [])
     return hits[0] if hits else None
 
 
-async def lookup_work(isbn: str, title: str, authors: str) -> SearchHit | None:
+async def lookup_work(
+    isbn: str,
+    title: str,
+    authors: str,
+    client: httpx.AsyncClient | None = None,
+) -> SearchHit | None:
     queries: list[str] = []
     if isbn:
         queries.append(f"isbn:{isbn}")
@@ -116,7 +133,23 @@ async def lookup_work(isbn: str, title: str, authors: str) -> SearchHit | None:
     if title_author and title_author not in queries:
         queries.append(title_author)
     for query in queries:
-        hit = await _search_first(query)
+        hit = await _search_first(query, client)
         if hit is not None:
             return hit
     return None
+
+
+async def lookup_catalog(
+    rows: list[GoodreadsRow],
+) -> list[tuple[GoodreadsRow, SearchHit | None]]:
+    """Resolve each CSV row against Open Library, two lookups at a time."""
+    if not rows:
+        return []
+    sem = asyncio.Semaphore(LOOKUP_CONCURRENCY)
+    async with httpx.AsyncClient(timeout=OL_TIMEOUT) as client:
+
+        async def one(row: GoodreadsRow) -> tuple[GoodreadsRow, SearchHit | None]:
+            async with sem:
+                return row, await lookup_work(row.isbn, row.title, row.authors, client)
+
+        return list(await asyncio.gather(*(one(row) for row in rows)))

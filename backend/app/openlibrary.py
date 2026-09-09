@@ -22,11 +22,18 @@ logger = logging.getLogger("bookclub.openlibrary")
 
 WORK_URL = "https://openlibrary.org{key}.json"
 SEARCH_URL = "https://openlibrary.org/search.json"
-_TIMEOUT = 8.0
+# Connect fails a dead hop quickly. Read stays long: trending and subjects
+# regularly take several seconds. This is not a promise to the UI.
+# TLS to openlibrary.org measured 2–4.7s from this host. 8s covers a slow
+# handshake without waiting the old 10s on a dead route.
+OL_TIMEOUT = httpx.Timeout(connect=8.0, read=15.0, write=5.0, pool=5.0)
 _DETAILS_TTL = 18 * 3600.0
 _DETAILS_MAX_KEYS = 64
+_ISBN_TTL = 18 * 3600.0
+_ISBN_MAX_KEYS = 64
 _details_cache: OrderedDict[str, tuple[float, "WorkDetails"]] = OrderedDict()
 _details_inflight: dict[str, asyncio.Future["WorkDetails"]] = {}
+_isbn_cache: OrderedDict[str, tuple[float, "IsbnHit"]] = OrderedDict()
 _ISBN_RE = re.compile(r"^(?:\d{9}[\dXx]|\d{13})$")
 MAX_SUBJECTS = 12
 
@@ -91,6 +98,26 @@ class IsbnHit:
 def clear_details_cache() -> None:
     _details_cache.clear()
     _details_inflight.clear()
+    _isbn_cache.clear()
+
+
+def _isbn_cache_get(isbn: str) -> IsbnHit | None:
+    hit = _isbn_cache.get(isbn)
+    if hit is None:
+        return None
+    expires, value = hit
+    if expires <= time():
+        _isbn_cache.pop(isbn, None)
+        return None
+    _isbn_cache.move_to_end(isbn)
+    return value
+
+
+def _isbn_cache_set(isbn: str, value: IsbnHit) -> None:
+    _isbn_cache[isbn] = (time() + _ISBN_TTL, value)
+    _isbn_cache.move_to_end(isbn)
+    while len(_isbn_cache) > _ISBN_MAX_KEYS:
+        _isbn_cache.popitem(last=False)
 
 
 def _details_cache_get(key: str) -> WorkDetails | None:
@@ -178,7 +205,7 @@ async def _load_work_details(ol_work_key: str) -> WorkDetails:
         "limit": 1,
     }
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=OL_TIMEOUT) as client:
             work, search = await asyncio.gather(
                 _get(client, WORK_URL.format(key=ol_work_key)),
                 _get(client, SEARCH_URL, search_params),
@@ -240,13 +267,16 @@ async def fetch_work_details(ol_work_key: str, *, bypass_cache: bool = False) ->
 
 
 async def lookup_isbn(isbn: str) -> IsbnHit | None:
+    cached = _isbn_cache_get(isbn)
+    if cached is not None:
+        return cached
     params = {
         "q": f"isbn:{isbn}",
         "fields": "key,title,author_name,cover_i,first_publish_year,number_of_pages_median",
         "limit": 1,
     }
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=OL_TIMEOUT) as client:
             payload = await _get(client, SEARCH_URL, params)
     except httpx.HTTPError as exc:
         logger.warning("open library isbn lookup failed err=%s", exc.__class__.__name__)
@@ -259,7 +289,7 @@ async def lookup_isbn(isbn: str) -> IsbnHit | None:
         title = str(doc.get("title") or "").strip()
         if not key.startswith("/works/") or not title:
             continue
-        return IsbnHit(
+        hit = IsbnHit(
             isbn=isbn,
             ol_work_key=key,
             title=title,
@@ -268,6 +298,8 @@ async def lookup_isbn(isbn: str) -> IsbnHit | None:
             year=_int(doc.get("first_publish_year")),
             pages=_int(doc.get("number_of_pages_median")),
         )
+        _isbn_cache_set(isbn, hit)
+        return hit
     return None
 
 
