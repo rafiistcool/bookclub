@@ -572,9 +572,10 @@ def test_search_cache_ttl_is_at_least_half_a_day():
 
 
 def test_open_library_connect_timeout_is_short():
-    assert books_router._TIMEOUT.connect == 3.5
+    assert books_router._TIMEOUT.connect == 8.0
     assert books_router._TIMEOUT.read == 15.0
-    assert books_router.OL_TIMEOUT.connect == 3.5
+    assert books_router.OL_TIMEOUT.connect == 8.0
+    assert books_router._TIMEOUT.connect < 10.0
 
 
 def test_cancelled_fetch_unblocks_coalesced_waiters(monkeypatch):

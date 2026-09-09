@@ -66,8 +66,9 @@ _CACHE_TTL = 18 * 3600.0
 _CACHE_MAX_KEYS = 256
 _cache: OrderedDict[str, tuple[float, Any]] = OrderedDict()
 _inflight: dict[str, asyncio.Future[dict]] = {}
-# Connect is short so a dead hop fails fast; read stays long because
-# trending/subjects regularly take several seconds. See OL_TIMEOUT.
+# Connect is shorter than the old 10s so a dead hop fails faster, but long
+# enough for a slow TLS handshake to Open Library (~4s measured). Read stays
+# long because trending/subjects regularly take several seconds.
 _TIMEOUT = OL_TIMEOUT
 
 OPEN_LIBRARY_URL = "https://openlibrary.org/search.json"

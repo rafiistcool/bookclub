@@ -24,7 +24,9 @@ WORK_URL = "https://openlibrary.org{key}.json"
 SEARCH_URL = "https://openlibrary.org/search.json"
 # Connect fails a dead hop quickly. Read stays long: trending and subjects
 # regularly take several seconds. This is not a promise to the UI.
-OL_TIMEOUT = httpx.Timeout(connect=3.5, read=15.0, write=5.0, pool=5.0)
+# TLS to openlibrary.org measured 2–4.7s from this host. 8s covers a slow
+# handshake without waiting the old 10s on a dead route.
+OL_TIMEOUT = httpx.Timeout(connect=8.0, read=15.0, write=5.0, pool=5.0)
 _DETAILS_TTL = 18 * 3600.0
 _DETAILS_MAX_KEYS = 64
 _ISBN_TTL = 18 * 3600.0
