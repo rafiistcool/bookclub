@@ -25,7 +25,8 @@ tailnet hostname at whatever machine you have.
 ## 1. Requirements
 
 - Docker Engine with Compose v2, **or** Python 3.12+ and Node 20+ (bare metal)
-- Outbound HTTPS so [Open Library](https://openlibrary.org) search works
+- Outbound HTTPS so [Open Library](https://openlibrary.org) search works.
+  The shelf still works if search is down; club-only books never call it.
 - A place for `./data` (a few megabytes)
 - Your own reverse proxy if you want HTTPS (see below). The image does not
   bundle one.
@@ -174,7 +175,28 @@ recreates the bootstrap invite from `BOOKCLUB_BOOTSTRAP_INVITE` or
 
 ## 5. Environment
 
-See `.env.example` and the table in the README. Important production rules:
+Every key is commented in [`.env.example`](.env.example) (or `deploy/env.example`).
+The README lists the handful that matter on first start. Full set:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `BOOKCLUB_NAME` | `Bookclub` | Club name in the UI, tab title, manifest, API title, and Open Library User-Agent. |
+| `BOOKCLUB_TZ` | `UTC` | IANA timezone for club-pick meeting labels. Invalid names fall back to UTC. |
+| `BOOKCLUB_THEME` | `#b44a2a` | Optional accent (`#rgb` / `#rrggbb`). |
+| `BOOKCLUB_THEME_DARK` | shaded accent | Optional darker accent. |
+| `BOOKCLUB_PUBLIC_URL` | empty | Canonical origin of this instance (`https://books.example.com`). Same-origin reverse proxy is the supported path; the UI does not talk to a split API host. Vite `localhost:5173` CORS is only when `DEBUG=1`. |
+| `SECRET_KEY` | empty in Compose | Signs the session cookie. Changing it logs everyone out. Empty + `DEBUG=0` writes `data/.secret_key`. Example / short values are refused when `DEBUG=0`. |
+| `BOOKCLUB_BOOTSTRAP_INVITE` | empty in Compose | First invite, only if the DB has none. Empty + `DEBUG=0` writes `data/.bootstrap_invite`. `DEV-ONLY` is refused when `DEBUG=0`. |
+| `DEBUG` | `0` in Compose | `1`: CORS for Vite, `/api/docs`. `0`: no docs. |
+| `BOOKCLUB_HTTPS` | `auto` | `auto`: session cookie is `Secure` only on HTTPS (including `X-Forwarded-Proto`). `1`: always. `0`: never. |
+| `BOOKCLUB_TRUSTED_PROXIES` | `*` | Who may set `X-Forwarded-*`. `*` is correct behind a private reverse proxy. |
+| `DATABASE_PATH` | `<repo>/data/bookclub.db` | Absolute path if you want it elsewhere. Docker uses `/data/bookclub.db`. |
+| `VAPID_PRIVATE_KEY` | empty | PEM private key for Web Push. Empty: a key pair is generated into `data/.vapid_private.pem` on first use. Changing it invalidates every device subscription. |
+| `VAPID_SUBJECT` | `BOOKCLUB_PUBLIC_URL` or `mailto:bookclub@localhost` | Contact claim sent to push services (`mailto:` or `https://`). |
+| `BOOKCLUB_PORT` | `8000` | Host port published by Compose. |
+| `PUID` / `PGID` | `1000` | Runtime user for bind-mounted `./data`. |
+
+Production rules:
 
 - `DEBUG=0` hides `/api/docs`.
 - Empty `SECRET_KEY` / `BOOKCLUB_BOOTSTRAP_INVITE` generate files under `./data`.
