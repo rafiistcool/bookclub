@@ -3,6 +3,7 @@ from enum import Enum
 from typing import Optional
 
 from sqlalchemy import Column, DateTime, LargeBinary, UniqueConstraint
+from sqlalchemy.orm import deferred
 from sqlmodel import Field, Relationship, SQLModel
 
 from app.i18n import DEFAULT_LOCALE
@@ -38,7 +39,7 @@ class User(SQLModel, table=True):
     notify_note: bool = Field(default=True)
     avatar: Optional[bytes] = Field(
         default=None,
-        sa_column=Column(LargeBinary, nullable=True),
+        sa_column=deferred(Column(LargeBinary, nullable=True)),
     )
     avatar_mime: Optional[str] = Field(default=None, max_length=32)
     avatar_updated_at: Optional[datetime] = Field(

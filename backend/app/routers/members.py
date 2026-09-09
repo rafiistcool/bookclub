@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, col, select
@@ -56,15 +56,23 @@ def list_members(
 @router.get("/{username}/avatar")
 def member_avatar(
     username: str,
+    request: Request,
     me: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> Response:
     member = session.exec(select(User).where(User.username == username.lower())).first()
     if member is None or not member.avatar:
         raise HTTPException(status_code=404, detail="No profile picture")
-    headers = {"Cache-Control": "private, max-age=86400"}
+    headers = {
+        "Cache-Control": "private, max-age=86400",
+        "X-Content-Type-Options": "nosniff",
+    }
+    etag = None
     if member.avatar_updated_at is not None:
-        headers["ETag"] = f'"{int(member.avatar_updated_at.timestamp())}"'
+        etag = f'"{int(member.avatar_updated_at.timestamp())}"'
+        headers["ETag"] = etag
+    if etag is not None and request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
     return Response(
         content=bytes(member.avatar),
         media_type=member.avatar_mime or AVATAR_MIME,

@@ -11,7 +11,7 @@ from app.works import isbn_from_work_key
 def avatar_url_for(user: User | None) -> str | None:
     if user is None or not user.username:
         return None
-    if not user.avatar and not user.avatar_mime:
+    if user.avatar_updated_at is None:
         return None
     ts = 0
     if user.avatar_updated_at is not None:

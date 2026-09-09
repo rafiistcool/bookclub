@@ -1,9 +1,15 @@
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from sqlalchemy import update
 from sqlmodel import Session, select
 
 from app import activity
-from app.avatars import AVATAR_MIME, MAX_UPLOAD_BYTES, process_avatar
+from app.avatars import (
+    AVATAR_MIME,
+    MAX_UPLOAD_BYTES,
+    TOO_LARGE,
+    oversize_content_length,
+    process_avatar,
+)
 from app.deps import get_current_user, get_session
 from app.models import Invite, User, utcnow
 from app.schemas import (
@@ -111,11 +117,17 @@ def update_preferences(
 
 @router.put("/me/avatar", response_model=UserOut)
 async def upload_avatar(
-    file: UploadFile = File(...),
+    request: Request,
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> UserOut:
-    raw = await file.read(MAX_UPLOAD_BYTES + 1)
+    if oversize_content_length(request.headers.get("content-length")):
+        raise HTTPException(status_code=413, detail=TOO_LARGE)
+    form = await request.form()
+    upload = form.get("file")
+    if not isinstance(upload, UploadFile):
+        raise HTTPException(status_code=400, detail="Use a JPEG, PNG, WebP, or GIF")
+    raw = await upload.read(MAX_UPLOAD_BYTES + 1)
     try:
         jpeg = process_avatar(raw)
     except ValueError as exc:
