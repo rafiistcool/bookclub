@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request
+from starlette.datastructures import UploadFile
 from sqlalchemy import update
 from sqlmodel import Session, select
 

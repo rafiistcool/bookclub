@@ -1,7 +1,7 @@
 from io import BytesIO
 
 from PIL import Image
-from sqlalchemy.orm import inspect as sa_inspect
+from sqlalchemy import inspect as sa_inspect
 from sqlmodel import Session, select
 
 from app.avatars import TOO_LARGE, TOO_MANY_PIXELS, oversize_content_length

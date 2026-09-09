@@ -2,8 +2,9 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import Column, DateTime, LargeBinary, UniqueConstraint
-from sqlalchemy.orm import deferred
+from sqlalchemy import Column, DateTime, LargeBinary, UniqueConstraint, event
+from sqlalchemy.orm import Session as SASession
+from sqlalchemy.orm import defer
 from sqlmodel import Field, Relationship, SQLModel
 
 from app.i18n import DEFAULT_LOCALE
@@ -39,7 +40,7 @@ class User(SQLModel, table=True):
     notify_note: bool = Field(default=True)
     avatar: Optional[bytes] = Field(
         default=None,
-        sa_column=deferred(Column(LargeBinary, nullable=True)),
+        sa_column=Column(LargeBinary, nullable=True),
     )
     avatar_mime: Optional[str] = Field(default=None, max_length=32)
     avatar_updated_at: Optional[datetime] = Field(
@@ -48,6 +49,23 @@ class User(SQLModel, table=True):
     )
 
     shelf_entries: list["ShelfEntry"] = Relationship(back_populates="user")
+
+
+@event.listens_for(SASession, "do_orm_execute")
+def _defer_avatar_blob(execute_state) -> None:  # type: ignore[no-untyped-def]
+    """SQLModel ignores sqlalchemy.orm.deferred() on Field(sa_column=...).
+
+    Defer the blob on entity SELECTs that load User. Column refreshes
+    (the serving route reading the bytes) skip this so lazy load works.
+    """
+    if not execute_state.is_select or execute_state.is_column_load:
+        return
+    try:
+        descriptions = execute_state.statement.column_descriptions
+    except Exception:
+        return
+    if any(desc.get("entity") is User for desc in descriptions):
+        execute_state.statement = execute_state.statement.options(defer(User.avatar))
 
 
 class Invite(SQLModel, table=True):

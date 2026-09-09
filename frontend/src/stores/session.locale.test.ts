@@ -19,6 +19,15 @@ vi.mock("../api/client", () => ({
   },
 }));
 
+vi.mock("./theme", () => ({
+  useTheme: () => ({
+    adopt: vi.fn(),
+    persist: vi.fn(),
+    theme: "paper",
+    mode: "system",
+  }),
+}));
+
 import { useLocale } from "./locale";
 import { useSession } from "./session";
 
