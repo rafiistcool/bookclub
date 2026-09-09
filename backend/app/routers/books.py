@@ -15,6 +15,7 @@ from app.config import get_settings
 from app.deps import get_current_user, get_session
 from app.models import Book, ClubPick, Quote, ShelfEntry, ShelfStatus, User
 from app.openlibrary import (
+    OL_TIMEOUT,
     WorkDetails,
     extract_isbn,
     fetch_work_details,
@@ -65,10 +66,9 @@ _CACHE_TTL = 18 * 3600.0
 _CACHE_MAX_KEYS = 256
 _cache: OrderedDict[str, tuple[float, Any]] = OrderedDict()
 _inflight: dict[str, asyncio.Future[dict]] = {}
-# Open Library's trending and subject endpoints regularly take well over 8s to
-# respond. Connect is a little longer than a LAN hop so a slow TLS handshake
-# is not reported as "the library is down."
-_TIMEOUT = httpx.Timeout(connect=10.0, read=15.0, write=5.0, pool=5.0)
+# Connect is short so a dead hop fails fast; read stays long because
+# trending/subjects regularly take several seconds. See OL_TIMEOUT.
+_TIMEOUT = OL_TIMEOUT
 
 OPEN_LIBRARY_URL = "https://openlibrary.org/search.json"
 TRENDING_URL = "https://openlibrary.org/trending/daily.json"
@@ -458,19 +458,24 @@ async def fetch_open_library(
 ) -> SearchPage:
     candidates = _search_candidates(query, subject)
     lang_en = not query
-    items: list[SearchHit] = []
-    num_found = 0
-    for index, q in enumerate(candidates):
-        use_page = page if index == 0 else 1
-        if index > 0 and (items or page > 1):
-            break
-        batch, found = await _search_ol_page(
-            q, sort=sort, page=use_page, limit=limit, lang_en=lang_en
+    primary, *fallbacks = candidates
+    items, num_found = await _search_ol_page(
+        primary, sort=sort, page=page, limit=limit, lang_en=lang_en
+    )
+    if not items and page == 1 and fallbacks:
+        # Title and author retries are independent; run them together after a
+        # true miss so an obscure query does not pay two serial OL waits.
+        results = await asyncio.gather(
+            *[
+                _search_ol_page(q, sort=sort, page=1, limit=limit, lang_en=lang_en)
+                for q in fallbacks
+            ]
         )
-        items = batch
-        num_found = found
-        if items:
-            break
+        for batch, found in results:
+            if batch:
+                items = batch
+                num_found = found
+                break
     return SearchPage(
         items=items,
         page=page,
@@ -902,18 +907,22 @@ async def _import_work_payload(session: Session, work_id: str, *, bypass_cache: 
     `_load_work_details` uses for the `/work/` path.
     """
     work_key = f"/works/{work_id}"
-    payload = await _fetch_json(
-        WORK_URL.format(work_id=work_id),
-        cache_key=f"work|{work_id}",
-        detail=BROWSE_UNAVAILABLE,
-        missing_detail="No such book.",
-        bypass_cache=bypass_cache,
+    payload, doc = await asyncio.gather(
+        _fetch_json(
+            WORK_URL.format(work_id=work_id),
+            cache_key=f"work|{work_id}",
+            detail=BROWSE_UNAVAILABLE,
+            missing_detail="No such book.",
+            bypass_cache=bypass_cache,
+        ),
+        _work_search_doc(work_id, work_key, bypass_cache=bypass_cache),
     )
-    doc = await _work_search_doc(work_id, work_key, bypass_cache=bypass_cache)
     title = str(payload.get("title") or doc.get("title") or "").strip()
-    authors = await _author_names(payload, bypass_cache=bypass_cache)
-    if not authors:
-        authors = ", ".join(str(name) for name in (doc.get("author_name") or []) if name)
+    search_authors = ", ".join(str(name) for name in (doc.get("author_name") or []) if name)
+    if bypass_cache:
+        authors = await _author_names(payload, bypass_cache=True) or search_authors
+    else:
+        authors = search_authors or await _author_names(payload, bypass_cache=False)
     cover_id = first_positive_cover(payload.get("covers"), doc.get("cover_i"))
     year = _year(doc.get("first_publish_year"))
     pages = _year(doc.get("number_of_pages_median"))

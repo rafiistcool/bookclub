@@ -169,9 +169,11 @@ def test_isbn_lookup(client, ol):
     assert body["on_shelf"] is None
 
     client.post("/api/shelf", json={**CIRCE, "status": "want_to_read"})
+    calls = len(ol.calls)
     again = client.get("/api/books/isbn/9780316556347").json()
     assert again["on_shelf"] == "want_to_read"
     assert again["shelf_id"] is not None
+    assert len(ol.calls) == calls
 
 
 def test_isbn10_with_x_check_digit_is_accepted(client, ol):

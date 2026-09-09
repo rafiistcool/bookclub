@@ -211,7 +211,8 @@ onMounted(loadInvites);
       </div>
       <p class="fine muted">
         Upload a Goodreads library export CSV. Exclusive shelves map to Want to read,
-        Reading, and Finished. Rows we cannot match are skipped.
+        Reading, and Finished. Each title is looked up at Open Library, so a large
+        export can take a while. Rows we cannot match are skipped.
       </p>
       <label class="import-file">
         <input type="file" accept=".csv,text/csv" @change="onImportFile" />
@@ -223,8 +224,11 @@ onMounted(loadInvites);
         :disabled="!importFile || importing"
         @click="importCsv"
       >
-        {{ importing ? "Importing…" : "Import CSV" }}
+        {{ importing ? "Importing… keep this tab open." : "Import CSV" }}
       </button>
+      <p v-if="importing" class="fine subtle">
+        Looking each title up at Open Library. This is often a few seconds per book.
+      </p>
       <template v-if="importResult">
         <p class="fine muted import-summary">
           Imported {{ importResult.imported }}. Skipped {{ importResult.skipped }}.

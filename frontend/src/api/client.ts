@@ -77,7 +77,7 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
-  search: (params: SearchParams = {}) => {
+  search: (params: SearchParams = {}, init: RequestInit = {}) => {
     const query = new URLSearchParams();
     if (params.q) query.set("q", params.q);
     if (params.subject) query.set("subject", params.subject);
@@ -85,14 +85,17 @@ export const api = {
     if (params.page) query.set("page", String(params.page));
     if (params.limit) query.set("limit", String(params.limit));
     const qs = query.toString();
-    return request<SearchPage>(`/api/books/search${qs ? `?${qs}` : ""}`);
+    return request<SearchPage>(`/api/books/search${qs ? `?${qs}` : ""}`, init);
   },
-  trending: (limit = 12) => request<SearchPage>(`/api/books/trending?limit=${limit}`),
-  subject: (subject: string, page = 1, limit = 12) =>
+  trending: (limit = 12, init: RequestInit = {}) =>
+    request<SearchPage>(`/api/books/trending?limit=${limit}`, init),
+  subject: (subject: string, page = 1, limit = 12, init: RequestInit = {}) =>
     request<SearchPage>(
       `/api/books/subjects/${encodeURIComponent(subject)}?page=${page}&limit=${limit}`,
+      init,
     ),
-  book: (workId: string) => request<BookDetail>(`/api/books/works/${workId}`),
+  book: (workId: string, init: RequestInit = {}) =>
+    request<BookDetail>(`/api/books/works/${workId}`, init),
   refreshBook: (workId: string) =>
     request<BookDetail>(`/api/books/works/${workId}/refresh`, { method: "POST" }),
   createCustomBook: (body: CustomBookIn) =>
