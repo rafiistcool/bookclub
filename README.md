@@ -15,7 +15,7 @@ You host it. There is no public service. One named club per instance.
 - **Shelves** — Want to read → Reading → Finished / Did not finish. Drag on desktop; filter grid on a phone.
 - **Club pick** — Home is the current book: meeting countdown, everyone’s progress, and a next-up vote.
 - **Diary** — Short notes at a reading position (“at 45%”, “Finished ★★★★☆”). Spoiler-shielded for members who are behind; one level of replies and emoji reactions.
-- **Discover** — Search [Open Library](https://openlibrary.org) by title, author, or ISBN. Trending row, subject shelves, and **add your own** when the catalog misses.
+- **Discover** — Search by title, author, or ISBN ([Open Library](https://openlibrary.org), or [Google Books](https://developers.google.com/books) only when `GOOGLE_BOOKS_API_KEY` is set). Trending row, subject shelves, and **add your own** when the catalog misses.
 - **Looks** — Four palettes (Paper, Slate, Forest, Ink) in light / dark / system, per member.
 - **Push** — Web Push for meetings, a new pick, and diary notes.
 - **One box** — FastAPI + the Vue app in a single image. SQLite WAL. No Redis, no Postgres. amd64 and arm64.
@@ -123,10 +123,11 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Bind `0.0.0.0` only if the 
 flowchart LR
   Browser -->|"same origin /api"| App["FastAPI + Vue"]
   App --> DB[("SQLite WAL")]
-  App -.->|"search + covers"| OL[Open Library]
+  App -.->|"OL when no Google key; legacy OL works"| OL[Open Library]
+  App -.->|"search + covers when key set"| GB[Google Books]
 ```
 
-Production is one process: uvicorn serves the API and the built Vue app from `:8000`. Everything lives in **`data/bookclub.db`**. Open Library needs outbound HTTPS and no API key; only books someone adds are stored. A work already in the club database is served from SQLite (local-first). Unknown Open Library works are imported on first open. Club-only books (`/works/BC…`, added from Discover) never call Open Library. Covers come from `covers.openlibrary.org`; blank or invalid IDs fall back to a monogram.
+Production is one process: uvicorn serves the API and the built Vue app from `:8000`. Everything lives in **`data/bookclub.db`**. Catalog search needs outbound HTTPS. Open Library needs no key. Set optional `GOOGLE_BOOKS_API_KEY` to use Google Books for Discover search, trending, subject shelves, ISBN, and Goodreads — with **no Open Library fallback**. An empty Google page stays empty (add-your-own). Google 5xx / timeout / 429 return an error. Title and Popular map to Google relevance; New maps to newest. Trending is newest fiction on Google. Leave the key empty for the current Open Library catalog (self-hosters without a key). Only books someone adds are stored. A work already in the club database is served from SQLite (local-first). Unknown `/works/OL…` keys still import from Open Library on first open. Google Books imports use an ISBN key (`/works/ISBN…`) when the volume has one, otherwise `/works/GB{volumeId}`. Enabling the key later can create a second row for a book already stored as `/works/OL…`. Club-only books (`/works/BC…`) never call a catalog. Google covers come from `imageLinks`, stored on the book as `cover_image_url` and rendered as https URLs. Open Library `cover_id` still uses `covers.openlibrary.org`. Blank covers fall back to a monogram. A Google 429/403 cools down Google calls for two minutes.
 
 Any member can download `bookclub.db` from **Settings → Backup**, or run `python -m app.backup`. There is no restore-from-upload — replace the files (see [SELFHOST.md](SELFHOST.md)). Schema changes apply on boot.
 
@@ -135,7 +136,7 @@ Invite-only, no email. Any signed-in member can mint invites. Members change the
 | Path | What it is |
 |---|---|
 | `/` | Club pick, meeting, progress, that book’s diary, next-up vote, past picks |
-| `/discover` | Search + browse Open Library; add-your-own when it misses |
+| `/discover` | Search + browse the catalog; add-your-own when it misses |
 | `/shelf` | Your columns (phone: status filter over a cover grid) |
 | `/club` | Members, TBR overlap, recent diary across all books, next-up vote |
 | `/club/:username` | A member’s shelf and ratings |
@@ -169,6 +170,7 @@ Compose and `.env` share the same keys. These are the ones that matter on first 
 | `BOOKCLUB_PUBLIC_URL` | empty | Public origin of this instance (`https://books.example.com`). Same-origin proxy only. |
 | `BOOKCLUB_HTTPS` | `auto` | `Secure` cookie only on HTTPS (including `X-Forwarded-Proto`). |
 | `BOOKCLUB_TZ` | `UTC` | IANA timezone for meeting labels. |
+| `GOOGLE_BOOKS_API_KEY` | empty | Optional. Google-only catalog (search, browse, ISBN, Goodreads, covers). Create an API key in Google Cloud Console and enable `books.googleapis.com`. Leave empty for Open Library only. |
 
 Theme accents, port, `PUID`/`PGID`, VAPID, trusted proxies, and the rest: **[`.env.example`](.env.example)** and **[SELFHOST.md](SELFHOST.md)**.
 

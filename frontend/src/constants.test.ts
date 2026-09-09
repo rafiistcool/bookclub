@@ -1,12 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   bookPath,
+  catalogUrl,
   coverUrl,
   editionCoverUrl,
   extractIsbn,
+  googleBooksUrl,
   isbnCoverUrl,
+  isbnFromWorkKey,
   isClubWorkId,
+  isGoogleCatalogWorkKey,
+  isGoogleWorkId,
+  isIsbnWorkId,
+  isOpenLibraryWorkId,
   monogram,
+  remoteCoverUrl,
   openLibraryUrl,
   relativeDay,
   starLabel,
@@ -48,6 +56,27 @@ describe("covers and links", () => {
     expect(openLibraryUrl("/works/OL1W")).toBe("https://openlibrary.org/works/OL1W");
     expect(isClubWorkId("BCdeadbeef01")).toBe(true);
     expect(openLibraryUrl("/works/BCdeadbeef01")).toBeNull();
+    expect(isOpenLibraryWorkId("OL1W")).toBe(true);
+    expect(isIsbnWorkId("ISBN9780316769488")).toBe(true);
+    expect(isGoogleWorkId("GBzyTCAlFPjgYC")).toBe(true);
+    expect(isGoogleCatalogWorkKey("/works/ISBN9780316769488")).toBe(true);
+    expect(isGoogleCatalogWorkKey("/works/GBzyTCAlFPjgYC")).toBe(true);
+    expect(isGoogleCatalogWorkKey("/works/OL1W")).toBe(false);
+    expect(remoteCoverUrl("http://books.google.com/books/content?id=x")).toBe(
+      "https://books.google.com/books/content?id=x",
+    );
+    expect(remoteCoverUrl("javascript:alert(1)")).toBeNull();
+    expect(
+      remoteCoverUrl("https://covers.openlibrary.org/b/id/123-L.jpg?default=false"),
+    ).toBeNull();
+    expect(remoteCoverUrl("https://attacker.example/pixel.gif")).toBeNull();
+    expect(isbnFromWorkKey("/works/ISBN9780316769488")).toBe("9780316769488");
+    expect(isbnFromWorkKey("/works/ISBN080442957x")).toBe("080442957X");
+    expect(openLibraryUrl("/works/ISBN9780316769488")).toBeNull();
+    expect(googleBooksUrl("/works/GBzyTCAlFPjgYC")).toBe(
+      "https://books.google.com/books?id=zyTCAlFPjgYC",
+    );
+    expect(catalogUrl("/works/ISBN9780316769488")).toContain("ISBN9780316769488");
   });
 });
 

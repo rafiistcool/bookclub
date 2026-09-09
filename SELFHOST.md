@@ -25,8 +25,14 @@ tailnet hostname at whatever machine you have.
 ## 1. Requirements
 
 - Docker Engine with Compose v2, **or** Python 3.12+ and Node 20+ (bare metal)
-- Outbound HTTPS so [Open Library](https://openlibrary.org) search works.
-  The shelf still works if search is down; club-only books never call it.
+- Outbound HTTPS so catalog search works ([Open Library](https://openlibrary.org),
+  and optionally [Google Books](https://developers.google.com/books) if you set
+  `GOOGLE_BOOKS_API_KEY`). With a key, Discover does not call Open Library
+  (empty Google results stay empty; 5xx/429 surface as errors). The shelf
+  still works if search is down; club-only books never call a catalog.
+  Enabling the key later can create ISBN-keyed duplicates of books already
+  stored as Open Library `/works/OL…` keys. Legacy `/works/OL…` rows stay
+  local-first.
 - A place for `./data` (a few megabytes)
 - Your own reverse proxy if you want HTTPS (see below). The image does not
   bundle one.
@@ -192,6 +198,7 @@ The README lists the handful that matter on first start. Full set:
 | `BOOKCLUB_TRUSTED_PROXIES` | `*` | Who may set `X-Forwarded-*`. `*` is correct behind a private reverse proxy. |
 | `DATABASE_PATH` | `<repo>/data/bookclub.db` | Absolute path if you want it elsewhere. Docker uses `/data/bookclub.db`. |
 | `VAPID_PRIVATE_KEY` | empty | PEM private key for Web Push. Empty: a key pair is generated into `data/.vapid_private.pem` on first use. Changing it invalidates every device subscription. |
+| `GOOGLE_BOOKS_API_KEY` | empty | Optional. Google-only catalog: Discover search, trending, subject shelves, ISBN, and Goodreads. No Open Library fallback on a miss. Create a key in Google Cloud Console → Credentials and enable the Books API (`books.googleapis.com`). Restrict by IP if you can. Default free quota is enough for a small club; billing is not required. Leave empty for Open Library only. |
 | `VAPID_SUBJECT` | `BOOKCLUB_PUBLIC_URL` or `mailto:bookclub@localhost` | Contact claim sent to push services (`mailto:` or `https://`). |
 | `BOOKCLUB_PORT` | `8000` | Host port published by Compose. |
 | `PUID` / `PGID` | `1000` | Runtime user for bind-mounted `./data`. |

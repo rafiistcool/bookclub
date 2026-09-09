@@ -44,6 +44,7 @@ export type SearchHit = {
   cover_edition_key?: string | null;
   isbn?: string | null;
   custom?: boolean;
+  cover_url?: string | null;
 };
 
 export type SearchSort = "readinglog" | "new" | "title" | "relevance";
@@ -74,6 +75,7 @@ export type BookDetail = {
   title: string;
   authors: string;
   cover_id: number | null;
+  cover_url?: string | null;
   year: number | null;
   description: string;
   subjects: string[];
@@ -98,7 +100,11 @@ export type ShelfList = {
 export type Member = {
   username: string;
   currently_reading_count: number;
-  currently_reading_preview: { title: string; cover_id: number | null }[];
+  currently_reading_preview: {
+    title: string;
+    cover_id: number | null;
+    cover_url?: string | null;
+  }[];
 };
 
 export type Invite = {
@@ -147,6 +153,7 @@ export type ClubPickBook = {
   title: string;
   authors: string;
   cover_id: number | null;
+  cover_url?: string | null;
   year: number | null;
   note?: string;
   meeting_at?: string | null;
@@ -211,6 +218,7 @@ export type DiaryBookIn = {
   title: string;
   authors: string;
   cover_id: number | null;
+  cover_url?: string | null;
   year: number | null;
 };
 
@@ -240,6 +248,7 @@ export type VoteBook = {
   title: string;
   authors: string;
   cover_id: number | null;
+  cover_url?: string | null;
   year: number | null;
 };
 

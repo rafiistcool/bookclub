@@ -6,7 +6,10 @@ import BookCover from "../components/BookCover.vue";
 import BookDiary from "../components/BookDiary.vue";
 import MeetingSheet from "../components/MeetingSheet.vue";
 import {
+  catalogUrl as externalCatalogUrl,
+  isbnFromWorkKey,
   isClubWorkId,
+  isOpenLibraryWorkId,
   openLibraryUrl,
   STATUSES,
   STATUS_LABEL,
@@ -41,8 +44,17 @@ const customBook = computed(
   () => book.value?.custom === true || isClubWorkId(workId.value),
 );
 const catalogUrl = computed(() =>
-  book.value ? openLibraryUrl(book.value.ol_work_key) : null,
+  book.value ? externalCatalogUrl(book.value.ol_work_key) : null,
 );
+const catalogLabel = computed(() => {
+  if (!book.value) return "";
+  if (openLibraryUrl(book.value.ol_work_key)) return "View on Open Library";
+  return "View on Google Books";
+});
+const catalogIsbn = computed(() =>
+  book.value ? isbnFromWorkKey(book.value.ol_work_key) : null,
+);
+const fromOpenLibrary = computed(() => isOpenLibraryWorkId(workId.value));
 
 function syncDrafts(detail: BookDetail) {
   takeDraft.value = detail.take;
@@ -115,6 +127,7 @@ async function setStatus(status: Status) {
         title: detail.title,
         authors: detail.authors,
         cover_id: detail.cover_id,
+        cover_url: detail.cover_url,
         year: detail.year,
         status,
       });
@@ -216,6 +229,7 @@ async function remove() {
           title: detail.title,
           authors: detail.authors,
           cover_id: detail.cover_id,
+          cover_url: detail.cover_url,
           year: detail.year,
           ...previous,
         });
@@ -245,6 +259,7 @@ async function confirmClubPick(meetingAt: string | null) {
       title: detail.title,
       authors: detail.authors,
       cover_id: detail.cover_id,
+      cover_url: detail.cover_url,
       year: detail.year,
       meeting_at: meetingAt,
     });
@@ -262,7 +277,7 @@ async function refreshDetails() {
     const detail = await api.refreshBook(workId.value);
     book.value = detail;
     syncDrafts(detail);
-    toast.show("Details updated from Open Library");
+    toast.show("Details updated");
   } catch (err) {
     toast.show(err instanceof ApiError ? err.message : "Could not refresh that book");
   } finally {
@@ -279,6 +294,7 @@ async function nominate() {
       title: detail.title,
       authors: detail.authors,
       cover_id: detail.cover_id,
+      cover_url: detail.cover_url,
       year: detail.year,
     });
     toast.show("Nominated for the next-up vote");
@@ -326,7 +342,14 @@ watch(workId, load);
     <template v-else-if="book">
       <div class="detail-hero">
         <div class="hero-cover">
-          <BookCover :title="book.title" :cover-id="book.cover_id" eager />
+          <BookCover
+            :title="book.title"
+            :cover-id="book.cover_id"
+            :isbn="catalogIsbn"
+            :work-key="book.ol_work_key"
+            :image-url="book.cover_url"
+            eager
+          />
         </div>
         <div class="detail-side">
           <div class="detail-intro">
@@ -352,7 +375,7 @@ watch(workId, load);
                 target="_blank"
                 rel="noreferrer"
               >
-                View on Open Library
+                {{ catalogLabel }}
               </a>
               <span v-if="catalogUrl" class="subtle"> · </span>
               <button
@@ -364,7 +387,7 @@ watch(workId, load);
                 {{ refreshing ? "Refreshing…" : "Refresh details" }}
               </button>
             </p>
-            <p v-if="!book.cover_id && !customBook" class="fine">
+            <p v-if="!book.cover_id && !book.cover_url && !customBook && fromOpenLibrary" class="fine">
               No cover stored.
               <button
                 class="text-btn"
@@ -519,6 +542,7 @@ watch(workId, load);
             title: book.title,
             authors: book.authors,
             cover_id: book.cover_id,
+            cover_url: book.cover_url,
             year: book.year,
           }"
         />

@@ -3,6 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.covers import storable_cover_image_url
 from app.models import ShelfStatus
 from app.themes import (
     COLOR_MODES,
@@ -14,6 +15,12 @@ from app.themes import (
 )
 
 USERNAME_RE = re.compile(r"^[a-z0-9_]{2,32}$")
+
+
+def optional_cover_url(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return storable_cover_image_url(value.strip())
 
 
 class UserOut(BaseModel):
@@ -139,6 +146,7 @@ class SearchHit(BaseModel):
     cover_edition_key: str | None = None
     isbn: str | None = None
     custom: bool = False
+    cover_url: str | None = None
 
 
 class SearchPage(BaseModel):
@@ -183,6 +191,7 @@ class IsbnHitOut(BaseModel):
     cover_id: int | None
     year: int | None
     pages: int | None
+    cover_url: str | None = None
     on_shelf: ShelfStatus | None = None
     shelf_id: int | None = None
 
@@ -199,6 +208,7 @@ class BookDetailOut(BaseModel):
     title: str
     authors: str = ""
     cover_id: int | None = None
+    cover_url: str | None = None
     year: int | None = None
     description: str = ""
     subjects: list[str] = []
@@ -261,6 +271,7 @@ class ShelfAddIn(BaseModel):
     title: str
     authors: str = ""
     cover_id: int | None = None
+    cover_url: str | None = None
     year: int | None = None
     status: ShelfStatus = ShelfStatus.want_to_read
     rating: int | None = Field(default=None, ge=1, le=5)
@@ -299,6 +310,11 @@ class ShelfAddIn(BaseModel):
         if len(value) > 200:
             raise ValueError("Keep the reason to 200 characters")
         return value
+
+    @field_validator("cover_url")
+    @classmethod
+    def cover_url_ok(cls, value: str | None) -> str | None:
+        return optional_cover_url(value)
 
 
 class ShelfPatchIn(BaseModel):
@@ -349,6 +365,7 @@ class GoodreadsImportOut(BaseModel):
 class ReadingPreview(BaseModel):
     title: str
     cover_id: int | None
+    cover_url: str | None = None
 
 
 class MemberOut(BaseModel):
@@ -362,6 +379,7 @@ class ClubPickSetIn(BaseModel):
     title: str
     authors: str = ""
     cover_id: int | None = None
+    cover_url: str | None = None
     year: int | None = None
     note: str = ""
     meeting_at: str | None = None
@@ -389,6 +407,11 @@ class ClubPickSetIn(BaseModel):
         if len(value) > 280:
             raise ValueError("note must be 280 characters or fewer")
         return value
+
+    @field_validator("cover_url")
+    @classmethod
+    def cover_url_ok(cls, value: str | None) -> str | None:
+        return optional_cover_url(value)
 
 
 class ClubPickReader(BaseModel):
@@ -528,6 +551,7 @@ class DiaryBookIn(BaseModel):
     title: str
     authors: str = ""
     cover_id: int | None = None
+    cover_url: str | None = None
     year: int | None = None
 
     @field_validator("title")
@@ -537,6 +561,11 @@ class DiaryBookIn(BaseModel):
         if not value:
             raise ValueError("A title is required")
         return value[:500]
+
+    @field_validator("cover_url")
+    @classmethod
+    def cover_url_ok(cls, value: str | None) -> str | None:
+        return optional_cover_url(value)
 
 
 class DiaryEntryIn(BaseModel):
@@ -617,6 +646,7 @@ class VoteNominateIn(BaseModel):
     title: str
     authors: str = ""
     cover_id: int | None = None
+    cover_url: str | None = None
     year: int | None = None
 
     @field_validator("ol_work_key")
@@ -634,6 +664,11 @@ class VoteNominateIn(BaseModel):
         if not value:
             raise ValueError("title is required")
         return value
+
+    @field_validator("cover_url")
+    @classmethod
+    def cover_url_ok(cls, value: str | None) -> str | None:
+        return optional_cover_url(value)
 
 
 class VoteCastIn(BaseModel):

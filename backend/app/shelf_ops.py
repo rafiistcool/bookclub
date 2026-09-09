@@ -1,7 +1,9 @@
 from sqlmodel import Session, col, select
 
+from app.covers import storable_cover_image_url
 from app.models import Book, ShelfEntry, ShelfStatus, utcnow
 from app.openlibrary import subjects_to_json
+from app.works import work_id_from_key, work_key
 
 
 def _usable_cover(cover_id: int | None) -> int | None:
@@ -16,8 +18,11 @@ def upsert_book(
     authors: str,
     cover_id: int | None,
     year: int | None,
+    cover_image_url: str | None = None,
 ) -> Book:
+    ol_work_key = work_key(work_id_from_key(ol_work_key))
     cover_id = _usable_cover(cover_id)
+    cover_image_url = storable_cover_image_url(cover_image_url)
     book = session.exec(select(Book).where(Book.ol_work_key == ol_work_key)).first()
     if book is None:
         book = Book(
@@ -25,6 +30,7 @@ def upsert_book(
             title=title,
             authors=authors,
             cover_id=cover_id,
+            cover_image_url=cover_image_url,
             year=year,
         )
         session.add(book)
@@ -35,6 +41,8 @@ def upsert_book(
         book.authors = authors
     if cover_id is not None:
         book.cover_id = cover_id
+    if cover_image_url is not None:
+        book.cover_image_url = cover_image_url
     if year is not None:
         book.year = year
     return book
@@ -51,8 +59,9 @@ def apply_book_details(
     pages: int | None = None,
     subjects: list[str] | None = None,
     ol_rating: float | None = None,
+    cover_image_url: str | None = None,
 ) -> Book:
-    """Copy Open Library metadata onto a local Book. Empty strings do not wipe title/authors."""
+    """Copy catalog metadata onto a local Book. Empty strings do not wipe title/authors."""
     if title:
         book.title = title
     if authors:
@@ -60,6 +69,9 @@ def apply_book_details(
     cover_id = _usable_cover(cover_id)
     if cover_id is not None:
         book.cover_id = cover_id
+    remote = storable_cover_image_url(cover_image_url)
+    if remote is not None:
+        book.cover_image_url = remote
     if year is not None:
         book.year = year
     if description is not None:

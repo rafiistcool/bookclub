@@ -4,7 +4,10 @@ import {
   coverUrl,
   editionCoverUrl,
   isbnCoverUrl,
+  isbnFromWorkKey,
+  isGoogleCatalogWorkKey,
   monogram,
+  remoteCoverUrl,
   type CoverSize,
 } from "../constants";
 
@@ -13,6 +16,8 @@ const props = defineProps<{
   coverId?: number | null;
   coverEditionKey?: string | null;
   isbn?: string | null;
+  workKey?: string | null;
+  imageUrl?: string | null;
   size?: CoverSize;
   eager?: boolean;
 }>();
@@ -21,11 +26,17 @@ const broken = ref(false);
 const sourceIndex = ref(0);
 const size = computed<CoverSize>(() => props.size ?? "fluid");
 const sources = computed(() => {
-  const urls = [
-    coverUrl(props.coverId, size.value),
-    editionCoverUrl(props.coverEditionKey, size.value),
-    isbnCoverUrl(props.isbn, size.value),
-  ];
+  const remote = remoteCoverUrl(props.imageUrl);
+  if (remote) return [remote];
+  const urls = [coverUrl(props.coverId, size.value)];
+  // ISBN / GB keys store a Google URL on the book. Do not invent an
+  // Open Library ISBN CDN request for those rows.
+  if (!isGoogleCatalogWorkKey(props.workKey || "")) {
+    urls.push(
+      editionCoverUrl(props.coverEditionKey, size.value),
+      isbnCoverUrl(props.isbn || isbnFromWorkKey(props.workKey || ""), size.value),
+    );
+  }
   return urls.filter((url): url is string => Boolean(url));
 });
 const src = computed(() => (broken.value ? null : (sources.value[sourceIndex.value] ?? null)));
@@ -59,7 +70,14 @@ function onLoad(event: Event) {
 }
 
 watch(
-  () => [props.coverId, props.coverEditionKey, props.isbn, size.value],
+  () => [
+    props.imageUrl,
+    props.coverId,
+    props.coverEditionKey,
+    props.isbn,
+    props.workKey,
+    size.value,
+  ],
   () => {
     broken.value = false;
     sourceIndex.value = 0;

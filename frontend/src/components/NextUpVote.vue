@@ -94,7 +94,13 @@ defineExpose({ load });
         :class="{ leading: index === 0 && row.votes > 0 }"
       >
         <RouterLink class="vote-book" :to="bookPath(row.book.ol_work_key)">
-          <BookCover :title="row.book.title" :cover-id="row.book.cover_id" size="sm" />
+          <BookCover
+            :title="row.book.title"
+            :cover-id="row.book.cover_id"
+            :work-key="row.book.ol_work_key"
+            :image-url="row.book.cover_url"
+            size="sm"
+          />
           <span class="vote-meta">
             <strong>{{ row.book.title }}</strong>
             <span v-if="row.book.authors" class="finer subtle">

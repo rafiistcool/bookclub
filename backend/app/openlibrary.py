@@ -266,10 +266,11 @@ async def fetch_work_details(ol_work_key: str, *, bypass_cache: bool = False) ->
             del _details_inflight[ol_work_key]
 
 
-async def lookup_isbn(isbn: str) -> IsbnHit | None:
-    cached = _isbn_cache_get(isbn)
-    if cached is not None:
-        return cached
+async def lookup_isbn(isbn: str, *, bypass_cache: bool = False) -> IsbnHit | None:
+    if not bypass_cache:
+        cached = _isbn_cache_get(isbn)
+        if cached is not None:
+            return cached
     params = {
         "q": f"isbn:{isbn}",
         "fields": "key,title,author_name,cover_i,first_publish_year,number_of_pages_median",

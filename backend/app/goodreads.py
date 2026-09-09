@@ -4,9 +4,17 @@ import io
 import re
 
 import httpx
+from fastapi import HTTPException
 
 from app.branding import open_library_ua
 from app.config import get_settings
+from app.googlebooks import (
+    GoogleBooksError,
+    RATE_LIMITED,
+    google_books_cooling_down,
+    google_books_enabled,
+    search_volumes,
+)
 from app.models import ShelfStatus
 from app.openlibrary import OL_TIMEOUT
 from app.routers.books import OPEN_LIBRARY_URL, map_open_library_docs
@@ -120,6 +128,11 @@ async def _search_first(
     return hits[0] if hits else None
 
 
+async def _search_google(query: str) -> SearchHit | None:
+    items, _total = await search_volumes(query, page=1, limit=5)
+    return items[0] if items else None
+
+
 async def lookup_work(
     isbn: str,
     title: str,
@@ -132,6 +145,12 @@ async def lookup_work(
     title_author = " ".join(part for part in (title, authors) if part).strip()
     if title_author and title_author not in queries:
         queries.append(title_author)
+    if google_books_enabled():
+        for query in queries:
+            hit = await _search_google(query)
+            if hit is not None:
+                return hit
+        return None
     for query in queries:
         hit = await _search_first(query, client)
         if hit is not None:
@@ -141,15 +160,26 @@ async def lookup_work(
 
 async def lookup_catalog(
     rows: list[GoodreadsRow],
-) -> list[tuple[GoodreadsRow, SearchHit | None]]:
-    """Resolve each CSV row against Open Library, two lookups at a time."""
+) -> list[tuple[GoodreadsRow, SearchHit | None, str | None]]:
+    """Resolve each CSV row against the configured catalog, two lookups at a time."""
     if not rows:
         return []
+    if google_books_enabled() and google_books_cooling_down():
+        raise HTTPException(status_code=429, detail=RATE_LIMITED)
     sem = asyncio.Semaphore(LOOKUP_CONCURRENCY)
+
+    async def one(
+        row: GoodreadsRow, client: httpx.AsyncClient | None
+    ) -> tuple[GoodreadsRow, SearchHit | None, str | None]:
+        async with sem:
+            try:
+                hit = await lookup_work(row.isbn, row.title, row.authors, client)
+            except GoogleBooksError:
+                return row, None, "Catalog unavailable"
+            return row, hit, None if hit else "No match"
+
+    if google_books_enabled():
+        return list(await asyncio.gather(*(one(row, None) for row in rows)))
+
     async with httpx.AsyncClient(timeout=OL_TIMEOUT) as client:
-
-        async def one(row: GoodreadsRow) -> tuple[GoodreadsRow, SearchHit | None]:
-            async with sem:
-                return row, await lookup_work(row.isbn, row.title, row.authors, client)
-
-        return list(await asyncio.gather(*(one(row) for row in rows)))
+        return list(await asyncio.gather(*(one(row, client) for row in rows)))

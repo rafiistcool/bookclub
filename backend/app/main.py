@@ -53,6 +53,10 @@ def create_app() -> FastAPI:
     settings = get_settings()
     club_name = sanitize_name(settings.bookclub_name)
     warn_invalid_theme(settings)
+    logger.info(
+        "catalog: %s",
+        "Google Books" if (settings.google_books_api_key or "").strip() else "Open Library",
+    )
 
     engine = init_db(settings.database_path)
     with Session(engine) as session:

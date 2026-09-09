@@ -103,6 +103,7 @@ def add_to_shelf(
         authors=payload.authors,
         cover_id=payload.cover_id,
         year=payload.year,
+        cover_image_url=payload.cover_url,
     )
     existing = session.exec(
         select(ShelfEntry)
@@ -158,9 +159,9 @@ async def import_goodreads(
 
     imported = 0
     looked_up = await lookup_catalog(rows)
-    for row, hit in looked_up:
+    for row, hit, reason in looked_up:
         if hit is None:
-            skips.append((row.title, "No match"))
+            skips.append((row.title, reason or "No match"))
             continue
         book = upsert_book(
             session,
@@ -169,6 +170,7 @@ async def import_goodreads(
             authors=hit.authors,
             cover_id=hit.cover_id,
             year=hit.year,
+            cover_image_url=hit.cover_url,
         )
         existing = session.exec(
             select(ShelfEntry).where(

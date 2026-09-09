@@ -22,6 +22,7 @@ class QuoteIn(BaseModel):
     title: str = ""
     authors: str = ""
     cover_id: int | None = None
+    cover_url: str | None = None
     year: int | None = None
     body: str
     page: int | None = Field(default=None, ge=0, le=20000)
@@ -140,6 +141,7 @@ def add_quote(
             authors=payload.authors,
             cover_id=payload.cover_id,
             year=payload.year,
+            cover_image_url=payload.cover_url,
         )
     row = Quote(user_id=me.id or 0, book_id=book.id or 0, body=payload.body, page=payload.page)
     session.add(row)

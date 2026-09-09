@@ -75,6 +75,7 @@ async function startReading() {
       title: current.book.title,
       authors: current.book.authors,
       cover_id: current.book.cover_id,
+      cover_url: current.book.cover_url,
       year: current.book.year,
       status: "currently_reading",
     });
@@ -105,6 +106,7 @@ async function saveMeeting(meetingAt: string | null) {
       title: current.book.title,
       authors: current.book.authors,
       cover_id: current.book.cover_id,
+      cover_url: current.book.cover_url,
       year: current.book.year,
       meeting_at: meetingAt,
     });
@@ -138,7 +140,13 @@ onMounted(load);
     <template v-else-if="pick">
       <article class="hero">
         <RouterLink class="hero-cover" :to="bookPath(pick.book.ol_work_key)">
-          <BookCover :title="pick.book.title" :cover-id="pick.book.cover_id" eager />
+          <BookCover
+            :title="pick.book.title"
+            :cover-id="pick.book.cover_id"
+            :work-key="pick.book.ol_work_key"
+            :image-url="pick.book.cover_url"
+            eager
+          />
         </RouterLink>
         <div class="hero-body">
           <p class="kicker">Reading now</p>
@@ -247,7 +255,13 @@ onMounted(load);
         <RouterLink to="/club">Vote in Club</RouterLink>
       </div>
       <RouterLink v-if="leader" class="book-row next-up-card" to="/club">
-        <BookCover :title="leader.book.title" :cover-id="leader.book.cover_id" size="sm" />
+        <BookCover
+          :title="leader.book.title"
+          :cover-id="leader.book.cover_id"
+          :work-key="leader.book.ol_work_key"
+          :image-url="leader.book.cover_url"
+          size="sm"
+        />
         <span class="book-row-meta">
           <h3>{{ leader.book.title }}</h3>
           <p class="fine">
@@ -278,7 +292,12 @@ onMounted(load);
           class="book-tile past-tile"
           :to="bookPath(row.book.ol_work_key)"
         >
-          <BookCover :title="row.book.title" :cover-id="row.book.cover_id" />
+          <BookCover
+            :title="row.book.title"
+            :cover-id="row.book.cover_id"
+            :work-key="row.book.ol_work_key"
+            :image-url="row.book.cover_url"
+          />
           <span class="book-tile-title">{{ row.book.title }}</span>
           <span class="book-tile-sub">{{ row.meeting_label || row.set_by }}</span>
         </RouterLink>

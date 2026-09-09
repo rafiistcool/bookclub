@@ -102,6 +102,7 @@ watch(() => route.params.username, load);
           :title="item.book.title"
           :authors="item.book.authors"
           :cover-id="item.book.cover_id"
+          :image-url="item.book.cover_url"
           :status="item.status"
           :rating="item.rating"
           show-authors
