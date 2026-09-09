@@ -18,6 +18,8 @@ def test_register_consumes_invite_and_sets_session(client):
         "username": "ada",
         "theme": "paper",
         "color_mode": "system",
+        "locale": "en",
+        "avatar_url": None,
     }
     me = client.get("/api/auth/me")
     assert me.status_code == 200
@@ -130,6 +132,8 @@ def test_update_theme_alone_leaves_color_mode(client):
         "username": "ada",
         "theme": "forest",
         "color_mode": "system",
+        "locale": "en",
+        "avatar_url": None,
     }
 
 
@@ -194,6 +198,25 @@ def test_preferences_require_a_session(client):
     assert response.status_code == 401
 
 
+def test_update_locale(client):
+    register(client, "ada")
+    response = client.patch("/api/auth/me/preferences", json={"locale": "de"})
+    assert response.status_code == 200
+    assert response.json()["locale"] == "de"
+    assert response.json()["theme"] == "paper"
+    client.post("/api/auth/logout")
+    assert login(client, "ada").status_code == 204
+    assert client.get("/api/auth/me").json()["locale"] == "de"
+
+
+def test_invalid_locale_rejected(client):
+    register(client, "ada")
+    response = client.patch("/api/auth/me/preferences", json={"locale": "fr"})
+    assert response.status_code == 400
+    assert "locale" in response.json()["detail"]
+    assert client.get("/api/auth/me").json()["locale"] == "en"
+
+
 def test_preference_columns_backfill_pre_existing_users(tmp_path):
     from app.db import init_db
 
@@ -218,8 +241,10 @@ def test_preference_columns_backfill_pre_existing_users(tmp_path):
         # Re-running must not fail on the already-added columns.
         init_db(path).dispose()
         probe = sqlite3.connect(path)
-        row = probe.execute("SELECT theme, color_mode FROM users WHERE id = 1").fetchone()
+        row = probe.execute(
+            "SELECT theme, color_mode, locale FROM users WHERE id = 1"
+        ).fetchone()
         probe.close()
     finally:
         engine.dispose()
-    assert row == ("paper", "system")
+    assert row == ("paper", "system", "en")

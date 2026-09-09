@@ -45,7 +45,7 @@ from app.schemas import (
     SearchHit,
     SearchPage,
 )
-from app.serialize import book_cover_url
+from app.serialize import avatar_url_for, book_cover_url
 from app.shelf_ops import apply_book_details, upsert_book
 from app.works import (
     canonical_work_id,
@@ -898,6 +898,7 @@ def _annotate_book_detail(detail: BookDetailOut, book: Book, user: User, session
                     status=entry.status,
                     rating=entry.rating,
                     progress=entry.progress,
+                    avatar_url=avatar_url_for(entry.user),
                 )
             )
     detail.readers.sort(key=lambda reader: reader.username)

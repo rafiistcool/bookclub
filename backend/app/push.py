@@ -25,6 +25,7 @@ from sqlalchemy.engine import Engine
 from sqlmodel import Session, col, select
 
 from app.config import get_settings
+from app.i18n import DEFAULT_LOCALE, normalize_locale
 from app.models import ClubPick, PushSubscription, User, utcnow
 from app.runtime import data_dir_from_env, read_or_create_file
 
@@ -123,11 +124,20 @@ def collect_targets(
     }
     if not allowed:
         return []
+    locale_by_id = {
+        user.id: normalize_locale(getattr(user, "locale", None)) for user in users
+    }
     subs = session.exec(
         select(PushSubscription).where(col(PushSubscription.user_id).in_(list(allowed)))
     ).all()
     return [
-        {"id": sub.id, "endpoint": sub.endpoint, "p256dh": sub.p256dh, "auth": sub.auth}
+        {
+            "id": sub.id,
+            "endpoint": sub.endpoint,
+            "p256dh": sub.p256dh,
+            "auth": sub.auth,
+            "locale": locale_by_id.get(sub.user_id, DEFAULT_LOCALE),
+        }
         for sub in subs
     ]
 
@@ -158,16 +168,33 @@ def schedule(
     url: str = "/",
     tag: str | None = None,
     exclude_user_id: int | None = None,
+    copy: dict[str, tuple[str, str]] | None = None,
 ) -> int:
-    """Queue a notification to every opted-in member. Returns how many devices were targeted."""
+    """Queue a notification to every opted-in member. Returns how many devices were targeted.
+
+    `copy` maps locale → (title, body). Recipients without a match get `title`/`body`.
+    """
     targets = collect_targets(session, kind, exclude_user_id=exclude_user_id)
     if not targets:
         return 0
-    payload = {"title": title, "body": body, "url": url, "tag": tag or kind, "kind": kind}
-    if background is not None:
-        background.add_task(deliver, engine, targets, payload)
-    else:
-        deliver(engine, targets, payload)
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for target in targets:
+        loc = normalize_locale(str(target.get("locale") or DEFAULT_LOCALE))
+        groups.setdefault(loc, []).append(target)
+    for loc, group in groups.items():
+        localized = (copy or {}).get(loc)
+        text_title, text_body = localized if localized else (title, body)
+        payload = {
+            "title": text_title,
+            "body": text_body,
+            "url": url,
+            "tag": tag or kind,
+            "kind": kind,
+        }
+        if background is not None:
+            background.add_task(deliver, engine, group, payload)
+        else:
+            deliver(engine, group, payload)
     return len(targets)
 
 
@@ -194,15 +221,24 @@ def maybe_schedule_meeting_reminder(
     pick.reminder_sent_at = now
     session.add(pick)
     session.commit()
+    title = f"{club_name}: meeting tomorrow"
+    body = f"{pick.book.title} — see you at the meeting."
     schedule(
         background,
         engine,
         session,
         kind="meeting",
-        title=f"{club_name}: meeting tomorrow",
-        body=f"{pick.book.title} — see you at the meeting.",
+        title=title,
+        body=body,
         url="/",
         tag=f"meeting-{pick.id}",
+        copy={
+            "en": (title, body),
+            "de": (
+                f"{club_name}: Treffen morgen",
+                f"{pick.book.title} — bis zum Treffen.",
+            ),
+        },
     )
     return True
 

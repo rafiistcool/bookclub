@@ -8,3 +8,4 @@ python-dotenv>=1.0
 python-multipart>=0.0.12
 itsdangerous>=2.2
 pywebpush>=2.0
+pillow>=11

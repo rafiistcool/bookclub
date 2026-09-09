@@ -16,6 +16,7 @@ vi.mock("vue-router", () => ({
   useRouter: () => ({ push }),
 }));
 
+import { i18n } from "../i18n";
 import AddBookSheet from "./AddBookSheet.vue";
 
 describe("AddBookSheet", () => {
@@ -32,7 +33,7 @@ describe("AddBookSheet", () => {
   it("submits a numeric year from the number input without crashing", async () => {
     const wrapper = mount(AddBookSheet, {
       props: { initialTitle: "Kitchen Zine 2" },
-      global: { plugins: [createPinia()] },
+      global: { plugins: [createPinia(), i18n] },
     });
     await wrapper.get('input[type="text"]').setValue("Kitchen Zine 2");
     const author = wrapper.findAll("input")[1];

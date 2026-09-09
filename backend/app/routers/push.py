@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 from app import push
 from app.branding import sanitize_name
 from app.config import get_settings
+from app.i18n import normalize_locale
 from app.deps import get_current_user, get_session
 from app.models import PushSubscription, User
 
@@ -154,13 +155,19 @@ def send_test(
         for row in rows
     ]
     club = sanitize_name(get_settings().bookclub_name)
+    if normalize_locale(me.locale) == "de":
+        title = f"{club}: Benachrichtigungen sind an"
+        body = "Du hörst von neuen Club-Büchern, Notizen und Treffen."
+    else:
+        title = f"{club}: notifications are on"
+        body = "You will hear about new picks, notes, and meeting reminders."
     background.add_task(
         push.deliver,
         request.app.state.engine,
         targets,
         {
-            "title": f"{club}: notifications are on",
-            "body": "You will hear about new picks, notes, and meeting reminders.",
+            "title": title,
+            "body": body,
             "url": "/settings",
             "tag": "test",
             "kind": "test",

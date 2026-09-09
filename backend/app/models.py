@@ -2,9 +2,10 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import Column, DateTime, UniqueConstraint
+from sqlalchemy import Column, DateTime, LargeBinary, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
+from app.i18n import DEFAULT_LOCALE
 from app.themes import DEFAULT_COLOR_MODE, DEFAULT_THEME_ID
 
 
@@ -27,6 +28,7 @@ class User(SQLModel, table=True):
     password_hash: str
     theme: str = Field(default=DEFAULT_THEME_ID, max_length=32)
     color_mode: str = Field(default=DEFAULT_COLOR_MODE, max_length=16)
+    locale: str = Field(default=DEFAULT_LOCALE, max_length=8)
     created_at: datetime = Field(
         default_factory=utcnow,
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -34,6 +36,15 @@ class User(SQLModel, table=True):
     notify_meeting: bool = Field(default=True)
     notify_pick: bool = Field(default=True)
     notify_note: bool = Field(default=True)
+    avatar: Optional[bytes] = Field(
+        default=None,
+        sa_column=Column(LargeBinary, nullable=True),
+    )
+    avatar_mime: Optional[str] = Field(default=None, max_length=32)
+    avatar_updated_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
 
     shelf_entries: list["ShelfEntry"] = Relationship(back_populates="user")
 

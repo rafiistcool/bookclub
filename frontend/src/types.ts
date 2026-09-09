@@ -2,12 +2,15 @@ import type { Status } from "./constants";
 
 export type ThemeId = "paper" | "slate" | "forest" | "ink";
 export type ColorMode = "light" | "dark" | "system";
+export type Locale = "en" | "de";
 
 export type User = {
   id: number;
   username: string;
   theme: ThemeId;
   color_mode: ColorMode;
+  locale: Locale;
+  avatar_url: string | null;
 };
 
 export type Book = {
@@ -68,6 +71,7 @@ export type BookReader = {
   status: Status;
   rating: number | null;
   progress: number | null;
+  avatar_url?: string | null;
 };
 
 export type BookDetail = {
@@ -105,6 +109,7 @@ export type Member = {
     cover_id: number | null;
     cover_url?: string | null;
   }[];
+  avatar_url?: string | null;
 };
 
 export type Invite = {
@@ -129,6 +134,7 @@ export type ClubPickReader = {
   take: string;
   dnf_reason: string;
   progress: number | null;
+  avatar_url?: string | null;
 };
 
 export type ClubPick = {
@@ -190,6 +196,7 @@ export type Reaction = {
 export type DiaryEntry = {
   id: number;
   author: string;
+  author_avatar_url?: string | null;
   mine: boolean;
   body: string;
   deleted: boolean;

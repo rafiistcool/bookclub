@@ -1,18 +1,21 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
+import Avatar from "../components/Avatar.vue";
 import NavIcon from "../components/NavIcon.vue";
 import { NAV_ITEMS, isActive } from "../nav";
 import { useClub } from "../stores/club";
 import { useSession } from "../stores/session";
 
+const { t } = useI18n();
 const club = useClub();
 const session = useSession();
 const route = useRoute();
 
 const bottomItems = NAV_ITEMS.filter((item) => item.bottomBar);
 const username = computed(() => session.user?.username ?? "");
-const initial = computed(() => username.value.charAt(0).toUpperCase() || "?");
+const avatarUrl = computed(() => session.user?.avatar_url ?? null);
 </script>
 
 <template>
@@ -22,9 +25,9 @@ const initial = computed(() => username.value.charAt(0).toUpperCase() || "?");
       <RouterLink
         class="avatar-link"
         to="/settings"
-        :aria-label="`Settings for ${username}`"
+        :aria-label="t('nav.settingsFor', { name: username })"
       >
-        <span class="avatar" aria-hidden="true">{{ initial }}</span>
+        <Avatar :username="username" :src="avatarUrl" />
       </RouterLink>
     </header>
 
@@ -40,14 +43,14 @@ const initial = computed(() => username.value.charAt(0).toUpperCase() || "?");
           :to="item.to"
         >
           <NavIcon :name="item.icon" :size="20" />
-          {{ item.label }}
+          {{ t(item.labelKey) }}
         </RouterLink>
       </nav>
       <RouterLink class="side-account" to="/settings">
-        <span class="avatar" aria-hidden="true">{{ initial }}</span>
+        <Avatar :username="username" :src="avatarUrl" />
         <span class="side-account-text">
           <strong>{{ username }}</strong>
-          <span class="finer subtle">Settings and theme</span>
+          <span class="finer subtle">{{ t("nav.settingsAndTheme") }}</span>
         </span>
       </RouterLink>
     </aside>
@@ -65,7 +68,7 @@ const initial = computed(() => username.value.charAt(0).toUpperCase() || "?");
         :aria-current="isActive(route.path, item.to) ? 'page' : undefined"
       >
         <NavIcon :name="item.icon" />
-        {{ item.label }}
+        {{ t(item.labelKey) }}
       </RouterLink>
     </nav>
   </div>
@@ -99,20 +102,6 @@ const initial = computed(() => username.value.charAt(0).toUpperCase() || "?");
   min-height: var(--tap);
   border-radius: var(--radius-pill);
   text-decoration: none;
-}
-
-.avatar {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-family: var(--serif);
-  font-weight: 700;
-  font-size: var(--text-sm);
-  flex: 0 0 auto;
 }
 
 .main {

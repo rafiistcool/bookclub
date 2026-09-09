@@ -5,33 +5,17 @@ import type { ColorMode, ThemeId, User } from "../types";
 import { useClub } from "./club";
 
 export const THEMES = [
-  {
-    id: "paper",
-    label: "Paper",
-    blurb: "Warm ivory and brick. The house style.",
-  },
-  {
-    id: "slate",
-    label: "Slate",
-    blurb: "Cool greys with a printer's blue.",
-  },
-  {
-    id: "forest",
-    label: "Forest",
-    blurb: "Soft greens and deep evergreen.",
-  },
-  {
-    id: "ink",
-    label: "Ink",
-    blurb: "Black on white, maximum contrast.",
-  },
-] as const satisfies readonly { id: ThemeId; label: string; blurb: string }[];
+  { id: "paper", labelKey: "theme.paper", blurbKey: "theme.paperBlurb" },
+  { id: "slate", labelKey: "theme.slate", blurbKey: "theme.slateBlurb" },
+  { id: "forest", labelKey: "theme.forest", blurbKey: "theme.forestBlurb" },
+  { id: "ink", labelKey: "theme.ink", blurbKey: "theme.inkBlurb" },
+] as const satisfies readonly { id: ThemeId; labelKey: string; blurbKey: string }[];
 
 export const MODES = [
-  { id: "light", label: "Light" },
-  { id: "dark", label: "Dark" },
-  { id: "system", label: "System" },
-] as const satisfies readonly { id: ColorMode; label: string }[];
+  { id: "light", labelKey: "theme.light" },
+  { id: "dark", labelKey: "theme.dark" },
+  { id: "system", labelKey: "theme.system" },
+] as const satisfies readonly { id: ColorMode; labelKey: string }[];
 
 const THEME_KEY = "bookclub.theme";
 const MODE_KEY = "bookclub.mode";

@@ -1,16 +1,21 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { api, ApiError } from "../api/client";
+import Avatar from "../components/Avatar.vue";
+import LanguageSwitch from "../components/LanguageSwitch.vue";
 import { MODES, THEMES, useTheme } from "../stores/theme";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import type { GoodreadsImport, Invite } from "../types";
 
+const { t } = useI18n();
 const router = useRouter();
 const theme = useTheme();
 const session = useSession();
 const toast = useToast();
+const avatarBusy = ref(false);
 
 const invites = ref<Invite[]>([]);
 const invitesError = ref("");
@@ -30,7 +35,7 @@ async function loadInvites() {
     invitesError.value = "";
   } catch (err) {
     invitesError.value =
-      err instanceof ApiError ? err.message : "Could not load invites";
+      err instanceof ApiError ? err.message : t("settings.invitesLoadFailed");
   } finally {
     invitesLoaded.value = true;
   }
@@ -43,7 +48,7 @@ async function mint() {
     await loadInvites();
     await copy(created.code);
   } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : "Could not create an invite");
+    toast.show(err instanceof ApiError ? err.message : t("settings.inviteFailed"));
   } finally {
     minting.value = false;
   }
@@ -52,7 +57,7 @@ async function mint() {
 async function copy(code: string) {
   try {
     await navigator.clipboard.writeText(code);
-    toast.show("Invite code copied");
+    toast.show(t("settings.inviteCopied"));
   } catch {
     toast.show(code);
   }
@@ -74,16 +79,50 @@ async function importCsv() {
     if (result.imported) {
       toast.show(
         result.skipped
-          ? `Imported ${result.imported}. Skipped ${result.skipped}.`
-          : `Imported ${result.imported} books`,
+          ? t("settings.importedSkipped", {
+              imported: result.imported,
+              skipped: result.skipped,
+            })
+          : t("settings.importedBooks", { n: result.imported }),
       );
     } else {
-      toast.show(result.skipped ? `Skipped ${result.skipped}` : "Nothing to import");
+      toast.show(
+        result.skipped ? t("settings.skippedOnly", { n: result.skipped }) : t("settings.nothingToImport"),
+      );
     }
   } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : "Could not import that file");
+    toast.show(err instanceof ApiError ? err.message : t("settings.importFailed"));
   } finally {
     importing.value = false;
+  }
+}
+
+async function onAvatarFile(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file || avatarBusy.value) return;
+  avatarBusy.value = true;
+  try {
+    session.user = await api.uploadAvatar(file);
+    toast.show(t("settings.photoSaved"));
+  } catch (err) {
+    toast.show(err instanceof ApiError ? err.message : t("settings.photoFailed"));
+  } finally {
+    avatarBusy.value = false;
+  }
+}
+
+async function removeAvatar() {
+  if (avatarBusy.value) return;
+  avatarBusy.value = true;
+  try {
+    session.user = await api.deleteAvatar();
+    toast.show(t("settings.photoRemoved"));
+  } catch (err) {
+    toast.show(err instanceof ApiError ? err.message : t("settings.photoFailed"));
+  } finally {
+    avatarBusy.value = false;
   }
 }
 
@@ -98,17 +137,57 @@ onMounted(loadInvites);
 <template>
   <section>
     <div class="page-head">
-      <h1>Settings</h1>
-      <p class="lede">Signed in as {{ username }}.</p>
+      <h1>{{ t("settings.title") }}</h1>
+      <p class="lede">{{ t("settings.signedInAs", { name: username }) }}</p>
     </div>
+
+    <section aria-labelledby="profile">
+      <div class="section-head">
+        <h2 id="profile">{{ t("settings.profile") }}</h2>
+      </div>
+      <p class="fine muted">{{ t("settings.profileBlurb") }}</p>
+      <div class="profile-row">
+        <Avatar :username="username" :src="session.user?.avatar_url" size="lg" />
+        <div class="profile-actions">
+          <label class="btn btn-ghost">
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              :disabled="avatarBusy"
+              @change="onAvatarFile"
+            />
+            {{ t("settings.choosePhoto") }}
+          </label>
+          <button
+            v-if="session.user?.avatar_url"
+            class="btn btn-ghost"
+            type="button"
+            :disabled="avatarBusy"
+            @click="removeAvatar"
+          >
+            {{ t("settings.removePhoto") }}
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="language">
+      <div class="section-head">
+        <h2 id="language">{{ t("settings.language") }}</h2>
+      </div>
+      <p class="fine muted">{{ t("settings.languageBlurb") }}</p>
+      <div class="mode-row">
+        <LanguageSwitch />
+      </div>
+    </section>
 
     <section aria-labelledby="appearance">
       <div class="section-head">
-        <h2 id="appearance">Appearance</h2>
+        <h2 id="appearance">{{ t("settings.appearance") }}</h2>
       </div>
 
       <div class="mode-row">
-        <div class="segmented" role="group" aria-label="Colour mode">
+        <div class="segmented" role="group" :aria-label="t('settings.colourMode')">
           <button
             v-for="option in MODES"
             :key="option.id"
@@ -116,14 +195,14 @@ onMounted(loadInvites);
             :aria-pressed="theme.mode === option.id"
             @click="theme.setMode(option.id)"
           >
-            {{ option.label }}
+            {{ t(option.labelKey) }}
           </button>
         </div>
         <p class="fine subtle">
           <template v-if="theme.mode === 'system'">
-            Following your device, currently {{ theme.resolvedMode }}.
+            {{ t("settings.followingDevice", { mode: t(`theme.${theme.resolvedMode}`) }) }}
           </template>
-          <template v-else>Always {{ theme.mode }}.</template>
+          <template v-else>{{ t("settings.alwaysMode", { mode: t(`theme.${theme.mode}`) }) }}</template>
         </p>
       </div>
 
@@ -153,21 +232,21 @@ onMounted(loadInvites);
             <span class="tp-accent" />
           </span>
           <span class="theme-name">
-            {{ option.label }}
-            <span v-if="theme.theme === option.id" class="badge club-pick">Active</span>
+            {{ t(option.labelKey) }}
+            <span v-if="theme.theme === option.id" class="badge club-pick">{{ t("common.active") }}</span>
           </span>
-          <span class="fine subtle">{{ option.blurb }}</span>
+          <span class="fine subtle">{{ t(option.blurbKey) }}</span>
         </button>
       </div>
     </section>
 
     <section class="section" aria-labelledby="invites">
       <div class="section-head">
-        <h2 id="invites">Invites</h2>
-        <span class="fine subtle nums">{{ unusedInvites }} unused</span>
+        <h2 id="invites">{{ t("settings.invites") }}</h2>
+        <span class="fine subtle nums">{{ t("settings.unusedCount", { n: unusedInvites }) }}</span>
       </div>
       <p class="fine muted">
-        Anyone with a code can make an account. Treat them like passwords.
+        {{ t("settings.invitesBlurb") }}
       </p>
       <button
         class="btn btn-primary mint-btn"
@@ -175,7 +254,7 @@ onMounted(loadInvites);
         :disabled="minting"
         @click="mint"
       >
-        {{ minting ? "Creating…" : "Create invite" }}
+        {{ minting ? t("settings.creatingInvite") : t("settings.createInvite") }}
       </button>
       <p v-if="invitesError" class="error">{{ invitesError }}</p>
       <ul v-else-if="invites.length" class="invite-list">
@@ -183,8 +262,8 @@ onMounted(loadInvites);
           <span>
             <code class="invite-code">{{ invite.code }}</code>
             <span class="fine subtle invite-state">
-              <template v-if="invite.used">Used by {{ invite.used_by }}</template>
-              <template v-else>Unused</template>
+              <template v-if="invite.used">{{ t("settings.usedBy", { name: invite.used_by }) }}</template>
+              <template v-else>{{ t("settings.unused") }}</template>
             </span>
           </span>
           <button
@@ -193,7 +272,7 @@ onMounted(loadInvites);
             type="button"
             @click="copy(invite.code)"
           >
-            Copy
+            {{ t("common.copy") }}
           </button>
         </li>
       </ul>
@@ -202,21 +281,19 @@ onMounted(loadInvites);
           <span class="skeleton skeleton-line" />
         </li>
       </ul>
-      <p v-else class="fine subtle">No invites yet.</p>
+      <p v-else class="fine subtle">{{ t("settings.noInvites") }}</p>
     </section>
 
     <section class="section" aria-labelledby="import">
       <div class="section-head">
-        <h2 id="import">Import from Goodreads</h2>
+        <h2 id="import">{{ t("settings.importTitle") }}</h2>
       </div>
       <p class="fine muted">
-        Upload a Goodreads library export CSV. Exclusive shelves map to Want to read,
-        Reading, and Finished. Each title is looked up at Open Library, so a large
-        export can take a while. Rows we cannot match are skipped.
+        {{ t("settings.importBlurb") }}
       </p>
       <label class="import-file">
         <input type="file" accept=".csv,text/csv" @change="onImportFile" />
-        <span>{{ importFile ? importFile.name : "Choose CSV" }}</span>
+        <span>{{ importFile ? importFile.name : t("settings.chooseCsv") }}</span>
       </label>
       <button
         class="btn btn-ghost"
@@ -224,14 +301,14 @@ onMounted(loadInvites);
         :disabled="!importFile || importing"
         @click="importCsv"
       >
-        {{ importing ? "Importing… keep this tab open." : "Import CSV" }}
+        {{ importing ? t("settings.importing") : t("settings.importCsv") }}
       </button>
       <p v-if="importing" class="fine subtle">
-        Looking each title up at Open Library. This is often a few seconds per book.
+        {{ t("settings.importWait") }}
       </p>
       <template v-if="importResult">
         <p class="fine muted import-summary">
-          Imported {{ importResult.imported }}. Skipped {{ importResult.skipped }}.
+          {{ t("settings.importSummary", { imported: importResult.imported, skipped: importResult.skipped }) }}
         </p>
         <ul v-if="importResult.skips.length" class="import-skips">
           <li v-for="(skip, index) in importResult.skips" :key="index">
@@ -243,22 +320,48 @@ onMounted(loadInvites);
 
     <section class="section" aria-labelledby="backup">
       <div class="section-head">
-        <h2 id="backup">Backup</h2>
+        <h2 id="backup">{{ t("settings.backup") }}</h2>
       </div>
       <p class="fine muted">
-        Download a copy of the club's SQLite database. Keep it somewhere safe — this
-        does not restore from a file.
+        {{ t("settings.backupBlurb") }}
       </p>
-      <a class="btn btn-ghost backup-btn" href="/api/backup">Download database</a>
+      <a class="btn btn-ghost backup-btn" href="/api/backup">{{ t("settings.downloadDatabase") }}</a>
     </section>
 
     <hr class="divider" />
 
-    <button class="btn btn-danger" type="button" @click="logout">Log out</button>
+    <button class="btn btn-danger" type="button" @click="logout">{{ t("settings.logOut") }}</button>
   </section>
 </template>
 
 <style scoped>
+.profile-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  margin: var(--space-3) 0 0;
+}
+
+.profile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.profile-actions label.btn {
+  position: relative;
+  cursor: pointer;
+}
+
+.profile-actions label.btn input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
 .mode-row {
   display: flex;
   flex-wrap: wrap;

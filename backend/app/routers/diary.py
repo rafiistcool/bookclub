@@ -31,7 +31,7 @@ from app.schemas import (
     ReactionIn,
     ReactionOut,
 )
-from app.serialize import book_out
+from app.serialize import avatar_url_for, book_out
 from app.shelf_ops import upsert_book
 from app.timezone import meeting_label, resolved_timezone
 from app.works import canonical_work_id, is_work_id, work_key
@@ -105,6 +105,7 @@ def _entry_out(
     return DiaryEntryOut(
         id=post.id or 0,
         author=post.author.username if post.author is not None else "unknown",
+        author_avatar_url=avatar_url_for(post.author),
         mine=post.author_id == viewer.id,
         body="" if deleted else post.body,
         deleted=deleted,

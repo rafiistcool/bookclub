@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { onUnmounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import {
   bookPath,
   starLabel,
-  STATUS_SHORT,
+  statusShort,
   type Status,
 } from "../constants";
 import type { ShelfItem } from "../types";
@@ -54,6 +55,8 @@ function stopListening() {
 
 onUnmounted(stopListening);
 
+const { t } = useI18n();
+
 const isClubPick = () =>
   Boolean(props.clubPickKey) && props.item.book.ol_work_key === props.clubPickKey;
 </script>
@@ -72,8 +75,8 @@ const isClubPick = () =>
         <strong class="card-title">{{ item.book.title }}</strong>
         <span v-if="item.book.authors" class="finer subtle">{{ item.book.authors }}</span>
         <span class="meta-line">
-          <span v-if="isClubPick()" class="badge club-pick">Club</span>
-          <span class="badge" :class="item.status">{{ STATUS_SHORT[item.status] }}</span>
+          <span v-if="isClubPick()" class="badge club-pick">{{ t("common.club") }}</span>
+          <span class="badge" :class="item.status">{{ statusShort(item.status) }}</span>
           <span v-if="item.progress != null" class="finer subtle nums">
             {{ item.progress }}%
           </span>
@@ -88,7 +91,7 @@ const isClubPick = () =>
       <button
         class="icon-btn"
         type="button"
-        aria-label="Book actions"
+        :aria-label="t('card.actions')"
         :aria-expanded="menuOpen"
         @click="toggleMenu"
       >
@@ -99,14 +102,14 @@ const isClubPick = () =>
         </svg>
       </button>
       <div v-if="menuOpen" class="card-menu">
-        <RouterLink :to="bookPath(item.book.ol_work_key)">Open book</RouterLink>
+        <RouterLink :to="bookPath(item.book.ol_work_key)">{{ t("card.openBook") }}</RouterLink>
         <button type="button" @click="closeMenu(); emit('clubPick')">
-          Set as club pick
+          {{ t("card.setPick") }}
         </button>
         <button type="button" @click="closeMenu(); emit('nominate')">
-          Nominate for next up
+          {{ t("card.nominate") }}
         </button>
-        <button type="button" @click="closeMenu(); emit('remove')">Remove</button>
+        <button type="button" @click="closeMenu(); emit('remove')">{{ t("common.remove") }}</button>
       </div>
     </div>
   </article>

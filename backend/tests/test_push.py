@@ -133,6 +133,20 @@ def test_dead_subscriptions_are_pruned(client, sent):
     assert client.get("/api/push/subscriptions").json() == {"items": []}
 
 
+def test_push_copy_follows_recipient_locale(client, sent):
+    register(client, "ada")
+    client.patch("/api/auth/me/preferences", json={"locale": "de"})
+    client.post("/api/push/subscriptions", json=_sub("https://push.example/ada"))
+    _add_member(client, "grace")
+    client.post("/api/push/subscriptions", json=_sub("https://push.example/grace"))
+    _add_member(client, "tom")
+
+    client.put("/api/pick", json=CIRCE)
+    by_endpoint = {target["endpoint"]: payload for target, payload in sent}
+    assert "gewählt" in by_endpoint["https://push.example/ada"]["body"]
+    assert "chose Circe" in by_endpoint["https://push.example/grace"]["body"]
+
+
 def test_meeting_reminder_sent_once_inside_24h(client, sent):
     register(client, "ada")
     client.post("/api/push/subscriptions", json=_sub("https://push.example/ada"))

@@ -25,6 +25,7 @@ vi.mock("../api/client", () => ({
 }));
 
 import { ApiError } from "../api/client";
+import { i18n } from "../i18n";
 import DiscoverPage from "./DiscoverPage.vue";
 import { resetDiscoverBrowseCache } from "./discoverCache";
 
@@ -80,7 +81,7 @@ async function mountDiscover(initial = "/discover") {
     { template: "<router-view />" },
     {
       global: {
-        plugins: [createPinia(), router],
+        plugins: [createPinia(), router, i18n],
         stubs: { BookTile: bookTileStub, AddBookSheet: true },
       },
     },

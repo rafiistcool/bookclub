@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { ApiError } from "../api/client";
+import LanguageSwitch from "../components/LanguageSwitch.vue";
 import { useClub } from "../stores/club";
 import { useSession } from "../stores/session";
+
+const { t } = useI18n();
 
 const club = useClub();
 
@@ -23,7 +27,7 @@ async function submit() {
     await session.register(username.value, password.value, invite.value);
     await router.replace("/");
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : "Could not create account";
+    error.value = err instanceof ApiError ? err.message : t("auth.couldNotCreate");
   } finally {
     pending.value = false;
   }
@@ -33,11 +37,11 @@ async function submit() {
 <template>
   <main class="auth-page">
     <h1 class="wordmark">{{ club.name }}</h1>
-    <p class="lede">Join with an invite from someone already here.</p>
+    <p class="lede">{{ t("auth.joinLede") }}</p>
     <form @submit.prevent="submit">
       <p v-if="error" class="error">{{ error }}</p>
       <label class="field">
-        <span>Invite code</span>
+        <span>{{ t("auth.inviteCode") }}</span>
         <input
           v-model="invite"
           name="invite"
@@ -47,7 +51,7 @@ async function submit() {
         />
       </label>
       <label class="field">
-        <span>Username</span>
+        <span>{{ t("auth.username") }}</span>
         <input
           v-model="username"
           name="username"
@@ -57,7 +61,7 @@ async function submit() {
         />
       </label>
       <label class="field">
-        <span>Password</span>
+        <span>{{ t("auth.password") }}</span>
         <div class="password-wrap">
           <input
             v-model="password"
@@ -68,18 +72,21 @@ async function submit() {
             required
           />
           <button class="text-btn" type="button" @click="show = !show">
-            {{ show ? "Hide" : "Show" }}
+            {{ show ? t("common.hide") : t("common.show") }}
           </button>
         </div>
       </label>
       <button class="btn btn-primary btn-block" type="submit" :disabled="pending">
-        {{ pending ? "Creating…" : "Create account" }}
+        {{ pending ? t("auth.creating") : t("auth.createAccount") }}
       </button>
     </form>
     <p class="muted fine auth-alt">
-      Already have an account?
-      <RouterLink to="/login">Sign in</RouterLink>
+      {{ t("auth.alreadyHave") }}
+      <RouterLink to="/login">{{ t("auth.signIn") }}</RouterLink>
     </p>
+    <div class="auth-locale">
+      <LanguageSwitch compact />
+    </div>
   </main>
 </template>
 
@@ -89,6 +96,10 @@ async function submit() {
 }
 
 .auth-alt {
+  margin-top: var(--space-5);
+}
+
+.auth-locale {
   margin-top: var(--space-5);
 }
 </style>

@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { bookPath, STATUS_SHORT, starLabel, type CoverSize, type Status } from "../constants";
+import { useI18n } from "vue-i18n";
+import { bookPath, statusShort, starLabel, type CoverSize, type Status } from "../constants";
 import BookCover from "./BookCover.vue";
+
+const { t } = useI18n();
 
 const props = defineProps<{
   olWorkKey: string;
@@ -33,13 +36,13 @@ const props = defineProps<{
         :size="size ?? 'tile'"
         :eager="eager"
       />
-      <span v-if="clubPick" class="badge book-tile-badge club-pick">Club</span>
+      <span v-if="clubPick" class="badge book-tile-badge club-pick">{{ t("common.club") }}</span>
       <span
         v-else-if="props.status"
         class="badge book-tile-badge"
         :class="props.status"
       >
-        {{ STATUS_SHORT[props.status] }}
+        {{ statusShort(props.status) }}
       </span>
     </span>
     <span class="book-tile-title">{{ title }}</span>
@@ -47,7 +50,7 @@ const props = defineProps<{
     <span
       v-if="rating && status === 'finished'"
       class="book-tile-sub stars"
-      :aria-label="`Rated ${rating} of 5`"
+      :aria-label="t('book.starsOf', { n: rating })"
     >
       {{ starLabel(rating) }}
     </span>

@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { spoilerLabel } from "../diary";
+
+const { t } = useI18n();
 
 /**
  * "Safe up to X%" for a diary entry. A chip shows the current flag; tapping it
@@ -42,7 +45,7 @@ function onSlide(event: Event) {
     </button>
     <span v-if="open" class="spoiler-panel">
       <label class="spoiler-slider">
-        <span class="fine">Readers below this point see it blurred</span>
+        <span class="fine">{{ t("diary.readersBlur") }}</span>
         <input
           type="range"
           min="0"
@@ -61,7 +64,7 @@ function onSlide(event: Event) {
           open = false;
         "
       >
-        Remove flag
+        {{ t("diary.removeFlag") }}
       </button>
     </span>
   </span>

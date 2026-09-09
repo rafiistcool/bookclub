@@ -1,5 +1,6 @@
 import type { Status } from "./constants";
 import { starLabel } from "./constants";
+import { t } from "./i18n";
 import type { DiaryEntry } from "./types";
 
 export const REACTIONS = ["❤️", "👍", "😂", "😮", "🔥", "📚"] as const;
@@ -12,13 +13,13 @@ export function positionMarker(entry: {
 }): string {
   if (entry.status_at === "finished") {
     const stars = starLabel(entry.author_rating);
-    return stars ? `Finished ${stars}` : "Finished";
+    return stars ? t("diary.finishedStars", { stars }) : t("diary.finished");
   }
-  if (entry.status_at === "did_not_finish") return "DNF";
+  if (entry.status_at === "did_not_finish") return t("diary.dnf");
   if (entry.status_at === "currently_reading" && entry.progress_at != null) {
-    return `at ${entry.progress_at}%`;
+    return t("diary.atPercent", { n: entry.progress_at });
   }
-  if (entry.status_at === "want_to_read") return "before starting";
+  if (entry.status_at === "want_to_read") return t("diary.beforeStarting");
   return "";
 }
 
@@ -46,9 +47,9 @@ export function defaultSpoilerUpto(myProgress: number | null, myStatus: Status |
 }
 
 export function spoilerLabel(upto: number | null): string {
-  if (upto == null) return "No spoiler flag";
-  if (upto >= 100) return "Whole book";
-  return `Safe up to ${upto}%`;
+  if (upto == null) return t("diary.noSpoiler");
+  if (upto >= 100) return t("diary.wholeBook");
+  return t("diary.safeUpto", { n: upto });
 }
 
 /** Trim to a single line of at most `max` characters, ellipsis included. */
@@ -70,7 +71,7 @@ export function clubFeedPreview(
   },
 ): string {
   if (isShielded(item.entry, item.my_progress, item.my_status)) {
-    return "Spoiler-flagged note";
+    return t("diary.spoilerPreview");
   }
   return excerpt(item.entry.body);
 }

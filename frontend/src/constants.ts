@@ -1,3 +1,5 @@
+import { t } from "./i18n";
+
 export const STATUSES = [
   "want_to_read",
   "currently_reading",
@@ -20,6 +22,14 @@ export const STATUS_SHORT: Record<Status, string> = {
   finished: "Done",
   did_not_finish: "DNF",
 };
+
+export function statusLabel(status: Status): string {
+  return t(`status.${status}`);
+}
+
+export function statusShort(status: Status): string {
+  return t(`statusShort.${status}`);
+}
 
 export type CoverSize = "xs" | "sm" | "md" | "lg" | "fluid" | "tile";
 
@@ -202,10 +212,16 @@ export function relativeDay(iso: string | null | undefined): string {
   const days = Math.round(
     (startOfDay(target) - startOfDay(new Date())) / 86_400_000,
   );
-  if (days === 0) return "today";
-  if (days === 1) return "tomorrow";
-  if (days === -1) return "yesterday";
-  if (days > 0) return days < 14 ? `in ${days} days` : `in ${Math.round(days / 7)} weeks`;
+  if (days === 0) return t("relative.today");
+  if (days === 1) return t("relative.tomorrow");
+  if (days === -1) return t("relative.yesterday");
+  if (days > 0) {
+    return days < 14
+      ? t("relative.inDays", { n: days })
+      : t("relative.inWeeks", { n: Math.round(days / 7) });
+  }
   const ago = Math.abs(days);
-  return ago < 14 ? `${ago} days ago` : `${Math.round(ago / 7)} weeks ago`;
+  return ago < 14
+    ? t("relative.daysAgo", { n: ago })
+    : t("relative.weeksAgo", { n: Math.round(ago / 7) });
 }

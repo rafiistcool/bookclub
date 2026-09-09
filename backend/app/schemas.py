@@ -4,6 +4,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
 
 from app.covers import storable_cover_image_url
+from app.i18n import DEFAULT_LOCALE, LOCALES, is_locale
 from app.models import ShelfStatus
 from app.themes import (
     COLOR_MODES,
@@ -28,11 +29,14 @@ class UserOut(BaseModel):
     username: str
     theme: str = DEFAULT_THEME_ID
     color_mode: str = DEFAULT_COLOR_MODE
+    locale: str = DEFAULT_LOCALE
+    avatar_url: str | None = None
 
 
 class PreferencesIn(BaseModel):
     theme: str | None = None
     color_mode: str | None = None
+    locale: str | None = None
 
     @field_validator("theme")
     @classmethod
@@ -52,6 +56,16 @@ class PreferencesIn(BaseModel):
         value = value.strip().lower()
         if not is_color_mode(value):
             raise ValueError(f"color_mode must be one of: {', '.join(COLOR_MODES)}")
+        return value
+
+    @field_validator("locale")
+    @classmethod
+    def locale_ok(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip().lower()
+        if not is_locale(value):
+            raise ValueError(f"locale must be one of: {', '.join(LOCALES)}")
         return value
 
 
@@ -201,6 +215,7 @@ class BookReader(BaseModel):
     status: ShelfStatus
     rating: int | None = None
     progress: int | None = None
+    avatar_url: str | None = None
 
 
 class BookDetailOut(BaseModel):
@@ -372,6 +387,7 @@ class MemberOut(BaseModel):
     username: str
     currently_reading_count: int
     currently_reading_preview: list[ReadingPreview]
+    avatar_url: str | None = None
 
 
 class ClubPickSetIn(BaseModel):
@@ -421,6 +437,7 @@ class ClubPickReader(BaseModel):
     take: str = ""
     dnf_reason: str = ""
     progress: int | None = None
+    avatar_url: str | None = None
 
 
 class ClubPickOut(BaseModel):
@@ -596,6 +613,7 @@ class DiaryEntryPatchIn(BaseModel):
 class DiaryEntryOut(BaseModel):
     id: int
     author: str
+    author_avatar_url: str | None = None
     mine: bool
     body: str
     deleted: bool = False

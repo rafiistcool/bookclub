@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { api, ApiError } from "../api/client";
 import { workId } from "../constants";
 import type { Status } from "../constants";
 import { countEntries, defaultSpoilerUpto } from "../diary";
+import { tp } from "../i18n";
 import { useToast } from "../stores/toast";
+
+const { t } = useI18n();
 import type { Diary, DiaryBookIn, DiaryEntry as Entry } from "../types";
 import DiaryEntry from "./DiaryEntry.vue";
 import SpoilerControl from "./SpoilerControl.vue";
@@ -80,7 +84,7 @@ async function load() {
     resetSpoilerDefault();
     await jumpToAnchor();
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : "Could not load the diary";
+    error.value = err instanceof ApiError ? err.message : t("diary.loadFailed");
   } finally {
     loaded.value = true;
   }
@@ -135,7 +139,7 @@ async function submit() {
     spoilerTouched.value = false;
     resetSpoilerDefault();
   } catch (err) {
-    fail(err, "Could not post that");
+    fail(err, t("diary.postFailed"));
   } finally {
     posting.value = false;
   }
@@ -162,7 +166,7 @@ async function submitReply(parent: Entry) {
     replyTo.value = null;
     replyDraft.value = "";
   } catch (err) {
-    fail(err, "Could not post that reply");
+    fail(err, t("diary.replyFailed"));
   } finally {
     posting.value = false;
   }
@@ -173,7 +177,7 @@ async function react(entry: Entry, emoji: string) {
   try {
     replaceEntry(await api.reactToEntry(entry.id, emoji));
   } catch (err) {
-    fail(err, "Could not react");
+    fail(err, t("diary.reactFailed"));
   } finally {
     busyId.value = null;
   }
@@ -183,9 +187,9 @@ async function edit(entry: Entry, body: string, spoilerUpto: number | null) {
   busyId.value = entry.id;
   try {
     replaceEntry(await api.editDiaryEntry(entry.id, { body, spoiler_upto: spoilerUpto }));
-    toast.show("Entry updated");
+    toast.show(t("diary.updated"));
   } catch (err) {
-    fail(err, "Could not save that");
+    fail(err, t("diary.saveFailed"));
   } finally {
     busyId.value = null;
   }
@@ -203,9 +207,9 @@ async function remove(entry: Entry) {
         .filter((row) => row.id !== entry.id)
         .map((row) => ({ ...row, replies: row.replies.filter((reply) => reply.id !== entry.id) }));
     }
-    toast.show("Entry deleted");
+    toast.show(t("diary.deleted"));
   } catch (err) {
-    fail(err, "Could not delete that");
+    fail(err, t("diary.deleteFailed"));
   } finally {
     busyId.value = null;
   }
@@ -235,9 +239,9 @@ watch(
 <template>
   <section class="diary">
     <div class="section-head">
-      <h2>{{ heading ?? "Diary" }}</h2>
+      <h2>{{ heading ?? t("diary.heading") }}</h2>
       <span v-if="total" class="fine subtle nums">
-        {{ total }} {{ total === 1 ? "entry" : "entries" }}
+        {{ tp("diary.entries", total) }}
       </span>
     </div>
 
@@ -246,7 +250,7 @@ watch(
 
     <template v-else>
       <button v-if="hidden" class="text-btn show-all" type="button" @click="showAll = true">
-        Show {{ hidden }} earlier {{ hidden === 1 ? "entry" : "entries" }}
+        {{ tp("diary.showEarlier", hidden) }}
       </button>
 
       <ol v-if="visible.length" class="diary-list">
@@ -280,8 +284,7 @@ watch(
                 type="button"
                 @click="expandReplies(entry.id)"
               >
-                {{ hiddenReplies(entry) }} more
-                {{ hiddenReplies(entry) === 1 ? "reply" : "replies" }}
+                {{ tp("diary.moreReplies", hiddenReplies(entry)) }}
               </button>
 
               <form
@@ -290,12 +293,12 @@ watch(
                 @submit.prevent="submitReply(entry)"
               >
                 <label class="field">
-                  <span class="visually-hidden">Reply to {{ entry.author }}</span>
+                  <span class="visually-hidden">{{ t("diary.replyToAria", { name: entry.author }) }}</span>
                   <textarea
                     v-model="replyDraft"
                     rows="2"
                     maxlength="1000"
-                    :placeholder="`Reply to ${entry.author}`"
+                    :placeholder="t('diary.replyPlaceholder', { name: entry.author })"
                     autofocus
                   />
                 </label>
@@ -303,14 +306,14 @@ watch(
                   <SpoilerControl v-model="replySpoiler" />
                   <span class="compose-actions">
                     <button class="btn btn-ghost btn-sm" type="button" @click="replyTo = null">
-                      Cancel
+                      {{ t("common.cancel") }}
                     </button>
                     <button
                       class="btn btn-primary btn-sm"
                       type="submit"
                       :disabled="posting || !replyDraft.trim()"
                     >
-                      Reply
+                      {{ t("common.reply") }}
                     </button>
                   </span>
                 </div>
@@ -320,20 +323,19 @@ watch(
         </li>
       </ol>
       <p v-else class="fine subtle">
-        Nothing written yet. Where are you, what stood out, what do you want to ask at the
-        meeting?
+        {{ t("diary.empty") }}
       </p>
     </template>
 
     <form class="compose" @submit.prevent="submit">
       <label class="field">
-        <span class="visually-hidden">Write a diary entry</span>
+        <span class="visually-hidden">{{ t("diary.writeAria") }}</span>
         <textarea
           ref="composer"
           v-model="draft"
           rows="3"
           maxlength="1000"
-          placeholder="A thought, a quote, a question for the meeting"
+          :placeholder="t('diary.placeholder')"
         />
       </label>
       <div class="compose-row">
@@ -351,7 +353,7 @@ watch(
           type="submit"
           :disabled="posting || !draft.trim() || !loaded"
         >
-          Post
+          {{ t("common.post") }}
         </button>
       </div>
     </form>

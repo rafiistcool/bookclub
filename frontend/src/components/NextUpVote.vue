@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
 import { bookPath } from "../constants";
+import { tp } from "../i18n";
 import { useToast } from "../stores/toast";
+
+const { t } = useI18n();
 import type { NextUpVote as NextUpVoteState, VoteNomination } from "../types";
 import BookCover from "./BookCover.vue";
 import MeetingSheet from "./MeetingSheet.vue";
@@ -31,7 +35,7 @@ async function load() {
     vote.value = await api.nextUp();
     error.value = "";
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : "Could not load the vote";
+    error.value = err instanceof ApiError ? err.message : t("vote.loadFailed");
   } finally {
     loaded.value = true;
   }
@@ -42,7 +46,7 @@ async function cast(row: VoteNomination) {
   try {
     vote.value = await api.castVote(row.id);
   } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : "Could not save that vote");
+    toast.show(err instanceof ApiError ? err.message : t("vote.saveFailed"));
   } finally {
     pendingId.value = null;
   }
@@ -56,10 +60,10 @@ async function confirm(meetingAt: string | null) {
   try {
     const result = await api.applyWinner(row.id, meetingAt);
     vote.value = result.vote;
-    toast.show(`“${row.book.title}” is now the club pick`);
+    toast.show(t("vote.confirmed", { title: row.book.title }));
     emit("applied");
   } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : "Could not confirm that winner");
+    toast.show(err instanceof ApiError ? err.message : t("vote.confirmFailed"));
   } finally {
     pendingId.value = null;
   }
@@ -72,15 +76,13 @@ defineExpose({ load });
 <template>
   <section aria-labelledby="next-up-heading">
     <div class="section-head">
-      <h2 id="next-up-heading">Next-up vote</h2>
+      <h2 id="next-up-heading">{{ t("vote.title") }}</h2>
       <span v-if="vote" class="fine subtle nums">
-        {{ nominations.length }} of {{ vote.nomination_limit }} nominations
+        {{ t("vote.nominationsOf", { current: nominations.length, limit: vote.nomination_limit }) }}
       </span>
     </div>
     <p class="fine muted vote-blurb">
-      Everyone gets one vote and can change it any time — voting does not change the
-      current pick. When you're ready, one of you confirms the winner, which replaces
-      the pick for the whole club.
+      {{ t("vote.blurb") }}
     </p>
 
     <p v-if="error" class="error">{{ error }}</p>
@@ -106,13 +108,13 @@ defineExpose({ load });
             <span v-if="row.book.authors" class="finer subtle">
               {{ row.book.authors }}
             </span>
-            <span class="finer subtle">Nominated by {{ row.nominated_by }}</span>
+            <span class="finer subtle">{{ t("vote.nominatedBy", { name: row.nominated_by }) }}</span>
           </span>
         </RouterLink>
 
         <div class="vote-tally">
           <span class="tally-count nums">{{ row.votes }}</span>
-          <span class="finer subtle">{{ row.votes === 1 ? "vote" : "votes" }}</span>
+          <span class="finer subtle">{{ tp("vote.voteWord", row.votes) }}</span>
           <span v-if="row.voters.length" class="finer subtle clamp-2">
             {{ row.voters.join(", ") }}
           </span>
@@ -126,7 +128,7 @@ defineExpose({ load });
             :disabled="pendingId === row.id"
             @click="cast(row)"
           >
-            {{ row.mine ? "Your vote" : "Vote" }}
+            {{ row.mine ? t("vote.yourVote") : t("vote.vote") }}
           </button>
           <button
             class="text-btn"
@@ -134,34 +136,33 @@ defineExpose({ load });
             :disabled="pendingId === row.id"
             @click="confirming = row"
           >
-            Confirm winner
+            {{ t("vote.confirmWinner") }}
           </button>
         </div>
       </li>
     </ol>
 
     <div v-else class="empty">
-      <h3>No nominations yet</h3>
+      <h3>{{ t("vote.noneTitle") }}</h3>
       <p>
-        Open any book and choose “Nominate for next up”. Books more than one of you
-        wants to read are a good place to start.
+        {{ t("vote.noneBody") }}
       </p>
       <div class="btn-row">
-        <RouterLink class="btn btn-ghost" to="/discover">Find a book</RouterLink>
+        <RouterLink class="btn btn-ghost" to="/discover">{{ t("home.findBook") }}</RouterLink>
       </div>
     </div>
 
     <p v-if="nominations.length" class="finer subtle vote-total nums">
-      {{ totalVotes }} {{ totalVotes === 1 ? "vote" : "votes" }} cast
+      {{ tp("vote.cast", totalVotes) }}
     </p>
 
     <MeetingSheet
       v-if="confirming"
-      title="Confirm as the club pick"
+      :title="t('vote.confirmTitle')"
       :book-title="confirming.book.title"
       :timezone="vote?.timezone || 'UTC'"
-      confirm-label="Confirm winner"
-      blurb="This ends the vote and replaces the current pick for everyone."
+      :confirm-label="t('vote.confirmWinner')"
+      :blurb="t('vote.confirmBlurb')"
       @confirm="confirm"
       @close="confirming = null"
     />

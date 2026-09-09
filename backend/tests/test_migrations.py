@@ -80,7 +80,17 @@ def test_legacy_database_is_upgraded_in_place(tmp_path):
             "cover_image_url",
         } <= book_cols
         user_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(users)"))}
-        assert {"notify_meeting", "notify_pick", "notify_note"} <= user_cols
+        assert {
+            "notify_meeting",
+            "notify_pick",
+            "notify_note",
+            "locale",
+            "avatar",
+            "avatar_mime",
+            "avatar_updated_at",
+        } <= user_cols
+        locale = conn.execute(text("SELECT locale FROM users")).one()
+        assert locale[0] == "en"
         post_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(club_pick_posts)"))}
         assert {"spoiler_upto", "milestone_id", "updated_at"} <= post_cols
         vote_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(next_up_votes)"))}

@@ -26,9 +26,16 @@
               ? "dark"
               : "light";
           }
+          var locale = localStorage.getItem("bookclub.locale");
+          if (locale !== "en" && locale !== "de") {
+            locale = (navigator.language || "").toLowerCase().indexOf("de") === 0
+              ? "de"
+              : "en";
+          }
           var root = document.documentElement;
           root.setAttribute("data-theme", theme);
           root.setAttribute("data-mode", mode);
+          root.lang = locale;
         } catch (error) {
           /* No storage access: the :root defaults stand. */
         }

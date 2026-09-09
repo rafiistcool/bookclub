@@ -62,16 +62,26 @@ def notify_new_pick(
 ) -> None:
     if pick.book is None:
         return
+    club = _club_name()
+    title = f"{club}: new club pick"
+    body = f"{actor.username} chose {pick.book.title}."
     push.schedule(
         background,
         engine,
         session,
         kind="pick",
-        title=f"{_club_name()}: new club pick",
-        body=f"{actor.username} chose {pick.book.title}.",
+        title=title,
+        body=body,
         url="/",
         tag=f"pick-{pick.id}",
         exclude_user_id=actor.id,
+        copy={
+            "en": (title, body),
+            "de": (
+                f"{club}: neues Club-Buch",
+                f"{actor.username} hat {pick.book.title} gewählt.",
+            ),
+        },
     )
 
 
@@ -251,16 +261,21 @@ def _create_post(
         raise HTTPException(status_code=500, detail="Could not save that note")
     if engine is not None and pick.book is not None:
         excerpt = payload.body if len(payload.body) <= 90 else payload.body[:87] + "…"
+        title = f"{me.username} on {pick.book.title}"
         push.schedule(
             background,
             engine,
             session,
             kind="note",
-            title=f"{me.username} on {pick.book.title}",
+            title=title,
             body=excerpt,
             url="/",
             tag=f"note-{pick.id}",
             exclude_user_id=me.id,
+            copy={
+                "en": (title, excerpt),
+                "de": (f"{me.username} zu {pick.book.title}", excerpt),
+            },
         )
     return _post_out(loaded, me, _timezone())
 

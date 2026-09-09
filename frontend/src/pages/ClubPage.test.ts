@@ -16,6 +16,7 @@ vi.mock("../api/client", () => ({
   },
 }));
 
+import { i18n } from "../i18n";
 import ClubPage from "./ClubPage.vue";
 
 const SECRET = "The coconut pillow on p. 237 is a tell.";
@@ -61,6 +62,7 @@ async function mountClub(items: DiaryFeedItem[]) {
   diaryFeed.mockResolvedValue({ items, has_more: false, timezone: "UTC" });
   const wrapper = mount(ClubPage, {
     global: {
+      plugins: [createPinia(), i18n],
       stubs: { NextUpVote: true, BookCover: true },
     },
   });
