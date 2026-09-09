@@ -54,8 +54,8 @@ class Settings(BaseSettings):
     # Web Push. Empty private key => generated into <data>/.vapid_private.pem.
     vapid_private_key: str = ""
     vapid_subject: str = ""
-    # Optional. When set, Discover search prefers Google Books and falls back
-    # to Open Library. Leave empty for OL-only (no Google calls).
+    # Optional. When set, Discover search / browse / ISBN / Goodreads use
+    # Google Books only (no Open Library fallback). Leave empty for OL-only.
     google_books_api_key: str = ""
 
     @field_validator("bookclub_public_url")

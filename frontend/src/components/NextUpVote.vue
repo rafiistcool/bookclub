@@ -98,6 +98,7 @@ defineExpose({ load });
             :title="row.book.title"
             :cover-id="row.book.cover_id"
             :work-key="row.book.ol_work_key"
+            :image-url="row.book.cover_url"
             size="sm"
           />
           <span class="vote-meta">

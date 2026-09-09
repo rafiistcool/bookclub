@@ -38,8 +38,23 @@ CIRCE_VOLUME = {
             {"type": "ISBN_13", "identifier": "9780316769488"},
             {"type": "ISBN_10", "identifier": "0316769487"},
         ],
+        "imageLinks": {
+            "smallThumbnail": (
+                "http://books.google.com/books/content?id=zyTCAlFPjgYC"
+                "&printsec=frontcover&img=1&zoom=5&source=gbs_api"
+            ),
+            "thumbnail": (
+                "http://books.google.com/books/content?id=zyTCAlFPjgYC"
+                "&printsec=frontcover&img=1&zoom=1&source=gbs_api"
+            ),
+        },
     },
 }
+
+CIRCE_COVER = (
+    "https://books.google.com/books/content?id=zyTCAlFPjgYC"
+    "&printsec=frontcover&img=1&zoom=0&source=gbs_api"
+)
 
 NO_ISBN_VOLUME = {
     "id": "abcVolumeId1",
@@ -48,6 +63,12 @@ NO_ISBN_VOLUME = {
         "authors": ["Ada"],
         "publishedDate": "2024",
         "description": "Stapled.",
+        "imageLinks": {
+            "thumbnail": (
+                "http://books.google.com/books/content?id=abcVolumeId1"
+                "&printsec=frontcover&img=1&zoom=1&source=gbs_api"
+            ),
+        },
     },
 }
 
@@ -58,6 +79,12 @@ ACHILLES_VOLUME = {
         "authors": ["Madeline Miller"],
         "publishedDate": "2012",
         "industryIdentifiers": [{"type": "ISBN_13", "identifier": "9780062060624"}],
+        "imageLinks": {
+            "thumbnail": (
+                "https://books.google.com/books/content?id=achillesVol1"
+                "&printsec=frontcover&img=1&zoom=1&source=gbs_api"
+            ),
+        },
     },
 }
 
@@ -249,6 +276,7 @@ def test_map_volume_prefers_isbn_key():
     assert hit.year == 2018
     assert hit.isbn == "9780316769488"
     assert hit.cover_id is None
+    assert hit.cover_url == CIRCE_COVER
 
 
 def test_map_volume_without_isbn_uses_volume_id():
@@ -274,6 +302,11 @@ def test_volume_details_strips_html():
     assert details.pages == 393
     assert details.subjects == ["Fiction", "Mythology"]
     assert details.rating == 4.5
+    assert details.cover_image_url == CIRCE_COVER
+
+
+def _open_library_urls() -> list[str]:
+    return [url for url, *_ in _FakeClient.calls if "openlibrary.org" in url]
 
 
 def test_search_prefers_google_books(gb):
@@ -285,64 +318,82 @@ def test_search_prefers_google_books(gb):
     assert items[0]["title"] == "Circe"
     assert items[0]["isbn"] == "9780316769488"
     assert items[0]["year"] == 2018
+    assert items[0]["cover_url"] == CIRCE_COVER
     gb_calls = _FakeClient.params_for("googleapis.com/books")
     assert len(gb_calls) == 1
     assert gb_calls[0]["q"] == "circe"
     assert "key" not in gb_calls[0]
+    assert "imageLinks" in str(gb_calls[0].get("fields") or "")
     assert _FakeClient.headers_for("googleapis.com/books")[0]["X-Goog-Api-Key"] == (
         "test-gb-key"
     )
     assert _FakeClient.params_for("search.json") == []
+    assert _open_library_urls() == []
 
     gb.get("/api/books/search", params={"q": "Circe"})
     gb.get("/api/books/search", params={"q": "  CIRCE  "})
     assert len(_FakeClient.params_for("googleapis.com/books")) == 1
 
 
-def test_search_falls_back_when_google_is_empty(gb):
+def test_search_empty_google_does_not_fall_back(gb):
     _FakeClient.gb_items = []
     response = gb.get("/api/books/search", params={"q": "circe"})
     assert response.status_code == 200
-    assert response.json()["items"][0]["title"] == "Circe from Open Library"
-    assert response.json()["items"][0]["ol_work_key"] == "/works/OL1W"
+    assert response.json()["items"] == []
     assert _FakeClient.params_for("googleapis.com/books")
-    assert _FakeClient.params_for("search.json")
+    assert _open_library_urls() == []
 
 
-def test_search_falls_back_when_google_is_429(gb):
+def test_search_google_429_does_not_fall_back(gb):
     _FakeClient.gb_status = 429
-    response = gb.get("/api/books/search", params={"q": "circe"})
-    assert response.status_code == 200
-    assert response.json()["items"][0]["ol_work_key"] == "/works/OL1W"
-    assert _FakeClient.params_for("search.json")
-
-
-def test_search_falls_back_when_google_is_500(gb):
-    _FakeClient.gb_status = 500
-    response = gb.get("/api/books/search", params={"q": "circe"})
-    assert response.status_code == 200
-    assert response.json()["items"][0]["ol_work_key"] == "/works/OL1W"
-
-
-def test_classified_open_library_error_after_google_failure(gb):
-    _FakeClient.gb_status = 429
-    _FakeClient.ol_status = 429
     response = gb.get("/api/books/search", params={"q": "circe"})
     assert response.status_code == 429
-    assert "20 seconds" in response.json()["detail"]
+    assert "busy" in response.json()["detail"].lower()
+    assert _open_library_urls() == []
 
 
-def test_subject_only_and_trending_stay_on_open_library(gb):
+def test_search_google_500_does_not_fall_back(gb):
+    _FakeClient.gb_status = 500
+    response = gb.get("/api/books/search", params={"q": "circe"})
+    assert response.status_code == 502
+    assert _open_library_urls() == []
+
+
+def test_browse_and_empty_search_use_google_not_open_library(gb):
     browse = gb.get("/api/books/search", params={"subject": "fantasy"})
     assert browse.status_code == 200
-    assert _FakeClient.params_for("googleapis.com/books") == []
-    assert _FakeClient.params_for("search.json")
+    assert browse.json()["items"][0]["ol_work_key"] == "/works/ISBN9780316769488"
+    qs = _FakeClient.params_for("googleapis.com/books")
+    assert qs
+    assert 'subject:"fantasy"' in qs[0]["q"]
+    assert _open_library_urls() == []
 
     _FakeClient.calls = []
     trending = gb.get("/api/books/trending")
     assert trending.status_code == 200
-    assert _FakeClient.params_for("googleapis.com/books") == []
-    assert _FakeClient.params_for("trending")
+    assert trending.json()["items"][0]["cover_url"] == CIRCE_COVER
+    tq = _FakeClient.params_for("googleapis.com/books")
+    assert tq
+    assert tq[0]["q"] == 'subject:"fiction"'
+    assert tq[0].get("orderBy") == "newest"
+    assert _FakeClient.params_for("trending") == []
+    assert _open_library_urls() == []
+
+    _FakeClient.calls = []
+    empty = gb.get("/api/books/search")
+    assert empty.status_code == 200
+    assert empty.json()["items"][0]["title"] == "Circe"
+    assert _FakeClient.params_for("trending") == []
+    assert _open_library_urls() == []
+
+    _FakeClient.calls = []
+    subject = gb.get("/api/books/subjects/science_fiction")
+    assert subject.status_code == 200
+    sq = _FakeClient.params_for("googleapis.com/books")
+    assert sq
+    assert 'subject:"science fiction"' in sq[0]["q"]
+    assert not any("/subjects/" in url for url, *_ in _FakeClient.calls)
+    assert _open_library_urls() == []
 
 
 def test_isbn_search_uses_google_isbn_field(gb):
@@ -359,8 +410,10 @@ def test_detail_imports_from_google_not_open_library(gb):
     assert body["title"] == "Circe"
     assert body["description"] == "A witch on an island."
     assert body["custom"] is False
+    assert body["cover_url"] == CIRCE_COVER
     assert any("googleapis.com/books" in url for url, *_ in _FakeClient.calls)
     assert not any("openlibrary.org/works/" in url for url, *_ in _FakeClient.calls)
+    assert _open_library_urls() == []
 
     _FakeClient.calls = []
     again = gb.get("/api/books/works/ISBN9780316769488")
@@ -372,6 +425,10 @@ def test_volume_key_detail_and_refresh(gb):
     body = gb.get("/api/books/works/GBabcVolumeId1").json()
     assert body["ol_work_key"] == "/works/GBabcVolumeId1"
     assert body["title"] == "Local Zine"
+    assert body["cover_url"] == (
+        "https://books.google.com/books/content?id=abcVolumeId1"
+        "&printsec=frontcover&img=1&zoom=0&source=gbs_api"
+    )
     assert any(url.endswith("/volumes/abcVolumeId1") for url, *_ in _FakeClient.calls)
 
     _FakeClient.volumes["abcVolumeId1"] = {
@@ -444,7 +501,9 @@ def test_isbn_lookup_prefers_google(gb):
     body = response.json()
     assert body["ol_work_key"] == "/works/ISBN9780316769488"
     assert body["title"] == "Circe"
+    assert body["cover_url"] == CIRCE_COVER
     assert _FakeClient.params_for("search.json") == []
+    assert _open_library_urls() == []
 
 
 def test_club_custom_book_still_skips_catalogs(gb):
@@ -463,14 +522,51 @@ def test_club_custom_book_still_skips_catalogs(gb):
     assert refresh.status_code == 400
 
 
-def test_isbn_cover_url_from_work_key():
+def test_cover_url_from_image_links_https_and_zoom():
+    from app.covers import cover_url_from_image_links, normalize_cover_image_url
+
+    assert cover_url_from_image_links(CIRCE_VOLUME["volumeInfo"]["imageLinks"]) == (
+        CIRCE_COVER
+    )
+    assert cover_url_from_image_links(None) is None
+    assert cover_url_from_image_links({"thumbnail": "javascript:alert(1)"}) is None
+    assert normalize_cover_image_url("http://books.google.com/books/content?id=x") == (
+        "https://books.google.com/books/content?id=x"
+    )
+
+
+def test_isbn_cover_url_from_work_key(monkeypatch):
+    from app.config import get_settings
     from app.serialize import cover_url
+
+    monkeypatch.delenv("GOOGLE_BOOKS_API_KEY", raising=False)
+    get_settings.cache_clear()
 
     assert cover_url(None, "/works/ISBN9780316769488") == (
         "https://covers.openlibrary.org/b/isbn/9780316769488-L.jpg?default=false"
     )
     assert cover_url(123, "/works/ISBN9780316769488").endswith("/123-L.jpg?default=false")
     assert cover_url(None, "/works/GBabcVolumeId1") is None
+    assert cover_url(
+        None,
+        "/works/GBabcVolumeId1",
+        "http://books.google.com/books/content?id=abcVolumeId1",
+    ) == "https://books.google.com/books/content?id=abcVolumeId1"
+
+
+def test_google_cover_wins_over_open_library_isbn_cdn():
+    from app.serialize import cover_url
+
+    assert cover_url(123, "/works/ISBN9780316769488", CIRCE_COVER) == CIRCE_COVER
+
+
+def test_isbn_cdn_skipped_when_google_key_is_set(gb):
+    from app.serialize import cover_url
+
+    assert cover_url(None, "/works/ISBN9780316769488") is None
+    assert cover_url(555, "/works/OL1W") == (
+        "https://covers.openlibrary.org/b/id/555-L.jpg?default=false"
+    )
 
 
 def test_later_google_page_does_not_mix_open_library(gb):
@@ -488,12 +584,19 @@ def test_later_google_page_does_not_mix_open_library(gb):
     assert _FakeClient.params_for("search.json") == []
 
 
-def test_title_sort_stays_on_open_library(gb):
-    response = gb.get("/api/books/search", params={"q": "circe", "sort": "title"})
-    assert response.status_code == 200
-    assert response.json()["items"][0]["ol_work_key"] == "/works/OL1W"
-    assert _FakeClient.params_for("googleapis.com/books") == []
-    assert _FakeClient.params_for("search.json")
+def test_title_and_popular_sorts_stay_on_google(gb):
+    title = gb.get("/api/books/search", params={"q": "circe", "sort": "title"})
+    assert title.status_code == 200
+    assert title.json()["items"][0]["ol_work_key"] == "/works/ISBN9780316769488"
+    assert "orderBy" not in _FakeClient.params_for("googleapis.com/books")[-1]
+    assert _open_library_urls() == []
+
+    _FakeClient.calls = []
+    popular = gb.get("/api/books/search", params={"q": "circe", "sort": "readinglog"})
+    assert popular.status_code == 200
+    assert popular.json()["items"][0]["cover_url"] == CIRCE_COVER
+    assert _FakeClient.params_for("googleapis.com/books")
+    assert _open_library_urls() == []
 
 
 def test_isbn_refresh_keeps_description_when_google_misses(gb):
@@ -505,6 +608,8 @@ def test_isbn_refresh_keeps_description_when_google_misses(gb):
     assert refreshed.status_code == 200
     assert refreshed.json()["description"] == "A witch on an island."
     assert refreshed.json()["subjects"] == ["Fiction", "Mythology"]
+    assert refreshed.json()["cover_url"] == CIRCE_COVER
+    assert _open_library_urls() == []
 
 
 def test_isbn_refresh_without_key_keeps_description(gb, monkeypatch):
@@ -529,12 +634,30 @@ def test_isbn_x_and_X_are_the_same_row(gb):
     assert second.json()["ol_work_key"] == "/works/ISBN080442957X"
 
 
-def test_isbn_lookup_falls_back_to_open_library(gb):
+def test_isbn_lookup_miss_does_not_use_open_library(gb):
     _FakeClient.gb_items = []
     response = gb.get("/api/books/isbn/9780316769488")
-    assert response.status_code == 200
-    assert response.json()["ol_work_key"] == "/works/OL1W"
-    assert _FakeClient.params_for("search.json")
+    assert response.status_code == 404
+    assert _open_library_urls() == []
+
+
+def test_shelf_add_persists_google_cover_url(gb):
+    added = gb.post(
+        "/api/shelf",
+        json={
+            "ol_work_key": "/works/ISBN9780316769488",
+            "title": "Circe",
+            "authors": "Madeline Miller",
+            "cover_url": CIRCE_COVER,
+            "status": "want_to_read",
+        },
+    )
+    assert added.status_code == 201, added.text
+    assert added.json()["book"]["cover_url"] == CIRCE_COVER
+    _FakeClient.calls = []
+    detail = gb.get("/api/books/works/ISBN9780316769488").json()
+    assert detail["cover_url"] == CIRCE_COVER
+    assert _FakeClient.calls == []
 
 
 def test_volume_key_without_google_key(client):
@@ -569,4 +692,7 @@ def test_goodreads_import_prefers_google(gb):
     assert "/works/ISBN9780316769488" in keys
     assert "/works/ISBN9780062060624" in keys
     assert _FakeClient.params_for("search.json") == []
+    assert _open_library_urls() == []
+    covers = {row["book"]["ol_work_key"]: row["book"]["cover_url"] for row in shelf}
+    assert covers["/works/ISBN9780316769488"] == CIRCE_COVER
 

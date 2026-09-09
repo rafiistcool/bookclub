@@ -78,6 +78,21 @@ export function isbnCoverUrl(
   return coverSrc("isbn", cleaned, size);
 }
 
+/** Google Books (or any https) cover. Rewrite http→https; reject non-URLs. */
+export function remoteCoverUrl(url: string | null | undefined): string | null {
+  const text = (url || "").trim();
+  if (!text) return null;
+  const https = text.startsWith("http://") ? `https://${text.slice(7)}` : text;
+  if (!https.startsWith("https://")) return null;
+  try {
+    const parsed = new URL(https);
+    if (parsed.protocol !== "https:") return null;
+    return https;
+  } catch {
+    return null;
+  }
+}
+
 /** "/works/OL1W" -> "OL1W", the form the detail route and API path take. */
 export function workId(olWorkKey: string): string {
   return olWorkKey.replace(/^\/works\//, "");
@@ -101,6 +116,11 @@ export function isIsbnWorkId(id: string): boolean {
 
 export function isGoogleWorkId(id: string): boolean {
   return GOOGLE_WORK_ID_RE.test(id);
+}
+
+export function isGoogleCatalogWorkKey(olWorkKey: string): boolean {
+  const id = workId(olWorkKey);
+  return isIsbnWorkId(id) || isGoogleWorkId(id);
 }
 
 export function isbnFromWorkKey(olWorkKey: string): string | null {

@@ -5,6 +5,7 @@ from sqlmodel import Session, col, select
 from app.deps import get_current_user, get_session
 from app.models import ShelfEntry, ShelfStatus, User
 from app.schemas import MemberOut, ReadingPreview
+from app.serialize import book_cover_url
 
 router = APIRouter(prefix="/api/members", tags=["members"])
 
@@ -33,7 +34,11 @@ def list_members(
             if entry.book is None:
                 continue
             preview.append(
-                ReadingPreview(title=entry.book.title, cover_id=entry.book.cover_id)
+                ReadingPreview(
+                    title=entry.book.title,
+                    cover_id=entry.book.cover_id,
+                    cover_url=book_cover_url(entry.book),
+                )
             )
         out.append(
             MemberOut(

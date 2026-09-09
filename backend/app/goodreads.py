@@ -150,6 +150,7 @@ async def lookup_work(
             hit = await _search_google(query)
             if hit is not None:
                 return hit
+        return None
     for query in queries:
         hit = await _search_first(query, client)
         if hit is not None:
@@ -160,14 +161,19 @@ async def lookup_work(
 async def lookup_catalog(
     rows: list[GoodreadsRow],
 ) -> list[tuple[GoodreadsRow, SearchHit | None]]:
-    """Resolve each CSV row against Open Library, two lookups at a time."""
+    """Resolve each CSV row against the configured catalog, two lookups at a time."""
     if not rows:
         return []
     sem = asyncio.Semaphore(LOOKUP_CONCURRENCY)
+
+    async def one(
+        row: GoodreadsRow, client: httpx.AsyncClient | None
+    ) -> tuple[GoodreadsRow, SearchHit | None]:
+        async with sem:
+            return row, await lookup_work(row.isbn, row.title, row.authors, client)
+
+    if google_books_enabled():
+        return list(await asyncio.gather(*(one(row, None) for row in rows)))
+
     async with httpx.AsyncClient(timeout=OL_TIMEOUT) as client:
-
-        async def one(row: GoodreadsRow) -> tuple[GoodreadsRow, SearchHit | None]:
-            async with sem:
-                return row, await lookup_work(row.isbn, row.title, row.authors, client)
-
-        return list(await asyncio.gather(*(one(row) for row in rows)))
+        return list(await asyncio.gather(*(one(row, client) for row in rows)))

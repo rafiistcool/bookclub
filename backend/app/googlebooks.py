@@ -1,8 +1,10 @@
 """Optional Google Books catalog: search, volume get, and ISBN lookup.
 
 Used when `GOOGLE_BOOKS_API_KEY` is set. Failures are signaled as
-`GoogleBooksError` so callers can fall back to Open Library. Never required
-for a working club — empty key means this module is not called.
+`GoogleBooksError` so callers can return a classified error. When the key
+is set, search / browse / ISBN / Goodreads stay on Google — they do not
+fall back to Open Library on a miss. Never required for a working club —
+empty key means this module is not called.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from fastapi import HTTPException
 
 from app.branding import google_books_ua
 from app.config import get_settings
+from app.covers import cover_url_from_image_links
 from app.openlibrary import extract_isbn
 from app.schemas import SearchHit
 from app.works import google_catalog_work_id, work_key
@@ -39,7 +42,7 @@ _P_CLOSE_RE = re.compile(r"</p>", re.IGNORECASE)
 _BLANK_LINES_RE = re.compile(r"\n{3,}")
 VOLUME_FIELDS = (
     "id,volumeInfo(title,authors,publishedDate,description,pageCount,"
-    "categories,averageRating,ratingsCount,industryIdentifiers)"
+    "categories,averageRating,ratingsCount,industryIdentifiers,imageLinks)"
 )
 SEARCH_FIELDS = f"totalItems,items({VOLUME_FIELDS})"
 RATE_LIMITED = "The library is busy. Wait a few seconds and try again."
@@ -48,7 +51,7 @@ _cooldown_until = 0.0
 
 
 class GoogleBooksError(Exception):
-    """Upstream Google Books failed. Callers should fall back to Open Library."""
+    """Upstream Google Books failed (transport, 429, or 5xx)."""
 
     def __init__(self, message: str = "google books unavailable", status: int | None = None):
         super().__init__(message)
@@ -69,6 +72,7 @@ class VolumeDetails:
     rating: float | None = None
     rating_count: int | None = None
     cover_id: int | None = None
+    cover_image_url: str | None = None
 
 
 def google_books_api_key() -> str:
@@ -204,6 +208,7 @@ def map_volume(volume: dict) -> SearchHit | None:
     work_id = google_catalog_work_id(isbn=isbn, volume_id=volume_id)
     if not title or work_id is None:
         return None
+    cover = cover_url_from_image_links(info.get("imageLinks"))
     return SearchHit(
         ol_work_key=work_key(work_id),
         title=title,
@@ -211,6 +216,7 @@ def map_volume(volume: dict) -> SearchHit | None:
         cover_id=None,
         year=_year(info.get("publishedDate")),
         isbn=isbn,
+        cover_url=cover,
     )
 
 
@@ -246,6 +252,7 @@ def volume_details(volume: dict) -> VolumeDetails | None:
         isbn=hit.isbn,
         rating=_float(info.get("averageRating")),
         rating_count=_int(info.get("ratingsCount")),
+        cover_image_url=hit.cover_url,
     )
 
 
@@ -430,16 +437,13 @@ async def lookup_isbn(isbn: str, *, bypass_cache: bool = False) -> VolumeDetails
         "fields": SEARCH_FIELDS,
     }
     cache_key = f"gb|isbn|{isbn}"
-    try:
-        payload = await _fetch_json(
-            SEARCH_URL,
-            cache_key=cache_key,
-            params=params,
-            bypass_cache=bypass_cache,
-            cache_empty=False,
-        )
-    except GoogleBooksError:
-        return None
+    payload = await _fetch_json(
+        SEARCH_URL,
+        cache_key=cache_key,
+        params=params,
+        bypass_cache=bypass_cache,
+        cache_empty=False,
+    )
     items = payload.get("items") or []
     if not isinstance(items, list) or not items:
         return None

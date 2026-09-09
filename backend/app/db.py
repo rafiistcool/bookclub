@@ -56,6 +56,7 @@ COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {
         "subjects": "VARCHAR NOT NULL DEFAULT '[]'",
         "ol_rating": "FLOAT",
         "details_fetched_at": "DATETIME",
+        "cover_image_url": "VARCHAR",
     },
     "shelf": {
         "rating": "INTEGER",

@@ -71,7 +71,14 @@ def test_legacy_database_is_upgraded_in_place(tmp_path):
         shelf_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(shelf)"))}
         assert {"rating", "take", "dnf_reason", "progress", "started_at", "finished_at"} <= shelf_cols
         book_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(books)"))}
-        assert {"description", "pages", "subjects", "ol_rating", "details_fetched_at"} <= book_cols
+        assert {
+            "description",
+            "pages",
+            "subjects",
+            "ol_rating",
+            "details_fetched_at",
+            "cover_image_url",
+        } <= book_cols
         user_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(users)"))}
         assert {"notify_meeting", "notify_pick", "notify_note"} <= user_cols
         post_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(club_pick_posts)"))}

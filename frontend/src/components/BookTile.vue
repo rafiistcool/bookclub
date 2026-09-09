@@ -9,6 +9,7 @@ const props = defineProps<{
   coverId?: number | null;
   coverEditionKey?: string | null;
   isbn?: string | null;
+  imageUrl?: string | null;
   status?: Status | null;
   clubPick?: boolean;
   showAuthors?: boolean;
@@ -28,6 +29,7 @@ const props = defineProps<{
         :cover-edition-key="coverEditionKey"
         :isbn="isbn"
         :work-key="olWorkKey"
+        :image-url="imageUrl"
         :size="size ?? 'tile'"
         :eager="eager"
       />

@@ -95,6 +95,7 @@ async function confirmRemove() {
           title: item.book.title,
           authors: item.book.authors,
           cover_id: item.book.cover_id,
+          cover_url: item.book.cover_url,
           year: item.book.year,
           status: item.status,
           rating: item.rating,
@@ -117,6 +118,7 @@ async function nominate(item: ShelfItem) {
       title: item.book.title,
       authors: item.book.authors,
       cover_id: item.book.cover_id,
+      cover_url: item.book.cover_url,
       year: item.book.year,
     });
     toast.show("Nominated for the next-up vote");
@@ -135,6 +137,7 @@ async function confirmClubPick(meetingAt: string | null) {
       title: item.book.title,
       authors: item.book.authors,
       cover_id: item.book.cover_id,
+      cover_url: item.book.cover_url,
       year: item.book.year,
       meeting_at: meetingAt,
     });
@@ -212,6 +215,7 @@ onMounted(load);
             :title="item.book.title"
             :authors="item.book.authors"
             :cover-id="item.book.cover_id"
+            :image-url="item.book.cover_url"
             :status="item.status"
             :rating="item.rating"
             :club-pick="item.book.ol_work_key === clubPick?.book.ol_work_key"

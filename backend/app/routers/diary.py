@@ -197,6 +197,7 @@ def add_entry(
             authors=payload.book.authors,
             cover_id=payload.book.cover_id,
             year=payload.book.year,
+            cover_image_url=payload.book.cover_url,
         )
     book_id = book.id or 0
 

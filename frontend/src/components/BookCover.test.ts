@@ -20,9 +20,38 @@ describe("BookCover", () => {
     expect(missing.text()).toContain("C");
   });
 
-  it("uses an ISBN work key when cover_id is missing", () => {
+  it("does not invent an Open Library ISBN CDN URL for Google catalog keys", () => {
     const wrapper = mount(BookCover, {
       props: { title: "Circe", workKey: "/works/ISBN9780316769488", size: "md" },
+    });
+    expect(wrapper.find("img").exists()).toBe(false);
+    expect(wrapper.text()).toContain("C");
+  });
+
+  it("renders an https cover URL and skips Open Library sources", () => {
+    const wrapper = mount(BookCover, {
+      props: {
+        title: "Circe",
+        imageUrl:
+          "http://books.google.com/books/content?id=zyTCAlFPjgYC&printsec=frontcover",
+        coverId: 8739376,
+        workKey: "/works/ISBN9780316769488",
+        size: "md",
+      },
+    });
+    expect(wrapper.get("img").attributes("src")).toBe(
+      "https://books.google.com/books/content?id=zyTCAlFPjgYC&printsec=frontcover",
+    );
+  });
+
+  it("uses an ISBN prop for Open Library works when cover_id is missing", () => {
+    const wrapper = mount(BookCover, {
+      props: {
+        title: "Circe",
+        workKey: "/works/OL1W",
+        isbn: "9780316769488",
+        size: "md",
+      },
     });
     expect(wrapper.get("img").attributes("src")).toBe(
       "https://covers.openlibrary.org/b/isbn/9780316769488-M.jpg?default=false",

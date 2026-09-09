@@ -65,6 +65,7 @@ const isClubPick = () =>
         :title="item.book.title"
         :cover-id="item.book.cover_id"
         :work-key="item.book.ol_work_key"
+        :image-url="item.book.cover_url"
         size="sm"
       />
       <span class="card-meta">

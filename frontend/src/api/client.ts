@@ -111,6 +111,7 @@ export const api = {
     title: string;
     authors: string;
     cover_id: number | null;
+    cover_url?: string | null;
     year: number | null;
     status: Status;
   } & FinishNote) => request<ShelfItem>("/api/shelf", { method: "POST", body: JSON.stringify(body) }),

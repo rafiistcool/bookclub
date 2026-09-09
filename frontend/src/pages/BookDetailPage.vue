@@ -127,6 +127,7 @@ async function setStatus(status: Status) {
         title: detail.title,
         authors: detail.authors,
         cover_id: detail.cover_id,
+        cover_url: detail.cover_url,
         year: detail.year,
         status,
       });
@@ -228,6 +229,7 @@ async function remove() {
           title: detail.title,
           authors: detail.authors,
           cover_id: detail.cover_id,
+          cover_url: detail.cover_url,
           year: detail.year,
           ...previous,
         });
@@ -257,6 +259,7 @@ async function confirmClubPick(meetingAt: string | null) {
       title: detail.title,
       authors: detail.authors,
       cover_id: detail.cover_id,
+      cover_url: detail.cover_url,
       year: detail.year,
       meeting_at: meetingAt,
     });
@@ -274,7 +277,7 @@ async function refreshDetails() {
     const detail = await api.refreshBook(workId.value);
     book.value = detail;
     syncDrafts(detail);
-    toast.show("Details updated from Open Library");
+    toast.show("Details updated");
   } catch (err) {
     toast.show(err instanceof ApiError ? err.message : "Could not refresh that book");
   } finally {
@@ -291,6 +294,7 @@ async function nominate() {
       title: detail.title,
       authors: detail.authors,
       cover_id: detail.cover_id,
+      cover_url: detail.cover_url,
       year: detail.year,
     });
     toast.show("Nominated for the next-up vote");
@@ -343,6 +347,7 @@ watch(workId, load);
             :cover-id="book.cover_id"
             :isbn="catalogIsbn"
             :work-key="book.ol_work_key"
+            :image-url="book.cover_url"
             eager
           />
         </div>
@@ -382,7 +387,7 @@ watch(workId, load);
                 {{ refreshing ? "Refreshing…" : "Refresh details" }}
               </button>
             </p>
-            <p v-if="!book.cover_id && !customBook && fromOpenLibrary" class="fine">
+            <p v-if="!book.cover_id && !book.cover_url && !customBook && fromOpenLibrary" class="fine">
               No cover stored.
               <button
                 class="text-btn"
@@ -537,6 +542,7 @@ watch(workId, load);
             title: book.title,
             authors: book.authors,
             cover_id: book.cover_id,
+            cover_url: book.cover_url,
             year: book.year,
           }"
         />

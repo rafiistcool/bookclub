@@ -301,6 +301,7 @@ def nominate(
         authors=payload.authors,
         cover_id=payload.cover_id,
         year=payload.year,
+        cover_image_url=payload.cover_url,
     )
     pick = current_pick(session)
     if pick is not None and pick.book_id == book.id:

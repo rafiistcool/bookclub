@@ -36,6 +36,7 @@ def apply_club_pick(
         authors=payload.authors,
         cover_id=payload.cover_id,
         year=payload.year,
+        cover_image_url=payload.cover_url,
     )
     current = current_pick(session)
     if current is not None and current.book_id == book.id:

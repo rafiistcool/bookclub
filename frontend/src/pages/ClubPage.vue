@@ -85,6 +85,7 @@ async function nominate(row: OverlapBook) {
       title: row.book.title,
       authors: row.book.authors,
       cover_id: row.book.cover_id,
+      cover_url: row.book.cover_url,
       year: row.book.year,
     });
     toast.show("Nominated for the next-up vote");
@@ -153,6 +154,7 @@ watch(includeReading, loadOverlap);
                 :key="book.title"
                 :title="book.title"
                 :cover-id="book.cover_id"
+                :image-url="book.cover_url"
                 size="xs"
               />
             </span>
@@ -178,6 +180,7 @@ watch(includeReading, loadOverlap);
                 :title="item.book.title"
                 :cover-id="item.book.cover_id"
                 :work-key="item.book.ol_work_key"
+                :image-url="item.book.cover_url"
                 size="xs"
               />
               <span class="feed-meta">
@@ -264,6 +267,7 @@ watch(includeReading, loadOverlap);
               :title="row.book.title"
               :cover-id="row.book.cover_id"
               :work-key="row.book.ol_work_key"
+              :image-url="row.book.cover_url"
               size="sm"
             />
             <span class="overlap-meta">

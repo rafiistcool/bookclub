@@ -47,7 +47,7 @@ const SORTS = [
 ] as const;
 
 const SHORT_QUERY =
-  "Open Library needs at least 3 characters. Add the author, or paste an ISBN.";
+  "Need at least 3 characters. Add the author, or paste an ISBN.";
 
 type ErrorKind = "" | "short" | "rate" | "unavailable" | "generic";
 
@@ -629,6 +629,7 @@ defineExpose({ loadPage });
             :cover-id="hit.cover_id"
             :cover-edition-key="hit.cover_edition_key"
             :isbn="hit.isbn"
+            :image-url="hit.cover_url"
             :status="hit.on_shelf"
             :club-pick="hit.club_pick"
             :eager="index < 4"
@@ -661,6 +662,7 @@ defineExpose({ loadPage });
             :cover-id="hit.cover_id"
             :cover-edition-key="hit.cover_edition_key"
             :isbn="hit.isbn"
+            :image-url="hit.cover_url"
             :status="hit.on_shelf"
             :club-pick="hit.club_pick"
             :eager="row.subject === BROWSE_ROWS[0] && index < 2"
@@ -760,6 +762,7 @@ defineExpose({ loadPage });
             :cover-id="hit.cover_id"
             :cover-edition-key="hit.cover_edition_key"
             :isbn="hit.isbn"
+            :image-url="hit.cover_url"
             :status="hit.on_shelf"
             :club-pick="hit.club_pick"
             :eager="index < 6"
@@ -785,7 +788,7 @@ defineExpose({ loadPage });
             <template v-if="activeSubject">
               The {{ activeSubject.label }} filter may be hiding it.
             </template>
-            Open Library misses some obscure and self-published titles — you can add
+            The catalog misses some obscure and self-published titles — you can add
             those yourself.
           </p>
           <div class="btn-row">
