@@ -20,6 +20,15 @@ describe("BookCover", () => {
     expect(missing.text()).toContain("C");
   });
 
+  it("uses an ISBN work key when cover_id is missing", () => {
+    const wrapper = mount(BookCover, {
+      props: { title: "Circe", workKey: "/works/ISBN9780316769488", size: "md" },
+    });
+    expect(wrapper.get("img").attributes("src")).toBe(
+      "https://covers.openlibrary.org/b/isbn/9780316769488-M.jpg?default=false",
+    );
+  });
+
   it("falls back to an edition key when cover_id is missing", () => {
     const wrapper = mount(BookCover, {
       props: { title: "Circe", coverId: null, coverEditionKey: "OL1M", size: "md" },

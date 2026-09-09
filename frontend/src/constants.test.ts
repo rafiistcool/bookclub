@@ -1,11 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   bookPath,
+  catalogUrl,
   coverUrl,
   editionCoverUrl,
   extractIsbn,
+  googleBooksUrl,
   isbnCoverUrl,
+  isbnFromWorkKey,
   isClubWorkId,
+  isGoogleWorkId,
+  isIsbnWorkId,
+  isOpenLibraryWorkId,
   monogram,
   openLibraryUrl,
   relativeDay,
@@ -48,6 +54,15 @@ describe("covers and links", () => {
     expect(openLibraryUrl("/works/OL1W")).toBe("https://openlibrary.org/works/OL1W");
     expect(isClubWorkId("BCdeadbeef01")).toBe(true);
     expect(openLibraryUrl("/works/BCdeadbeef01")).toBeNull();
+    expect(isOpenLibraryWorkId("OL1W")).toBe(true);
+    expect(isIsbnWorkId("ISBN9780316769488")).toBe(true);
+    expect(isGoogleWorkId("GBzyTCAlFPjgYC")).toBe(true);
+    expect(isbnFromWorkKey("/works/ISBN9780316769488")).toBe("9780316769488");
+    expect(openLibraryUrl("/works/ISBN9780316769488")).toBeNull();
+    expect(googleBooksUrl("/works/GBzyTCAlFPjgYC")).toBe(
+      "https://books.google.com/books?id=zyTCAlFPjgYC",
+    );
+    expect(catalogUrl("/works/ISBN9780316769488")).toContain("ISBN9780316769488");
   });
 });
 

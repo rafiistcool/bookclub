@@ -14,6 +14,14 @@ from app.branding import open_library_ua
 from app.config import get_settings
 from app.deps import get_current_user, get_session
 from app.models import Book, ClubPick, Quote, ShelfEntry, ShelfStatus, User
+from app.googlebooks import (
+    GoogleBooksError,
+    VolumeDetails,
+    fetch_volume,
+    google_books_enabled,
+    lookup_isbn as lookup_isbn_google,
+    search_volumes,
+)
 from app.openlibrary import (
     OL_TIMEOUT,
     WorkDetails,
@@ -39,8 +47,13 @@ from app.schemas import (
 from app.serialize import cover_url
 from app.shelf_ops import apply_book_details, upsert_book
 from app.works import (
+    google_volume_id,
+    isbn_from_work_id,
+    isbn_from_work_key,
     is_club_work_id,
     is_club_work_key,
+    is_google_catalog_id,
+    is_google_work_id,
     is_open_library_work_id,
     is_work_id,
     new_club_work_id,
@@ -91,6 +104,9 @@ QUERY_TOO_SHORT = (
 )
 RATE_LIMITED = "The library is busy. Wait a few seconds and try again."
 CUSTOM_NO_REFRESH = "This book was added by the club, not Open Library."
+GOOGLE_NO_REFRESH = (
+    "This book was added from Google Books. Set GOOGLE_BOOKS_API_KEY to refresh."
+)
 # Open Library rejects any q shorter than 3 characters, so an empty search box
 # cannot be expressed as a search query at all. Browse falls back to trending.
 MAX_DETAIL_AUTHORS = 3
@@ -438,7 +454,7 @@ async def _search_ol_page(
         params["lang"] = "en"
     if sort != "relevance":
         params["sort"] = sort
-    cache_key = f"search|{normalize_search_query(q)}|{sort}|{page}|{limit}"
+    cache_key = f"ol|search|{normalize_search_query(q)}|{sort}|{page}|{limit}"
     payload = await _fetch_json(
         OPEN_LIBRARY_URL,
         cache_key=cache_key,
@@ -481,6 +497,46 @@ async def fetch_open_library(
         items=items,
         page=page,
         has_more=page * limit < num_found,
+    )
+
+
+async def fetch_google_books(
+    query: str,
+    *,
+    subject: str,
+    sort: Sort,
+    page: int,
+    limit: int,
+) -> SearchPage | None:
+    """Search Google Books. None means the caller should fall back to OL."""
+    try:
+        items, total = await search_volumes(
+            query, subject=subject, sort=sort, page=page, limit=limit
+        )
+    except GoogleBooksError:
+        return None
+    if not items:
+        return None
+    return SearchPage(items=items, page=page, has_more=page * limit < total)
+
+
+async def fetch_catalog(
+    query: str,
+    *,
+    subject: str,
+    sort: Sort,
+    page: int,
+    limit: int,
+) -> SearchPage:
+    """Prefer Google Books when a key is set; Open Library otherwise or on miss."""
+    if google_books_enabled() and query:
+        gb_page = await fetch_google_books(
+            query, subject=subject, sort=sort, page=page, limit=limit
+        )
+        if gb_page is not None:
+            return gb_page
+    return await fetch_open_library(
+        query, subject=subject, sort=sort, page=page, limit=limit
     )
 
 
@@ -672,6 +728,7 @@ def _local_catalog_hits(session: Session, query: str, limit: int) -> list[Search
                 authors=book.authors,
                 cover_id=_cover_id(book.cover_id),
                 year=book.year,
+                isbn=isbn_from_work_key(book.ol_work_key),
                 custom=is_club_work_key(book.ol_work_key),
             )
         )
@@ -723,7 +780,7 @@ async def search_books(
     resolved_sort: Sort = sort or ("relevance" if query else "readinglog")
     local = _local_catalog_hits(session, query, limit) if (query and page == 1) else []
     try:
-        result = await fetch_open_library(
+        result = await fetch_catalog(
             query,
             subject=subject,
             sort=resolved_sort,
@@ -865,7 +922,7 @@ def _work_details_from_local(
         authors=book.authors,
         cover_id=book.cover_id,
         year=book.year,
-        cover_url=cover_url(book.cover_id),
+        cover_url=cover_url(book.cover_id, book.ol_work_key),
         description=book.description,
         pages=book.pages,
         subjects=subjects_from_json(book.subjects),
@@ -960,6 +1017,76 @@ async def _import_work_payload(session: Session, work_id: str, *, bypass_cache: 
     return loaded
 
 
+def _import_google_details(
+    session: Session, work_id: str, details: VolumeDetails
+) -> Book:
+    """Upsert a Google Books volume under its ISBN or volume work key."""
+    key = work_key(work_id)
+    book = _book_by_key(session, key)
+    if book is None:
+        book = upsert_book(
+            session,
+            ol_work_key=key,
+            title=details.title or work_id,
+            authors=details.authors,
+            cover_id=None,
+            year=details.year,
+        )
+    apply_book_details(
+        book,
+        title=details.title,
+        authors=details.authors,
+        year=details.year,
+        description=details.description,
+        pages=details.pages,
+        subjects=details.subjects,
+        ol_rating=details.rating,
+    )
+    session.add(book)
+    session.commit()
+    loaded = _book_by_key(session, key)
+    if loaded is None:
+        raise HTTPException(status_code=500, detail="Could not save that book")
+    return loaded
+
+
+async def _load_google_catalog(
+    work_id: str, *, bypass_cache: bool = False
+) -> VolumeDetails:
+    """Resolve an ISBN- or volume-keyed work from Google Books, or OL ISBN."""
+    if is_google_work_id(work_id):
+        volume_id = google_volume_id(work_id)
+        if volume_id is None:
+            raise HTTPException(status_code=404, detail="No such book.")
+        if not google_books_enabled():
+            raise HTTPException(
+                status_code=400 if bypass_cache else 404,
+                detail=GOOGLE_NO_REFRESH if bypass_cache else "No such book.",
+            )
+        return await fetch_volume(volume_id, bypass_cache=bypass_cache)
+
+    isbn = isbn_from_work_id(work_id)
+    if isbn is None:
+        raise HTTPException(status_code=404, detail="No such book.")
+    if google_books_enabled():
+        details = await lookup_isbn_google(isbn, bypass_cache=bypass_cache)
+        if details is not None:
+            return details
+    hit = await lookup_isbn(isbn)
+    if hit is None:
+        raise HTTPException(status_code=404, detail="No such book.")
+    return VolumeDetails(
+        work_key=work_key(work_id),
+        volume_id="",
+        title=hit.title,
+        authors=hit.authors,
+        year=hit.year,
+        description="",
+        pages=hit.pages,
+        isbn=isbn,
+    )
+
+
 def _import_work_details(session: Session, work_id: str, details: WorkDetails) -> Book:
     work_key = f"/works/{work_id}"
     book = _book_by_key(session, work_key)
@@ -1024,7 +1151,13 @@ async def book_detail(
     book = _book_by_key(session, key)
     if book is not None:
         return _book_detail_from_local(book, user, session)
-    if is_club_work_id(work_id) or not is_open_library_work_id(work_id):
+    if is_club_work_id(work_id):
+        raise HTTPException(status_code=404, detail="No such book.")
+    if is_google_catalog_id(work_id):
+        details = await _load_google_catalog(work_id)
+        book = _import_google_details(session, work_id, details)
+        return _book_detail_from_local(book, user, session)
+    if not is_open_library_work_id(work_id):
         raise HTTPException(status_code=404, detail="No such book.")
     book = await _import_work_payload(session, work_id)
     return _book_detail_from_local(book, user, session)
@@ -1038,6 +1171,10 @@ async def refresh_book_detail(
 ) -> BookDetailOut:
     if is_club_work_id(work_id):
         raise HTTPException(status_code=400, detail=CUSTOM_NO_REFRESH)
+    if is_google_catalog_id(work_id):
+        details = await _load_google_catalog(work_id, bypass_cache=True)
+        book = _import_google_details(session, work_id, details)
+        return _book_detail_from_local(book, user, session)
     if not is_open_library_work_id(work_id):
         raise HTTPException(status_code=404, detail="No such book.")
     book = await _import_work_payload(session, work_id, bypass_cache=True)
@@ -1056,6 +1193,16 @@ async def work_details(
         if book is None:
             raise HTTPException(status_code=404, detail="No such book.")
         return _work_details_from_local(book, user, session)
+    if is_google_catalog_id(work_id):
+        key = work_key(work_id)
+        book = _book_by_key(session, key)
+        if book is not None:
+            return _work_details_from_local(book, user, session)
+        details = await _load_google_catalog(work_id)
+        book = _import_google_details(session, work_id, details)
+        return _work_details_from_local(
+            book, user, session, ol_rating_count=details.rating_count
+        )
     if not is_open_library_work_id(work_id):
         raise HTTPException(status_code=400, detail="That is not an Open Library work id")
     key = work_key(work_id)
@@ -1075,6 +1222,12 @@ async def refresh_work_details(
 ) -> BookDetailsOut:
     if is_club_work_id(work_id):
         raise HTTPException(status_code=400, detail=CUSTOM_NO_REFRESH)
+    if is_google_catalog_id(work_id):
+        details = await _load_google_catalog(work_id, bypass_cache=True)
+        book = _import_google_details(session, work_id, details)
+        return _work_details_from_local(
+            book, user, session, ol_rating_count=details.rating_count
+        )
     if not is_open_library_work_id(work_id):
         raise HTTPException(status_code=400, detail="That is not an Open Library work id")
     key = work_key(work_id)
@@ -1090,6 +1243,31 @@ async def isbn_lookup(
     session: Session = Depends(get_session),
 ) -> IsbnHitOut:
     clean = normalize_isbn(isbn)
+    if google_books_enabled():
+        gb_hit = await lookup_isbn_google(clean)
+        if gb_hit is not None:
+            out = IsbnHitOut(
+                isbn=clean,
+                ol_work_key=gb_hit.work_key,
+                title=gb_hit.title,
+                authors=gb_hit.authors,
+                cover_id=None,
+                year=gb_hit.year,
+                pages=gb_hit.pages,
+            )
+            book = session.exec(
+                select(Book).where(Book.ol_work_key == gb_hit.work_key)
+            ).first()
+            if book is not None:
+                entry = session.exec(
+                    select(ShelfEntry).where(
+                        ShelfEntry.user_id == user.id, ShelfEntry.book_id == book.id
+                    )
+                ).first()
+                if entry is not None:
+                    out.on_shelf = entry.status
+                    out.shelf_id = entry.id
+            return out
     hit = await lookup_isbn(clean)
     if hit is None:
         raise HTTPException(status_code=404, detail="No book found for that ISBN")

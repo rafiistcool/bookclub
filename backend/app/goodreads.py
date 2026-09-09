@@ -7,6 +7,11 @@ import httpx
 
 from app.branding import open_library_ua
 from app.config import get_settings
+from app.googlebooks import (
+    GoogleBooksError,
+    google_books_enabled,
+    search_volumes,
+)
 from app.models import ShelfStatus
 from app.openlibrary import OL_TIMEOUT
 from app.routers.books import OPEN_LIBRARY_URL, map_open_library_docs
@@ -120,6 +125,14 @@ async def _search_first(
     return hits[0] if hits else None
 
 
+async def _search_google(query: str) -> SearchHit | None:
+    try:
+        items, _total = await search_volumes(query, page=1, limit=5)
+    except GoogleBooksError:
+        return None
+    return items[0] if items else None
+
+
 async def lookup_work(
     isbn: str,
     title: str,
@@ -132,6 +145,11 @@ async def lookup_work(
     title_author = " ".join(part for part in (title, authors) if part).strip()
     if title_author and title_author not in queries:
         queries.append(title_author)
+    if google_books_enabled():
+        for query in queries:
+            hit = await _search_google(query)
+            if hit is not None:
+                return hit
     for query in queries:
         hit = await _search_first(query, client)
         if hit is not None:

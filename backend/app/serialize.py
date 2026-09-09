@@ -1,11 +1,15 @@
 from app.models import Book, ShelfEntry
 from app.schemas import BookOut, ShelfItemOut
+from app.works import isbn_from_work_key
 
 
-def cover_url(cover_id: int | None) -> str | None:
-    if cover_id is None or cover_id <= 0:
-        return None
-    return f"https://covers.openlibrary.org/b/id/{cover_id}-L.jpg?default=false"
+def cover_url(cover_id: int | None, ol_work_key: str | None = None) -> str | None:
+    if cover_id is not None and cover_id > 0:
+        return f"https://covers.openlibrary.org/b/id/{cover_id}-L.jpg?default=false"
+    isbn = isbn_from_work_key(ol_work_key or "")
+    if isbn:
+        return f"https://covers.openlibrary.org/b/isbn/{isbn}-L.jpg?default=false"
+    return None
 
 
 def book_out(book: Book) -> BookOut:
@@ -16,7 +20,7 @@ def book_out(book: Book) -> BookOut:
         authors=book.authors,
         cover_id=book.cover_id,
         year=book.year,
-        cover_url=cover_url(book.cover_id),
+        cover_url=cover_url(book.cover_id, book.ol_work_key),
         pages=book.pages,
     )
 

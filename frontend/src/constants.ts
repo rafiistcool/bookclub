@@ -35,6 +35,9 @@ const COVER_TIER: Record<CoverSize, "S" | "M" | "L"> = {
 
 const ISBN_RE = /^(?:\d{9}[\dXx]|\d{13})$/;
 const CLUB_WORK_ID_RE = /^BC[a-f0-9]{10}$/;
+const OL_WORK_ID_RE = /^OL\d+W$/;
+const ISBN_WORK_ID_RE = /^ISBN(?:\d{9}[\dXx]|\d{13})$/;
+const GOOGLE_WORK_ID_RE = /^GB[A-Za-z0-9_-]{1,40}$/;
 
 export function extractIsbn(raw: string): string | null {
   const cleaned = raw.replace(/[\s-]/g, "").toUpperCase();
@@ -88,13 +91,47 @@ export function isClubWorkKey(olWorkKey: string): boolean {
   return isClubWorkId(workId(olWorkKey));
 }
 
+export function isOpenLibraryWorkId(id: string): boolean {
+  return OL_WORK_ID_RE.test(id);
+}
+
+export function isIsbnWorkId(id: string): boolean {
+  return ISBN_WORK_ID_RE.test(id);
+}
+
+export function isGoogleWorkId(id: string): boolean {
+  return GOOGLE_WORK_ID_RE.test(id);
+}
+
+export function isbnFromWorkKey(olWorkKey: string): string | null {
+  const id = workId(olWorkKey);
+  return isIsbnWorkId(id) ? extractIsbn(id.slice(4)) : null;
+}
+
 export function bookPath(olWorkKey: string): string {
   return `/book/${workId(olWorkKey)}`;
 }
 
 export function openLibraryUrl(olWorkKey: string): string | null {
-  if (isClubWorkKey(olWorkKey)) return null;
-  return `https://openlibrary.org${olWorkKey}`;
+  const id = workId(olWorkKey);
+  if (!isOpenLibraryWorkId(id)) return null;
+  return `https://openlibrary.org/works/${id}`;
+}
+
+export function googleBooksUrl(olWorkKey: string): string | null {
+  const id = workId(olWorkKey);
+  if (isGoogleWorkId(id)) {
+    return `https://books.google.com/books?id=${id.slice(2)}`;
+  }
+  const isbn = isbnFromWorkKey(olWorkKey);
+  if (isbn) {
+    return `https://books.google.com/books?vid=ISBN${isbn}`;
+  }
+  return null;
+}
+
+export function catalogUrl(olWorkKey: string): string | null {
+  return openLibraryUrl(olWorkKey) || googleBooksUrl(olWorkKey);
 }
 
 export type FinishNote = {

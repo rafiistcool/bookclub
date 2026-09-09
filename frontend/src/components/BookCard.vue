@@ -61,7 +61,12 @@ const isClubPick = () =>
 <template>
   <article ref="root" class="shelf-card">
     <RouterLink class="card-link" :to="bookPath(item.book.ol_work_key)">
-      <BookCover :title="item.book.title" :cover-id="item.book.cover_id" size="sm" />
+      <BookCover
+        :title="item.book.title"
+        :cover-id="item.book.cover_id"
+        :work-key="item.book.ol_work_key"
+        size="sm"
+      />
       <span class="card-meta">
         <strong class="card-title">{{ item.book.title }}</strong>
         <span v-if="item.book.authors" class="finer subtle">{{ item.book.authors }}</span>

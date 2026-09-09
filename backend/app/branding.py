@@ -77,11 +77,21 @@ def cors_origins(settings: Settings) -> list[str]:
     return origins
 
 
-def open_library_ua(settings: Settings) -> str:
+def _ua_token(settings: Settings) -> tuple[str, str]:
     token = re.sub(r"[^A-Za-z0-9._-]+", "", sanitize_name(settings.bookclub_name))
     token = token or "Bookclub"
     contact = public_origin(settings.bookclub_public_url) or "private book club"
+    return token, contact
+
+
+def open_library_ua(settings: Settings) -> str:
+    token, contact = _ua_token(settings)
     return f"{token}/1.0 ({contact}; catalog browse via Open Library)"
+
+
+def google_books_ua(settings: Settings) -> str:
+    token, contact = _ua_token(settings)
+    return f"{token}/1.0 ({contact}; catalog search via Google Books)"
 
 
 def warn_invalid_theme(settings: Settings) -> None:

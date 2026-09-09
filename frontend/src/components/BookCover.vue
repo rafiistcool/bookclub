@@ -4,6 +4,7 @@ import {
   coverUrl,
   editionCoverUrl,
   isbnCoverUrl,
+  isbnFromWorkKey,
   monogram,
   type CoverSize,
 } from "../constants";
@@ -13,6 +14,7 @@ const props = defineProps<{
   coverId?: number | null;
   coverEditionKey?: string | null;
   isbn?: string | null;
+  workKey?: string | null;
   size?: CoverSize;
   eager?: boolean;
 }>();
@@ -24,7 +26,7 @@ const sources = computed(() => {
   const urls = [
     coverUrl(props.coverId, size.value),
     editionCoverUrl(props.coverEditionKey, size.value),
-    isbnCoverUrl(props.isbn, size.value),
+    isbnCoverUrl(props.isbn || isbnFromWorkKey(props.workKey || ""), size.value),
   ];
   return urls.filter((url): url is string => Boolean(url));
 });
@@ -59,7 +61,7 @@ function onLoad(event: Event) {
 }
 
 watch(
-  () => [props.coverId, props.coverEditionKey, props.isbn, size.value],
+  () => [props.coverId, props.coverEditionKey, props.isbn, props.workKey, size.value],
   () => {
     broken.value = false;
     sourceIndex.value = 0;

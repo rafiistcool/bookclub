@@ -174,7 +174,12 @@ watch(includeReading, loadOverlap);
         <ol class="feed-list">
           <li v-for="item in feed" :key="item.entry.id">
             <RouterLink class="feed-row" :to="entryPath(item)">
-              <BookCover :title="item.book.title" :cover-id="item.book.cover_id" size="xs" />
+              <BookCover
+                :title="item.book.title"
+                :cover-id="item.book.cover_id"
+                :work-key="item.book.ol_work_key"
+                size="xs"
+              />
               <span class="feed-meta">
                 <span class="feed-head">
                   <strong>{{ item.entry.author }}</strong>
@@ -255,7 +260,12 @@ watch(includeReading, loadOverlap);
       <ul v-else class="overlap-list">
         <li v-for="row in overlap" :key="row.book.ol_work_key" class="overlap-row">
           <RouterLink class="overlap-book" :to="bookPath(row.book.ol_work_key)">
-            <BookCover :title="row.book.title" :cover-id="row.book.cover_id" size="sm" />
+            <BookCover
+              :title="row.book.title"
+              :cover-id="row.book.cover_id"
+              :work-key="row.book.ol_work_key"
+              size="sm"
+            />
             <span class="overlap-meta">
               <strong>{{ row.book.title }}</strong>
               <span v-if="row.book.authors" class="finer subtle">

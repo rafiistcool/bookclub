@@ -6,7 +6,10 @@ import BookCover from "../components/BookCover.vue";
 import BookDiary from "../components/BookDiary.vue";
 import MeetingSheet from "../components/MeetingSheet.vue";
 import {
+  catalogUrl as externalCatalogUrl,
+  isbnFromWorkKey,
   isClubWorkId,
+  isOpenLibraryWorkId,
   openLibraryUrl,
   STATUSES,
   STATUS_LABEL,
@@ -41,8 +44,17 @@ const customBook = computed(
   () => book.value?.custom === true || isClubWorkId(workId.value),
 );
 const catalogUrl = computed(() =>
-  book.value ? openLibraryUrl(book.value.ol_work_key) : null,
+  book.value ? externalCatalogUrl(book.value.ol_work_key) : null,
 );
+const catalogLabel = computed(() => {
+  if (!book.value) return "";
+  if (openLibraryUrl(book.value.ol_work_key)) return "View on Open Library";
+  return "View on Google Books";
+});
+const catalogIsbn = computed(() =>
+  book.value ? isbnFromWorkKey(book.value.ol_work_key) : null,
+);
+const fromOpenLibrary = computed(() => isOpenLibraryWorkId(workId.value));
 
 function syncDrafts(detail: BookDetail) {
   takeDraft.value = detail.take;
@@ -326,7 +338,13 @@ watch(workId, load);
     <template v-else-if="book">
       <div class="detail-hero">
         <div class="hero-cover">
-          <BookCover :title="book.title" :cover-id="book.cover_id" eager />
+          <BookCover
+            :title="book.title"
+            :cover-id="book.cover_id"
+            :isbn="catalogIsbn"
+            :work-key="book.ol_work_key"
+            eager
+          />
         </div>
         <div class="detail-side">
           <div class="detail-intro">
@@ -352,7 +370,7 @@ watch(workId, load);
                 target="_blank"
                 rel="noreferrer"
               >
-                View on Open Library
+                {{ catalogLabel }}
               </a>
               <span v-if="catalogUrl" class="subtle"> · </span>
               <button
@@ -364,7 +382,7 @@ watch(workId, load);
                 {{ refreshing ? "Refreshing…" : "Refresh details" }}
               </button>
             </p>
-            <p v-if="!book.cover_id && !customBook" class="fine">
+            <p v-if="!book.cover_id && !customBook && fromOpenLibrary" class="fine">
               No cover stored.
               <button
                 class="text-btn"

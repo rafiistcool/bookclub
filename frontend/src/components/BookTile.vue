@@ -27,6 +27,7 @@ const props = defineProps<{
         :cover-id="coverId"
         :cover-edition-key="coverEditionKey"
         :isbn="isbn"
+        :work-key="olWorkKey"
         :size="size ?? 'tile'"
         :eager="eager"
       />
