@@ -102,6 +102,10 @@ async function onAvatarFile(event: Event) {
   const file = input.files?.[0];
   input.value = "";
   if (!file || avatarBusy.value) return;
+  if (file.size > 2 * 1024 * 1024) {
+    toast.show(t("errors.pictureTooLarge"));
+    return;
+  }
   avatarBusy.value = true;
   try {
     session.user = await api.uploadAvatar(file);
@@ -352,6 +356,11 @@ onMounted(loadInvites);
 .profile-actions label.btn {
   position: relative;
   cursor: pointer;
+}
+
+.profile-actions label.btn:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .profile-actions label.btn input {

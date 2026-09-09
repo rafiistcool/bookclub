@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 
 const props = withDefaults(
   defineProps<{
@@ -10,12 +10,21 @@ const props = withDefaults(
   { src: null, size: "md" },
 );
 
+const failed = ref(false);
 const initial = computed(() => props.username.charAt(0).toUpperCase() || "?");
+const showImage = computed(() => Boolean(props.src) && !failed.value);
+
+watch(
+  () => props.src,
+  () => {
+    failed.value = false;
+  },
+);
 </script>
 
 <template>
   <span class="avatar" :class="`size-${size}`" aria-hidden="true">
-    <img v-if="src" :src="src" alt="" />
+    <img v-if="showImage" :src="src!" alt="" loading="lazy" @error="failed = true" />
     <template v-else>{{ initial }}</template>
   </span>
 </template>
