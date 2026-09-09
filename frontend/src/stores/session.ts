@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { api, ApiError } from "../api/client";
 import type { User } from "../types";
+import { useLocale } from "./locale";
 import { useTheme } from "./theme";
 
 export const useSession = defineStore("session", {
@@ -14,6 +15,7 @@ export const useSession = defineStore("session", {
       try {
         this.user = await api.me();
         useTheme().adopt(this.user);
+        useLocale().adopt(this.user);
       } catch (error) {
         if (!(error instanceof ApiError && error.status === 401)) {
           throw error;
@@ -33,17 +35,27 @@ export const useSession = defineStore("session", {
       // browser has been using rather than snapping back to the default.
       const theme = useTheme();
       void theme.persist({ theme: theme.theme, color_mode: theme.mode });
+      void useLocale().persist();
     },
     async login(username: string, password: string) {
       await api.login({ username, password });
       this.user = await api.me();
       useTheme().adopt(this.user);
+      const locale = useLocale();
+      if (locale.explicit) {
+        // Auth-screen EN|DE was an explicit choice; keep it (existing
+        // members are backfilled to `en`, so adopt() would undo the toggle).
+        void locale.persist();
+      } else {
+        locale.adopt(this.user);
+      }
     },
     async logout() {
       try {
         await api.logout();
       } finally {
         this.user = null;
+        useLocale().clearExplicit();
       }
     },
   },

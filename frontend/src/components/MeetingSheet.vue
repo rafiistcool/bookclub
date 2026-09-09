@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import { useI18n } from "vue-i18n";
 import BottomSheet from "./BottomSheet.vue";
+
+const { t } = useI18n();
 
 const props = defineProps<{
   title: string;
@@ -24,9 +27,9 @@ const meeting = ref(props.meetingLocal ?? "");
     <p class="muted sheet-book">{{ bookTitle }}</p>
     <p v-if="blurb" class="fine subtle sheet-blurb">{{ blurb }}</p>
     <label class="field">
-      <span>Meeting date and time</span>
+      <span>{{ t("meeting.dateTime") }}</span>
       <input v-model="meeting" type="datetime-local" />
-      <span class="field-hint">Optional · {{ timezone }}</span>
+      <span class="field-hint">{{ t("meeting.optionalTz", { tz: timezone }) }}</span>
     </label>
     <button
       v-if="meeting"
@@ -34,7 +37,7 @@ const meeting = ref(props.meetingLocal ?? "");
       type="button"
       @click="meeting = ''"
     >
-      Clear meeting
+      {{ t("meeting.clear") }}
     </button>
     <div class="stack">
       <button
@@ -42,10 +45,10 @@ const meeting = ref(props.meetingLocal ?? "");
         type="button"
         @click="emit('confirm', meeting.trim() || null)"
       >
-        {{ confirmLabel || "Set club pick" }}
+        {{ confirmLabel || t("meeting.setPick") }}
       </button>
       <button class="btn btn-ghost btn-block" type="button" @click="emit('close')">
-        Cancel
+        {{ t("common.cancel") }}
       </button>
     </div>
   </BottomSheet>

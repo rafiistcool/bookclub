@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { reactive, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { VueDraggable } from "vue-draggable-plus";
-import { STATUSES, STATUS_LABEL, type Status } from "../constants";
+import { STATUSES, statusLabel, type Status } from "../constants";
 import type { ShelfItem } from "../types";
 import BookCard from "./BookCard.vue";
+
+const { t } = useI18n();
 
 const props = defineProps<{
   items: ShelfItem[];
@@ -45,7 +48,7 @@ function onDrop(status: Status, event: { newIndex?: number }) {
   <div class="board">
     <section v-for="status in STATUSES" :key="status" class="column">
       <header class="column-head">
-        <h3>{{ STATUS_LABEL[status] }}</h3>
+        <h3>{{ statusLabel(status) }}</h3>
         <span class="fine subtle nums">{{ lists[status].length }}</span>
       </header>
       <VueDraggable
@@ -80,7 +83,7 @@ function onDrop(status: Status, event: { newIndex?: number }) {
         />
       </div>
       <p v-if="lists[status].length === 0" class="finer subtle column-empty">
-        {{ readonly ? "Nothing here." : "Drag a book here." }}
+        {{ readonly ? t("shelf.nothingHere") : t("shelf.dragHere") }}
       </p>
     </section>
   </div>

@@ -1,5 +1,8 @@
 import { config } from "@vue/test-utils";
 import { vi } from "vitest";
+import { i18n } from "../i18n";
+
+config.global.plugins = [i18n];
 
 // Components use <RouterLink> freely; stub it as a plain anchor in unit tests.
 config.global.stubs = {

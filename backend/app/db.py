@@ -5,6 +5,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from sqlalchemy.engine import Engine
 
 from app.config import Settings
+from app.i18n import DEFAULT_LOCALE
 from app.models import (
     BookPost,
     BookPostReaction,
@@ -46,9 +47,13 @@ COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {
         # before this migration read back as paper/system rather than NULL.
         "theme": f"VARCHAR(32) NOT NULL DEFAULT '{DEFAULT_THEME_ID}'",
         "color_mode": f"VARCHAR(16) NOT NULL DEFAULT '{DEFAULT_COLOR_MODE}'",
+        "locale": f"VARCHAR(8) NOT NULL DEFAULT '{DEFAULT_LOCALE}'",
         "notify_meeting": "BOOLEAN NOT NULL DEFAULT 1",
         "notify_pick": "BOOLEAN NOT NULL DEFAULT 1",
         "notify_note": "BOOLEAN NOT NULL DEFAULT 1",
+        "avatar": "BLOB",
+        "avatar_mime": "VARCHAR(32)",
+        "avatar_updated_at": "DATETIME",
     },
     "books": {
         "description": "VARCHAR NOT NULL DEFAULT ''",

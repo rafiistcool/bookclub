@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 from app import activity
 from app.models import ClubPick, ShelfEntry, ShelfStatus, User, utcnow
 from app.schemas import ClubPickOut, ClubPickReader, ClubPickSetIn
-from app.serialize import book_out
+from app.serialize import avatar_url_for, book_out
 from app.shelf_ops import upsert_book
 from app.timezone import meeting_label, meeting_local, parse_meeting
 
@@ -102,6 +102,7 @@ def pick_out(session: Session, pick: ClubPick, viewer: User, tz_name: str) -> Cl
                 take=entry.take,
                 dnf_reason=entry.dnf_reason,
                 progress=entry.progress,
+                avatar_url=avatar_url_for(entry.user),
             )
         )
         if entry.user_id == viewer.id:

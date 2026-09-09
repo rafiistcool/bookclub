@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { api, ApiError } from "../api/client";
 import AddBookSheet from "../components/AddBookSheet.vue";
@@ -20,15 +21,15 @@ const SHELF_CONCURRENCY = 2;
 const STILL_WAITING_AFTER_SEC = 2;
 
 const SUBJECTS = [
-  { label: "Fiction", value: "fiction" },
-  { label: "Fantasy", value: "fantasy" },
-  { label: "Mystery", value: "mystery" },
-  { label: "Romance", value: "romance" },
-  { label: "Science fiction", value: "science_fiction" },
-  { label: "History", value: "history" },
-  { label: "Biography", value: "biography" },
-  { label: "Horror", value: "horror" },
-  { label: "Young adult", value: "young_adult" },
+  { value: "fiction" },
+  { value: "fantasy" },
+  { value: "mystery" },
+  { value: "romance" },
+  { value: "science_fiction" },
+  { value: "history" },
+  { value: "biography" },
+  { value: "horror" },
+  { value: "young_adult" },
 ] as const;
 
 /** The shelves on the browse surface, in the order they appear. */
@@ -41,13 +42,10 @@ const BROWSE_ROWS = [
 ] as const;
 
 const SORTS = [
-  { label: "Popular", value: "readinglog" },
-  { label: "New", value: "new" },
-  { label: "Title", value: "title" },
+  { labelKey: "discover.sortPopular", value: "readinglog" },
+  { labelKey: "discover.sortNew", value: "new" },
+  { labelKey: "discover.sortTitle", value: "title" },
 ] as const;
-
-const SHORT_QUERY =
-  "Need at least 3 characters. Add the author, or paste an ISBN.";
 
 type ErrorKind = "" | "short" | "rate" | "unavailable" | "generic";
 
@@ -59,9 +57,12 @@ type Row = {
   error: string;
 };
 
+const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
 const toast = useToast();
+
+const SHORT_QUERY = computed(() => t("discover.shortQuery"));
 
 const query = ref("");
 const submittedQuery = ref("");
@@ -111,9 +112,11 @@ const activeSubject = computed(() => SUBJECTS.find((entry) => entry.value === su
 
 const resultsLabel = computed(() => {
   const chip = activeSubject.value;
-  if (submittedQuery.value && chip) return `“${submittedQuery.value}” in ${chip.label}`;
-  if (submittedQuery.value) return `“${submittedQuery.value}”`;
-  return chip?.label ?? "Results";
+  if (submittedQuery.value && chip) {
+    return t("discover.inSubject", { query: submittedQuery.value, subject: subjectLabel(chip.value) });
+  }
+  if (submittedQuery.value) return t("discover.quoted", { query: submittedQuery.value });
+  return chip ? subjectLabel(chip.value) : t("discover.results");
 });
 
 const shortQuery = computed(() => {
@@ -133,10 +136,9 @@ const stillBrowsing = computed(
 );
 
 function subjectLabel(value: string) {
-  return (
-    SUBJECTS.find((entry) => entry.value === value)?.label ??
-    value.replace(/_/g, " ")
-  );
+  const key = `discover.subjects.${value}`;
+  const translated = t(key);
+  return translated === key ? value.replace(/_/g, " ") : translated;
 }
 
 function classifyError(err: unknown): { message: string; kind: ErrorKind } {
@@ -146,14 +148,14 @@ function classifyError(err: unknown): { message: string; kind: ErrorKind } {
     if (err.status === 502) return { message: err.message, kind: "unavailable" };
     return { message: err.message, kind: "generic" };
   }
-  return { message: "Search failed", kind: "generic" };
+  return { message: t("discover.searchFailed"), kind: "generic" };
 }
 
 function errorTitle(kind: ErrorKind) {
-  if (kind === "short") return "That search is too short";
-  if (kind === "rate") return "The library is busy";
-  if (kind === "unavailable") return "The library is unavailable";
-  return "That search did not come back";
+  if (kind === "short") return t("discover.shortTitle");
+  if (kind === "rate") return t("discover.rateTitle");
+  if (kind === "unavailable") return t("discover.unavailableTitle");
+  return t("discover.genericTitle");
 }
 
 function isAbortError(err: unknown) {
@@ -253,7 +255,7 @@ async function loadShelfRow(row: Row, signal: AbortSignal, quiet: boolean) {
     if (isAbortError(err) || signal.aborted) return;
     if (quiet && row.items.length) return;
     row.items = [];
-    row.error = err instanceof ApiError ? err.message : "Could not load this shelf.";
+    row.error = err instanceof ApiError ? err.message : t("discover.shelfLoadFailed");
   } finally {
     if (!signal.aborted) row.pending = false;
   }
@@ -290,7 +292,7 @@ async function loadBrowse(quiet = false) {
         if (quiet && trending.value.length) return;
         trending.value = [];
         browseError.value =
-          err instanceof ApiError ? err.message : "Could not reach the library";
+          err instanceof ApiError ? err.message : t("discover.reachFailed");
       } finally {
         if (!signal.aborted) browsePending.value = false;
       }
@@ -323,7 +325,7 @@ function retryTrending() {
     })
     .catch((err) => {
       browseError.value =
-        err instanceof ApiError ? err.message : "Could not reach the library";
+        err instanceof ApiError ? err.message : t("discover.reachFailed");
     })
     .finally(() => {
       browsePending.value = false;
@@ -341,7 +343,7 @@ function retryRow(row: Row) {
     })
     .catch((err) => {
       row.items = [];
-      row.error = err instanceof ApiError ? err.message : "Could not load this shelf.";
+      row.error = err instanceof ApiError ? err.message : t("discover.shelfLoadFailed");
     })
     .finally(() => {
       row.pending = false;
@@ -424,7 +426,7 @@ async function loadPage(nextPage: number, reset: boolean) {
       hasMore.value = false;
     } else {
       moreError.value = classified.message;
-      toast.show("Couldn't load more");
+      toast.show(t("discover.loadMoreFailed"));
     }
   } finally {
     if (seq === requestSeq) {
@@ -513,7 +515,7 @@ watch([submittedQuery, subject, sortPick], () => {
     pending.value = false;
     items.value = [];
     hasMore.value = false;
-    error.value = SHORT_QUERY;
+    error.value = SHORT_QUERY.value;
     errorKind.value = "short";
     moreError.value = "";
     return;
@@ -555,8 +557,8 @@ defineExpose({ loadPage });
 <template>
   <section>
     <div class="page-head">
-      <h1>Discover</h1>
-      <p class="lede">Search the catalog, or browse what people are reading.</p>
+      <h1>{{ t("discover.title") }}</h1>
+      <p class="lede">{{ t("discover.lede") }}</p>
     </div>
 
     <div class="discover-search">
@@ -579,8 +581,8 @@ defineExpose({ loadPage });
             v-model="query"
             type="search"
             inputmode="search"
-            placeholder="Title, author, or ISBN"
-            aria-label="Search books"
+            :placeholder="t('discover.placeholder')"
+            :aria-label="t('discover.searchAria')"
           />
           <button
             v-if="query || submittedQuery"
@@ -588,12 +590,12 @@ defineExpose({ loadPage });
             type="button"
             @click="clearSearch"
           >
-            Clear
+            {{ t("common.clear") }}
           </button>
         </span>
-        <button class="btn btn-primary" type="submit">Search</button>
+        <button class="btn btn-primary" type="submit">{{ t("discover.search") }}</button>
       </form>
-      <div class="chip-row scroll" role="group" aria-label="Subject filter">
+      <div class="chip-row scroll" role="group" :aria-label="t('discover.subjectFilter')">
         <button
           v-for="chip in SUBJECTS"
           :key="chip.value"
@@ -603,7 +605,7 @@ defineExpose({ loadPage });
           :class="{ active: subject === chip.value }"
           @click="toggleSubject(chip.value)"
         >
-          {{ chip.label }}
+          {{ subjectLabel(chip.value) }}
         </button>
       </div>
     </div>
@@ -611,11 +613,11 @@ defineExpose({ loadPage });
     <!-- Browse surface -->
     <template v-if="browsing">
       <p v-if="stillBrowsing" class="fine subtle wait-note" aria-live="polite">
-        Still loading shelves… {{ browseWaitSec }}s so far.
+        {{ t("discover.stillLoading", { n: browseWaitSec }) }}
       </p>
       <section aria-labelledby="trending">
         <div class="section-head">
-          <h2 id="trending">Trending today</h2>
+          <h2 id="trending">{{ t("discover.trending") }}</h2>
         </div>
         <div v-if="browsePending || trending.length" class="rail">
           <TileSkeleton v-if="browsePending" :count="7" />
@@ -638,16 +640,16 @@ defineExpose({ loadPage });
         </div>
         <p v-else-if="browseError" class="fine subtle row-fallback">
           {{ browseError }}
-          <button class="text-btn" type="button" @click="retryTrending">Try again</button>
+          <button class="text-btn" type="button" @click="retryTrending">{{ t("common.tryAgain") }}</button>
         </p>
-        <p v-else class="fine subtle">Nothing trending right now.</p>
+        <p v-else class="fine subtle">{{ t("discover.nothingTrending") }}</p>
       </section>
 
       <section v-for="row in rows" :key="row.subject" class="section">
         <div class="section-head">
-          <h2>{{ row.label }}</h2>
+          <h2>{{ subjectLabel(row.subject) }}</h2>
           <button class="text-btn" type="button" @click="toggleSubject(row.subject)">
-            See all
+            {{ t("discover.seeAll") }}
           </button>
         </div>
         <div v-if="row.pending || row.items.length" class="rail">
@@ -670,10 +672,10 @@ defineExpose({ loadPage });
           />
         </div>
         <p v-else class="fine subtle row-fallback">
-          {{ row.error || "Could not load this shelf." }}
-          <button class="text-btn" type="button" @click="retryRow(row)">Try again</button>
+          {{ row.error || t("discover.shelfLoadFailed") }}
+          <button class="text-btn" type="button" @click="retryRow(row)">{{ t("common.tryAgain") }}</button>
           <button class="text-btn" type="button" @click="toggleSubject(row.subject)">
-            Search it instead
+            {{ t("discover.searchInstead") }}
           </button>
         </p>
       </section>
@@ -693,7 +695,7 @@ defineExpose({ loadPage });
             :class="{ active: effectiveSort === option.value }"
             @click="pickSort(option.value)"
           >
-            {{ option.label }}
+            {{ t(option.labelKey) }}
           </button>
           <button
             class="chip"
@@ -702,20 +704,20 @@ defineExpose({ loadPage });
             :class="{ active: hideOnShelf }"
             @click="hideOnShelf = !hideOnShelf"
           >
-            Not on my shelf
+            {{ t("discover.notOnShelf") }}
           </button>
         </div>
       </div>
 
       <p v-if="activeSubject" class="filter-banner">
-        Filtered to <strong>{{ activeSubject.label }}</strong>
-        <button class="text-btn" type="button" @click="clearSubject">Clear filter</button>
+        {{ t("discover.filteredTo") }} <strong>{{ subjectLabel(activeSubject.value) }}</strong>
+        <button class="text-btn" type="button" @click="clearSubject">{{ t("discover.clearFilter") }}</button>
       </p>
       <p v-if="popularUnavailable" class="fine subtle">
-        Popular is unavailable right now. Showing relevance instead.
+        {{ t("discover.popularUnavailable") }}
       </p>
       <p v-if="stillSearching" class="fine subtle wait-note" aria-live="polite">
-        Still searching the library… {{ searchWaitSec }}s so far.
+        {{ t("discover.stillSearching", { n: searchWaitSec }) }}
       </p>
 
       <div
@@ -733,7 +735,7 @@ defineExpose({ loadPage });
               type="button"
               @click="loadPage(1, true)"
             >
-              Try again
+              {{ t("common.tryAgain") }}
             </button>
             <button
               v-if="activeSubject"
@@ -741,13 +743,13 @@ defineExpose({ loadPage });
               type="button"
               @click="clearSubject"
             >
-              Clear {{ activeSubject.label }}
+              {{ t("discover.clearSubject", { label: subjectLabel(activeSubject.value) }) }}
             </button>
             <button class="btn btn-ghost" type="button" @click="clearSearch">
-              Back to browsing
+              {{ t("discover.backToBrowsing") }}
             </button>
             <button class="btn btn-primary" type="button" @click="addingBook = true">
-              Add your own book
+              {{ t("discover.addOwn") }}
             </button>
           </div>
         </div>
@@ -772,24 +774,23 @@ defineExpose({ loadPage });
         </div>
 
         <div v-else-if="items.length && hideOnShelf" class="empty">
-          <h3>All of these are already yours</h3>
-          <p>Every loaded result is on your shelf.</p>
+          <h3>{{ t("discover.alreadyYoursTitle") }}</h3>
+          <p>{{ t("discover.alreadyYoursBody") }}</p>
           <div class="btn-row">
             <button class="btn btn-ghost" type="button" @click="hideOnShelf = false">
-              Show them anyway
+              {{ t("discover.showAnyway") }}
             </button>
           </div>
         </div>
 
         <div v-else class="empty">
-          <h3>Nothing matched</h3>
+          <h3>{{ t("discover.nothingMatched") }}</h3>
           <p>
-            Try the title plus the author, or paste an ISBN.
+            {{ t("discover.nothingMatchedBody") }}
             <template v-if="activeSubject">
-              The {{ activeSubject.label }} filter may be hiding it.
+              {{ t("discover.filterHiding", { label: subjectLabel(activeSubject.value) }) }}
             </template>
-            The catalog misses some obscure and self-published titles — you can add
-            those yourself.
+            {{ t("discover.catalogMisses") }}
           </p>
           <div class="btn-row">
             <button
@@ -798,21 +799,21 @@ defineExpose({ loadPage });
               type="button"
               @click="clearSubject"
             >
-              Clear {{ activeSubject.label }}
+              {{ t("discover.clearSubject", { label: subjectLabel(activeSubject.value) }) }}
             </button>
             <button class="btn btn-ghost" type="button" @click="clearSearch">
-              Back to browsing
+              {{ t("discover.backToBrowsing") }}
             </button>
             <button class="btn btn-primary" type="button" @click="addingBook = true">
-              Add your own book
+              {{ t("discover.addOwn") }}
             </button>
           </div>
         </div>
 
         <p v-if="moreError" class="fine subtle row-fallback more-error">
-          Couldn't load more. {{ moreError }}
+          {{ t("discover.couldntLoadMore") }} {{ moreError }}
           <button class="text-btn" type="button" @click="loadPage(page + 1, false)">
-            Try again
+            {{ t("common.tryAgain") }}
           </button>
         </p>
       </div>

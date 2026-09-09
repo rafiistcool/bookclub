@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
+import Avatar from "../components/Avatar.vue";
 import BookCover from "../components/BookCover.vue";
 import BookDiary from "../components/BookDiary.vue";
 import MeetingSheet from "../components/MeetingSheet.vue";
@@ -8,12 +10,18 @@ import {
   bookPath,
   relativeDay,
   starLabel,
-  STATUS_LABEL,
-  STATUS_SHORT,
+  statusLabel,
+  statusShort,
 } from "../constants";
+import { formatClubDate } from "../i18n/dates";
+import { tp } from "../i18n";
+import { useLocale } from "../stores/locale";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import type { ClubPick, NextUpVote } from "../types";
+
+const { t } = useI18n();
+const locale = useLocale();
 
 const session = useSession();
 const toast = useToast();
@@ -54,7 +62,7 @@ async function load() {
     history.value = past.items;
     error.value = "";
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : "Could not load the club pick";
+    error.value = err instanceof ApiError ? err.message : t("home.loadFailed");
   } finally {
     loaded.value = true;
   }
@@ -81,15 +89,15 @@ async function startReading() {
     });
     current.on_shelf = created.status;
     current.shelf_id = created.id;
-    toast.show("Added to Reading");
+    toast.show(t("home.addedToReading"));
     await load();
   } catch (err) {
     if (err instanceof ApiError && err.status === 409 && err.item) {
       current.on_shelf = err.item.status;
       current.shelf_id = err.item.id;
-      toast.show(`Already on your shelf as ${STATUS_LABEL[err.item.status]}`);
+      toast.show(t("home.alreadyOnShelf", { status: statusLabel(err.item.status) }));
     } else {
-      toast.show(err instanceof ApiError ? err.message : "Could not add that book");
+      toast.show(err instanceof ApiError ? err.message : t("home.addFailed"));
     }
   } finally {
     busy.value = false;
@@ -110,10 +118,10 @@ async function saveMeeting(meetingAt: string | null) {
       year: current.book.year,
       meeting_at: meetingAt,
     });
-    toast.show(meetingAt ? "Meeting saved" : "Meeting cleared");
+    toast.show(meetingAt ? t("home.meetingSaved") : t("home.meetingCleared"));
     await load();
   } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : "Could not update the meeting");
+    toast.show(err instanceof ApiError ? err.message : t("home.meetingFailed"));
   }
 }
 
@@ -123,8 +131,8 @@ onMounted(load);
 <template>
   <section class="home">
     <div class="page-head">
-      <h1>{{ session.user?.username ? `Hello, ${session.user.username}` : "Home" }}</h1>
-      <p class="lede">One book, everyone at once. Here's where the club stands.</p>
+      <h1>{{ session.user?.username ? t("home.hello", { name: session.user.username }) : t("home.title") }}</h1>
+      <p class="lede">{{ t("home.lede") }}</p>
     </div>
 
     <p v-if="error" class="error">{{ error }}</p>
@@ -149,21 +157,21 @@ onMounted(load);
           />
         </RouterLink>
         <div class="hero-body">
-          <p class="kicker">Reading now</p>
+          <p class="kicker">{{ t("home.readingNow") }}</p>
           <RouterLink class="hero-title" :to="bookPath(pick.book.ol_work_key)">
             <h2 class="display">{{ pick.book.title }}</h2>
           </RouterLink>
           <p v-if="pick.book.authors" class="hero-authors">{{ pick.book.authors }}</p>
           <p class="fine subtle">
-            Chosen by {{ pick.set_by }}
+            {{ t("home.chosenBy", { name: pick.set_by }) }}
             <template v-if="pick.book.year"> · {{ pick.book.year }}</template>
           </p>
 
-          <p v-if="pick.meeting_label" class="meeting">
-            <strong>{{ pick.meeting_label }}</strong>
+          <p v-if="pick.meeting_at" class="meeting">
+            <strong>{{ formatClubDate(pick.meeting_at, timezone, locale.locale) || pick.meeting_label }}</strong>
             <span v-if="meetingCountdown" class="subtle">{{ meetingCountdown }}</span>
           </p>
-          <p v-else class="fine subtle">No meeting scheduled yet.</p>
+          <p v-else class="fine subtle">{{ t("home.noMeeting") }}</p>
 
           <p v-if="pick.note" class="note">{{ pick.note }}</p>
 
@@ -172,7 +180,7 @@ onMounted(load);
               class="btn btn-primary"
               :to="bookPath(pick.book.ol_work_key)"
             >
-              {{ pick.on_shelf ? "Open book" : "See details" }}
+              {{ pick.on_shelf ? t("home.openBook") : t("home.seeDetails") }}
             </RouterLink>
             <button
               v-if="!pick.on_shelf"
@@ -181,17 +189,17 @@ onMounted(load);
               :disabled="busy"
               @click="startReading"
             >
-              Start reading
+              {{ t("home.startReading") }}
             </button>
             <span v-else class="badge" :class="pick.on_shelf">
-              {{ STATUS_SHORT[pick.on_shelf] }}
+              {{ statusShort(pick.on_shelf) }}
             </span>
             <button
               class="btn btn-ghost"
               type="button"
               @click="editingMeeting = true"
             >
-              {{ pick.meeting_at ? "Change meeting" : "Add meeting" }}
+              {{ pick.meeting_at ? t("home.changeMeeting") : t("home.addMeeting") }}
             </button>
           </div>
         </div>
@@ -199,9 +207,9 @@ onMounted(load);
 
       <section class="section progress-section" aria-labelledby="progress">
         <div class="section-head">
-          <h2 id="progress">Where everyone is</h2>
+          <h2 id="progress">{{ t("home.whereEveryone") }}</h2>
           <span class="fine subtle nums">
-            {{ finishedCount }} of {{ readers.length || 0 }} finished
+            {{ t("home.finishedOf", { finished: finishedCount, total: readers.length || 0 }) }}
           </span>
         </div>
         <div v-if="readers.length" class="rail reader-rail">
@@ -211,8 +219,9 @@ onMounted(load);
             class="reader-chip"
             :to="`/club/${row.username}`"
           >
+            <Avatar :username="row.username" :src="row.avatar_url" size="sm" />
             <span class="reader-name">{{ row.username }}</span>
-            <span class="badge" :class="row.status">{{ STATUS_SHORT[row.status] }}</span>
+            <span class="badge" :class="row.status">{{ statusShort(row.status) }}</span>
             <span v-if="row.progress != null" class="progress-track" aria-hidden="true">
               <span class="progress-fill" :style="{ width: `${row.progress}%` }" />
             </span>
@@ -226,7 +235,7 @@ onMounted(load);
           </RouterLink>
         </div>
         <p v-else class="fine subtle">
-          Nobody has added this one yet. Be the first.
+          {{ t("home.nobodyAdded") }}
         </p>
       </section>
 
@@ -235,24 +244,24 @@ onMounted(load);
           :work-key="pick.book.ol_work_key"
           :book="pick.book"
           :preview="3"
-          heading="Diary"
+          :heading="t('home.diary')"
         />
       </section>
     </template>
 
     <div v-else class="empty">
-      <h3>No club pick yet</h3>
-      <p>Choose one book for everyone to read at the same time.</p>
+      <h3>{{ t("home.noPickTitle") }}</h3>
+      <p>{{ t("home.noPickBody") }}</p>
       <div class="btn-row">
-        <RouterLink class="btn btn-primary" to="/discover">Find a book</RouterLink>
-        <RouterLink class="btn btn-ghost" to="/shelf">Pick from your shelf</RouterLink>
+        <RouterLink class="btn btn-primary" to="/discover">{{ t("home.findBook") }}</RouterLink>
+        <RouterLink class="btn btn-ghost" to="/shelf">{{ t("home.pickFromShelf") }}</RouterLink>
       </div>
     </div>
 
     <section class="section next-up-section" aria-labelledby="next-up">
       <div class="section-head">
-        <h2 id="next-up">Next up</h2>
-        <RouterLink to="/club">Vote in Club</RouterLink>
+        <h2 id="next-up">{{ t("home.nextUp") }}</h2>
+        <RouterLink to="/club">{{ t("home.voteInClub") }}</RouterLink>
       </div>
       <RouterLink v-if="leader" class="book-row next-up-card" to="/club">
         <BookCover
@@ -265,24 +274,22 @@ onMounted(load);
         <span class="book-row-meta">
           <h3>{{ leader.book.title }}</h3>
           <p class="fine">
-            Leading with {{ leader.votes }}
-            {{ leader.votes === 1 ? "vote" : "votes" }}
+            {{ tp("home.leadingVotes", leader.votes) }}
             <span class="subtle">
-              · {{ vote?.nominations.length }} nominated
+              · {{ t("home.nominatedCount", { n: vote?.nominations.length ?? 0 }) }}
             </span>
           </p>
         </span>
-        <span class="fine">Vote →</span>
+        <span class="fine">{{ t("home.voteArrow") }}</span>
       </RouterLink>
       <p v-else class="fine subtle">
-        No nominations yet. Nominate a book from its page and the club votes on what
-        comes next.
+        {{ t("home.noNominations") }}
       </p>
     </section>
 
     <section v-if="history.length" class="section past-section" aria-labelledby="past">
       <div class="section-head">
-        <h2 id="past">Past picks</h2>
+        <h2 id="past">{{ t("home.pastPicks") }}</h2>
         <span class="fine subtle nums">{{ history.length }}</span>
       </div>
       <div class="rail">
@@ -299,18 +306,18 @@ onMounted(load);
             :image-url="row.book.cover_url"
           />
           <span class="book-tile-title">{{ row.book.title }}</span>
-          <span class="book-tile-sub">{{ row.meeting_label || row.set_by }}</span>
+          <span class="book-tile-sub">{{ formatClubDate(row.meeting_at, timezone, locale.locale) || row.meeting_label || row.set_by }}</span>
         </RouterLink>
       </div>
     </section>
 
     <MeetingSheet
       v-if="editingMeeting && pick"
-      title="Meeting"
+      :title="t('home.meetingTitle')"
       :book-title="pick.book.title"
       :timezone="timezone"
       :meeting-local="pick.meeting_local"
-      confirm-label="Save meeting"
+      :confirm-label="t('home.saveMeeting')"
       @confirm="saveMeeting"
       @close="editingMeeting = false"
     />
@@ -399,6 +406,10 @@ onMounted(load);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.reader-chip :deep(.avatar) {
+  margin-bottom: var(--space-1);
 }
 
 .reader-chip .badge {

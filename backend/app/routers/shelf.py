@@ -19,9 +19,8 @@ from app.schemas import (
     ShelfItemOut,
     ShelfListOut,
     ShelfPatchIn,
-    UserOut,
 )
-from app.serialize import shelf_item_out
+from app.serialize import shelf_item_out, user_out
 from app.shelf_ops import apply_finish_fields, apply_progress, place_item, upsert_book
 
 router = APIRouter(prefix="/api/shelf", tags=["shelf"])
@@ -74,12 +73,7 @@ def get_shelf(
         owner = me
     items = [_shelf_item_or_skip(entry) for entry in _shelf_for_user(session, owner)]
     return ShelfListOut(
-        user=UserOut(
-            id=owner.id or 0,
-            username=owner.username,
-            theme=owner.theme,
-            color_mode=owner.color_mode,
-        ),
+        user=user_out(owner),
         items=[item for item in items if item is not None],
     )
 

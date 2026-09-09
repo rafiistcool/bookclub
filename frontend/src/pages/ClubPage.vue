@@ -1,12 +1,21 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
+import Avatar from "../components/Avatar.vue";
 import BookCover from "../components/BookCover.vue";
 import NextUpVote from "../components/NextUpVote.vue";
-import { bookPath, STATUS_SHORT, workId } from "../constants";
+import { bookPath, statusShort } from "../constants";
 import { clubFeedPreview, isShielded, positionMarker } from "../diary";
+import { formatClubDate } from "../i18n/dates";
+import { useClub } from "../stores/club";
+import { useLocale } from "../stores/locale";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
+
+const { t } = useI18n();
+const club = useClub();
+const locale = useLocale();
 import type { DiaryFeedItem, Member, OverlapBook } from "../types";
 
 const session = useSession();
@@ -40,7 +49,7 @@ async function loadFeed(more = false) {
     feedHasMore.value = page.has_more;
     feedError.value = "";
   } catch (err) {
-    feedError.value = err instanceof ApiError ? err.message : "Could not load the diary";
+    feedError.value = err instanceof ApiError ? err.message : t("club.diaryLoadFailed");
   } finally {
     feedLoaded.value = true;
     feedBusy.value = false;
@@ -57,7 +66,7 @@ async function loadMembers() {
     membersError.value = "";
   } catch (err) {
     membersError.value =
-      err instanceof ApiError ? err.message : "Could not load the club";
+      err instanceof ApiError ? err.message : t("club.loadFailed");
   } finally {
     membersLoaded.value = true;
   }
@@ -71,7 +80,7 @@ async function loadOverlap() {
   } catch (err) {
     overlap.value = [];
     overlapError.value =
-      err instanceof ApiError ? err.message : "Could not load the overlap";
+      err instanceof ApiError ? err.message : t("club.overlapFailed");
   } finally {
     overlapLoaded.value = true;
   }
@@ -88,10 +97,10 @@ async function nominate(row: OverlapBook) {
       cover_url: row.book.cover_url,
       year: row.book.year,
     });
-    toast.show("Nominated for the next-up vote");
+    toast.show(t("shelf.nominated"));
     await voteSection.value?.load();
   } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : "Could not nominate that book");
+    toast.show(err instanceof ApiError ? err.message : t("shelf.nominateFailed"));
   } finally {
     nominating.value = null;
   }
@@ -109,13 +118,13 @@ watch(includeReading, loadOverlap);
 <template>
   <section>
     <div class="page-head">
-      <h1>Club</h1>
-      <p class="lede">Who's here, what you have in common, and what to read next.</p>
+      <h1>{{ t("club.title") }}</h1>
+      <p class="lede">{{ t("club.lede") }}</p>
     </div>
 
     <section aria-labelledby="members">
       <div class="section-head">
-        <h2 id="members">Members</h2>
+        <h2 id="members">{{ t("club.members") }}</h2>
         <span v-if="membersLoaded" class="fine subtle nums">
           {{ members.length + 1 }}
         </span>
@@ -125,27 +134,29 @@ watch(includeReading, loadOverlap);
       <div v-else-if="!membersLoaded" class="skeleton member-skeleton" aria-hidden="true" />
 
       <div v-else-if="members.length === 0" class="empty">
-        <h3>You're the only one here</h3>
-        <p>Mint an invite code and send it to someone. A club of one is a book.</p>
+        <h3>{{ t("club.onlyYouTitle") }}</h3>
+        <p>{{ t("club.onlyYouBody") }}</p>
         <div class="btn-row">
-          <RouterLink class="btn btn-primary" to="/settings">Create an invite</RouterLink>
+          <RouterLink class="btn btn-primary" to="/settings">{{ t("club.createInvite") }}</RouterLink>
         </div>
       </div>
 
       <ul v-else class="member-list">
         <li v-if="session.user" class="member-card is-you">
+          <Avatar :username="session.user.username" :src="session.user.avatar_url" />
           <span class="member-meta">
             <strong>{{ session.user.username }}</strong>
-            <span class="finer subtle">That's you</span>
+            <span class="finer subtle">{{ t("club.thatsYou") }}</span>
           </span>
-          <RouterLink class="btn btn-ghost btn-sm" to="/shelf">Your shelf</RouterLink>
+          <RouterLink class="btn btn-ghost btn-sm" to="/shelf">{{ t("club.yourShelf") }}</RouterLink>
         </li>
         <li v-for="member in members" :key="member.username">
           <RouterLink class="member-card" :to="`/club/${member.username}`">
+            <Avatar :username="member.username" :src="member.avatar_url" />
             <span class="member-meta">
               <strong>{{ member.username }}</strong>
               <span class="finer subtle nums">
-                {{ member.currently_reading_count }} currently reading
+                {{ t("club.currentlyReading", { n: member.currently_reading_count }) }}
               </span>
             </span>
             <span class="preview-row">
@@ -165,12 +176,12 @@ watch(includeReading, loadOverlap);
 
     <section class="section" aria-labelledby="written">
       <div class="section-head">
-        <h2 id="written">Recently written</h2>
+        <h2 id="written">{{ t("club.recentlyWritten") }}</h2>
       </div>
       <p v-if="feedError" class="error">{{ feedError }}</p>
       <div v-else-if="!feedLoaded" class="skeleton member-skeleton" aria-hidden="true" />
       <p v-else-if="feed.length === 0" class="fine subtle">
-        Nothing written yet. Open a book and leave the first note.
+        {{ t("club.nothingWritten") }}
       </p>
       <template v-else>
         <ol class="feed-list">
@@ -188,9 +199,9 @@ watch(includeReading, loadOverlap);
                   <strong>{{ item.entry.author }}</strong>
                   <span class="finer subtle">
                     <template v-if="item.parent_author">
-                      replied to {{ item.parent_author }} on
+                      {{ t("club.repliedTo", { name: item.parent_author }) }}
                     </template>
-                    <template v-else>on</template>
+                    <template v-else>{{ t("club.on") }}</template>
                     {{ item.book.title }}
                   </span>
                 </span>
@@ -203,9 +214,9 @@ watch(includeReading, loadOverlap);
                   <span
                     v-if="item.entry.spoiler_upto != null"
                     class="badge"
-                    :title="`Safe up to ${item.entry.spoiler_upto}%`"
+                    :title="t('club.safeUptoTitle', { n: item.entry.spoiler_upto })"
                   >
-                    spoiler-flagged
+                    {{ t("club.spoilerFlagged") }}
                   </span>
                   {{ clubFeedPreview(item) }}
                 </span>
@@ -213,7 +224,7 @@ watch(includeReading, loadOverlap);
                   <template v-if="positionMarker(item.entry)">
                     {{ positionMarker(item.entry) }} ·
                   </template>
-                  {{ item.entry.created_label }}
+                  {{ formatClubDate(item.entry.created_at, club.timezone, locale.locale) || item.entry.created_label }}
                   <template v-if="item.entry.reactions.length">
                     · {{ item.entry.reactions.map((r) => `${r.emoji} ${r.count}`).join(" ") }}
                   </template>
@@ -229,14 +240,14 @@ watch(includeReading, loadOverlap);
           :disabled="feedBusy"
           @click="loadFeed(true)"
         >
-          Show more
+          {{ t("common.showMore") }}
         </button>
       </template>
     </section>
 
     <section class="section" aria-labelledby="overlap">
       <div class="section-head">
-        <h2 id="overlap">TBR overlap</h2>
+        <h2 id="overlap">{{ t("club.overlap") }}</h2>
         <button
           class="chip"
           type="button"
@@ -244,20 +255,18 @@ watch(includeReading, loadOverlap);
           :class="{ active: includeReading }"
           @click="includeReading = !includeReading"
         >
-          Include Reading
+          {{ t("club.includeReading") }}
         </button>
       </div>
       <p class="fine muted overlap-blurb">
-        Books two or more of you have on Want to read{{
-          includeReading ? " or Reading" : ""
-        }}. The shortest path to a pick everyone already wants.
+        {{ includeReading ? t("club.overlapBlurbReading") : t("club.overlapBlurb") }}
       </p>
 
       <p v-if="overlapError" class="error">{{ overlapError }}</p>
       <div v-else-if="!overlapLoaded" class="skeleton member-skeleton" aria-hidden="true" />
 
       <p v-else-if="overlap.length === 0" class="fine subtle">
-        No shared wants yet. Add a few books to Want to read and check back.
+        {{ t("club.noOverlap") }}
       </p>
 
       <ul v-else class="overlap-list">
@@ -282,7 +291,7 @@ watch(includeReading, loadOverlap);
                   class="badge"
                   :class="member.status"
                 >
-                  {{ member.username }} · {{ STATUS_SHORT[member.status] }}
+                  {{ member.username }} · {{ statusShort(member.status) }}
                 </span>
               </span>
             </span>
@@ -293,7 +302,7 @@ watch(includeReading, loadOverlap);
             :disabled="nominating === row.book.ol_work_key"
             @click="nominate(row)"
           >
-            Nominate
+            {{ t("common.nominate") }}
           </button>
         </li>
       </ul>
@@ -344,6 +353,7 @@ watch(includeReading, loadOverlap);
   display: grid;
   gap: 2px;
   min-width: 0;
+  flex: 1;
 }
 
 .member-meta strong {

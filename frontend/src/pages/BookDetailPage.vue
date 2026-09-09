@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { api, ApiError } from "../api/client";
+import Avatar from "../components/Avatar.vue";
 import BookCover from "../components/BookCover.vue";
 import BookDiary from "../components/BookDiary.vue";
 import MeetingSheet from "../components/MeetingSheet.vue";
@@ -12,13 +14,16 @@ import {
   isOpenLibraryWorkId,
   openLibraryUrl,
   STATUSES,
-  STATUS_LABEL,
-  STATUS_SHORT,
+  statusLabel,
+  statusShort,
   starLabel,
   type Status,
 } from "../constants";
+import { tp } from "../i18n";
 import { useToast } from "../stores/toast";
 import type { BookDetail } from "../types";
+
+const { t } = useI18n();
 
 const route = useRoute();
 const toast = useToast();
@@ -48,8 +53,8 @@ const catalogUrl = computed(() =>
 );
 const catalogLabel = computed(() => {
   if (!book.value) return "";
-  if (openLibraryUrl(book.value.ol_work_key)) return "View on Open Library";
-  return "View on Google Books";
+  if (openLibraryUrl(book.value.ol_work_key)) return t("book.viewOpenLibrary");
+  return t("book.viewGoogle");
 });
 const catalogIsbn = computed(() =>
   book.value ? isbnFromWorkKey(book.value.ol_work_key) : null,
@@ -100,7 +105,7 @@ async function load() {
       return;
     }
     book.value = null;
-    error.value = err instanceof ApiError ? err.message : "Could not load that book";
+    error.value = err instanceof ApiError ? err.message : t("book.loadFailed");
   } finally {
     if (!controller.signal.aborted) {
       loaded.value = true;
@@ -134,7 +139,7 @@ async function setStatus(status: Status) {
       detail.shelf_id = created.id;
     }
     detail.on_shelf = status;
-    toast.show(`Moved to ${STATUS_LABEL[status]}`);
+    toast.show(t("book.movedTo", { status: statusLabel(status) }));
   } catch (err) {
     // Another tab or the importer may have shelved it since this page loaded.
     if (err instanceof ApiError && err.status === 409 && err.item) {
@@ -144,7 +149,7 @@ async function setStatus(status: Status) {
       await setStatus(status);
       return;
     }
-    toast.show(err instanceof ApiError ? err.message : "Could not save that");
+    toast.show(err instanceof ApiError ? err.message : t("book.saveFailed"));
   } finally {
     busy.value = false;
   }
@@ -168,7 +173,7 @@ async function patch(
     toast.show(message, action);
     if ("rating" in body) void refreshClubRating();
   } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : "Could not save that");
+    toast.show(err instanceof ApiError ? err.message : t("book.saveFailed"));
   } finally {
     busy.value = false;
   }
@@ -192,11 +197,11 @@ function rate(value: number) {
   const detail = book.value;
   if (!detail) return;
   if (detail.rating === value) {
-    void patch({ rating: null }, "Rating cleared");
+    void patch({ rating: null }, t("book.ratingCleared"));
     return;
   }
-  void patch({ rating: value }, `Rated ${value} of 5`, {
-    label: "Write a few lines",
+  void patch({ rating: value }, t("book.starsOf", { n: value }), {
+    label: t("book.writeAFew"),
     run: () => diary.value?.focusComposer(),
   });
 }
@@ -221,8 +226,8 @@ async function remove() {
     detail.dnf_reason = "";
     detail.progress = null;
     syncDrafts(detail);
-    toast.show("Removed from your shelf", {
-      label: "Undo",
+    toast.show(t("book.removed"), {
+      label: t("common.undo"),
       run: async () => {
         const created = await api.addToShelf({
           ol_work_key: detail.ol_work_key,
@@ -243,7 +248,7 @@ async function remove() {
       },
     });
   } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : "Could not remove that book");
+    toast.show(err instanceof ApiError ? err.message : t("shelf.removeFailed"));
   } finally {
     busy.value = false;
   }
@@ -264,9 +269,9 @@ async function confirmClubPick(meetingAt: string | null) {
       meeting_at: meetingAt,
     });
     detail.club_pick = true;
-    toast.show("Set as the club pick");
+    toast.show(t("book.setPick"));
   } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : "Could not set the club pick");
+    toast.show(err instanceof ApiError ? err.message : t("book.setPickFailed"));
   }
 }
 
@@ -277,9 +282,9 @@ async function refreshDetails() {
     const detail = await api.refreshBook(workId.value);
     book.value = detail;
     syncDrafts(detail);
-    toast.show("Details updated");
+    toast.show(t("book.detailsUpdated"));
   } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : "Could not refresh that book");
+    toast.show(err instanceof ApiError ? err.message : t("book.refreshFailed"));
   } finally {
     refreshing.value = false;
   }
@@ -297,9 +302,9 @@ async function nominate() {
       cover_url: detail.cover_url,
       year: detail.year,
     });
-    toast.show("Nominated for the next-up vote");
+    toast.show(t("book.nominated"));
   } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : "Could not nominate that book");
+    toast.show(err instanceof ApiError ? err.message : t("book.nominateFailed"));
   }
 }
 
@@ -314,7 +319,7 @@ watch(workId, load);
 <template>
   <section>
     <p class="fine back-link">
-      <RouterLink to="/discover">← Discover</RouterLink>
+      <RouterLink to="/discover">{{ t("book.backDiscover") }}</RouterLink>
     </p>
 
     <template v-if="!loaded">
@@ -326,16 +331,16 @@ watch(workId, load);
         </div>
       </div>
       <p v-if="loadWaitSec >= 2" class="fine subtle" aria-live="polite">
-        Still loading this book… {{ loadWaitSec }}s so far.
+        {{ t("book.stillLoading", { n: loadWaitSec }) }}
       </p>
     </template>
 
     <div v-else-if="error" class="empty">
-      <h3>Could not load that book</h3>
+      <h3>{{ t("book.loadFailedTitle") }}</h3>
       <p>{{ error }}</p>
       <div class="btn-row">
-        <button class="btn btn-ghost" type="button" @click="load">Try again</button>
-        <RouterLink class="btn btn-ghost" to="/discover">Back to Discover</RouterLink>
+        <button class="btn btn-ghost" type="button" @click="load">{{ t("common.tryAgain") }}</button>
+        <RouterLink class="btn btn-ghost" to="/discover">{{ t("book.backToDiscover") }}</RouterLink>
       </div>
     </div>
 
@@ -353,20 +358,19 @@ watch(workId, load);
         </div>
         <div class="detail-side">
           <div class="detail-intro">
-            <p v-if="book.club_pick" class="kicker">Current club pick</p>
+            <p v-if="book.club_pick" class="kicker">{{ t("book.currentPick") }}</p>
             <h1 class="display">{{ book.title }}</h1>
             <p v-if="book.authors" class="detail-authors">{{ book.authors }}</p>
             <p v-if="book.rating_count" class="club-rating">
               <span class="stars" aria-hidden="true">★</span>
               <strong class="nums">{{ book.club_rating?.toFixed(1) }}</strong>
               <span class="fine subtle">
-                club rating · {{ book.rating_count }}
-                {{ book.rating_count === 1 ? "rating" : "ratings" }}
+                {{ tp("book.clubRating", book.rating_count) }}
               </span>
             </p>
-            <p v-if="book.year" class="fine subtle nums">First published {{ book.year }}</p>
+            <p v-if="book.year" class="fine subtle nums">{{ t("book.firstPublished", { year: book.year }) }}</p>
             <p v-if="customBook" class="fine subtle">
-              Added by the club — not on Open Library.
+              {{ t("book.addedByClub") }}
             </p>
             <p v-else class="fine">
               <a
@@ -384,25 +388,25 @@ watch(workId, load);
                 :disabled="refreshing"
                 @click="refreshDetails"
               >
-                {{ refreshing ? "Refreshing…" : "Refresh details" }}
+                {{ refreshing ? t("book.refreshing") : t("book.refreshDetails") }}
               </button>
             </p>
             <p v-if="!book.cover_id && !book.cover_url && !customBook && fromOpenLibrary" class="fine">
-              No cover stored.
+              {{ t("book.noCover") }}
               <button
                 class="text-btn"
                 type="button"
                 :disabled="refreshing"
                 @click="refreshDetails"
               >
-                Refresh from Open Library
+                {{ t("book.refreshFromOl") }}
               </button>
             </p>
           </div>
 
           <div class="panel shelf-panel">
-            <p class="caps subtle">Your shelf</p>
-            <div class="segmented status-control" role="group" aria-label="Shelf status">
+            <p class="caps subtle">{{ t("book.yourShelf") }}</p>
+            <div class="segmented status-control" role="group" :aria-label="t('book.shelfStatus')">
               <button
                 v-for="status in STATUSES"
                 :key="status"
@@ -411,17 +415,17 @@ watch(workId, load);
                 :disabled="busy"
                 @click="setStatus(status)"
               >
-                {{ STATUS_SHORT[status] }}
+                {{ statusShort(status) }}
               </button>
             </div>
 
             <p v-if="!book.on_shelf" class="fine subtle">
-              Not on your shelf yet. Pick a status to add it.
+              {{ t("book.notOnShelf") }}
             </p>
 
             <div v-if="book.on_shelf === 'currently_reading'" class="control-block">
               <label class="progress-label" for="progress">
-                <span>Progress</span>
+                <span>{{ t("book.progress") }}</span>
                 <strong class="nums">{{ progressDraft }}%</strong>
               </label>
               <input
@@ -432,19 +436,19 @@ watch(workId, load);
                 max="100"
                 step="5"
                 :disabled="busy"
-                @change="patch({ progress: progressDraft }, `Progress: ${progressDraft}%`)"
+                @change="patch({ progress: progressDraft }, t('book.progressSaved', { n: progressDraft }))"
               />
             </div>
 
             <div v-if="book.on_shelf === 'finished'" class="control-block">
-              <span class="fine">Your rating</span>
+              <span class="fine">{{ t("book.yourRating") }}</span>
               <div class="star-row">
                 <button
                   v-for="value in 5"
                   :key="value"
                   class="star-btn"
                   type="button"
-                  :aria-label="`${value} of 5`"
+                  :aria-label="t('book.starsOf', { n: value })"
                   :aria-pressed="book.rating === value"
                   :disabled="busy"
                   @click="rate(value)"
@@ -453,41 +457,41 @@ watch(workId, load);
                 </button>
               </div>
               <label class="field">
-                <span>One-line take</span>
+                <span>{{ t("book.oneLineTake") }}</span>
                 <input
                   v-model="takeDraft"
                   type="text"
                   maxlength="140"
-                  placeholder="What stood out?"
+                  :placeholder="t('book.takePlaceholder')"
                 />
               </label>
               <button
                 class="btn btn-ghost btn-sm"
                 type="button"
                 :disabled="busy || takeDraft === book.take"
-                @click="patch({ take: takeDraft }, 'Take saved')"
+                @click="patch({ take: takeDraft }, t('book.takeSaved'))"
               >
-                Save take
+                {{ t("book.saveTake") }}
               </button>
             </div>
 
             <div v-if="book.on_shelf === 'did_not_finish'" class="control-block">
               <label class="field">
-                <span>Why didn't you finish?</span>
+                <span>{{ t("book.dnfWhy") }}</span>
                 <input
                   v-model="reasonDraft"
                   type="text"
                   maxlength="200"
-                  placeholder="Optional"
+                  :placeholder="t('common.optional')"
                 />
               </label>
               <button
                 class="btn btn-ghost btn-sm"
                 type="button"
                 :disabled="busy || reasonDraft === book.dnf_reason"
-                @click="patch({ dnf_reason: reasonDraft }, 'Reason saved')"
+                @click="patch({ dnf_reason: reasonDraft }, t('book.reasonSaved'))"
               >
-                Save reason
+                {{ t("book.saveReason") }}
               </button>
             </div>
 
@@ -498,10 +502,10 @@ watch(workId, load);
                 :disabled="book.club_pick"
                 @click="settingPick = true"
               >
-                {{ book.club_pick ? "Already the club pick" : "Set as club pick" }}
+                {{ book.club_pick ? t("book.alreadyPick") : t("book.setAsPick") }}
               </button>
               <button class="btn btn-ghost btn-sm" type="button" @click="nominate">
-                Nominate for next up
+                {{ t("book.nominate") }}
               </button>
               <button
                 v-if="book.on_shelf"
@@ -510,7 +514,7 @@ watch(workId, load);
                 :disabled="busy"
                 @click="remove"
               >
-                Remove
+                {{ t("common.remove") }}
               </button>
             </div>
           </div>
@@ -519,7 +523,7 @@ watch(workId, load);
 
       <section v-if="book.description" class="section">
         <div class="section-head">
-          <h2>About</h2>
+          <h2>{{ t("book.about") }}</h2>
         </div>
         <p class="description" :class="{ clamped: longDescription && !expanded }">
           {{ book.description }}
@@ -530,7 +534,7 @@ watch(workId, load);
           type="button"
           @click="expanded = !expanded"
         >
-          {{ expanded ? "Show less" : "Read more" }}
+          {{ expanded ? t("book.showLess") : t("book.readMore") }}
         </button>
       </section>
 
@@ -550,7 +554,7 @@ watch(workId, load);
 
       <section v-if="book.subjects.length" class="section">
         <div class="section-head">
-          <h2>Subjects</h2>
+          <h2>{{ t("book.subjects") }}</h2>
         </div>
         <div class="chip-row">
           <RouterLink
@@ -566,13 +570,14 @@ watch(workId, load);
 
       <section class="section">
         <div class="section-head">
-          <h2>Other readers</h2>
+          <h2>{{ t("book.otherReaders") }}</h2>
         </div>
         <ul v-if="book.readers.length" class="reader-list">
           <li v-for="reader in book.readers" :key="reader.username">
+            <Avatar :username="reader.username" :src="reader.avatar_url" size="sm" />
             <RouterLink :to="`/club/${reader.username}`">{{ reader.username }}</RouterLink>
             <span class="badge" :class="reader.status">
-              {{ STATUS_SHORT[reader.status] }}
+              {{ statusShort(reader.status) }}
             </span>
             <span v-if="reader.progress != null" class="fine subtle nums">
               {{ reader.progress }}%
@@ -582,16 +587,16 @@ watch(workId, load);
             </span>
           </li>
         </ul>
-        <p v-else class="fine subtle">Nobody else in the club has this one yet.</p>
+        <p v-else class="fine subtle">{{ t("book.nobodyElse") }}</p>
       </section>
     </template>
 
     <MeetingSheet
       v-if="settingPick && book"
-      title="Set as club pick"
+      :title="t('book.setAsPick')"
       :book-title="book.title"
       :timezone="clubTimezone"
-      blurb="This replaces the current pick for everyone."
+      :blurb="t('book.pickBlurb')"
       @confirm="confirmClubPick"
       @close="settingPick = false"
     />

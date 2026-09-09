@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
 import BookTile from "../components/BookTile.vue";
 import BottomSheet from "../components/BottomSheet.vue";
@@ -7,12 +8,14 @@ import MeetingSheet from "../components/MeetingSheet.vue";
 import ShelfBoard from "../components/ShelfBoard.vue";
 import TileSkeleton from "../components/TileSkeleton.vue";
 import { DESKTOP, useMediaQuery } from "../composables/useMediaQuery";
-import { STATUSES, STATUS_LABEL, STATUS_SHORT, type Status } from "../constants";
+import { STATUSES, statusLabel, statusShort, type Status } from "../constants";
+import { tp } from "../i18n";
 import { useToast } from "../stores/toast";
 import type { ClubPick, ShelfItem } from "../types";
 
 type Filter = "all" | Status;
 
+const { t } = useI18n();
 const desktop = useMediaQuery(DESKTOP);
 const toast = useToast();
 
@@ -55,7 +58,7 @@ async function load() {
     items.value = (await api.myShelf()).items;
     error.value = "";
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : "Could not load your shelf";
+    error.value = err instanceof ApiError ? err.message : t("shelf.loadFailed");
   } finally {
     loaded.value = true;
   }
@@ -73,10 +76,10 @@ async function onDropped(item: ShelfItem, status: Status, position: number) {
   try {
     await api.patchShelf(item.id, { status, position });
     items.value = (await api.myShelf()).items;
-    toast.show(`Moved to ${STATUS_LABEL[status]}`);
+    toast.show(t("shelf.movedTo", { status: statusLabel(status) }));
   } catch (err) {
     items.value = snapshot;
-    toast.show(err instanceof ApiError ? err.message : "Could not move that book");
+    toast.show(err instanceof ApiError ? err.message : t("shelf.moveFailed"));
   }
 }
 
@@ -87,8 +90,8 @@ async function confirmRemove() {
   try {
     await api.removeFromShelf(item.id);
     items.value = items.value.filter((row) => row.id !== item.id);
-    toast.show(`Removed “${item.book.title}”`, {
-      label: "Undo",
+    toast.show(t("shelf.removed", { title: item.book.title }), {
+      label: t("common.undo"),
       run: async () => {
         await api.addToShelf({
           ol_work_key: item.book.ol_work_key,
@@ -107,7 +110,7 @@ async function confirmRemove() {
       },
     });
   } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : "Could not remove that book");
+    toast.show(err instanceof ApiError ? err.message : t("shelf.removeFailed"));
   }
 }
 
@@ -121,9 +124,9 @@ async function nominate(item: ShelfItem) {
       cover_url: item.book.cover_url,
       year: item.book.year,
     });
-    toast.show("Nominated for the next-up vote");
+    toast.show(t("shelf.nominated"));
   } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : "Could not nominate that book");
+    toast.show(err instanceof ApiError ? err.message : t("shelf.nominateFailed"));
   }
 }
 
@@ -141,9 +144,9 @@ async function confirmClubPick(meetingAt: string | null) {
       year: item.book.year,
       meeting_at: meetingAt,
     });
-    toast.show("Set as the club pick");
+    toast.show(t("shelf.setPick"));
   } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : "Could not set the club pick");
+    toast.show(err instanceof ApiError ? err.message : t("shelf.setPickFailed"));
   }
 }
 
@@ -153,10 +156,9 @@ onMounted(load);
 <template>
   <section>
     <div class="page-head">
-      <h1>Your shelf</h1>
+      <h1>{{ t("shelf.title") }}</h1>
       <p class="lede">
-        {{ counts.all }} {{ counts.all === 1 ? "book" : "books" }} ·
-        {{ counts.currently_reading }} in progress
+        {{ t("shelf.lede", { books: tp("shelf.books", counts.all), reading: counts.currently_reading }) }}
       </p>
     </div>
 
@@ -167,22 +169,22 @@ onMounted(load);
     </div>
 
     <div v-else-if="items.length === 0" class="empty">
-      <h3>Your shelf is empty</h3>
-      <p>Add a book and it shows up here, sorted by what you're doing with it.</p>
+      <h3>{{ t("shelf.emptyTitle") }}</h3>
+      <p>{{ t("shelf.emptyBody") }}</p>
       <div class="btn-row">
-        <RouterLink class="btn btn-primary" to="/discover">Find a book</RouterLink>
-        <RouterLink class="btn btn-ghost" to="/settings">Import from Goodreads</RouterLink>
+        <RouterLink class="btn btn-primary" to="/discover">{{ t("home.findBook") }}</RouterLink>
+        <RouterLink class="btn btn-ghost" to="/settings">{{ t("shelf.importGoodreads") }}</RouterLink>
       </div>
     </div>
 
     <template v-else>
-      <div v-if="!desktop" class="segmented shelf-filter" role="group" aria-label="Filter by status">
+      <div v-if="!desktop" class="segmented shelf-filter" role="group" :aria-label="t('shelf.filterByStatus')">
         <button
           type="button"
           :aria-pressed="filter === 'all'"
           @click="filter = 'all'"
         >
-          All <span class="seg-count nums">{{ counts.all }}</span>
+          {{ t("common.all") }} <span class="seg-count nums">{{ counts.all }}</span>
         </button>
         <button
           v-for="status in STATUSES"
@@ -191,7 +193,7 @@ onMounted(load);
           :aria-pressed="filter === status"
           @click="filter = status"
         >
-          {{ STATUS_SHORT[status] }}
+          {{ statusShort(status) }}
           <span class="seg-count nums">{{ counts[status] }}</span>
         </button>
       </div>
@@ -223,36 +225,35 @@ onMounted(load);
           />
         </div>
         <p v-else class="fine subtle">
-          Nothing in {{ STATUS_LABEL[filter as Status] }} yet.
+          {{ t("shelf.nothingIn", { status: statusLabel(filter as Status) }) }}
         </p>
       </template>
     </template>
 
     <MeetingSheet
       v-if="settingPick"
-      title="Set as club pick"
+      :title="t('shelf.setAsPick')"
       :book-title="settingPick.book.title"
       :timezone="clubTimezone"
-      blurb="This replaces the current pick for everyone."
+      :blurb="t('shelf.pickBlurb')"
       @confirm="confirmClubPick"
       @close="settingPick = null"
     />
 
     <BottomSheet
       v-if="removing"
-      :title="`Remove “${removing.book.title}”?`"
+      :title="t('shelf.removeTitle', { title: removing.book.title })"
       @close="removing = null"
     >
       <p class="muted remove-blurb">
-        It leaves your shelf along with your rating and notes. You can undo this right
-        after.
+        {{ t("shelf.removeBlurb") }}
       </p>
       <div class="stack">
         <button class="btn btn-danger btn-block" type="button" @click="confirmRemove">
-          Remove
+          {{ t("common.remove") }}
         </button>
         <button class="btn btn-ghost btn-block" type="button" @click="removing = null">
-          Cancel
+          {{ t("common.cancel") }}
         </button>
       </div>
     </BottomSheet>

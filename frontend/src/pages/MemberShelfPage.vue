@@ -1,15 +1,20 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { api, ApiError } from "../api/client";
+import Avatar from "../components/Avatar.vue";
 import BookTile from "../components/BookTile.vue";
 import TileSkeleton from "../components/TileSkeleton.vue";
-import { STATUSES, STATUS_LABEL, STATUS_SHORT, type Status } from "../constants";
+import { STATUSES, statusLabel, statusShort, type Status } from "../constants";
+import { tp } from "../i18n";
 import type { ShelfItem } from "../types";
 
 type Filter = "all" | Status;
 
+const { t } = useI18n();
 const route = useRoute();
+const avatarUrl = ref<string | null>(null);
 const username = ref("");
 const items = ref<ShelfItem[]>([]);
 const error = ref("");
@@ -41,11 +46,12 @@ async function load() {
   try {
     const shelf = await api.friendShelf(username.value);
     username.value = shelf.user.username;
+    avatarUrl.value = shelf.user.avatar_url;
     items.value = shelf.items;
     error.value = "";
   } catch (err) {
     items.value = [];
-    error.value = err instanceof ApiError ? err.message : "Could not load that shelf";
+    error.value = err instanceof ApiError ? err.message : t("memberShelf.loadFailed");
   } finally {
     loaded.value = true;
   }
@@ -57,13 +63,15 @@ watch(() => route.params.username, load);
 
 <template>
   <section>
-    <p class="fine back-link"><RouterLink to="/club">← Club</RouterLink></p>
-    <div class="page-head">
-      <h1>{{ username }}'s shelf</h1>
-      <p v-if="loaded && !error" class="lede nums">
-        {{ counts.all }} {{ counts.all === 1 ? "book" : "books" }} ·
-        {{ counts.currently_reading }} in progress
-      </p>
+    <p class="fine back-link"><RouterLink to="/club">{{ t("memberShelf.back") }}</RouterLink></p>
+    <div class="page-head member-head">
+      <Avatar :username="username" :src="avatarUrl" size="lg" />
+      <div>
+        <h1>{{ t("memberShelf.title", { name: username }) }}</h1>
+        <p v-if="loaded && !error" class="lede nums">
+          {{ t("memberShelf.lede", { books: tp("shelf.books", counts.all), reading: counts.currently_reading }) }}
+        </p>
+      </div>
     </div>
 
     <p v-if="error" class="error">{{ error }}</p>
@@ -73,14 +81,14 @@ watch(() => route.params.username, load);
     </div>
 
     <div v-else-if="items.length === 0" class="empty">
-      <h3>Nothing on this shelf yet</h3>
-      <p>{{ username }} has not added any books.</p>
+      <h3>{{ t("memberShelf.emptyTitle") }}</h3>
+      <p>{{ t("memberShelf.emptyBody", { name: username }) }}</p>
     </div>
 
     <template v-else>
-      <div class="segmented shelf-filter" role="group" aria-label="Filter by status">
+      <div class="segmented shelf-filter" role="group" :aria-label="t('shelf.filterByStatus')">
         <button type="button" :aria-pressed="filter === 'all'" @click="filter = 'all'">
-          All <span class="seg-count nums">{{ counts.all }}</span>
+          {{ t("common.all") }} <span class="seg-count nums">{{ counts.all }}</span>
         </button>
         <button
           v-for="status in STATUSES"
@@ -89,7 +97,7 @@ watch(() => route.params.username, load);
           :aria-pressed="filter === status"
           @click="filter = status"
         >
-          {{ STATUS_SHORT[status] }}
+          {{ statusShort(status) }}
           <span class="seg-count nums">{{ counts[status] }}</span>
         </button>
       </div>
@@ -109,7 +117,7 @@ watch(() => route.params.username, load);
         />
       </div>
       <p v-else class="fine subtle">
-        Nothing in {{ STATUS_LABEL[filter as Status] }}.
+        {{ t("memberShelf.nothingIn", { status: statusLabel(filter as Status) }) }}
       </p>
     </template>
   </section>
@@ -118,6 +126,12 @@ watch(() => route.params.username, load);
 <style scoped>
 .back-link {
   margin-bottom: var(--space-4);
+}
+
+.member-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
 }
 
 .shelf-filter {

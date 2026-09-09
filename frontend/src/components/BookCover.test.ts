@@ -12,6 +12,7 @@ describe("BookCover", () => {
       "https://covers.openlibrary.org/b/id/8739376-M.jpg?default=false",
     );
     expect(img.attributes("loading")).toBe("lazy");
+    expect(img.attributes("alt")).toBe("Cover of Circe");
   });
 
   it("does not render an image for null or -1 cover ids", () => {

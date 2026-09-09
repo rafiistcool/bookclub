@@ -6,6 +6,7 @@ import type {
   ClubPickBook,
   ClubPickCurrent,
   ColorMode,
+  Locale,
   Diary,
   DiaryEntry,
   DiaryEntryIn,
@@ -24,6 +25,8 @@ import type {
   ShelfList,
   User,
 } from "../types";
+import { t } from "../i18n";
+import { translateApiError } from "../i18n/apiErrors";
 import type { FinishNote, Status } from "../constants";
 
 export class ApiError extends Error {
@@ -58,7 +61,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!response.ok) {
     const detail = data?.detail;
     const message =
-      typeof detail === "string" ? detail : "Something went wrong. Try again.";
+      typeof detail === "string" ? translateApiError(detail) : t("errors.generic");
     throw new ApiError(message, response.status, detail ?? data, data?.item);
   }
   return data as T;
@@ -72,11 +75,17 @@ export const api = {
   login: (body: { username: string; password: string }) =>
     request<void>("/api/auth/login", { method: "POST", body: JSON.stringify(body) }),
   logout: () => request<void>("/api/auth/logout", { method: "POST" }),
-  savePreferences: (body: { theme?: ThemeId; color_mode?: ColorMode }) =>
+  savePreferences: (body: { theme?: ThemeId; color_mode?: ColorMode; locale?: Locale }) =>
     request<User>("/api/auth/me/preferences", {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+  uploadAvatar: (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return request<User>("/api/auth/me/avatar", { method: "PUT", body });
+  },
+  deleteAvatar: () => request<User>("/api/auth/me/avatar", { method: "DELETE" }),
   search: (params: SearchParams = {}, init: RequestInit = {}) => {
     const query = new URLSearchParams();
     if (params.q) query.set("q", params.q);

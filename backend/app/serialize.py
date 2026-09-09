@@ -1,8 +1,36 @@
+from datetime import timezone
+
 from app.config import get_settings
 from app.covers import storable_cover_image_url
-from app.models import Book, ShelfEntry
-from app.schemas import BookOut, ShelfItemOut
+from app.i18n import DEFAULT_LOCALE
+from app.models import Book, ShelfEntry, User
+from app.schemas import BookOut, ShelfItemOut, UserOut
 from app.works import isbn_from_work_key
+
+
+def avatar_url_for(user: User | None) -> str | None:
+    if user is None or not user.username:
+        return None
+    if user.avatar_updated_at is None:
+        return None
+    ts = 0
+    if user.avatar_updated_at is not None:
+        stamp = user.avatar_updated_at
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        ts = int(stamp.timestamp())
+    return f"/api/members/{user.username}/avatar?v={ts}"
+
+
+def user_out(user: User) -> UserOut:
+    return UserOut(
+        id=user.id or 0,
+        username=user.username,
+        theme=user.theme,
+        color_mode=user.color_mode,
+        locale=user.locale or DEFAULT_LOCALE,
+        avatar_url=avatar_url_for(user),
+    )
 
 
 def cover_url(

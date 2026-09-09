@@ -1,9 +1,18 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import type { Status } from "../constants";
 import { REACTIONS, isShielded, positionMarker, spoilerLabel } from "../diary";
+import { formatClubDate } from "../i18n/dates";
+import { useClub } from "../stores/club";
+import { useLocale } from "../stores/locale";
 import type { DiaryEntry } from "../types";
+import Avatar from "./Avatar.vue";
 import SpoilerControl from "./SpoilerControl.vue";
+
+const { t } = useI18n();
+const club = useClub();
+const locale = useLocale();
 
 const props = defineProps<{
   entry: DiaryEntry;
@@ -33,7 +42,11 @@ const shielded = computed(
   () => !revealed.value && isShielded(props.entry, props.myProgress, props.myStatus),
 );
 const marker = computed(() => positionMarker(props.entry));
-const initial = computed(() => props.entry.author.charAt(0).toUpperCase() || "?");
+const when = computed(
+  () =>
+    formatClubDate(props.entry.created_at, club.timezone, locale.locale) ||
+    props.entry.created_label,
+);
 const pickable = computed(() =>
   REACTIONS.filter((emoji) => !props.entry.reactions.some((row) => row.emoji === emoji && row.mine)),
 );
@@ -84,11 +97,15 @@ watch(
     :class="{ compact, deleted: entry.deleted, mine: entry.mine }"
   >
     <header class="entry-meta">
-      <span class="entry-avatar" aria-hidden="true">{{ initial }}</span>
+      <Avatar
+        :username="entry.author"
+        :src="entry.author_avatar_url"
+        :size="compact ? 'xs' : 'sm'"
+      />
       <strong class="entry-author">{{ entry.author }}</strong>
       <span v-if="marker" class="entry-marker" :class="entry.status_at ?? ''">{{ marker }}</span>
-      <span class="finer subtle entry-time">{{ entry.created_label }}</span>
-      <span v-if="entry.edited" class="finer subtle">edited</span>
+      <span class="finer subtle entry-time">{{ when }}</span>
+      <span v-if="entry.edited" class="finer subtle">{{ t("diary.edited") }}</span>
       <span
         v-if="!entry.deleted && entry.spoiler_upto != null && !shielded"
         class="finer subtle"
@@ -97,25 +114,25 @@ watch(
       </span>
     </header>
 
-    <p v-if="entry.deleted" class="entry-deleted fine subtle">Entry deleted</p>
+    <p v-if="entry.deleted" class="entry-deleted fine subtle">{{ t("diary.deleted") }}</p>
 
     <form v-else-if="editing" class="entry-edit" @submit.prevent="saveEdit">
       <label class="field">
-        <span class="visually-hidden">Edit entry</span>
+        <span class="visually-hidden">{{ t("diary.editAria") }}</span>
         <textarea v-model="editDraft" rows="3" maxlength="1000" />
       </label>
       <div class="entry-edit-row">
         <SpoilerControl v-model="editSpoiler" />
         <span class="entry-edit-actions">
           <button class="btn btn-ghost btn-sm" type="button" @click="editing = false">
-            Cancel
+            {{ t("common.cancel") }}
           </button>
           <button
             class="btn btn-primary btn-sm"
             type="submit"
             :disabled="busy || !editDraft.trim()"
           >
-            Save
+            {{ t("common.save") }}
           </button>
         </span>
       </div>
@@ -127,11 +144,11 @@ watch(
         v-if="shielded"
         class="shield-btn"
         type="button"
-        :aria-label="`Reveal entry, ${spoilerLabel(entry.spoiler_upto)}`"
+        :aria-label="t('diary.revealAria', { label: spoilerLabel(entry.spoiler_upto) })"
         @click="revealed = true"
       >
         <span class="kicker">{{ spoilerLabel(entry.spoiler_upto) }}</span>
-        <span class="fine">You're at {{ myProgress ?? 0 }}% · tap to reveal</span>
+        <span class="fine">{{ t("diary.youreAt", { n: myProgress ?? 0 }) }}</span>
       </button>
     </div>
 
@@ -154,19 +171,19 @@ watch(
           class="chip reaction add"
           type="button"
           :aria-expanded="pickerOpen"
-          aria-label="Add reaction"
+          :aria-label="t('diary.addReaction')"
           :disabled="busy"
           @click="pickerOpen = !pickerOpen"
         >
           +
         </button>
-        <span v-if="pickerOpen" class="reaction-picker" role="group" aria-label="Reactions">
+        <span v-if="pickerOpen" class="reaction-picker" role="group" :aria-label="t('diary.reactions')">
           <button
             v-for="emoji in pickable"
             :key="emoji"
             class="reaction-pick"
             type="button"
-            :aria-label="`React ${emoji}`"
+            :aria-label="t('diary.react', { emoji })"
             @click="react(emoji)"
           >
             {{ emoji }}
@@ -175,10 +192,10 @@ watch(
       </span>
       <span class="entry-links">
         <button v-if="!compact" class="text-btn" type="button" @click="emit('reply')">
-          Reply
+          {{ t("common.reply") }}
         </button>
         <template v-if="entry.mine">
-          <button class="text-btn" type="button" @click="startEdit">Edit</button>
+          <button class="text-btn" type="button" @click="startEdit">{{ t("common.edit") }}</button>
           <button
             class="text-btn"
             :class="{ danger: confirming }"
@@ -186,7 +203,7 @@ watch(
             :disabled="busy"
             @click="askDelete"
           >
-            {{ confirming ? "Delete?" : "Delete" }}
+            {{ confirming ? t("common.deleteConfirm") : t("common.delete") }}
           </button>
         </template>
       </span>
@@ -225,23 +242,9 @@ watch(
   gap: var(--space-1) var(--space-2);
 }
 
-.entry-avatar {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border-radius: var(--radius-pill);
+.entry-meta :deep(.avatar) {
   background: var(--accent-soft);
   color: var(--accent-hover);
-  font-family: var(--serif);
-  font-weight: 700;
-  font-size: var(--text-xs);
-}
-
-.compact .entry-avatar {
-  width: 20px;
-  height: 20px;
-  font-size: var(--text-2xs);
 }
 
 .entry-marker {
