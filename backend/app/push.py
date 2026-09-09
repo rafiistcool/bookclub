@@ -25,7 +25,7 @@ from sqlalchemy.engine import Engine
 from sqlmodel import Session, col, select
 
 from app.config import get_settings
-from app.i18n import DEFAULT_LOCALE, normalize_locale
+from app.i18n import DEFAULT_LOCALE, normalize_locale, push_copy_map
 from app.models import ClubPick, PushSubscription, User, utcnow
 from app.runtime import data_dir_from_env, read_or_create_file
 
@@ -221,8 +221,8 @@ def maybe_schedule_meeting_reminder(
     pick.reminder_sent_at = now
     session.add(pick)
     session.commit()
-    title = f"{club_name}: meeting tomorrow"
-    body = f"{pick.book.title} — see you at the meeting."
+    copy = push_copy_map("meeting", club=club_name, title=pick.book.title)
+    title, body = copy[DEFAULT_LOCALE]
     schedule(
         background,
         engine,
@@ -232,13 +232,7 @@ def maybe_schedule_meeting_reminder(
         body=body,
         url="/",
         tag=f"meeting-{pick.id}",
-        copy={
-            "en": (title, body),
-            "de": (
-                f"{club_name}: Treffen morgen",
-                f"{pick.book.title} — bis zum Treffen.",
-            ),
-        },
+        copy=copy,
     )
     return True
 

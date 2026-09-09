@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import {
   coverUrl,
   editionCoverUrl,
@@ -10,6 +11,8 @@ import {
   remoteCoverUrl,
   type CoverSize,
 } from "../constants";
+
+const { t } = useI18n();
 
 const props = defineProps<{
   title: string;
@@ -93,7 +96,7 @@ watch(
     <img
       v-if="src"
       :src="src"
-      :alt="`Cover of ${title}`"
+      :alt="t('cover.alt', { title })"
       :width="width"
       :height="height"
       :loading="eager ? 'eager' : 'lazy'"

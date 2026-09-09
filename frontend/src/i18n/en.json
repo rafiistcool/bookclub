@@ -8,6 +8,9 @@
     "settingsAndTheme": "Settings and theme",
     "settingsFor": "Settings for {name}"
   },
+  "cover": {
+    "alt": "Cover of {title}"
+  },
   "common": {
     "cancel": "Cancel",
     "save": "Save",
@@ -168,7 +171,7 @@
   },
   "shelf": {
     "title": "Your shelf",
-    "lede": "{books} · {reading} in progress",
+    "lede": "{books} · {reading} currently reading",
     "books": "{n} book | {n} books",
     "loadFailed": "Could not load your shelf",
     "movedTo": "Moved to {status}",
@@ -193,8 +196,8 @@
   },
   "memberShelf": {
     "back": "← Club",
-    "title": "{name}'s shelf",
-    "lede": "{books} · {reading} in progress",
+    "title": "Shelf of {name}",
+    "lede": "{books} · {reading} currently reading",
     "loadFailed": "Could not load that shelf",
     "emptyTitle": "Nothing on this shelf yet",
     "emptyBody": "{name} has not added any books.",
@@ -424,6 +427,7 @@
     "currentPasswordWrong": "Current password is wrong",
     "differentPassword": "Pick a different password",
     "pictureTooLarge": "That picture is too large (2 MB max)",
+    "pictureTooManyPixels": "That picture has too many pixels",
     "usePicture": "Use a JPEG, PNG, WebP, or GIF",
     "notAPicture": "That file is not a picture",
     "noPicture": "No profile picture"

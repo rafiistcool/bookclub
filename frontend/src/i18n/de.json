@@ -8,6 +8,9 @@
     "settingsAndTheme": "Einstellungen und Design",
     "settingsFor": "Einstellungen für {name}"
   },
+  "cover": {
+    "alt": "Cover von {title}"
+  },
   "common": {
     "cancel": "Abbrechen",
     "save": "Speichern",
@@ -168,7 +171,7 @@
   },
   "shelf": {
     "title": "Dein Regal",
-    "lede": "{books} · {reading} in Arbeit",
+    "lede": "{books} · {reading} gerade am Lesen",
     "books": "{n} Buch | {n} Bücher",
     "loadFailed": "Dein Regal konnte nicht geladen werden",
     "movedTo": "Verschoben nach {status}",
@@ -193,8 +196,8 @@
   },
   "memberShelf": {
     "back": "← Club",
-    "title": "{name}s Regal",
-    "lede": "{books} · {reading} in Arbeit",
+    "title": "Regal von {name}",
+    "lede": "{books} · {reading} gerade am Lesen",
     "loadFailed": "Dieses Regal konnte nicht geladen werden",
     "emptyTitle": "Noch nichts in diesem Regal",
     "emptyBody": "{name} hat noch keine Bücher hinzugefügt.",
@@ -249,7 +252,7 @@
     "shortTitle": "Die Suche ist zu kurz",
     "rateTitle": "Die Bibliothek ist beschäftigt",
     "unavailableTitle": "Die Bibliothek ist nicht erreichbar",
-    "genericTitle": "Die Suche ist nicht zurückgekommen",
+    "genericTitle": "Die Suche hat nicht geantwortet",
     "shortQuery": "Mindestens 3 Zeichen. Ergänze den Autor oder füge eine ISBN ein.",
     "searchFailed": "Suche fehlgeschlagen",
     "clearSubject": "{label} aufheben",
@@ -261,7 +264,7 @@
     "nothingMatched": "Nichts gefunden",
     "nothingMatchedBody": "Versuch Titel plus Autor, oder füge eine ISBN ein.",
     "filterHiding": "Der Filter {label} könnte es verbergen.",
-    "catalogMisses": "Der Katalog verpasst manche obskuren und selbstverlegten Titel — die kannst du selbst anlegen.",
+    "catalogMisses": "Im Katalog fehlen manche obskuren und selbstverlegten Titel — die kannst du selbst anlegen.",
     "reachFailed": "Die Bibliothek ist nicht erreichbar",
     "couldntLoadMore": "Mehr konnte nicht geladen werden.",
     "loadMoreFailed": "Mehr konnte nicht geladen werden",
@@ -372,17 +375,17 @@
   "vote": {
     "title": "Abstimmung fürs Nächste",
     "nominationsOf": "{current} von {limit} Nominierungen",
-    "blurb": "Jede Person hat eine Stimme und kann sie jederzeit ändern — das ändert das aktuelle Club-Buch nicht. Wenn ihr soweit seid, bestätigt jemand die Gewinnerin, und das ersetzt das Club-Buch für alle.",
+    "blurb": "Jede Person hat eine Stimme und kann sie jederzeit ändern — das ändert das aktuelle Club-Buch nicht. Wenn ihr soweit seid, bestätigt jemand den Gewinnertitel, und das ersetzt das Club-Buch für alle.",
     "loadFailed": "Abstimmung konnte nicht geladen werden",
     "saveFailed": "Stimme konnte nicht gespeichert werden",
     "confirmed": "„{title}“ ist jetzt das Club-Buch",
-    "confirmFailed": "Gewinnerin konnte nicht bestätigt werden",
+    "confirmFailed": "Gewinnertitel konnte nicht bestätigt werden",
     "nominatedBy": "Nominiert von {name}",
     "votes": "{n} Stimme | {n} Stimmen",
     "voteWord": "Stimme | Stimmen",
     "yourVote": "Deine Stimme",
     "vote": "Abstimmen",
-    "confirmWinner": "Gewinnerin bestätigen",
+    "confirmWinner": "Gewinnertitel bestätigen",
     "noneTitle": "Noch keine Nominierungen",
     "noneBody": "Öffne ein Buch und wähle „Fürs Nächste nominieren“. Bücher, die mehrere von euch lesen wollen, sind ein guter Start.",
     "cast": "{n} Stimme abgegeben | {n} Stimmen abgegeben",
@@ -424,6 +427,7 @@
     "currentPasswordWrong": "Aktuelles Passwort ist falsch",
     "differentPassword": "Wähle ein anderes Passwort",
     "pictureTooLarge": "Das Bild ist zu groß (höchstens 2 MB)",
+    "pictureTooManyPixels": "Das Bild hat zu viele Pixel",
     "usePicture": "Nimm ein JPEG, PNG, WebP oder GIF",
     "notAPicture": "Das ist keine Bilddatei",
     "noPicture": "Kein Profilbild"

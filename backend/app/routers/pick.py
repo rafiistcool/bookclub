@@ -6,6 +6,7 @@ from sqlmodel import Session, col, select
 
 from app import activity, push
 from app.branding import sanitize_name
+from app.i18n import DEFAULT_LOCALE, push_copy_map
 from app.ics import build_meeting_ics
 from app.config import get_settings
 from app.deps import get_current_user, get_session
@@ -63,8 +64,10 @@ def notify_new_pick(
     if pick.book is None:
         return
     club = _club_name()
-    title = f"{club}: new club pick"
-    body = f"{actor.username} chose {pick.book.title}."
+    copy = push_copy_map(
+        "pick", club=club, actor=actor.username, title=pick.book.title
+    )
+    title, body = copy[DEFAULT_LOCALE]
     push.schedule(
         background,
         engine,
@@ -75,13 +78,7 @@ def notify_new_pick(
         url="/",
         tag=f"pick-{pick.id}",
         exclude_user_id=actor.id,
-        copy={
-            "en": (title, body),
-            "de": (
-                f"{club}: neues Club-Buch",
-                f"{actor.username} hat {pick.book.title} gewählt.",
-            ),
-        },
+        copy=copy,
     )
 
 
@@ -261,21 +258,21 @@ def _create_post(
         raise HTTPException(status_code=500, detail="Could not save that note")
     if engine is not None and pick.book is not None:
         excerpt = payload.body if len(payload.body) <= 90 else payload.body[:87] + "…"
-        title = f"{me.username} on {pick.book.title}"
+        copy = push_copy_map(
+            "note", actor=me.username, title=pick.book.title, excerpt=excerpt
+        )
+        title, body = copy[DEFAULT_LOCALE]
         push.schedule(
             background,
             engine,
             session,
             kind="note",
             title=title,
-            body=excerpt,
+            body=body,
             url="/",
             tag=f"note-{pick.id}",
             exclude_user_id=me.id,
-            copy={
-                "en": (title, excerpt),
-                "de": (f"{me.username} zu {pick.book.title}", excerpt),
-            },
+            copy=copy,
         )
     return _post_out(loaded, me, _timezone())
 

@@ -9,6 +9,7 @@ const API_ERROR_KEYS: Record<string, string> = {
   "Current password is wrong": "errors.currentPasswordWrong",
   "Pick a different password": "errors.differentPassword",
   "That picture is too large (2 MB max)": "errors.pictureTooLarge",
+  "That picture has too many pixels": "errors.pictureTooManyPixels",
   "Use a JPEG, PNG, WebP, or GIF": "errors.usePicture",
   "That file is not a picture": "errors.notAPicture",
   "No profile picture": "errors.noPicture",

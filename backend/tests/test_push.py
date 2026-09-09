@@ -133,6 +133,25 @@ def test_dead_subscriptions_are_pruned(client, sent):
     assert client.get("/api/push/subscriptions").json() == {"items": []}
 
 
+def test_push_copy_catalog_covers_every_locale():
+    from app.i18n import LOCALES, PUSH_COPY, push_copy
+
+    assert set(PUSH_COPY) == {"pick", "note", "meeting", "test"}
+    fields = {
+        "club": "Bookclub",
+        "actor": "ada",
+        "title": "Circe",
+        "excerpt": "A note",
+    }
+    for kind, by_locale in PUSH_COPY.items():
+        assert set(by_locale) == set(LOCALES)
+        for loc in LOCALES:
+            title, body = push_copy(kind, loc, **fields)
+            assert title and body
+            assert "{" not in title
+            assert "{" not in body
+
+
 def test_push_copy_follows_recipient_locale(client, sent):
     register(client, "ada")
     client.patch("/api/auth/me/preferences", json={"locale": "de"})
