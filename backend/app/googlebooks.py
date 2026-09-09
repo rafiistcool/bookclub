@@ -39,9 +39,12 @@ _P_CLOSE_RE = re.compile(r"</p>", re.IGNORECASE)
 _BLANK_LINES_RE = re.compile(r"\n{3,}")
 VOLUME_FIELDS = (
     "id,volumeInfo(title,authors,publishedDate,description,pageCount,"
-    "categories,averageRating,ratingsCount,industryIdentifiers,imageLinks)"
+    "categories,averageRating,ratingsCount,industryIdentifiers)"
 )
 SEARCH_FIELDS = f"totalItems,items({VOLUME_FIELDS})"
+RATE_LIMITED = "The library is busy. Wait a few seconds and try again."
+_COOLDOWN_SEC = 120.0
+_cooldown_until = 0.0
 
 
 class GoogleBooksError(Exception):
@@ -59,12 +62,13 @@ class VolumeDetails:
     title: str
     authors: str
     year: int | None
-    description: str
-    pages: int | None
-    subjects: list[str] = field(default_factory=list)
+    description: str | None = None
+    pages: int | None = None
+    subjects: list[str] | None = None
     isbn: str | None = None
     rating: float | None = None
     rating_count: int | None = None
+    cover_id: int | None = None
 
 
 def google_books_api_key() -> str:
@@ -76,8 +80,20 @@ def google_books_enabled() -> bool:
 
 
 def clear_google_cache() -> None:
+    global _cooldown_until
     _cache.clear()
     _inflight.clear()
+    _cooldown_until = 0.0
+
+
+def google_books_cooling_down() -> bool:
+    return time() < _cooldown_until
+
+
+def _trip_cooldown(status: int | None) -> None:
+    global _cooldown_until
+    if status in {429, 403}:
+        _cooldown_until = time() + _COOLDOWN_SEC
 
 
 def _cache_get(key: str) -> dict | None:
@@ -241,21 +257,35 @@ def google_search_query(query: str, subject: str = "") -> str:
     if query:
         parts.append(query)
     if subject:
-        parts.append(f"subject:{subject.replace('_', ' ')}")
+        label = subject.replace("_", " ")
+        parts.append(f'subject:"{label}"')
     return " ".join(parts)
 
 
+def _google_headers() -> dict[str, str]:
+    key = google_books_api_key()
+    if not key:
+        raise GoogleBooksError("google books key missing")
+    return {
+        "User-Agent": google_books_ua(get_settings()),
+        "X-Goog-Api-Key": key,
+    }
+
+
 async def _fetch_json_uncached(url: str, params: dict[str, str | int]) -> dict:
+    if google_books_cooling_down():
+        raise GoogleBooksError(status=429)
     started = monotonic()
     try:
         async with httpx.AsyncClient(timeout=GB_TIMEOUT) as client:
             response = await client.get(
                 url,
                 params=params,
-                headers={"User-Agent": google_books_ua(get_settings())},
+                headers=_google_headers(),
             )
         status = response.status_code
         if status >= 400:
+            _trip_cooldown(status)
             elapsed_ms = int((monotonic() - started) * 1000)
             logger.warning(
                 "google books request failed url=%s status=%s latency_ms=%s",
@@ -270,6 +300,7 @@ async def _fetch_json_uncached(url: str, params: dict[str, str | int]) -> dict:
     except httpx.HTTPError as exc:
         elapsed_ms = int((monotonic() - started) * 1000)
         status = getattr(getattr(exc, "response", None), "status_code", None)
+        _trip_cooldown(status)
         logger.warning(
             "google books request failed url=%s status=%s latency_ms=%s err=%s",
             url,
@@ -332,13 +363,6 @@ async def _fetch_json(
             del _inflight[cache_key]
 
 
-def _auth_params() -> dict[str, str | int]:
-    key = google_books_api_key()
-    if not key:
-        raise GoogleBooksError("google books key missing")
-    return {"key": key}
-
-
 async def search_volumes(
     query: str,
     *,
@@ -351,7 +375,6 @@ async def search_volumes(
     if not q:
         return [], 0
     params: dict[str, str | int] = {
-        **_auth_params(),
         "q": q,
         "maxResults": limit,
         "startIndex": (page - 1) * limit,
@@ -377,7 +400,7 @@ async def search_volumes(
 
 
 async def fetch_volume(volume_id: str, *, bypass_cache: bool = False) -> VolumeDetails:
-    params: dict[str, str | int] = {**_auth_params(), "fields": VOLUME_FIELDS}
+    params: dict[str, str | int] = {"fields": VOLUME_FIELDS}
     cache_key = f"gb|volume|{volume_id}"
     try:
         payload = await _fetch_json(
@@ -389,6 +412,8 @@ async def fetch_volume(volume_id: str, *, bypass_cache: bool = False) -> VolumeD
     except GoogleBooksError as exc:
         if exc.status == 404:
             raise HTTPException(status_code=404, detail="No such book.") from exc
+        if exc.status == 429:
+            raise HTTPException(status_code=429, detail=RATE_LIMITED) from exc
         raise HTTPException(
             status_code=502, detail="Could not load that book right now. Try again."
         ) from exc
@@ -400,7 +425,6 @@ async def fetch_volume(volume_id: str, *, bypass_cache: bool = False) -> VolumeD
 
 async def lookup_isbn(isbn: str, *, bypass_cache: bool = False) -> VolumeDetails | None:
     params: dict[str, str | int] = {
-        **_auth_params(),
         "q": f"isbn:{isbn}",
         "maxResults": 1,
         "fields": SEARCH_FIELDS,

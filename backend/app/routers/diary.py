@@ -34,7 +34,7 @@ from app.schemas import (
 from app.serialize import book_out
 from app.shelf_ops import upsert_book
 from app.timezone import meeting_label, resolved_timezone
-from app.works import is_work_id, work_key
+from app.works import canonical_work_id, is_work_id, work_key
 
 router = APIRouter(tags=["diary"])
 
@@ -47,6 +47,7 @@ def _timezone() -> str:
 
 
 def _work_key(work_id: str) -> str:
+    work_id = canonical_work_id(work_id)
     if not is_work_id(work_id):
         raise HTTPException(status_code=404, detail="No such book.")
     return work_key(work_id)

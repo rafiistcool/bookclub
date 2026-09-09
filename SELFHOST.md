@@ -28,7 +28,8 @@ tailnet hostname at whatever machine you have.
 - Outbound HTTPS so catalog search works ([Open Library](https://openlibrary.org),
   and optionally [Google Books](https://developers.google.com/books) if you set
   `GOOGLE_BOOKS_API_KEY`). The shelf still works if search is down; club-only
-  books never call a catalog.
+  books never call a catalog. Enabling the key later can create ISBN-keyed
+  duplicates of books already stored as Open Library `/works/OL…` keys.
 - A place for `./data` (a few megabytes)
 - Your own reverse proxy if you want HTTPS (see below). The image does not
   bundle one.

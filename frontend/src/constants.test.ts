@@ -58,6 +58,7 @@ describe("covers and links", () => {
     expect(isIsbnWorkId("ISBN9780316769488")).toBe(true);
     expect(isGoogleWorkId("GBzyTCAlFPjgYC")).toBe(true);
     expect(isbnFromWorkKey("/works/ISBN9780316769488")).toBe("9780316769488");
+    expect(isbnFromWorkKey("/works/ISBN080442957x")).toBe("080442957X");
     expect(openLibraryUrl("/works/ISBN9780316769488")).toBeNull();
     expect(googleBooksUrl("/works/GBzyTCAlFPjgYC")).toBe(
       "https://books.google.com/books?id=zyTCAlFPjgYC",

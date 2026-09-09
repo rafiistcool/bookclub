@@ -290,7 +290,7 @@ async function loadBrowse(quiet = false) {
         if (quiet && trending.value.length) return;
         trending.value = [];
         browseError.value =
-          err instanceof ApiError ? err.message : "Could not reach Open Library";
+          err instanceof ApiError ? err.message : "Could not reach the library";
       } finally {
         if (!signal.aborted) browsePending.value = false;
       }
@@ -323,7 +323,7 @@ function retryTrending() {
     })
     .catch((err) => {
       browseError.value =
-        err instanceof ApiError ? err.message : "Could not reach Open Library";
+        err instanceof ApiError ? err.message : "Could not reach the library";
     })
     .finally(() => {
       browsePending.value = false;
@@ -556,7 +556,7 @@ defineExpose({ loadPage });
   <section>
     <div class="page-head">
       <h1>Discover</h1>
-      <p class="lede">Search the Open Library, or browse what people are reading.</p>
+      <p class="lede">Search the catalog, or browse what people are reading.</p>
     </div>
 
     <div class="discover-search">

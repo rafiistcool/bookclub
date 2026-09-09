@@ -47,6 +47,7 @@ from app.schemas import (
 from app.serialize import cover_url
 from app.shelf_ops import apply_book_details, upsert_book
 from app.works import (
+    canonical_work_id,
     google_volume_id,
     isbn_from_work_id,
     isbn_from_work_key,
@@ -115,9 +116,23 @@ _TITLE_BY_AUTHOR_RE = re.compile(r"^(.+?)\s+by\s+(.+)$", re.IGNORECASE)
 Sort = Literal["readinglog", "new", "title", "relevance"]
 
 
+# Google only supports relevance / newest. Title and Popular stay on OL.
+_GOOGLE_SORTS = {"relevance", "new"}
+_catalog_provider: OrderedDict[str, str] = OrderedDict()
+_PROVIDER_MAX = 256
+
+
 def clear_search_cache() -> None:
     _cache.clear()
     _inflight.clear()
+    _catalog_provider.clear()
+
+
+def _remember_catalog_provider(key: str, provider: str) -> None:
+    _catalog_provider[key] = provider
+    _catalog_provider.move_to_end(key)
+    while len(_catalog_provider) > _PROVIDER_MAX:
+        _catalog_provider.popitem(last=False)
 
 
 def normalize_search_query(query: str) -> str:
@@ -528,13 +543,33 @@ async def fetch_catalog(
     page: int,
     limit: int,
 ) -> SearchPage:
-    """Prefer Google Books when a key is set; Open Library otherwise or on miss."""
-    if google_books_enabled() and query:
+    """Prefer Google Books when a key is set; Open Library otherwise or on miss.
+
+    The provider is sticky per query: page 2+ of a Google result set never
+    appends Open Library hits. Title / Popular sorts stay on Open Library
+    because Google has no equivalent.
+    """
+    sticky_key = f"{normalize_search_query(query)}|{subject}|{sort}"
+    use_google = (
+        google_books_enabled()
+        and bool(query)
+        and sort in _GOOGLE_SORTS
+        and not (page > 1 and _catalog_provider.get(sticky_key) == "ol")
+    )
+    if use_google:
         gb_page = await fetch_google_books(
             query, subject=subject, sort=sort, page=page, limit=limit
         )
         if gb_page is not None:
+            _remember_catalog_provider(sticky_key, "gb")
             return gb_page
+        if page > 1:
+            return SearchPage(items=[], page=page, has_more=False)
+        result = await fetch_open_library(
+            query, subject=subject, sort=sort, page=page, limit=limit
+        )
+        _remember_catalog_provider(sticky_key, "ol")
+        return result
     return await fetch_open_library(
         query, subject=subject, sort=sort, page=page, limit=limit
     )
@@ -1029,13 +1064,14 @@ def _import_google_details(
             ol_work_key=key,
             title=details.title or work_id,
             authors=details.authors,
-            cover_id=None,
+            cover_id=details.cover_id,
             year=details.year,
         )
     apply_book_details(
         book,
         title=details.title,
         authors=details.authors,
+        cover_id=details.cover_id,
         year=details.year,
         description=details.description,
         pages=details.pages,
@@ -1072,7 +1108,7 @@ async def _load_google_catalog(
         details = await lookup_isbn_google(isbn, bypass_cache=bypass_cache)
         if details is not None:
             return details
-    hit = await lookup_isbn(isbn)
+    hit = await lookup_isbn(isbn, bypass_cache=bypass_cache)
     if hit is None:
         raise HTTPException(status_code=404, detail="No such book.")
     return VolumeDetails(
@@ -1081,9 +1117,11 @@ async def _load_google_catalog(
         title=hit.title,
         authors=hit.authors,
         year=hit.year,
-        description="",
+        description=None,
         pages=hit.pages,
+        subjects=None,
         isbn=isbn,
+        cover_id=hit.cover_id,
     )
 
 
@@ -1145,6 +1183,7 @@ async def book_detail(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> BookDetailOut:
+    work_id = canonical_work_id(work_id)
     if not is_work_id(work_id):
         raise HTTPException(status_code=404, detail="No such book.")
     key = work_key(work_id)
@@ -1169,6 +1208,7 @@ async def refresh_book_detail(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> BookDetailOut:
+    work_id = canonical_work_id(work_id)
     if is_club_work_id(work_id):
         raise HTTPException(status_code=400, detail=CUSTOM_NO_REFRESH)
     if is_google_catalog_id(work_id):
@@ -1187,6 +1227,7 @@ async def work_details(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> BookDetailsOut:
+    work_id = canonical_work_id(work_id)
     if is_club_work_id(work_id):
         key = work_key(work_id)
         book = _book_by_key(session, key)
@@ -1220,6 +1261,7 @@ async def refresh_work_details(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> BookDetailsOut:
+    work_id = canonical_work_id(work_id)
     if is_club_work_id(work_id):
         raise HTTPException(status_code=400, detail=CUSTOM_NO_REFRESH)
     if is_google_catalog_id(work_id):

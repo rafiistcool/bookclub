@@ -14,6 +14,7 @@ from app.openlibrary import clear_details_cache
 from app.routers import books as books_router
 from app.security import reset_rate_limits
 from app.works import (
+    canonical_work_id,
     google_catalog_work_id,
     google_volume_id,
     isbn_from_work_key,
@@ -50,6 +51,16 @@ NO_ISBN_VOLUME = {
     },
 }
 
+ACHILLES_VOLUME = {
+    "id": "achillesVol1",
+    "volumeInfo": {
+        "title": "The Song of Achilles",
+        "authors": ["Madeline Miller"],
+        "publishedDate": "2012",
+        "industryIdentifiers": [{"type": "ISBN_13", "identifier": "9780062060624"}],
+    },
+}
+
 OL_CIRCE = {
     "key": "/works/OL1W",
     "title": "Circe from Open Library",
@@ -83,7 +94,7 @@ class _FakeResponse:
 
 
 class _FakeClient:
-    calls: list[tuple[str, dict | None]] = []
+    calls: list[tuple[str, dict | None, dict | None]] = []
     gb_items: list[dict] = [CIRCE_VOLUME]
     gb_total: int = 1
     gb_status: int | None = None
@@ -115,20 +126,32 @@ class _FakeClient:
 
     @classmethod
     def params_for(cls, needle: str) -> list[dict]:
-        return [params or {} for url, params in cls.calls if needle in url]
+        return [params or {} for url, params, *_ in cls.calls if needle in url]
+
+    @classmethod
+    def headers_for(cls, needle: str) -> list[dict]:
+        return [headers or {} for url, _params, headers in cls.calls if needle in url]
 
     async def get(self, url, params=None, headers=None):
-        _FakeClient.calls.append((url, params))
+        _FakeClient.calls.append((url, params, headers))
         assert "Bookclub/1.0" in (headers or {}).get("User-Agent", "")
 
         if "googleapis.com/books" in url:
+            assert "key" not in (params or {})
+            assert (headers or {}).get("X-Goog-Api-Key") == "test-gb-key"
             if _FakeClient.gb_status:
                 return _FakeResponse(None, url, status_code=_FakeClient.gb_status)
             if url.rstrip("/").endswith("/volumes"):
                 q = str((params or {}).get("q") or "")
                 items = list(_FakeClient.gb_items)
-                if q.startswith("isbn:0000000000") or q == "zzzzempty":
+                if (
+                    q.startswith("isbn:0000000000")
+                    or q.startswith("isbn:9780000000002")
+                    or q == "zzzzempty"
+                ):
                     items = []
+                elif "Song of Achilles" in q:
+                    items = [ACHILLES_VOLUME]
                 return _FakeResponse(
                     {"totalItems": 0 if not items else _FakeClient.gb_total, "items": items},
                     url,
@@ -211,7 +234,10 @@ def test_google_catalog_ids():
     )
     assert google_catalog_work_id(isbn=None, volume_id="zyTCAlFPjgYC") == "GBzyTCAlFPjgYC"
     assert google_search_query("978-0-316-76948-8") == "isbn:9780316769488"
-    assert google_search_query("circe", "fantasy") == "circe subject:fantasy"
+    assert google_search_query("circe", "science_fiction") == (
+        'circe subject:"science fiction"'
+    )
+    assert canonical_work_id("ISBN080442957x") == "ISBN080442957X"
 
 
 def test_map_volume_prefers_isbn_key():
@@ -262,7 +288,10 @@ def test_search_prefers_google_books(gb):
     gb_calls = _FakeClient.params_for("googleapis.com/books")
     assert len(gb_calls) == 1
     assert gb_calls[0]["q"] == "circe"
-    assert gb_calls[0]["key"] == "test-gb-key"
+    assert "key" not in gb_calls[0]
+    assert _FakeClient.headers_for("googleapis.com/books")[0]["X-Goog-Api-Key"] == (
+        "test-gb-key"
+    )
     assert _FakeClient.params_for("search.json") == []
 
     gb.get("/api/books/search", params={"q": "Circe"})
@@ -330,8 +359,8 @@ def test_detail_imports_from_google_not_open_library(gb):
     assert body["title"] == "Circe"
     assert body["description"] == "A witch on an island."
     assert body["custom"] is False
-    assert any("googleapis.com/books" in url for url, _ in _FakeClient.calls)
-    assert not any("openlibrary.org/works/" in url for url, _ in _FakeClient.calls)
+    assert any("googleapis.com/books" in url for url, *_ in _FakeClient.calls)
+    assert not any("openlibrary.org/works/" in url for url, *_ in _FakeClient.calls)
 
     _FakeClient.calls = []
     again = gb.get("/api/books/works/ISBN9780316769488")
@@ -343,7 +372,7 @@ def test_volume_key_detail_and_refresh(gb):
     body = gb.get("/api/books/works/GBabcVolumeId1").json()
     assert body["ol_work_key"] == "/works/GBabcVolumeId1"
     assert body["title"] == "Local Zine"
-    assert any(url.endswith("/volumes/abcVolumeId1") for url, _ in _FakeClient.calls)
+    assert any(url.endswith("/volumes/abcVolumeId1") for url, *_ in _FakeClient.calls)
 
     _FakeClient.volumes["abcVolumeId1"] = {
         **NO_ISBN_VOLUME,
@@ -406,7 +435,7 @@ def test_refresh_updates_google_isbn_book(gb):
     refreshed = gb.post("/api/books/works/ISBN9780316769488/refresh")
     assert refreshed.status_code == 200
     assert refreshed.json()["description"] == "A witch on an island."
-    assert not any("/works/OL" in url for url, _ in _FakeClient.calls)
+    assert not any("/works/OL" in url for url, *_ in _FakeClient.calls)
 
 
 def test_isbn_lookup_prefers_google(gb):
@@ -442,3 +471,102 @@ def test_isbn_cover_url_from_work_key():
     )
     assert cover_url(123, "/works/ISBN9780316769488").endswith("/123-L.jpg?default=false")
     assert cover_url(None, "/works/GBabcVolumeId1") is None
+
+
+def test_later_google_page_does_not_mix_open_library(gb):
+    _FakeClient.gb_total = 50
+    page1 = gb.get("/api/books/search", params={"q": "circe", "page": 1})
+    assert page1.status_code == 200
+    assert page1.json()["items"][0]["ol_work_key"] == "/works/ISBN9780316769488"
+    assert page1.json()["has_more"] is True
+
+    _FakeClient.gb_items = []
+    page2 = gb.get("/api/books/search", params={"q": "circe", "page": 2})
+    assert page2.status_code == 200
+    assert page2.json()["items"] == []
+    assert page2.json()["has_more"] is False
+    assert _FakeClient.params_for("search.json") == []
+
+
+def test_title_sort_stays_on_open_library(gb):
+    response = gb.get("/api/books/search", params={"q": "circe", "sort": "title"})
+    assert response.status_code == 200
+    assert response.json()["items"][0]["ol_work_key"] == "/works/OL1W"
+    assert _FakeClient.params_for("googleapis.com/books") == []
+    assert _FakeClient.params_for("search.json")
+
+
+def test_isbn_refresh_keeps_description_when_google_misses(gb):
+    imported = gb.get("/api/books/works/ISBN9780316769488").json()
+    assert imported["description"] == "A witch on an island."
+
+    _FakeClient.gb_items = []
+    refreshed = gb.post("/api/books/works/ISBN9780316769488/refresh")
+    assert refreshed.status_code == 200
+    assert refreshed.json()["description"] == "A witch on an island."
+    assert refreshed.json()["subjects"] == ["Fiction", "Mythology"]
+
+
+def test_isbn_refresh_without_key_keeps_description(gb, monkeypatch):
+    imported = gb.get("/api/books/works/ISBN9780316769488").json()
+    assert imported["description"] == "A witch on an island."
+
+    monkeypatch.setenv("GOOGLE_BOOKS_API_KEY", "")
+    get_settings.cache_clear()
+    _FakeClient.calls = []
+    refreshed = gb.post("/api/books/works/ISBN9780316769488/refresh")
+    assert refreshed.status_code == 200
+    assert refreshed.json()["description"] == "A witch on an island."
+    assert _FakeClient.params_for("googleapis.com/books") == []
+
+
+def test_isbn_x_and_X_are_the_same_row(gb):
+    first = gb.get("/api/books/works/ISBN080442957X")
+    assert first.status_code == 200
+    second = gb.get("/api/books/works/ISBN080442957x")
+    assert second.status_code == 200
+    assert first.json()["ol_work_key"] == "/works/ISBN080442957X"
+    assert second.json()["ol_work_key"] == "/works/ISBN080442957X"
+
+
+def test_isbn_lookup_falls_back_to_open_library(gb):
+    _FakeClient.gb_items = []
+    response = gb.get("/api/books/isbn/9780316769488")
+    assert response.status_code == 200
+    assert response.json()["ol_work_key"] == "/works/OL1W"
+    assert _FakeClient.params_for("search.json")
+
+
+def test_volume_key_without_google_key(client):
+    register(client, "ada")
+    assert client.get("/api/books/works/GBabcVolumeId1").status_code == 404
+    refresh = client.post("/api/books/works/GBabcVolumeId1/refresh")
+    assert refresh.status_code == 400
+    assert "GOOGLE_BOOKS_API_KEY" in refresh.json()["detail"]
+
+
+def test_volume_refresh_429_is_classified(gb):
+    gb.get("/api/books/works/GBabcVolumeId1")
+    _FakeClient.gb_status = 429
+    response = gb.post("/api/books/works/GBabcVolumeId1/refresh")
+    assert response.status_code == 429
+    assert "busy" in response.json()["detail"].lower()
+
+
+def test_goodreads_import_prefers_google(gb):
+    from pathlib import Path
+
+    raw = (Path(__file__).parent / "fixtures" / "goodreads.csv").read_bytes()
+    response = gb.post(
+        "/api/shelf/import",
+        files={"file": ("goodreads.csv", raw, "text/csv")},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["imported"] == 2
+    shelf = gb.get("/api/shelf").json()["items"]
+    keys = {row["book"]["ol_work_key"] for row in shelf}
+    assert "/works/ISBN9780316769488" in keys
+    assert "/works/ISBN9780062060624" in keys
+    assert _FakeClient.params_for("search.json") == []
+

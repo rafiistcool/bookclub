@@ -105,7 +105,10 @@ export function isGoogleWorkId(id: string): boolean {
 
 export function isbnFromWorkKey(olWorkKey: string): string | null {
   const id = workId(olWorkKey);
-  return isIsbnWorkId(id) ? extractIsbn(id.slice(4)) : null;
+  const canonical = id.startsWith("ISBN") || id.startsWith("isbn")
+    ? `ISBN${id.slice(4).toUpperCase()}`
+    : id;
+  return isIsbnWorkId(canonical) ? extractIsbn(canonical.slice(4)) : null;
 }
 
 export function bookPath(olWorkKey: string): string {

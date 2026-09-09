@@ -41,11 +41,20 @@ def is_google_catalog_id(work_id: str) -> bool:
 
 
 def is_work_id(work_id: str) -> bool:
-    return bool(WORK_ID_RE.fullmatch(work_id))
+    return bool(WORK_ID_RE.fullmatch(canonical_work_id(work_id)))
+
+
+def canonical_work_id(work_id: str) -> str:
+    """ISBN-10 check digits are stored upper-case (`X`, never `x`)."""
+    if len(work_id) > 4 and work_id[:4].upper() == "ISBN":
+        candidate = "ISBN" + work_id[4:].upper()
+        if ISBN_WORK_ID_RE.fullmatch(candidate):
+            return candidate
+    return work_id
 
 
 def work_key(work_id: str) -> str:
-    return f"/works/{work_id}"
+    return f"/works/{canonical_work_id(work_id)}"
 
 
 def work_id_from_key(ol_work_key: str) -> str:
@@ -61,6 +70,7 @@ def is_google_catalog_key(ol_work_key: str) -> bool:
 
 
 def isbn_from_work_id(work_id: str) -> str | None:
+    work_id = canonical_work_id(work_id)
     if not is_isbn_work_id(work_id):
         return None
     return work_id[4:]
