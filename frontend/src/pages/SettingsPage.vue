@@ -4,11 +4,12 @@ import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { api, ApiError } from "../api/client";
 import Avatar from "../components/Avatar.vue";
+import FavoritesEditor from "../components/FavoritesEditor.vue";
 import LanguageSwitch from "../components/LanguageSwitch.vue";
 import { MODES, THEMES, useTheme } from "../stores/theme";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
-import type { GoodreadsImport, Invite } from "../types";
+import type { Favorite, GoodreadsImport, Invite } from "../types";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -28,6 +29,29 @@ const importResult = ref<GoodreadsImport | null>(null);
 
 const username = computed(() => session.user?.username ?? "");
 const unusedInvites = computed(() => invites.value.filter((row) => !row.used).length);
+const favorites = ref<Favorite[]>([]);
+const favoritesBusy = ref(false);
+
+async function loadFavorites() {
+  try {
+    favorites.value = (await api.myFavorites()).items;
+  } catch (err) {
+    toast.show(err instanceof ApiError ? err.message : t("favorites.saveFailed"));
+  }
+}
+
+async function replaceFavorites(bookIds: number[]) {
+  if (favoritesBusy.value) return;
+  favoritesBusy.value = true;
+  try {
+    favorites.value = (await api.replaceFavorites(bookIds)).items;
+    toast.show(bookIds.length ? t("favorites.saved") : t("favorites.cleared"));
+  } catch (err) {
+    toast.show(err instanceof ApiError ? err.message : t("favorites.saveFailed"));
+  } finally {
+    favoritesBusy.value = false;
+  }
+}
 
 async function loadInvites() {
   try {
@@ -135,7 +159,10 @@ async function logout() {
   await router.push("/login");
 }
 
-onMounted(loadInvites);
+onMounted(() => {
+  void loadInvites();
+  void loadFavorites();
+});
 </script>
 
 <template>
@@ -173,6 +200,14 @@ onMounted(loadInvites);
           </button>
         </div>
       </div>
+    </section>
+
+    <section class="section" aria-labelledby="favorites">
+      <div class="section-head">
+        <h2 id="favorites">{{ t("favorites.heading") }}</h2>
+      </div>
+      <p class="fine muted">{{ t("favorites.settingsBlurb") }}</p>
+      <FavoritesEditor :items="favorites" :busy="favoritesBusy" @replace="replaceFavorites" />
     </section>
 
     <section class="section" aria-labelledby="language">

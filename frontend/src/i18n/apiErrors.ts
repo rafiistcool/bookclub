@@ -13,6 +13,10 @@ const API_ERROR_KEYS: Record<string, string> = {
   "Use a JPEG, PNG, WebP, or GIF": "errors.usePicture",
   "That file is not a picture": "errors.notAPicture",
   "No profile picture": "errors.noPicture",
+  "That book is not in the club yet": "errors.bookNotInClub",
+  "Each book can only be a favourite once": "errors.duplicateFavourite",
+  "At most 3 favourites": "errors.tooManyFavourites",
+  "You already have 3 favourites": "errors.favouritesFull",
 };
 
 export function translateApiError(detail: string): string {

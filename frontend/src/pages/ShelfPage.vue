@@ -2,24 +2,29 @@
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
+import Avatar from "../components/Avatar.vue";
 import BookTile from "../components/BookTile.vue";
 import BottomSheet from "../components/BottomSheet.vue";
+import FavoritePortrait from "../components/FavoritePortrait.vue";
 import MeetingSheet from "../components/MeetingSheet.vue";
 import ShelfBoard from "../components/ShelfBoard.vue";
 import TileSkeleton from "../components/TileSkeleton.vue";
 import { DESKTOP, useMediaQuery } from "../composables/useMediaQuery";
 import { STATUSES, statusLabel, statusShort, type Status } from "../constants";
 import { tp } from "../i18n";
+import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
-import type { ClubPick, ShelfItem } from "../types";
+import type { ClubPick, Favorite, ShelfItem } from "../types";
 
 type Filter = "all" | Status;
 
 const { t } = useI18n();
 const desktop = useMediaQuery(DESKTOP);
+const session = useSession();
 const toast = useToast();
 
 const items = ref<ShelfItem[]>([]);
+const favorites = ref<Favorite[]>([]);
 const error = ref("");
 const loaded = ref(false);
 const filter = ref<Filter>("all");
@@ -55,7 +60,9 @@ const visible = computed(() => {
 
 async function load() {
   try {
-    items.value = (await api.myShelf()).items;
+    const shelf = await api.myShelf();
+    items.value = shelf.items;
+    favorites.value = shelf.favorites ?? [];
     error.value = "";
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : t("shelf.loadFailed");
@@ -75,7 +82,9 @@ async function onDropped(item: ShelfItem, status: Status, position: number) {
   const snapshot = items.value.map((row) => ({ ...row }));
   try {
     await api.patchShelf(item.id, { status, position });
-    items.value = (await api.myShelf()).items;
+    const shelf = await api.myShelf();
+    items.value = shelf.items;
+    favorites.value = shelf.favorites ?? [];
     toast.show(t("shelf.movedTo", { status: statusLabel(status) }));
   } catch (err) {
     items.value = snapshot;
@@ -106,7 +115,9 @@ async function confirmRemove() {
           dnf_reason: item.dnf_reason,
           progress: item.progress,
         });
-        items.value = (await api.myShelf()).items;
+        const shelf = await api.myShelf();
+        items.value = shelf.items;
+        favorites.value = shelf.favorites ?? [];
       },
     });
   } catch (err) {
@@ -155,12 +166,20 @@ onMounted(load);
 
 <template>
   <section>
-    <div class="page-head">
-      <h1>{{ t("shelf.title") }}</h1>
-      <p class="lede">
-        {{ t("shelf.lede", { books: tp("shelf.books", counts.all), reading: counts.currently_reading }) }}
-      </p>
+    <div class="page-head shelf-head">
+      <Avatar :username="session.user?.username ?? ''" :src="session.user?.avatar_url" size="lg" />
+      <div>
+        <h1>{{ t("shelf.title") }}</h1>
+        <p class="lede">
+          {{ t("shelf.lede", { books: tp("shelf.books", counts.all), reading: counts.currently_reading }) }}
+        </p>
+      </div>
     </div>
+    <FavoritePortrait
+      v-if="loaded && !error"
+      :items="favorites"
+      :empty-hint="t('favorites.emptyOwn')"
+    />
 
     <p v-if="error" class="error">{{ error }}</p>
 
@@ -261,6 +280,12 @@ onMounted(load);
 </template>
 
 <style scoped>
+.shelf-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
 .shelf-filter {
   margin-bottom: var(--space-5);
 }

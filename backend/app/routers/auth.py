@@ -12,8 +12,17 @@ from app.avatars import (
     process_avatar,
 )
 from app.deps import get_current_user, get_session
+from app.favorites import (
+    add_favorite,
+    favorites_out,
+    list_favorites,
+    remove_favorite,
+    replace_favorites,
+)
 from app.models import Invite, User, utcnow
 from app.schemas import (
+    FavoritesIn,
+    FavoritesOut,
     LoginIn,
     NotificationPrefsIn,
     NotificationPrefsOut,
@@ -96,6 +105,41 @@ def logout(request: Request) -> None:
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(get_current_user)) -> UserOut:
     return user_out(user)
+
+
+@router.get("/me/favorites", response_model=FavoritesOut)
+def my_favorites(
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> FavoritesOut:
+    return favorites_out(list_favorites(session, user))
+
+
+@router.put("/me/favorites", response_model=FavoritesOut)
+def replace_my_favorites(
+    payload: FavoritesIn,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> FavoritesOut:
+    return favorites_out(replace_favorites(session, user, payload.book_ids))
+
+
+@router.post("/me/favorites/{book_id}", response_model=FavoritesOut)
+def add_my_favorite(
+    book_id: int,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> FavoritesOut:
+    return favorites_out(add_favorite(session, user, book_id))
+
+
+@router.delete("/me/favorites/{book_id}", response_model=FavoritesOut)
+def remove_my_favorite(
+    book_id: int,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> FavoritesOut:
+    return favorites_out(remove_favorite(session, user, book_id))
 
 
 @router.patch("/me/preferences", response_model=UserOut)

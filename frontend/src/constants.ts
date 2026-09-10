@@ -1,5 +1,7 @@
 import { t } from "./i18n";
 
+export const FAVORITE_LIMIT = 3;
+
 export const STATUSES = [
   "want_to_read",
   "currently_reading",

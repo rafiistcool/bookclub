@@ -194,6 +194,28 @@
     "nothingHere": "Nothing here.",
     "dragHere": "Drag a book here."
   },
+  "favorites": {
+    "heading": "Favourites",
+    "portraitLabel": "Favourite books",
+    "slot": "{n}. {title}",
+    "emptyOwn": "No favourites yet. Mark up to three from a book page.",
+    "added": "Added to favourites",
+    "removed": "Removed from favourites",
+    "saveFailed": "Could not update favourites",
+    "full": "You already have 3 favourites. Remove one first, or reorder in Settings.",
+    "mark": "Favourite",
+    "marked": "Favourited",
+    "markedAt": "Favourite · {n}",
+    "settingsBlurb": "Up to three books, shown under your photo on your shelf. Any book already in the club can be a favourite — it does not have to be on your shelf.",
+    "emptySlot": "Empty",
+    "moveUp": "Move up",
+    "moveDown": "Move down",
+    "clearSlot": "Clear this favourite",
+    "clearAll": "Clear all",
+    "cleared": "Favourites cleared",
+    "saved": "Favourites updated",
+    "position": "Position {n}"
+  },
   "memberShelf": {
     "back": "← Club",
     "title": "Shelf of {name}",
@@ -430,6 +452,10 @@
     "pictureTooManyPixels": "That picture has too many pixels",
     "usePicture": "Use a JPEG, PNG, WebP, or GIF",
     "notAPicture": "That file is not a picture",
-    "noPicture": "No profile picture"
+    "noPicture": "No profile picture",
+    "bookNotInClub": "That book is not in the club yet",
+    "duplicateFavourite": "Each book can only be a favourite once",
+    "tooManyFavourites": "At most 3 favourites",
+    "favouritesFull": "You already have 3 favourites"
   }
 }

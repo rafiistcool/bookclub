@@ -290,6 +290,32 @@ async function refreshDetails() {
   }
 }
 
+async function toggleFavorite() {
+  const detail = book.value;
+  if (!detail || busy.value) return;
+  busy.value = true;
+  try {
+    if (detail.favorite_position) {
+      await api.removeFavorite(detail.id);
+      detail.favorite_position = null;
+      toast.show(t("favorites.removed"));
+    } else {
+      const result = await api.addFavorite(detail.id);
+      const mine = result.items.find((row) => row.book.id === detail.id);
+      detail.favorite_position = mine?.position ?? null;
+      toast.show(t("favorites.added"));
+    }
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 409) {
+      toast.show(t("favorites.full"));
+    } else {
+      toast.show(err instanceof ApiError ? err.message : t("favorites.saveFailed"));
+    }
+  } finally {
+    busy.value = false;
+  }
+}
+
 async function nominate() {
   const detail = book.value;
   if (!detail) return;
@@ -496,6 +522,19 @@ watch(workId, load);
             </div>
 
             <div class="btn-row panel-actions">
+              <button
+                class="btn btn-ghost btn-sm"
+                type="button"
+                :aria-pressed="Boolean(book.favorite_position)"
+                :disabled="busy"
+                @click="toggleFavorite"
+              >
+                {{
+                  book.favorite_position
+                    ? t("favorites.markedAt", { n: book.favorite_position })
+                    : t("favorites.mark")
+                }}
+              </button>
               <button
                 class="btn btn-ghost btn-sm"
                 type="button"

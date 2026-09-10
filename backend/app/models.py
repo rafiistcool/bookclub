@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import Column, DateTime, LargeBinary, UniqueConstraint, event
+from sqlalchemy import CheckConstraint, Column, DateTime, LargeBinary, UniqueConstraint, event
 from sqlalchemy.orm import Session as SASession
 from sqlalchemy.orm import defer
 from sqlmodel import Field, Relationship, SQLModel
@@ -49,6 +49,7 @@ class User(SQLModel, table=True):
     )
 
     shelf_entries: list["ShelfEntry"] = Relationship(back_populates="user")
+    favorites: list["UserFavorite"] = Relationship(back_populates="user")
 
 
 @event.listens_for(SASession, "do_orm_execute")
@@ -107,6 +108,7 @@ class Book(SQLModel, table=True):
     )
 
     shelf_entries: list["ShelfEntry"] = Relationship(back_populates="book")
+    favorites: list["UserFavorite"] = Relationship(back_populates="book")
 
 
 class ShelfEntry(SQLModel, table=True):
@@ -139,6 +141,31 @@ class ShelfEntry(SQLModel, table=True):
 
     user: Optional[User] = Relationship(back_populates="shelf_entries")
     book: Optional[Book] = Relationship(back_populates="shelf_entries")
+
+
+FAVORITE_LIMIT = 3
+
+
+class UserFavorite(SQLModel, table=True):
+    """A member's ordered favourite books, positions 1–3."""
+
+    __tablename__ = "user_favorites"
+    __table_args__ = (
+        UniqueConstraint("user_id", "book_id", name="uq_favorite_user_book"),
+        UniqueConstraint("user_id", "position", name="uq_favorite_user_position"),
+        CheckConstraint(
+            f"position >= 1 AND position <= {FAVORITE_LIMIT}",
+            name="ck_favorite_position",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    book_id: int = Field(foreign_key="books.id", index=True)
+    position: int = Field(ge=1, le=FAVORITE_LIMIT)
+
+    user: Optional[User] = Relationship(back_populates="favorites")
+    book: Optional[Book] = Relationship(back_populates="favorites")
 
 
 class ClubPick(SQLModel, table=True):

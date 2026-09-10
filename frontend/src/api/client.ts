@@ -11,6 +11,7 @@ import type {
   DiaryEntry,
   DiaryEntryIn,
   DiaryFeed,
+  FavoritesList,
   GoodreadsImport,
   Invite,
   OverlapList,
@@ -86,6 +87,16 @@ export const api = {
     return request<User>("/api/auth/me/avatar", { method: "PUT", body });
   },
   deleteAvatar: () => request<User>("/api/auth/me/avatar", { method: "DELETE" }),
+  myFavorites: () => request<FavoritesList>("/api/auth/me/favorites"),
+  replaceFavorites: (bookIds: number[]) =>
+    request<FavoritesList>("/api/auth/me/favorites", {
+      method: "PUT",
+      body: JSON.stringify({ book_ids: bookIds }),
+    }),
+  addFavorite: (bookId: number) =>
+    request<FavoritesList>(`/api/auth/me/favorites/${bookId}`, { method: "POST" }),
+  removeFavorite: (bookId: number) =>
+    request<FavoritesList>(`/api/auth/me/favorites/${bookId}`, { method: "DELETE" }),
   search: (params: SearchParams = {}, init: RequestInit = {}) => {
     const query = new URLSearchParams();
     if (params.q) query.set("q", params.q);

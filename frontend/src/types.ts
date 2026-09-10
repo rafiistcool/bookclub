@@ -75,6 +75,7 @@ export type BookReader = {
 };
 
 export type BookDetail = {
+  id: number;
   ol_work_key: string;
   title: string;
   authors: string;
@@ -94,11 +95,22 @@ export type BookDetail = {
   club_rating: number | null;
   rating_count: number;
   custom?: boolean;
+  favorite_position: number | null;
+};
+
+export type Favorite = {
+  position: number;
+  book: Book;
+};
+
+export type FavoritesList = {
+  items: Favorite[];
 };
 
 export type ShelfList = {
   user: User;
   items: ShelfItem[];
+  favorites: Favorite[];
 };
 
 export type Member = {

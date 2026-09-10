@@ -194,6 +194,28 @@
     "nothingHere": "Nichts hier.",
     "dragHere": "Zieh ein Buch hierher."
   },
+  "favorites": {
+    "heading": "Lieblingsbücher",
+    "portraitLabel": "Lieblingsbücher",
+    "slot": "{n}. {title}",
+    "emptyOwn": "Noch keine Lieblinge. Markiere bis zu drei auf einer Buchseite.",
+    "added": "Zu den Lieblingen hinzugefügt",
+    "removed": "Von den Lieblingen entfernt",
+    "saveFailed": "Lieblinge konnten nicht gespeichert werden",
+    "full": "Du hast schon 3 Lieblinge. Entferne zuerst einen, oder sortiere unter Einstellungen um.",
+    "mark": "Liebling",
+    "marked": "Liebling",
+    "markedAt": "Liebling · {n}",
+    "settingsBlurb": "Bis zu drei Bücher, unter deinem Foto am Regal. Jedes Buch im Club-Katalog kann ein Liebling sein — es muss nicht in deinem Regal stehen.",
+    "emptySlot": "Leer",
+    "moveUp": "Nach oben",
+    "moveDown": "Nach unten",
+    "clearSlot": "Diesen Liebling leeren",
+    "clearAll": "Alle leeren",
+    "cleared": "Lieblinge geleert",
+    "saved": "Lieblinge gespeichert",
+    "position": "Platz {n}"
+  },
   "memberShelf": {
     "back": "← Club",
     "title": "Regal von {name}",
@@ -430,6 +452,10 @@
     "pictureTooManyPixels": "Das Bild hat zu viele Pixel",
     "usePicture": "Nimm ein JPEG, PNG, WebP oder GIF",
     "notAPicture": "Das ist keine Bilddatei",
-    "noPicture": "Kein Profilbild"
+    "noPicture": "Kein Profilbild",
+    "bookNotInClub": "Dieses Buch ist noch nicht im Club",
+    "duplicateFavourite": "Jedes Buch darf nur einmal ein Liebling sein",
+    "tooManyFavourites": "Höchstens 3 Lieblinge",
+    "favouritesFull": "Du hast schon 3 Lieblinge"
   }
 }

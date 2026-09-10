@@ -20,6 +20,7 @@ from app.schemas import (
     ShelfListOut,
     ShelfPatchIn,
 )
+from app.favorites import favorite_out, list_favorites
 from app.serialize import shelf_item_out, user_out
 from app.shelf_ops import apply_finish_fields, apply_progress, place_item, upsert_book
 
@@ -72,9 +73,15 @@ def get_shelf(
     else:
         owner = me
     items = [_shelf_item_or_skip(entry) for entry in _shelf_for_user(session, owner)]
+    favorites = [
+        item
+        for row in list_favorites(session, owner)
+        if (item := favorite_out(row)) is not None
+    ]
     return ShelfListOut(
         user=user_out(owner),
         items=[item for item in items if item is not None],
+        favorites=favorites,
     )
 
 

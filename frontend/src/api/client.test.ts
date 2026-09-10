@@ -80,6 +80,21 @@ describe("api client", () => {
     expect(fetchMock.mock.calls[6][0]).toBe("/api/diary?limit=5&before=42");
   });
 
+  it("replaces and toggles favourites", async () => {
+    await api.replaceFavorites([3, 1]);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/auth/me/favorites");
+    expect(fetchMock.mock.calls[0][1].method).toBe("PUT");
+    expect(fetchMock.mock.calls[0][1].body).toBe(JSON.stringify({ book_ids: [3, 1] }));
+    await api.myFavorites();
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/auth/me/favorites");
+    await api.addFavorite(9);
+    expect(fetchMock.mock.calls[2][0]).toBe("/api/auth/me/favorites/9");
+    expect(fetchMock.mock.calls[2][1].method).toBe("POST");
+    await api.removeFavorite(9);
+    expect(fetchMock.mock.calls[3][0]).toBe("/api/auth/me/favorites/9");
+    expect(fetchMock.mock.calls[3][1].method).toBe("DELETE");
+  });
+
   it("patches theme preferences", async () => {
     await api.savePreferences({ theme: "ink" });
     const [url, init] = fetchMock.mock.calls[0];
