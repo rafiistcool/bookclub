@@ -13,7 +13,6 @@ vi.mock("../api/client", () => ({
   },
 }));
 
-import { i18n } from "../i18n";
 import MemberShelfPage from "./MemberShelfPage.vue";
 
 function favorite(position: number, title: string): Favorite {
@@ -52,7 +51,7 @@ async function mountMember(favorites: Favorite[]) {
   await router.isReady();
   const wrapper = mount(MemberShelfPage, {
     global: {
-      plugins: [createPinia(), i18n, router],
+      plugins: [createPinia(), router],
     },
   });
   await flushPromises();

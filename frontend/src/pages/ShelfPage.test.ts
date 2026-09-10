@@ -14,7 +14,6 @@ vi.mock("../api/client", () => ({
   },
 }));
 
-import { i18n } from "../i18n";
 import { useSession } from "../stores/session";
 import ShelfPage from "./ShelfPage.vue";
 
@@ -82,7 +81,7 @@ async function mountShelf(favorites: Favorite[], items: ShelfItem[] = []) {
   };
   session.ready = true;
   const wrapper = mount(ShelfPage, {
-    global: { plugins: [pinia, i18n] },
+    global: { plugins: [pinia] },
   });
   await flushPromises();
   return wrapper;
@@ -92,6 +91,20 @@ describe("ShelfPage favourites portrait", () => {
   beforeEach(() => {
     myShelf.mockReset();
     clubPick.mockReset();
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
   });
 
   it("shows a subtle empty hint when you have no favourites", async () => {
