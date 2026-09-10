@@ -126,6 +126,8 @@ def test_legacy_database_is_upgraded_in_place(tmp_path):
             if row[2]
         }
         assert len(favorite_indexes) >= 2
+        favorite_fks = conn.execute(text("PRAGMA foreign_key_list(user_favorites)")).fetchall()
+        assert {row[6] for row in favorite_fks} == {"CASCADE"}
 
     # Running again is a no-op.
     init_db(path)

@@ -1,4 +1,8 @@
-from tests.conftest import register
+import threading
+
+from fastapi.testclient import TestClient
+
+from tests.conftest import login, register
 
 
 def _add(client, *, work: str, title: str, **overrides):
@@ -83,11 +87,23 @@ def test_unknown_and_duplicate_book_ids_are_rejected(client):
     assert duplicate.status_code == 400
     assert "once" in duplicate.json()["detail"]
 
+    _add(client, work="/works/OL2W", title="Song of Achilles")
+    _add(client, work="/works/OL3W", title="Galatea")
+    _add(client, work="/works/OL4W", title="Circe leftover")
     too_many = client.put(
         "/api/auth/me/favorites",
-        json={"book_ids": [circe, circe + 1, circe + 2, circe + 3]},
+        json={
+            "book_ids": [
+                circe,
+                _book_id(client, "Song of Achilles"),
+                _book_id(client, "Galatea"),
+                _book_id(client, "Circe leftover"),
+            ]
+        },
     )
     assert too_many.status_code == 400
+    assert "At most 3" in too_many.json()["detail"]
+    assert client.get("/api/auth/me/favorites").json() == {"items": []}
 
 
 def test_favourite_does_not_require_own_shelf(client):
@@ -186,6 +202,44 @@ def test_omitted_book_ids_clears_favourites(client):
     cleared = client.put("/api/auth/me/favorites", json={})
     assert cleared.status_code == 200
     assert cleared.json() == {"items": []}
+
+
+def test_concurrent_add_for_last_slot_is_409_not_500(client):
+    register(client, "ada")
+    _add(client, work="/works/OL1W", title="Circe")
+    _add(client, work="/works/OL2W", title="Song of Achilles")
+    _add(client, work="/works/OL3W", title="Galatea")
+    _add(client, work="/works/OL4W", title="Circe leftover")
+    circe = _book_id(client, "Circe")
+    song = _book_id(client, "Song of Achilles")
+    galatea = _book_id(client, "Galatea")
+    leftover = _book_id(client, "Circe leftover")
+    client.put("/api/auth/me/favorites", json={"book_ids": [circe, song]})
+
+    statuses: list[int] = []
+    lock = threading.Lock()
+    start = threading.Barrier(2)
+
+    def attempt(book_id: int) -> None:
+        local = TestClient(client.app)
+        assert login(local, "ada").status_code == 204
+        start.wait()
+        response = local.post(f"/api/auth/me/favorites/{book_id}")
+        with lock:
+            statuses.append(response.status_code)
+
+    threads = [
+        threading.Thread(target=attempt, args=(galatea,)),
+        threading.Thread(target=attempt, args=(leftover,)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert 500 not in statuses
+    assert sorted(statuses) == [200, 409]
+    assert len(client.get("/api/auth/me/favorites").json()["items"]) == 3
 
 
 def test_favorites_require_a_session(client):

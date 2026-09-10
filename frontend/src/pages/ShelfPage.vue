@@ -62,7 +62,7 @@ async function load() {
   try {
     const shelf = await api.myShelf();
     items.value = shelf.items;
-    favorites.value = shelf.favorites ?? [];
+    favorites.value = shelf.favorites;
     error.value = "";
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : t("shelf.loadFailed");
@@ -84,7 +84,7 @@ async function onDropped(item: ShelfItem, status: Status, position: number) {
     await api.patchShelf(item.id, { status, position });
     const shelf = await api.myShelf();
     items.value = shelf.items;
-    favorites.value = shelf.favorites ?? [];
+    favorites.value = shelf.favorites;
     toast.show(t("shelf.movedTo", { status: statusLabel(status) }));
   } catch (err) {
     items.value = snapshot;
@@ -117,7 +117,7 @@ async function confirmRemove() {
         });
         const shelf = await api.myShelf();
         items.value = shelf.items;
-        favorites.value = shelf.favorites ?? [];
+        favorites.value = shelf.favorites;
       },
     });
   } catch (err) {

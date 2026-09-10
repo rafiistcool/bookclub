@@ -49,7 +49,9 @@ class User(SQLModel, table=True):
     )
 
     shelf_entries: list["ShelfEntry"] = Relationship(back_populates="user")
-    favorites: list["UserFavorite"] = Relationship(back_populates="user")
+    favorites: list["UserFavorite"] = Relationship(
+        back_populates="user", cascade_delete=True
+    )
 
 
 @event.listens_for(SASession, "do_orm_execute")
@@ -108,7 +110,9 @@ class Book(SQLModel, table=True):
     )
 
     shelf_entries: list["ShelfEntry"] = Relationship(back_populates="book")
-    favorites: list["UserFavorite"] = Relationship(back_populates="book")
+    favorites: list["UserFavorite"] = Relationship(
+        back_populates="book", cascade_delete=True
+    )
 
 
 class ShelfEntry(SQLModel, table=True):
@@ -160,8 +164,8 @@ class UserFavorite(SQLModel, table=True):
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="users.id", index=True)
-    book_id: int = Field(foreign_key="books.id", index=True)
+    user_id: int = Field(foreign_key="users.id", index=True, ondelete="CASCADE")
+    book_id: int = Field(foreign_key="books.id", index=True, ondelete="CASCADE")
     position: int = Field(ge=1, le=FAVORITE_LIMIT)
 
     user: Optional[User] = Relationship(back_populates="favorites")

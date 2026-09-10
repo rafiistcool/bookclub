@@ -13,26 +13,25 @@ defineProps<{
 </script>
 
 <template>
-  <div v-if="items.length" class="portrait" role="list" :aria-label="t('favorites.portraitLabel')">
-    <RouterLink
-      v-for="row in items"
-      :key="row.book.id"
-      class="portrait-slot"
-      role="listitem"
-      :to="bookPath(row.book.ol_work_key)"
-      :aria-label="t('favorites.slot', { n: row.position, title: row.book.title })"
-    >
-      <span class="portrait-rank nums" aria-hidden="true">{{ row.position }}</span>
-      <BookCover
-        :title="row.book.title"
-        :cover-id="row.book.cover_id"
-        :work-key="row.book.ol_work_key"
-        :image-url="row.book.cover_url"
-        size="md"
-        eager
-      />
-    </RouterLink>
-  </div>
+  <ul v-if="items.length" class="portrait" :aria-label="t('favorites.portraitLabel')">
+    <li v-for="row in items" :key="row.book.id">
+      <RouterLink
+        class="portrait-slot"
+        :to="bookPath(row.book.ol_work_key)"
+        :aria-label="t('favorites.slot', { n: row.position, title: row.book.title })"
+      >
+        <span class="portrait-rank nums" aria-hidden="true">{{ row.position }}</span>
+        <BookCover
+          :title="row.book.title"
+          :cover-id="row.book.cover_id"
+          :work-key="row.book.ol_work_key"
+          :image-url="row.book.cover_url"
+          size="md"
+          eager
+        />
+      </RouterLink>
+    </li>
+  </ul>
   <p v-else-if="emptyHint" class="fine subtle portrait-empty">{{ emptyHint }}</p>
 </template>
 
@@ -41,7 +40,9 @@ defineProps<{
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-3);
+  list-style: none;
   margin: 0 0 var(--space-5);
+  padding: 0;
 }
 
 .portrait-slot {

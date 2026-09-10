@@ -370,11 +370,13 @@ class FavoriteOut(BaseModel):
 
 
 class FavoritesIn(BaseModel):
-    book_ids: list[int] = Field(default_factory=list, max_length=FAVORITE_LIMIT)
+    book_ids: list[int] = Field(default_factory=list)
 
     @field_validator("book_ids")
     @classmethod
     def book_ids_ok(cls, value: list[int]) -> list[int]:
+        if len(value) > FAVORITE_LIMIT:
+            raise ValueError("At most 3 favourites")
         if len(value) != len(set(value)):
             raise ValueError("Each book can only be a favourite once")
         if any(book_id <= 0 for book_id in value):

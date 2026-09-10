@@ -204,7 +204,6 @@
     "saveFailed": "Could not update favourites",
     "full": "You already have 3 favourites. Remove one first, or reorder in Settings.",
     "mark": "Favourite",
-    "marked": "Favourited",
     "markedAt": "Favourite · {n}",
     "settingsBlurb": "Up to three books, shown under your photo on your shelf. Any book already in the club can be a favourite — it does not have to be on your shelf.",
     "emptySlot": "Empty",

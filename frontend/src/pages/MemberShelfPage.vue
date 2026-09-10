@@ -50,7 +50,7 @@ async function load() {
     username.value = shelf.user.username;
     avatarUrl.value = shelf.user.avatar_url;
     items.value = shelf.items;
-    favorites.value = shelf.favorites ?? [];
+    favorites.value = shelf.favorites;
     error.value = "";
   } catch (err) {
     items.value = [];

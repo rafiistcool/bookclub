@@ -1,4 +1,5 @@
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, col, select
 
@@ -91,7 +92,14 @@ def add_favorite(session: Session, user: User, book_id: int) -> list[UserFavorit
             position=len(current) + 1,
         )
     )
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        current = list_favorites(session, user)
+        if any(row.book_id == book_id for row in current):
+            return current
+        raise HTTPException(status_code=409, detail=FAVOURITES_FULL) from None
     return list_favorites(session, user)
 
 

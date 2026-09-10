@@ -16,15 +16,19 @@ const emit = defineEmits<{
   replace: [bookIds: number[]];
 }>();
 
+const ordered = computed(() =>
+  [...props.items].sort((a, b) => a.position - b.position || a.book.id - b.book.id),
+);
+
 const slots = computed(() => {
-  const byPosition = new Map(props.items.map((row) => [row.position, row]));
+  const byPosition = new Map(ordered.value.map((row) => [row.position, row]));
   return Array.from({ length: FAVORITE_LIMIT }, (_, index) => {
     const position = index + 1;
     return { position, row: byPosition.get(position) ?? null };
   });
 });
 
-const ids = computed(() => props.items.map((row) => row.book.id));
+const ids = computed(() => ordered.value.map((row) => row.book.id));
 
 function move(index: number, delta: number) {
   const next = [...ids.value];
