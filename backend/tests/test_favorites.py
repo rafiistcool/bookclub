@@ -1,7 +1,14 @@
 import threading
 
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
+from sqlmodel import Session, select
 
+from app.favorites import FAVOURITES_FULL, add_favorite, list_favorites
+from app.models import Book, User, UserFavorite
+from app.schemas import FavoritesIn
 from tests.conftest import login, register
 
 
@@ -102,8 +109,17 @@ def test_unknown_and_duplicate_book_ids_are_rejected(client):
         },
     )
     assert too_many.status_code == 400
-    assert "At most 3" in too_many.json()["detail"]
+    assert too_many.json()["detail"] == "At most 3 favourites"
     assert client.get("/api/auth/me/favorites").json() == {"items": []}
+
+
+def test_favorites_in_length_check_is_the_translatable_validator():
+    with pytest.raises(ValidationError) as exc:
+        FavoritesIn(book_ids=[1, 2, 3, 4])
+    errors = exc.value.errors()
+    assert errors[0]["type"] == "value_error"
+    assert errors[0]["msg"] == "Value error, At most 3 favourites"
+    assert not any(error["type"] == "too_long" for error in errors)
 
 
 def test_favourite_does_not_require_own_shelf(client):
@@ -202,6 +218,56 @@ def test_omitted_book_ids_clears_favourites(client):
     cleared = client.put("/api/auth/me/favorites", json={})
     assert cleared.status_code == 200
     assert cleared.json() == {"items": []}
+
+
+def test_stale_last_slot_insert_maps_integrity_error_to_409(client, monkeypatch):
+    register(client, "ada")
+    _add(client, work="/works/OL1W", title="Circe")
+    _add(client, work="/works/OL2W", title="Song of Achilles")
+    _add(client, work="/works/OL3W", title="Galatea")
+    _add(client, work="/works/OL4W", title="Circe leftover")
+    circe = _book_id(client, "Circe")
+    song = _book_id(client, "Song of Achilles")
+    galatea = _book_id(client, "Galatea")
+    leftover = _book_id(client, "Circe leftover")
+    client.put("/api/auth/me/favorites", json={"book_ids": [circe, song]})
+
+    engine = client.app.state.engine
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.username == "ada")).one()
+        session.add(UserFavorite(user_id=user.id or 0, book_id=galatea, position=3))
+        session.commit()
+
+    original = list_favorites
+    seen_check = {"done": False}
+
+    def stale_list(session: Session, user: User) -> list[UserFavorite]:
+        rows = original(session, user)
+        if not seen_check["done"]:
+            seen_check["done"] = True
+            return [row for row in rows if row.position < 3]
+        return rows
+
+    monkeypatch.setattr("app.favorites.list_favorites", stale_list)
+
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.username == "ada")).one()
+        with pytest.raises(HTTPException) as exc:
+            add_favorite(session, user, leftover)
+        assert exc.value.status_code == 409
+        assert exc.value.detail == FAVOURITES_FULL
+
+    titles = [row["book"]["title"] for row in client.get("/api/auth/me/favorites").json()["items"]]
+    assert titles == ["Circe", "Song of Achilles", "Galatea"]
+
+
+def test_favorite_relationships_use_delete_cascade():
+    assert User.favorites.property.cascade.delete
+    assert User.favorites.property.cascade.delete_orphan
+    assert Book.favorites.property.cascade.delete
+    assert Book.favorites.property.cascade.delete_orphan
+    assert next(iter(UserFavorite.__table__.c.user_id.foreign_keys)).ondelete == "CASCADE"
+    assert next(iter(UserFavorite.__table__.c.book_id.foreign_keys)).ondelete == "CASCADE"
 
 
 def test_concurrent_add_for_last_slot_is_409_not_500(client):

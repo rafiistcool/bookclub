@@ -43,11 +43,16 @@ describe("FavoritePortrait", () => {
         ],
       },
     });
-    const links = wrapper.findAll("a");
+    expect(wrapper.get("ul.portrait").element.tagName).toBe("UL");
+    expect(wrapper.get("ul.portrait").attributes("aria-label")).toBe("Favourite books");
+    expect(wrapper.findAll("ul.portrait > li")).toHaveLength(2);
+    const links = wrapper.findAll("ul.portrait > li a");
     expect(links).toHaveLength(2);
     expect(links[0].attributes("href")).toBe("/book/OL1W");
     expect(links[0].attributes("aria-label")).toBe("1. Circe");
+    expect(links[0].attributes("role")).toBeUndefined();
     expect(links[1].attributes("aria-label")).toBe("2. Galatea");
+    expect(links[1].attributes("role")).toBeUndefined();
     expect(wrapper.findAll(".portrait-rank").map((node) => node.text())).toEqual(["1", "2"]);
     expect(wrapper.findAll("img")).toHaveLength(2);
   });

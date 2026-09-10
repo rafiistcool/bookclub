@@ -119,8 +119,9 @@ describe("ShelfPage favourites portrait", () => {
       [item(9, "Something else")],
     );
     expect(wrapper.text()).not.toContain("No favourites yet");
-    const portrait = wrapper.get(".portrait");
-    expect(portrait.findAll("a")).toHaveLength(2);
+    const portrait = wrapper.get("ul.portrait");
+    expect(portrait.findAll("li a")).toHaveLength(2);
+    expect(portrait.get("li a").attributes("role")).toBeUndefined();
     expect(portrait.text()).toContain("1");
     expect(portrait.text()).toContain("2");
   });

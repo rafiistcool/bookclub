@@ -29,6 +29,30 @@ describe("locale catalogs", () => {
     expect(keysOf(de).sort()).toEqual(keysOf(en).sort());
   });
 
+  it("does not keep the unused favorites.marked key", () => {
+    expect(keysOf(en)).not.toContain("favorites.marked");
+    expect(keysOf(de)).not.toContain("favorites.marked");
+    expect(keysOf(en)).toContain("favorites.markedAt");
+  });
+
+  it("prefers Favoriten over Lieblinge in German favourites copy", () => {
+    const flagged = [
+      de.favorites.emptyOwn,
+      de.favorites.added,
+      de.favorites.removed,
+      de.favorites.full,
+      de.favorites.settingsBlurb,
+      de.favorites.cleared,
+      de.errors.tooManyFavourites,
+      de.errors.favouritesFull,
+    ];
+    for (const text of flagged) {
+      expect(text).toMatch(/Favorit/);
+      expect(text).not.toMatch(/Lieblinge/);
+    }
+    expect(de.favorites.heading).toBe("Lieblingsbücher");
+  });
+
   it("keeps {placeholder} sets and | plural arity in lockstep", () => {
     for (const key of keysOf(en)) {
       const left = atPath(en, key);

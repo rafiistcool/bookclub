@@ -36,6 +36,21 @@ describe("FavoritesEditor", () => {
     expect(wrapper.emitted("replace")?.[1]).toEqual([[2]]);
   });
 
+  it("sorts by position before indexing into ids", async () => {
+    const wrapper = mount(FavoritesEditor, {
+      props: {
+        items: [favorite(2, "Galatea", 2), favorite(1, "Circe", 1)],
+      },
+    });
+    expect(wrapper.findAll(".fav-title").map((node) => node.text())).toEqual([
+      "Circe",
+      "Galatea",
+    ]);
+
+    await wrapper.get('[aria-label="Move down"]').trigger("click");
+    expect(wrapper.emitted("replace")?.[0]).toEqual([[2, 1]]);
+  });
+
   it("clears the set", async () => {
     const wrapper = mount(FavoritesEditor, {
       props: { items: [favorite(1, "Circe", 1)] },

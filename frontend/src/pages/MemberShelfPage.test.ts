@@ -72,7 +72,9 @@ describe("MemberShelfPage favourites portrait", () => {
 
   it("shows the member's favourite covers under the avatar", async () => {
     const wrapper = await mountMember([favorite(1, "Circe")]);
-    expect(wrapper.get(".portrait").findAll("a")).toHaveLength(1);
-    expect(wrapper.get(".portrait a").attributes("aria-label")).toBe("1. Circe");
+    const portrait = wrapper.get("ul.portrait");
+    expect(portrait.findAll("li a")).toHaveLength(1);
+    expect(portrait.get("li a").attributes("aria-label")).toBe("1. Circe");
+    expect(portrait.get("li a").attributes("role")).toBeUndefined();
   });
 });
