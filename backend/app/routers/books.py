@@ -45,6 +45,7 @@ from app.schemas import (
     SearchHit,
     SearchPage,
 )
+from app.favorites import favorite_position_for
 from app.serialize import avatar_url_for, book_cover_url
 from app.shelf_ops import apply_book_details, upsert_book
 from app.works import (
@@ -907,6 +908,7 @@ def _annotate_book_detail(detail: BookDetailOut, book: Book, user: User, session
 
 def _book_detail_from_local(book: Book, user: User, session: Session) -> BookDetailOut:
     detail = BookDetailOut(
+        id=book.id or 0,
         ol_work_key=book.ol_work_key,
         title=book.title,
         authors=book.authors,
@@ -917,6 +919,7 @@ def _book_detail_from_local(book: Book, user: User, session: Session) -> BookDet
         subjects=subjects_from_json(book.subjects),
         club_pick=_current_pick_key(session) == book.ol_work_key,
         custom=is_club_work_key(book.ol_work_key),
+        favorite_position=favorite_position_for(session, user, book.id),
     )
     return _annotate_book_detail(detail, book, user, session)
 

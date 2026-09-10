@@ -5,10 +5,11 @@ import { useRoute } from "vue-router";
 import { api, ApiError } from "../api/client";
 import Avatar from "../components/Avatar.vue";
 import BookTile from "../components/BookTile.vue";
+import FavoritePortrait from "../components/FavoritePortrait.vue";
 import TileSkeleton from "../components/TileSkeleton.vue";
 import { STATUSES, statusLabel, statusShort, type Status } from "../constants";
 import { tp } from "../i18n";
-import type { ShelfItem } from "../types";
+import type { Favorite, ShelfItem } from "../types";
 
 type Filter = "all" | Status;
 
@@ -17,6 +18,7 @@ const route = useRoute();
 const avatarUrl = ref<string | null>(null);
 const username = ref("");
 const items = ref<ShelfItem[]>([]);
+const favorites = ref<Favorite[]>([]);
 const error = ref("");
 const loaded = ref(false);
 const filter = ref<Filter>("all");
@@ -48,9 +50,11 @@ async function load() {
     username.value = shelf.user.username;
     avatarUrl.value = shelf.user.avatar_url;
     items.value = shelf.items;
+    favorites.value = shelf.favorites;
     error.value = "";
   } catch (err) {
     items.value = [];
+    favorites.value = [];
     error.value = err instanceof ApiError ? err.message : t("memberShelf.loadFailed");
   } finally {
     loaded.value = true;
@@ -73,6 +77,7 @@ watch(() => route.params.username, load);
         </p>
       </div>
     </div>
+    <FavoritePortrait v-if="loaded && !error" :items="favorites" />
 
     <p v-if="error" class="error">{{ error }}</p>
 

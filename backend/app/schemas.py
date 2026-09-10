@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.covers import storable_cover_image_url
 from app.i18n import DEFAULT_LOCALE, LOCALES, is_locale
-from app.models import ShelfStatus
+from app.models import FAVORITE_LIMIT, ShelfStatus
 from app.themes import (
     COLOR_MODES,
     DEFAULT_COLOR_MODE,
@@ -219,6 +219,7 @@ class BookReader(BaseModel):
 
 
 class BookDetailOut(BaseModel):
+    id: int
     ol_work_key: str
     title: str
     authors: str = ""
@@ -240,6 +241,8 @@ class BookDetailOut(BaseModel):
     rating_count: int = 0
     # True for books a member typed in because Open Library missed them (#7).
     custom: bool = False
+    # Viewer's ordered favourite slot for this book, if any (1–3).
+    favorite_position: int | None = None
 
 
 class ShelfItemOut(BaseModel):
@@ -361,9 +364,34 @@ class ShelfPatchIn(BaseModel):
         return value
 
 
+class FavoriteOut(BaseModel):
+    position: int
+    book: BookOut
+
+
+class FavoritesIn(BaseModel):
+    book_ids: list[int] = Field(default_factory=list)
+
+    @field_validator("book_ids")
+    @classmethod
+    def book_ids_ok(cls, value: list[int]) -> list[int]:
+        if len(value) > FAVORITE_LIMIT:
+            raise ValueError("At most 3 favourites")
+        if len(value) != len(set(value)):
+            raise ValueError("Each book can only be a favourite once")
+        if any(book_id <= 0 for book_id in value):
+            raise ValueError("That book is not in the club yet")
+        return value
+
+
+class FavoritesOut(BaseModel):
+    items: list[FavoriteOut]
+
+
 class ShelfListOut(BaseModel):
     user: UserOut
     items: list[ShelfItemOut]
+    favorites: list[FavoriteOut] = []
 
 
 class GoodreadsSkipOut(BaseModel):

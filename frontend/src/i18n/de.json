@@ -194,6 +194,27 @@
     "nothingHere": "Nichts hier.",
     "dragHere": "Zieh ein Buch hierher."
   },
+  "favorites": {
+    "heading": "Lieblingsbücher",
+    "portraitLabel": "Lieblingsbücher",
+    "slot": "{n}. {title}",
+    "emptyOwn": "Noch keine Favoriten. Markiere bis zu drei auf einer Buchseite.",
+    "added": "Zu den Favoriten hinzugefügt",
+    "removed": "Von den Favoriten entfernt",
+    "saveFailed": "Favoriten konnten nicht gespeichert werden",
+    "full": "Du hast schon 3 Favoriten. Entferne zuerst einen, oder sortiere unter Einstellungen um.",
+    "mark": "Favorit",
+    "markedAt": "Favorit · {n}",
+    "settingsBlurb": "Bis zu drei Bücher, unter deinem Foto am Regal. Jedes Buch im Club-Katalog kann ein Favorit sein — es muss nicht in deinem Regal stehen.",
+    "emptySlot": "Leer",
+    "moveUp": "Nach oben",
+    "moveDown": "Nach unten",
+    "clearSlot": "Diesen Favoriten leeren",
+    "clearAll": "Alle leeren",
+    "cleared": "Favoriten geleert",
+    "saved": "Favoriten gespeichert",
+    "position": "Platz {n}"
+  },
   "memberShelf": {
     "back": "← Club",
     "title": "Regal von {name}",
@@ -430,6 +451,10 @@
     "pictureTooManyPixels": "Das Bild hat zu viele Pixel",
     "usePicture": "Nimm ein JPEG, PNG, WebP oder GIF",
     "notAPicture": "Das ist keine Bilddatei",
-    "noPicture": "Kein Profilbild"
+    "noPicture": "Kein Profilbild",
+    "bookNotInClub": "Dieses Buch ist noch nicht im Club",
+    "duplicateFavourite": "Jedes Buch darf nur einmal ein Favorit sein",
+    "tooManyFavourites": "Höchstens 3 Favoriten",
+    "favouritesFull": "Du hast schon 3 Favoriten"
   }
 }
