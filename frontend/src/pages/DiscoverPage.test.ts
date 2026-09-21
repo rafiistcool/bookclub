@@ -28,6 +28,7 @@ import { ApiError } from "../api/client";
 import { i18n } from "../i18n";
 import DiscoverPage from "./DiscoverPage.vue";
 import { resetDiscoverBrowseCache } from "./discoverCache";
+import { rememberSearch, resetSearchHistory } from "./searchHistory";
 
 function hit(overrides: Partial<SearchHit> = {}): SearchHit {
   return {
@@ -101,6 +102,7 @@ describe("DiscoverPage", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     resetDiscoverBrowseCache();
+    resetSearchHistory();
     search.mockReset();
     trending.mockReset();
     subject.mockReset();
@@ -213,6 +215,7 @@ describe("DiscoverPage search results", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     resetDiscoverBrowseCache();
+    resetSearchHistory();
     search.mockReset();
     trending.mockReset();
     subject.mockReset();
@@ -377,5 +380,94 @@ describe("DiscoverPage search results", () => {
     await flushPromises();
     expect(wrapper.text()).toContain("Circe");
     expect(wrapper.text()).not.toContain("Dune");
+  });
+});
+
+describe("DiscoverPage search history", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    resetDiscoverBrowseCache();
+    resetSearchHistory();
+    search.mockReset();
+    trending.mockReset();
+    subject.mockReset();
+    trending.mockResolvedValue(page([hit({ ol_work_key: "/works/OLT", title: "Trending Book" })]));
+    subject.mockResolvedValue(page([]));
+    search.mockResolvedValue(page([hit()]));
+  });
+
+  async function openHistory(wrapper: VueWrapper) {
+    await wrapper.get(".search-combo").trigger("focusin");
+    await nextTick();
+  }
+
+  it("keeps the history panel closed until the search field is focused", async () => {
+    rememberSearch("Circe");
+    const { wrapper } = await mountDiscover();
+    expect(wrapper.find(".search-history").exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("Recent searches");
+  });
+
+  it("remembers a submitted query and restores it after remount", async () => {
+    const { wrapper } = await mountDiscover();
+    await submitQuery(wrapper, "dune");
+    await flushPromises();
+    expect(wrapper.find(".search-history").exists()).toBe(false);
+    wrapper.unmount();
+
+    const { wrapper: again } = await mountDiscover();
+    await openHistory(again);
+    expect(again.get(".search-history").attributes("aria-label")).toBe("Recent searches");
+    expect(again.get(".search-history-query").text()).toContain("dune");
+  });
+
+  it("runs a recent query again without retyping it", async () => {
+    rememberSearch("Circe");
+    const { wrapper } = await mountDiscover();
+    await openHistory(wrapper);
+    await wrapper.get(".search-history-query").trigger("click");
+    await flushPromises();
+    expect(search).toHaveBeenCalled();
+    const params = (search.mock.calls[0][0] ?? {}) as { q?: string };
+    expect(params.q).toBe("Circe");
+    expect(wrapper.get("input[type='search']").element).toHaveProperty("value", "Circe");
+    expect(wrapper.text()).toContain("Circe");
+    expect(wrapper.find(".search-history").exists()).toBe(false);
+  });
+
+  it("filters recents to the text in the field", async () => {
+    rememberSearch("Circe");
+    rememberSearch("Dune");
+    const { wrapper } = await mountDiscover();
+    await wrapper.get("input[type='search']").setValue("ci");
+    await openHistory(wrapper);
+    const labels = wrapper.findAll(".search-history-query").map((btn) => btn.text());
+    expect(labels.join(" ")).toContain("Circe");
+    expect(labels.join(" ")).not.toContain("Dune");
+  });
+
+  it("removes one recent and can clear the rest", async () => {
+    rememberSearch("Circe");
+    rememberSearch("Dune");
+    const { wrapper } = await mountDiscover();
+    await openHistory(wrapper);
+    await wrapper
+      .get("button[aria-label='Remove “Circe” from history']")
+      .trigger("click");
+    await nextTick();
+    expect(wrapper.findAll(".search-history-query")).toHaveLength(1);
+    expect(wrapper.get(".search-history-query").text()).toContain("Dune");
+
+    await wrapper.get(".search-history-clear button").trigger("click");
+    await nextTick();
+    expect(wrapper.find(".search-history").exists()).toBe(false);
+  });
+
+  it("does not remember a blank submit", async () => {
+    const { wrapper } = await mountDiscover();
+    await submitQuery(wrapper, "   ");
+    await flushPromises();
+    await openHistory(wrapper);
+    expect(wrapper.find(".search-history").exists()).toBe(false);
   });
 });
