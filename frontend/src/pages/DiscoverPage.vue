@@ -658,6 +658,9 @@ defineExpose({ loadPage });
             :aria-label="t('discover.recentSearches')"
             @mousedown.prevent
           >
+            <li class="search-history-heading" role="presentation">
+              {{ t("discover.recentSearches") }}
+            </li>
             <li
               v-for="item in visibleRecent"
               :key="item"
@@ -997,11 +1000,22 @@ defineExpose({ loadPage });
   z-index: 2;
   margin: 0;
   padding: var(--space-1);
+  max-height: min(320px, 50vh);
+  overflow: auto;
   list-style: none;
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   box-shadow: var(--elev-float);
+}
+
+.search-history-heading {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  color: var(--text-subtle);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
 }
 
 .search-history-row,
