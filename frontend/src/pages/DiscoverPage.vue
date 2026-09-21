@@ -17,6 +17,7 @@ import {
   readSearchHistory,
   rememberSearch,
 } from "./searchHistory";
+import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import type { SearchHit, SearchSort } from "../types";
 
@@ -66,6 +67,7 @@ type Row = {
 const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
+const session = useSession();
 const toast = useToast();
 
 const SHORT_QUERY = computed(() => t("discover.shortQuery"));
@@ -139,6 +141,8 @@ const visibleRecent = computed(() => {
 });
 
 const showHistory = computed(() => historyOpen.value && visibleRecent.value.length > 0);
+
+const historyOwner = computed(() => session.user?.id ?? null);
 
 const stillSearching = computed(
   () => pending.value && searchWaitSec.value >= STILL_WAITING_AFTER_SEC,
@@ -471,10 +475,15 @@ function syncRoute() {
   void router.replace({ path: "/discover", query: next });
 }
 
+function loadRecent() {
+  recentSearches.value = readSearchHistory(historyOwner.value);
+  historyOpen.value = false;
+}
+
 function rememberSubmitted(raw: string) {
   const trimmed = raw.trim();
-  if (!trimmed) return;
-  recentSearches.value = rememberSearch(trimmed);
+  if (!trimmed || shortQuery.value) return;
+  recentSearches.value = rememberSearch(historyOwner.value, trimmed);
 }
 
 function submitSearch() {
@@ -493,11 +502,17 @@ function applyRecent(item: string) {
 }
 
 function removeRecent(item: string) {
-  recentSearches.value = forgetSearch(item);
+  recentSearches.value = forgetSearch(historyOwner.value, item);
 }
 
 function clearRecent() {
-  recentSearches.value = clearSearchHistory();
+  recentSearches.value = clearSearchHistory(historyOwner.value);
+  historyOpen.value = false;
+}
+
+function onSearchEscape(event: KeyboardEvent) {
+  if (!showHistory.value) return;
+  event.preventDefault();
   historyOpen.value = false;
 }
 
@@ -577,6 +592,8 @@ watch(sentinel, (el, previous) => {
   if (el) observer.observe(el);
 });
 
+watch(historyOwner, () => loadRecent(), { immediate: true });
+
 onMounted(() => {
   observer = new IntersectionObserver(
     (entries) => {
@@ -584,7 +601,6 @@ onMounted(() => {
     },
     { rootMargin: "240px 0px" },
   );
-  recentSearches.value = readSearchHistory();
   const willFetch = readRoute();
   if (browsing.value) ensureBrowse();
   if (!willFetch && !browsing.value && !shortQuery.value) void loadPage(1, true);
@@ -636,10 +652,7 @@ defineExpose({ loadPage });
               spellcheck="false"
               :placeholder="t('discover.placeholder')"
               :aria-label="t('discover.searchAria')"
-              :aria-expanded="showHistory ? 'true' : 'false'"
-              aria-controls="discover-recent-searches"
-              aria-haspopup="listbox"
-              @keydown.escape.prevent="historyOpen = false"
+              @keydown.escape="onSearchEscape"
             />
             <button
               v-if="query || submittedQuery"
@@ -654,7 +667,7 @@ defineExpose({ loadPage });
             v-if="showHistory"
             id="discover-recent-searches"
             class="search-history"
-            role="listbox"
+            role="list"
             :aria-label="t('discover.recentSearches')"
             @mousedown.prevent
           >
@@ -665,8 +678,8 @@ defineExpose({ loadPage });
               v-for="item in visibleRecent"
               :key="item"
               class="search-history-row"
-              role="option"
-              :aria-selected="submittedQuery === item"
+              role="listitem"
+              :class="{ current: submittedQuery === item }"
             >
               <button class="search-history-query" type="button" @click="applyRecent(item)">
                 <svg
@@ -693,7 +706,7 @@ defineExpose({ loadPage });
                 <span aria-hidden="true">×</span>
               </button>
             </li>
-            <li v-if="recentSearches.length" class="search-history-clear">
+            <li v-if="recentSearches.length" class="search-history-clear" role="listitem">
               <button class="text-btn" type="button" @click="clearRecent">
                 {{ t("discover.clearRecent") }}
               </button>
@@ -1048,7 +1061,7 @@ defineExpose({ loadPage });
 }
 
 .search-history-query:hover,
-.search-history-row[aria-selected="true"] .search-history-query {
+.search-history-row.current .search-history-query {
   background: var(--surface-2);
 }
 

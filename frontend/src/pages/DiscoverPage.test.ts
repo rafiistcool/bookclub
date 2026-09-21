@@ -3,7 +3,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { nextTick } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { SearchHit, SearchPage } from "../types";
+import type { SearchHit, SearchPage, User } from "../types";
 
 const search = vi.fn();
 const trending = vi.fn();
@@ -26,9 +26,24 @@ vi.mock("../api/client", () => ({
 
 import { ApiError } from "../api/client";
 import { i18n } from "../i18n";
+import { useSession } from "../stores/session";
 import DiscoverPage from "./DiscoverPage.vue";
 import { resetDiscoverBrowseCache } from "./discoverCache";
 import { rememberSearch, resetSearchHistory } from "./searchHistory";
+
+const ADA = 1;
+const LENA = 2;
+
+function member(id = ADA, username = "ada"): User {
+  return {
+    id,
+    username,
+    theme: "paper",
+    color_mode: "system",
+    locale: "en",
+    avatar_url: null,
+  };
+}
 
 function hit(overrides: Partial<SearchHit> = {}): SearchHit {
   return {
@@ -62,7 +77,10 @@ const bookTileStub = {
   template: "<div class='tile'>{{ title }}</div>",
 };
 
-async function mountDiscover(initial = "/discover") {
+async function mountDiscover(initial = "/discover", user: User | null = member()) {
+  const pinia = createPinia();
+  setActivePinia(pinia);
+  if (user) useSession().user = user;
   const router = createRouter({
     history: createMemoryHistory(),
     scrollBehavior() {
@@ -82,13 +100,13 @@ async function mountDiscover(initial = "/discover") {
     { template: "<router-view />" },
     {
       global: {
-        plugins: [createPinia(), router, i18n],
+        plugins: [pinia, router, i18n],
         stubs: { BookTile: bookTileStub, AddBookSheet: true },
       },
     },
   );
   await flushPromises();
-  return { wrapper, router };
+  return { wrapper, router, pinia };
 }
 
 async function submitQuery(wrapper: VueWrapper, q: string) {
@@ -402,7 +420,7 @@ describe("DiscoverPage search history", () => {
   }
 
   it("keeps the history panel closed until the search field is focused", async () => {
-    rememberSearch("Circe");
+    rememberSearch(ADA, "Circe");
     const { wrapper } = await mountDiscover();
     expect(wrapper.find(".search-history").exists()).toBe(false);
     expect(wrapper.text()).not.toContain("Recent searches");
@@ -417,12 +435,13 @@ describe("DiscoverPage search history", () => {
 
     const { wrapper: again } = await mountDiscover();
     await openHistory(again);
+    expect(again.get(".search-history").attributes("role")).toBe("list");
     expect(again.get(".search-history").attributes("aria-label")).toBe("Recent searches");
     expect(again.get(".search-history-query").text()).toContain("dune");
   });
 
   it("runs a recent query again without retyping it", async () => {
-    rememberSearch("Circe");
+    rememberSearch(ADA, "Circe");
     const { wrapper } = await mountDiscover();
     await openHistory(wrapper);
     await wrapper.get(".search-history-query").trigger("click");
@@ -436,8 +455,8 @@ describe("DiscoverPage search history", () => {
   });
 
   it("filters recents to the text in the field", async () => {
-    rememberSearch("Circe");
-    rememberSearch("Dune");
+    rememberSearch(ADA, "Circe");
+    rememberSearch(ADA, "Dune");
     const { wrapper } = await mountDiscover();
     await wrapper.get("input[type='search']").setValue("ci");
     await openHistory(wrapper);
@@ -447,8 +466,8 @@ describe("DiscoverPage search history", () => {
   });
 
   it("removes one recent and can clear the rest", async () => {
-    rememberSearch("Circe");
-    rememberSearch("Dune");
+    rememberSearch(ADA, "Circe");
+    rememberSearch(ADA, "Dune");
     const { wrapper } = await mountDiscover();
     await openHistory(wrapper);
     await wrapper
@@ -468,6 +487,77 @@ describe("DiscoverPage search history", () => {
     await submitQuery(wrapper, "   ");
     await flushPromises();
     await openHistory(wrapper);
+    expect(wrapper.find(".search-history").exists()).toBe(false);
+  });
+
+  it("does not remember a short failed query", async () => {
+    const { wrapper } = await mountDiscover();
+    await submitQuery(wrapper, "it");
+    await flushPromises();
+    expect(wrapper.text()).toContain("That search is too short");
+    await wrapper.get("button.text-btn").trigger("click");
+    await nextTick();
+    await openHistory(wrapper);
+    expect(wrapper.find(".search-history").exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("Recent searches");
+  });
+
+  it("keeps recents per signed-in member and clears them on logout", async () => {
+    rememberSearch(ADA, "Dune");
+    rememberSearch(LENA, "Circe");
+    const { wrapper } = await mountDiscover("/discover", member(ADA, "till"));
+    await openHistory(wrapper);
+    expect(wrapper.get(".search-history-query").text()).toContain("Dune");
+    expect(wrapper.findAll(".search-history-query").map((btn) => btn.text()).join(" ")).not.toContain(
+      "Circe",
+    );
+    wrapper.unmount();
+
+    const { wrapper: lena, pinia } = await mountDiscover("/discover", member(LENA, "lena"));
+    await openHistory(lena);
+    expect(lena.get(".search-history-query").text()).toContain("Circe");
+    expect(lena.findAll(".search-history-query").map((btn) => btn.text()).join(" ")).not.toContain(
+      "Dune",
+    );
+
+    useSession(pinia).user = null;
+    await nextTick();
+    await openHistory(lena);
+    expect(lena.find(".search-history").exists()).toBe(false);
+  });
+
+  it("exposes a labelled button list instead of a combobox listbox", async () => {
+    rememberSearch(ADA, "Circe");
+    const { wrapper } = await mountDiscover();
+    const input = wrapper.get("input[type='search']");
+    expect(input.attributes("aria-haspopup")).toBeUndefined();
+    expect(input.attributes("aria-controls")).toBeUndefined();
+    expect(input.attributes("aria-expanded")).toBeUndefined();
+    await openHistory(wrapper);
+    const panel = wrapper.get(".search-history");
+    expect(panel.attributes("role")).toBe("list");
+    expect(wrapper.find("[role='listbox']").exists()).toBe(false);
+    expect(wrapper.find("[role='option']").exists()).toBe(false);
+    expect(wrapper.findAll("[role='listitem']").length).toBeGreaterThan(0);
+    expect(wrapper.get(".search-history-query").element.tagName).toBe("BUTTON");
+  });
+
+  it("only prevents Escape when the history panel is open", async () => {
+    rememberSearch(ADA, "Circe");
+    const { wrapper } = await mountDiscover();
+    const input = wrapper.get("input[type='search']").element as HTMLInputElement;
+
+    const closed = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    input.dispatchEvent(closed);
+    await nextTick();
+    expect(closed.defaultPrevented).toBe(false);
+
+    await openHistory(wrapper);
+    expect(wrapper.find(".search-history").exists()).toBe(true);
+    const open = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    input.dispatchEvent(open);
+    await nextTick();
+    expect(open.defaultPrevented).toBe(true);
     expect(wrapper.find(".search-history").exists()).toBe(false);
   });
 });
