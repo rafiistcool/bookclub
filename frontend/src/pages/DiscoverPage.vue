@@ -11,6 +11,13 @@ import {
   readBrowseSnapshot,
   writeBrowseSnapshot,
 } from "./discoverCache";
+import {
+  clearSearchHistory,
+  forgetSearch,
+  readSearchHistory,
+  rememberSearch,
+} from "./searchHistory";
+import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import type { SearchHit, SearchSort } from "../types";
 
@@ -60,6 +67,7 @@ type Row = {
 const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
+const session = useSession();
 const toast = useToast();
 
 const SHORT_QUERY = computed(() => t("discover.shortQuery"));
@@ -69,6 +77,8 @@ const submittedQuery = ref("");
 const subject = ref("");
 const sortPick = ref<"" | Exclude<SearchSort, "relevance">>("");
 const hideOnShelf = ref(false);
+const recentSearches = ref<string[]>([]);
+const historyOpen = ref(false);
 
 const items = ref<SearchHit[]>([]);
 const page = ref(0);
@@ -123,6 +133,16 @@ const shortQuery = computed(() => {
   const q = submittedQuery.value.trim();
   return q.length > 0 && q.length < 3 && !extractIsbn(q) && !subject.value;
 });
+
+const visibleRecent = computed(() => {
+  const needle = query.value.trim().toLowerCase();
+  if (!needle) return recentSearches.value;
+  return recentSearches.value.filter((item) => item.toLowerCase().includes(needle));
+});
+
+const showHistory = computed(() => historyOpen.value && visibleRecent.value.length > 0);
+
+const historyOwner = computed(() => session.user?.id ?? null);
 
 const stillSearching = computed(
   () => pending.value && searchWaitSec.value >= STILL_WAITING_AFTER_SEC,
@@ -455,9 +475,52 @@ function syncRoute() {
   void router.replace({ path: "/discover", query: next });
 }
 
+function loadRecent() {
+  recentSearches.value = readSearchHistory(historyOwner.value);
+  historyOpen.value = false;
+}
+
+function rememberSubmitted(raw: string) {
+  const trimmed = raw.trim();
+  if (!trimmed || shortQuery.value) return;
+  recentSearches.value = rememberSearch(historyOwner.value, trimmed);
+}
+
 function submitSearch() {
   submittedQuery.value = query.value.trim();
+  rememberSubmitted(submittedQuery.value);
+  historyOpen.value = false;
   syncRoute();
+}
+
+function applyRecent(item: string) {
+  query.value = item;
+  submittedQuery.value = item.trim();
+  rememberSubmitted(submittedQuery.value);
+  historyOpen.value = false;
+  syncRoute();
+}
+
+function removeRecent(item: string) {
+  recentSearches.value = forgetSearch(historyOwner.value, item);
+}
+
+function clearRecent() {
+  recentSearches.value = clearSearchHistory(historyOwner.value);
+  historyOpen.value = false;
+}
+
+function onSearchEscape(event: KeyboardEvent) {
+  if (!showHistory.value) return;
+  event.preventDefault();
+  historyOpen.value = false;
+}
+
+function onSearchFocusOut(event: FocusEvent) {
+  const root = event.currentTarget as HTMLElement | null;
+  const next = event.relatedTarget as Node | null;
+  if (root && next && root.contains(next)) return;
+  historyOpen.value = false;
 }
 
 function clearSearch() {
@@ -529,6 +592,8 @@ watch(sentinel, (el, previous) => {
   if (el) observer.observe(el);
 });
 
+watch(historyOwner, () => loadRecent(), { immediate: true });
+
 onMounted(() => {
   observer = new IntersectionObserver(
     (entries) => {
@@ -563,36 +628,91 @@ defineExpose({ loadPage });
 
     <div class="discover-search">
       <form role="search" @submit.prevent="submitSearch">
-        <span class="search-field">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.8"
-            stroke-linecap="round"
-            aria-hidden="true"
+        <div class="search-combo" @focusin="historyOpen = true" @focusout="onSearchFocusOut">
+          <span class="search-field">
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              aria-hidden="true"
+            >
+              <circle cx="11" cy="11" r="6.4" />
+              <path d="M15.8 15.8 20.2 20.2" />
+            </svg>
+            <input
+              v-model="query"
+              type="search"
+              inputmode="search"
+              autocomplete="off"
+              autocorrect="off"
+              spellcheck="false"
+              :placeholder="t('discover.placeholder')"
+              :aria-label="t('discover.searchAria')"
+              @keydown.escape="onSearchEscape"
+            />
+            <button
+              v-if="query || submittedQuery"
+              class="text-btn"
+              type="button"
+              @click="clearSearch"
+            >
+              {{ t("common.clear") }}
+            </button>
+          </span>
+          <ul
+            v-if="showHistory"
+            id="discover-recent-searches"
+            class="search-history"
+            role="list"
+            :aria-label="t('discover.recentSearches')"
+            @mousedown.prevent
           >
-            <circle cx="11" cy="11" r="6.4" />
-            <path d="M15.8 15.8 20.2 20.2" />
-          </svg>
-          <input
-            v-model="query"
-            type="search"
-            inputmode="search"
-            :placeholder="t('discover.placeholder')"
-            :aria-label="t('discover.searchAria')"
-          />
-          <button
-            v-if="query || submittedQuery"
-            class="text-btn"
-            type="button"
-            @click="clearSearch"
-          >
-            {{ t("common.clear") }}
-          </button>
-        </span>
+            <li class="search-history-heading" role="presentation">
+              {{ t("discover.recentSearches") }}
+            </li>
+            <li
+              v-for="item in visibleRecent"
+              :key="item"
+              class="search-history-row"
+              role="listitem"
+              :class="{ current: submittedQuery === item }"
+            >
+              <button class="search-history-query" type="button" @click="applyRecent(item)">
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  aria-hidden="true"
+                >
+                  <circle cx="12" cy="12" r="7.2" />
+                  <path d="M12 8.6v4.1l2.6 1.5" />
+                </svg>
+                <span>{{ item }}</span>
+              </button>
+              <button
+                class="search-history-forget"
+                type="button"
+                :aria-label="t('discover.removeRecent', { query: item })"
+                @click="removeRecent(item)"
+              >
+                <span aria-hidden="true">×</span>
+              </button>
+            </li>
+            <li v-if="recentSearches.length" class="search-history-clear" role="listitem">
+              <button class="text-btn" type="button" @click="clearRecent">
+                {{ t("discover.clearRecent") }}
+              </button>
+            </li>
+          </ul>
+        </div>
         <button class="btn btn-primary" type="submit">{{ t("discover.search") }}</button>
       </form>
       <div class="chip-row scroll" role="group" :aria-label="t('discover.subjectFilter')">
@@ -847,11 +967,17 @@ defineExpose({ loadPage });
   margin-bottom: var(--space-2);
 }
 
-.search-field {
+.search-combo {
+  position: relative;
   flex: 1;
+  min-width: 0;
+}
+
+.search-field {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  width: 100%;
   padding: 0 var(--space-3);
   min-height: 46px;
   border: 1px solid var(--border-strong);
@@ -877,6 +1003,90 @@ defineExpose({ loadPage });
 .search-field:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
+}
+
+.search-history {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + var(--space-1));
+  z-index: 2;
+  margin: 0;
+  padding: var(--space-1);
+  max-height: min(320px, 50vh);
+  overflow: auto;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-float);
+}
+
+.search-history-heading {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  color: var(--text-subtle);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
+.search-history-row,
+.search-history-clear {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.search-history-query {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--tap);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-weight: 600;
+  text-align: left;
+}
+
+.search-history-query span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-history-query:hover,
+.search-history-row.current .search-history-query {
+  background: var(--surface-2);
+}
+
+.search-history-forget {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: var(--tap);
+  min-height: var(--tap);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-subtle);
+  font-size: var(--text-xl);
+  line-height: 1;
+}
+
+.search-history-forget:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.search-history-clear {
+  justify-content: flex-end;
+  padding: 0 var(--space-1);
 }
 
 .results-head {
