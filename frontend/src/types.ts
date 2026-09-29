@@ -24,6 +24,8 @@ export type Book = {
 };
 
 export type ShelfItem = {
+  started_at?: string | null;
+  finished_at?: string | null;
   id: number;
   status: Status;
   position: number;
@@ -107,7 +109,14 @@ export type FavoritesList = {
   items: Favorite[];
 };
 
+export type SearchHistoryEntry = {
+  id: number;
+  query: string;
+  last_used_at: string;
+};
+
 export type ShelfList = {
+  timezone: string;
   user: User;
   items: ShelfItem[];
   favorites: Favorite[];

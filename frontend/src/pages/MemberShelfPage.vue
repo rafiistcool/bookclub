@@ -4,10 +4,10 @@ import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { api, ApiError } from "../api/client";
 import Avatar from "../components/Avatar.vue";
-import BookTile from "../components/BookTile.vue";
+import ShelfBoard from "../components/ShelfBoard.vue";
 import FavoritePortrait from "../components/FavoritePortrait.vue";
 import TileSkeleton from "../components/TileSkeleton.vue";
-import { STATUSES, statusLabel, statusShort, type Status } from "../constants";
+import { STATUSES, statusShort, type Status } from "../constants";
 import { tp } from "../i18n";
 import type { Favorite, ShelfItem } from "../types";
 
@@ -21,6 +21,7 @@ const items = ref<ShelfItem[]>([]);
 const favorites = ref<Favorite[]>([]);
 const error = ref("");
 const loaded = ref(false);
+const timezone = ref("UTC");
 const filter = ref<Filter>("all");
 
 const counts = computed(() => {
@@ -35,12 +36,6 @@ const counts = computed(() => {
   return tally;
 });
 
-const visible = computed(() =>
-  filter.value === "all"
-    ? items.value
-    : items.value.filter((item) => item.status === filter.value),
-);
-
 async function load() {
   loaded.value = false;
   filter.value = "all";
@@ -50,6 +45,7 @@ async function load() {
     username.value = shelf.user.username;
     avatarUrl.value = shelf.user.avatar_url;
     items.value = shelf.items;
+    timezone.value = shelf.timezone || "UTC";
     favorites.value = shelf.favorites;
     error.value = "";
   } catch (err) {
@@ -107,23 +103,7 @@ watch(() => route.params.username, load);
         </button>
       </div>
 
-      <div v-if="visible.length" class="book-grid">
-        <BookTile
-          v-for="item in visible"
-          :key="item.id"
-          :ol-work-key="item.book.ol_work_key"
-          :title="item.book.title"
-          :authors="item.book.authors"
-          :cover-id="item.book.cover_id"
-          :image-url="item.book.cover_url"
-          :status="item.status"
-          :rating="item.rating"
-          show-authors
-        />
-      </div>
-      <p v-else class="fine subtle">
-        {{ t("memberShelf.nothingIn", { status: statusLabel(filter as Status) }) }}
-      </p>
+      <ShelfBoard :items="items" :filter="filter" :timezone="timezone" grid readonly />
     </template>
   </section>
 </template>

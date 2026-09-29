@@ -37,6 +37,7 @@ from app.routers import (
     push,
     quotes,
     shelf,
+    search_history,
     stats,
     vote,
 )
@@ -130,6 +131,7 @@ def create_app() -> FastAPI:
     app.include_router(books.router)
     app.include_router(diary.router)
     app.include_router(shelf.router)
+    app.include_router(search_history.router)
     app.include_router(members.router)
     app.include_router(pick.router)
     app.include_router(overlap.router)

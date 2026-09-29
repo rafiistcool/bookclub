@@ -457,3 +457,19 @@ class NextUpBallot(SQLModel, table=True):
     vote: Optional[NextUpVote] = Relationship(back_populates="ballots")
     nomination: Optional[NextUpNomination] = Relationship(back_populates="ballots")
     user: Optional[User] = Relationship()
+
+
+class SearchHistory(SQLModel, table=True):
+    __tablename__ = "search_history"
+    __table_args__ = (
+        UniqueConstraint("user_id", "normalized_query", name="uq_search_history_user_query"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    query: str
+    normalized_query: str
+    last_used_at: datetime = Field(
+        default_factory=utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )

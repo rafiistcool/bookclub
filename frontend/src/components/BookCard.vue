@@ -5,18 +5,23 @@ import {
   bookPath,
   starLabel,
   statusShort,
-  type Status,
 } from "../constants";
 import type { ShelfItem } from "../types";
 import BookCover from "./BookCover.vue";
+import BookTile from "./BookTile.vue";
+import BottomSheet from "./BottomSheet.vue";
 
 const props = defineProps<{
   item: ShelfItem;
   readonly?: boolean;
+  grid?: boolean;
+  organizing?: boolean;
+  disabled?: boolean;
   clubPickKey?: string | null;
 }>();
 
 const emit = defineEmits<{
+  action: [action: "status" | "date" | "previous" | "next"];
   remove: [];
   clubPick: [];
   nominate: [];
@@ -26,11 +31,11 @@ const menuOpen = ref(false);
 const root = ref<HTMLElement | null>(null);
 
 function onDocumentPointerDown(event: PointerEvent) {
-  if (!root.value?.contains(event.target as Node)) menuOpen.value = false;
+  if (!root.value?.contains(event.target as Node)) closeMenu();
 }
 
 function onDocumentKeydown(event: KeyboardEvent) {
-  if (event.key === "Escape") menuOpen.value = false;
+  if (event.key === "Escape") closeMenu();
 }
 
 function toggleMenu() {
@@ -62,8 +67,16 @@ const isClubPick = () =>
 </script>
 
 <template>
-  <article ref="root" class="shelf-card">
-    <RouterLink class="card-link" :to="bookPath(item.book.ol_work_key)">
+  <article ref="root" class="shelf-card" :class="{ 'grid-card': grid }">
+    <BookTile v-if="grid"
+      :ol-work-key="item.book.ol_work_key" :title="item.book.title"
+      :authors="item.book.authors" :cover-id="item.book.cover_id"
+      :image-url="item.book.cover_url" :status="item.status"
+      :rating="item.rating" :club-pick="isClubPick()" show-authors
+    />
+    <button v-if="organizing && !readonly" class="drag-handle icon-btn" type="button"
+      :disabled="disabled" :aria-label="t('shelf.dragBook', { title: item.book.title })">↕</button>
+    <RouterLink v-if="!grid" class="card-link" :to="bookPath(item.book.ol_work_key)">
       <BookCover
         :title="item.book.title"
         :cover-id="item.book.cover_id"
@@ -93,6 +106,7 @@ const isClubPick = () =>
         type="button"
         :aria-label="t('card.actions')"
         :aria-expanded="menuOpen"
+        :disabled="disabled"
         @click="toggleMenu"
       >
         <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
@@ -101,7 +115,13 @@ const isClubPick = () =>
           <circle cx="19" cy="12" r="1.8" fill="currentColor" />
         </svg>
       </button>
-      <div v-if="menuOpen" class="card-menu">
+      <component :is="grid ? BottomSheet : 'div'" v-if="menuOpen"
+        :class="grid ? 'mobile-book-menu' : 'card-menu'" :title="item.book.title" @close="closeMenu">
+        <div class="card-menu-content">
+        <button type="button" :disabled="disabled" @click="closeMenu(); emit('action', 'status')">{{ t("shelf.changeStatus") }}</button>
+        <button v-if="item.status === 'finished'" type="button" :disabled="disabled" @click="closeMenu(); emit('action', 'date')">{{ t("shelf.editDate") }}</button>
+        <button type="button" :disabled="disabled" @click="closeMenu(); emit('action', 'previous')">{{ t("shelf.movePrevious") }}</button>
+        <button type="button" :disabled="disabled" @click="closeMenu(); emit('action', 'next')">{{ t("shelf.moveNext") }}</button>
         <RouterLink :to="bookPath(item.book.ol_work_key)">{{ t("card.openBook") }}</RouterLink>
         <button type="button" @click="closeMenu(); emit('clubPick')">
           {{ t("card.setPick") }}
@@ -110,12 +130,18 @@ const isClubPick = () =>
           {{ t("card.nominate") }}
         </button>
         <button type="button" @click="closeMenu(); emit('remove')">{{ t("common.remove") }}</button>
-      </div>
+        </div>
+      </component>
     </div>
   </article>
 </template>
 
 <style scoped>
+.shelf-card.grid-card { display: block; padding: 0; border: 0; background: transparent; }
+.grid-card .card-actions { position: absolute; top: 4px; right: 4px; }
+.grid-card .card-actions > button, .drag-handle { background: var(--surface); border: 1px solid var(--border); }
+.drag-handle { position: absolute; top: 4px; left: 4px; z-index: 2; cursor: grab; touch-action: none; }
+
 .shelf-card {
   position: relative;
   display: flex;
@@ -168,8 +194,8 @@ const isClubPick = () =>
   z-index: 30;
 }
 
-.card-menu a,
-.card-menu button {
+.card-menu-content a,
+.card-menu-content button {
   display: block;
   width: 100%;
   text-align: left;
@@ -183,8 +209,8 @@ const isClubPick = () =>
   text-decoration: none;
 }
 
-.card-menu a:hover,
-.card-menu button:hover {
+.card-menu-content a:hover,
+.card-menu-content button:hover {
   background: var(--surface-2);
 }
 </style>

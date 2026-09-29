@@ -1,5 +1,5 @@
 import re
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -336,6 +336,7 @@ class ShelfAddIn(BaseModel):
 
 
 class ShelfPatchIn(BaseModel):
+    finished_on: date | None = None
     status: ShelfStatus | None = None
     position: int | None = Field(default=None, ge=0)
     rating: int | None = Field(default=None, ge=1, le=5)
@@ -389,6 +390,7 @@ class FavoritesOut(BaseModel):
 
 
 class ShelfListOut(BaseModel):
+    timezone: str = "UTC"
     user: UserOut
     items: list[ShelfItemOut]
     favorites: list[FavoriteOut] = []
@@ -770,3 +772,21 @@ class VoteSuggestionOut(BaseModel):
 
 class VoteSuggestionsOut(BaseModel):
     items: list[VoteSuggestionOut]
+
+
+class SearchHistoryIn(BaseModel):
+    query: str
+
+    @field_validator("query")
+    @classmethod
+    def query_ok(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if not 1 <= len(value) <= 300:
+            raise ValueError("Search must contain between 1 and 300 characters")
+        return value
+
+
+class SearchHistoryOut(BaseModel):
+    id: int
+    query: str
+    last_used_at: datetime

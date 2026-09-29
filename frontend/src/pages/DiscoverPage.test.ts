@@ -8,6 +8,9 @@ import type { SearchHit, SearchPage } from "../types";
 const search = vi.fn();
 const trending = vi.fn();
 const subject = vi.fn();
+const searchHistory = vi.fn();
+const rememberSearch = vi.fn();
+const deleteSearchHistory = vi.fn();
 
 vi.mock("../api/client", () => ({
   ApiError: class ApiError extends Error {
@@ -18,6 +21,9 @@ vi.mock("../api/client", () => ({
     }
   },
   api: {
+    searchHistory: (...args: unknown[]) => searchHistory(...args),
+    rememberSearch: (...args: unknown[]) => rememberSearch(...args),
+    deleteSearchHistory: (...args: unknown[]) => deleteSearchHistory(...args),
     search: (...args: unknown[]) => search(...args),
     trending: (...args: unknown[]) => trending(...args),
     subject: (...args: unknown[]) => subject(...args),
@@ -102,6 +108,9 @@ describe("DiscoverPage", () => {
     setActivePinia(createPinia());
     resetDiscoverBrowseCache();
     search.mockReset();
+    searchHistory.mockReset().mockResolvedValue([]);
+    rememberSearch.mockReset().mockResolvedValue([]);
+    deleteSearchHistory.mockReset().mockResolvedValue(undefined);
     trending.mockReset();
     subject.mockReset();
     trending.mockResolvedValue(page([hit({ ol_work_key: "/works/OL7W", title: "Atomic Habits" })]));
@@ -377,5 +386,60 @@ describe("DiscoverPage search results", () => {
     await flushPromises();
     expect(wrapper.text()).toContain("Circe");
     expect(wrapper.text()).not.toContain("Dune");
+  });
+});
+
+
+describe("DiscoverPage search history", () => {
+  beforeEach(() => {
+    resetDiscoverBrowseCache();
+    search.mockReset().mockResolvedValue(page([]));
+    trending.mockResolvedValue(page([]));
+    subject.mockResolvedValue(page([]));
+    searchHistory.mockReset().mockResolvedValue(Array.from({ length: 7 }, (_, i) => ({ id: i + 1, query: `Book ${i + 1}`, last_used_at: "2026-07-01T12:00:00Z" })));
+    rememberSearch.mockReset().mockResolvedValue([]);
+    deleteSearchHistory.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("shows five recent terms, expands, and reruns a selected search", async () => {
+    const { wrapper } = await mountDiscover();
+    expect(wrapper.findAll(".history-query")).toHaveLength(5);
+    await wrapper.findAll("button").find((button) => button.text() === "Show all")!.trigger("click");
+    expect(wrapper.findAll(".history-query")).toHaveLength(7);
+    await wrapper.get(".history-query").trigger("click");
+    await flushPromises();
+    expect(rememberSearch).toHaveBeenCalledWith("Book 1");
+    expect(search).toHaveBeenCalled();
+    expect((wrapper.get("input[type=search]").element as HTMLInputElement).value).toBe("Book 1");
+    wrapper.unmount();
+  });
+
+  it("saves only submitted valid terms, even with zero results or history failure", async () => {
+    const { wrapper } = await mountDiscover();
+    await wrapper.get("input[type=search]").setValue("Circe");
+    expect(rememberSearch).not.toHaveBeenCalled();
+    await submitQuery(wrapper, "it");
+    await flushPromises();
+    expect(rememberSearch).not.toHaveBeenCalled();
+    rememberSearch.mockRejectedValue(new Error("offline"));
+    await submitQuery(wrapper, "Circe");
+    await flushPromises();
+    expect(rememberSearch).toHaveBeenCalledWith("Circe");
+    expect(search).toHaveBeenCalled();
+    expect(wrapper.text()).toContain("Nothing matched");
+    wrapper.unmount();
+  });
+
+  it("deletes one term or all terms without changing search results", async () => {
+    const { wrapper } = await mountDiscover();
+    await wrapper.get('button[aria-label="Remove search: Book 1"]').trigger("click");
+    await flushPromises();
+    expect(deleteSearchHistory).toHaveBeenCalledWith(1);
+    expect(wrapper.find('button[aria-label="Remove search: Book 1"]').exists()).toBe(false);
+    await wrapper.findAll("button").find((button) => button.text() === "Clear history")!.trigger("click");
+    await flushPromises();
+    expect(deleteSearchHistory).toHaveBeenCalledWith(undefined);
+    expect(wrapper.find(".search-history").exists()).toBe(false);
+    wrapper.unmount();
   });
 });

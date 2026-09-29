@@ -1,9 +1,13 @@
+from datetime import datetime, time, timezone
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app import activity
+from app.config import get_settings
+from app.timezone import club_zone, resolved_timezone
 from app.deps import get_current_user, get_session
 from app.goodreads import (
     MAX_IMPORT_BYTES,
@@ -79,6 +83,7 @@ def get_shelf(
         if (item := favorite_out(row)) is not None
     ]
     return ShelfListOut(
+        timezone=resolved_timezone(get_settings().bookclub_tz),
         user=user_out(owner),
         items=[item for item in items if item is not None],
         favorites=favorites,
@@ -217,6 +222,7 @@ def update_shelf_item(
         and "take" not in payload.model_fields_set
         and "dnf_reason" not in payload.model_fields_set
         and "progress" not in payload.model_fields_set
+        and "finished_on" not in payload.model_fields_set
     ):
         raise HTTPException(status_code=400, detail="Nothing to update")
     entry = _load_entry(session, entry_id)
@@ -226,6 +232,13 @@ def update_shelf_item(
     previous_progress = entry.progress
     status = payload.status or entry.status
     position = payload.position if payload.position is not None else entry.position
+    if "finished_on" in payload.model_fields_set:
+        if status != ShelfStatus.finished:
+            raise HTTPException(status_code=400, detail="Reading date requires a finished book")
+        zone = club_zone(get_settings().bookclub_tz)
+        if payload.finished_on and payload.finished_on > datetime.now(zone).date():
+            raise HTTPException(status_code=400, detail="Reading date cannot be in the future")
+
     if payload.status is not None or any(
         field in payload.model_fields_set for field in ("rating", "take", "dnf_reason")
     ):
@@ -246,7 +259,17 @@ def update_shelf_item(
             status,
             payload.progress if "progress" in payload.model_fields_set else entry.progress,
         )
-    place_item(session, entry, status, position)
+    place_item(session, entry, status, position, stamp_dates=status != previous_status)
+    if "finished_on" in payload.model_fields_set:
+        entry.finished_at = (
+            datetime.combine(payload.finished_on, time(12), tzinfo=zone).astimezone(timezone.utc)
+            if payload.finished_on else None
+        )
+        # A retrospectively entered completion must not precede the recorded start.
+        if entry.finished_at and entry.started_at:
+            started = entry.started_at.replace(tzinfo=timezone.utc) if entry.started_at.tzinfo is None else entry.started_at
+            if started > entry.finished_at:
+                entry.started_at = entry.finished_at
     if status != previous_status:
         _status_event(entry, me, session, added=False)
     elif (

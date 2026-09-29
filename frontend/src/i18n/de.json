@@ -192,7 +192,20 @@
     "removeTitle": "„{title}“ entfernen?",
     "removeBlurb": "Es verlässt dein Regal samt Bewertung und Notizen. Du kannst das direkt danach rückgängig machen.",
     "nothingHere": "Nichts hier.",
-    "dragHere": "Zieh ein Buch hierher."
+    "dragHere": "Zieh ein Buch hierher.",
+    "organize": "Regal ordnen",
+    "doneOrdering": "Ordnen beenden",
+    "organizeHint": "Ziehe am Griff, um Bücher zu ordnen. Den Lesestatus änderst du im Buchmenü.",
+    "dragBook": "{title} verschieben",
+    "changeStatus": "Lesestatus ändern",
+    "editDate": "Lesedatum ändern",
+    "movePrevious": "Nach vorne",
+    "moveNext": "Nach hinten",
+    "noReadingDate": "Ohne Lesedatum",
+    "finishedOn": "Gelesen am",
+    "clearDate": "Lesedatum entfernen",
+    "dateSaved": "Lesedatum gespeichert",
+    "orderSaved": "Reihenfolge gespeichert"
   },
   "favorites": {
     "heading": "Lieblingsbücher",
@@ -302,7 +315,13 @@
       "biography": "Biografie",
       "horror": "Horror",
       "young_adult": "Jugendbuch"
-    }
+    },
+    "recentSearches": "Letzte Suchanfragen",
+    "clearHistory": "Verlauf löschen",
+    "allHistory": "Alle anzeigen",
+    "lessHistory": "Weniger anzeigen",
+    "removeSearch": "Suchanfrage entfernen: {query}",
+    "historyDeleteFailed": "Der Suchverlauf konnte nicht gelöscht werden. Versuch es noch einmal."
   },
   "book": {
     "stillLoading": "Buch lädt noch… {n} s bisher.",
@@ -455,6 +474,9 @@
     "bookNotInClub": "Dieses Buch ist noch nicht im Club",
     "duplicateFavourite": "Jedes Buch darf nur einmal ein Favorit sein",
     "tooManyFavourites": "Höchstens 3 Favoriten",
-    "favouritesFull": "Du hast schon 3 Favoriten"
+    "favouritesFull": "Du hast schon 3 Favoriten",
+    "readingDateFinished": "Ein Lesedatum ist nur für gelesene Bücher möglich.",
+    "readingDateFuture": "Das Lesedatum darf nicht in der Zukunft liegen.",
+    "historyNotFound": "Diese Suche ist nicht mehr in deinem Verlauf."
   }
 }

@@ -3,7 +3,6 @@ import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
 import Avatar from "../components/Avatar.vue";
-import BookTile from "../components/BookTile.vue";
 import BottomSheet from "../components/BottomSheet.vue";
 import FavoritePortrait from "../components/FavoritePortrait.vue";
 import MeetingSheet from "../components/MeetingSheet.vue";
@@ -14,6 +13,7 @@ import { STATUSES, statusLabel, statusShort, type Status } from "../constants";
 import { tp } from "../i18n";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
+import { clubDate, dropPosition, shelfGroups } from "../shelf";
 import type { ClubPick, Favorite, ShelfItem } from "../types";
 
 type Filter = "all" | Status;
@@ -32,6 +32,11 @@ const removing = ref<ShelfItem | null>(null);
 const settingPick = ref<ShelfItem | null>(null);
 const clubPick = ref<ClubPick | null>(null);
 const clubTimezone = ref("UTC");
+const organizing = ref(false);
+const saving = ref(false);
+const editing = ref<{ item: ShelfItem; action: "status" | "date" } | null>(null);
+const dateValue = ref("");
+const today = computed(() => clubDate(new Date().toISOString(), clubTimezone.value));
 
 const counts = computed(() => {
   const tally: Record<Filter, number> = {
@@ -45,24 +50,12 @@ const counts = computed(() => {
   return tally;
 });
 
-const visible = computed(() => {
-  const rows =
-    filter.value === "all"
-      ? items.value
-      : items.value.filter((item) => item.status === filter.value);
-  return [...rows].sort(
-    (a, b) =>
-      STATUSES.indexOf(a.status) - STATUSES.indexOf(b.status) ||
-      a.position - b.position ||
-      a.id - b.id,
-  );
-});
-
 async function load() {
   try {
     const shelf = await api.myShelf();
     items.value = shelf.items;
     favorites.value = shelf.favorites;
+    clubTimezone.value = shelf.timezone || "UTC";
     error.value = "";
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : t("shelf.loadFailed");
@@ -72,23 +65,78 @@ async function load() {
   try {
     const current = await api.clubPick();
     clubPick.value = current.pick;
-    clubTimezone.value = current.timezone;
   } catch {
     clubPick.value = null;
   }
 }
 
 async function onDropped(item: ShelfItem, status: Status, position: number) {
+  if (saving.value) return;
   const snapshot = items.value.map((row) => ({ ...row }));
+  saving.value = true;
+  // Mirror the server's per-status order immediately, including its source gap.
+  const siblings = items.value.filter((row) => row.status === status && row.id !== item.id)
+    .sort((a, b) => a.position - b.position || a.id - b.id);
+  const moved = { ...item, status };
+  if (status !== item.status) moved.finished_at = status === "finished" ? new Date().toISOString() : null;
+  siblings.splice(Math.min(position, siblings.length), 0, moved);
+  siblings.forEach((row, index) => { row.position = index; });
+  const remaining = items.value.filter((row) => row.status !== status && row.id !== item.id);
+  if (item.status !== status) remaining.filter((row) => row.status === item.status)
+    .sort((a, b) => a.position - b.position || a.id - b.id)
+    .forEach((row, index) => { row.position = index; });
+  items.value = [...remaining, ...siblings];
   try {
-    await api.patchShelf(item.id, { status, position });
-    const shelf = await api.myShelf();
-    items.value = shelf.items;
-    favorites.value = shelf.favorites;
-    toast.show(t("shelf.movedTo", { status: statusLabel(status) }));
+    const saved = await api.patchShelf(item.id, { status, position });
+    items.value = items.value.map((row) => row.id === saved.id ? saved : row);
+    toast.show(t(status === item.status ? "shelf.orderSaved" : "shelf.movedTo", { status: statusLabel(status) }));
   } catch (err) {
     items.value = snapshot;
     toast.show(err instanceof ApiError ? err.message : t("shelf.moveFailed"));
+  } finally {
+    saving.value = false;
+  }
+}
+
+function onAction(item: ShelfItem, action: "status" | "date" | "previous" | "next") {
+  if (saving.value) return;
+  if (action === "status" || action === "date") {
+    editing.value = { item, action };
+    dateValue.value = clubDate(item.finished_at, clubTimezone.value);
+    return;
+  }
+  const group = shelfGroups(items.value, clubTimezone.value).find((group) => group.items.some((row) => row.id === item.id));
+  if (!group) return;
+  const rows = [...group.items];
+  const index = rows.findIndex((row) => row.id === item.id);
+  const target = index + (action === "previous" ? -1 : 1);
+  if (target < 0 || target >= rows.length) return;
+  rows.splice(index, 1);
+  rows.splice(target, 0, item);
+  void onDropped(item, item.status, dropPosition(items.value, rows, item, item.status));
+}
+
+function changeStatus(status: Status) {
+  const item = editing.value?.item;
+  if (!item || saving.value) return;
+  editing.value = null;
+  void onDropped(item, status, 0);
+}
+
+async function saveDate(clear = false) {
+  const item = editing.value?.item;
+  if (!item || saving.value) return;
+  if (!clear && (!dateValue.value || dateValue.value > today.value)) return;
+  saving.value = true;
+  try {
+    const saved = await api.patchShelf(item.id, { finished_on: clear ? null : dateValue.value });
+    items.value = items.value.map((row) => row.id === saved.id ? saved : row);
+    editing.value = null;
+    toast.show(t("shelf.dateSaved"));
+  } catch (err) {
+    toast.show(err instanceof ApiError ? err.message : t("shelf.moveFailed"));
+  } finally {
+    saving.value = false;
   }
 }
 
@@ -217,37 +265,34 @@ onMounted(load);
         </button>
       </div>
 
+      <button v-if="!desktop" class="btn btn-ghost organize-button" type="button"
+        :aria-pressed="organizing" :disabled="saving" @click="organizing = !organizing">
+        {{ organizing ? t('shelf.doneOrdering') : t('shelf.organize') }}
+      </button>
+      <p v-if="!desktop && organizing" class="fine subtle">{{ t('shelf.organizeHint') }}</p>
       <ShelfBoard
-        v-if="desktop"
-        :items="items"
+        :items="items" :grid="!desktop" :organizing="!desktop && organizing"
+        :filter="desktop ? 'all' : filter" :timezone="clubTimezone" :disabled="saving"
         :club-pick-key="clubPick?.book.ol_work_key"
-        @dropped="onDropped"
-        @remove="removing = $event"
-        @club-pick="settingPick = $event"
-        @nominate="nominate"
+        @dropped="onDropped" @action="onAction"
+        @remove="removing = $event" @club-pick="settingPick = $event" @nominate="nominate"
       />
-
-      <template v-else>
-        <div v-if="visible.length" class="book-grid">
-          <BookTile
-            v-for="item in visible"
-            :key="item.id"
-            :ol-work-key="item.book.ol_work_key"
-            :title="item.book.title"
-            :authors="item.book.authors"
-            :cover-id="item.book.cover_id"
-            :image-url="item.book.cover_url"
-            :status="item.status"
-            :rating="item.rating"
-            :club-pick="item.book.ol_work_key === clubPick?.book.ol_work_key"
-            show-authors
-          />
-        </div>
-        <p v-else class="fine subtle">
-          {{ t("shelf.nothingIn", { status: statusLabel(filter as Status) }) }}
-        </p>
-      </template>
     </template>
+
+    <BottomSheet v-if="editing" :title="t(editing.action === 'date' ? 'shelf.editDate' : 'shelf.changeStatus')"
+      @close="!saving && (editing = null)">
+      <p>{{ editing.item.book.title }}</p>
+      <div v-if="editing.action === 'status'" class="stack">
+        <button v-for="status in STATUSES" :key="status" type="button" class="btn btn-ghost btn-block"
+          :disabled="saving || status === editing.item.status" @click="changeStatus(status)">{{ statusLabel(status) }}</button>
+      </div>
+      <form v-else class="stack" @submit.prevent="saveDate()">
+        <label for="finished-on">{{ t('shelf.finishedOn') }}</label>
+        <input id="finished-on" v-model="dateValue" type="date" :max="today" required :disabled="saving" />
+        <button class="btn btn-primary" type="submit" :disabled="saving || !dateValue || dateValue > today">{{ t('common.save') }}</button>
+        <button class="btn btn-ghost" type="button" :disabled="saving" @click="saveDate(true)">{{ t('shelf.clearDate') }}</button>
+      </form>
+    </BottomSheet>
 
     <MeetingSheet
       v-if="settingPick"
@@ -280,6 +325,7 @@ onMounted(load);
 </template>
 
 <style scoped>
+.organize-button { margin-bottom: var(--space-4); }
 .shelf-head {
   display: flex;
   align-items: center;

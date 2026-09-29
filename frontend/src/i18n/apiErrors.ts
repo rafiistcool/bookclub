@@ -1,6 +1,9 @@
 import { t } from "./index";
 
 const API_ERROR_KEYS: Record<string, string> = {
+  "Reading date requires a finished book": "errors.readingDateFinished",
+  "Reading date cannot be in the future": "errors.readingDateFuture",
+  "Search history entry not found": "errors.historyNotFound",
   "Not signed in": "errors.notSignedIn",
   "That username is already taken": "errors.usernameTaken",
   "That invite code is not valid": "errors.inviteInvalid",

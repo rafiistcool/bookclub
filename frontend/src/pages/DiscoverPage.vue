@@ -12,7 +12,7 @@ import {
   writeBrowseSnapshot,
 } from "./discoverCache";
 import { useToast } from "../stores/toast";
-import type { SearchHit, SearchSort } from "../types";
+import type { SearchHistoryEntry, SearchHit, SearchSort } from "../types";
 
 /** Two in flight shortens the browse waterfall. A same-host probe of five
  *  subjects at concurrency 2 still produced a connect timeout after a warm-up,
@@ -63,6 +63,63 @@ const router = useRouter();
 const toast = useToast();
 
 const SHORT_QUERY = computed(() => t("discover.shortQuery"));
+
+const history = ref<SearchHistoryEntry[]>([]);
+const historyExpanded = ref(false);
+const historyBusy = ref(false);
+let historyVersion = 0;
+let historyWrites = Promise.resolve();
+
+async function loadHistory() {
+  if (historyBusy.value) return;
+  const version = ++historyVersion;
+  try {
+    const entries = await api.searchHistory();
+    if (version === historyVersion) history.value = entries;
+  } catch {
+    // A missing history must never block catalog discovery.
+  }
+}
+
+function rememberSearch(value: string) {
+  const version = ++historyVersion;
+  historyBusy.value = true;
+  historyWrites = historyWrites.then(async () => {
+    try {
+      const entries = await api.rememberSearch(value);
+      if (version === historyVersion) history.value = entries;
+    } catch {
+      // Search remains usable when saving its history fails.
+    } finally {
+      if (version === historyVersion) historyBusy.value = false;
+    }
+  });
+}
+
+function deleteHistory(id?: number) {
+  if (historyBusy.value) return;
+  const version = ++historyVersion;
+  historyBusy.value = true;
+  // Serialize deletion with searches submitted while the request is in flight.
+  historyWrites = historyWrites.then(async () => {
+    try {
+      await api.deleteSearchHistory(id);
+      if (version === historyVersion) {
+        history.value = id === undefined ? [] : history.value.filter((entry) => entry.id !== id);
+      }
+    } catch {
+      toast.show(t("discover.historyDeleteFailed"));
+    } finally {
+      if (version === historyVersion) historyBusy.value = false;
+    }
+  });
+}
+
+function repeatSearch(value: string) {
+  query.value = value;
+  subject.value = "";
+  submitSearch();
+}
 
 const query = ref("");
 const submittedQuery = ref("");
@@ -457,7 +514,11 @@ function syncRoute() {
 
 function submitSearch() {
   submittedQuery.value = query.value.trim();
+  if (submittedQuery.value && !shortQuery.value) rememberSearch(submittedQuery.value);
+  const unchanged = router.currentRoute.value.query.q === submittedQuery.value
+    && (router.currentRoute.value.query.subject || "") === subject.value;
   syncRoute();
+  if (unchanged && !shortQuery.value && submittedQuery.value) void loadPage(1, true);
 }
 
 function clearSearch() {
@@ -530,6 +591,7 @@ watch(sentinel, (el, previous) => {
 });
 
 onMounted(() => {
+  void loadHistory();
   observer = new IntersectionObserver(
     (entries) => {
       if (entries.some((entry) => entry.isIntersecting)) maybeLoadMore();
@@ -579,6 +641,7 @@ defineExpose({ loadPage });
           </svg>
           <input
             v-model="query"
+            @focus="loadHistory"
             type="search"
             inputmode="search"
             :placeholder="t('discover.placeholder')"
@@ -595,6 +658,22 @@ defineExpose({ loadPage });
         </span>
         <button class="btn btn-primary" type="submit">{{ t("discover.search") }}</button>
       </form>
+      <section v-if="!query.trim() && history.length" class="search-history" :aria-label="t('discover.recentSearches')" :aria-busy="historyBusy">
+        <div class="history-heading">
+          <strong>{{ t('discover.recentSearches') }}</strong>
+          <button type="button" class="text-btn" :disabled="historyBusy" @click="deleteHistory()">{{ t('discover.clearHistory') }}</button>
+        </div>
+        <ul>
+          <li v-for="entry in (historyExpanded ? history : history.slice(0, 5))" :key="entry.id">
+            <button type="button" class="text-btn history-query" @click="repeatSearch(entry.query)">{{ entry.query }}</button>
+            <button type="button" class="icon-btn" :disabled="historyBusy"
+              :aria-label="t('discover.removeSearch', { query: entry.query })" @click="deleteHistory(entry.id)">×</button>
+          </li>
+        </ul>
+        <button v-if="history.length > 5" type="button" class="text-btn" @click="historyExpanded = !historyExpanded">
+          {{ historyExpanded ? t('discover.lessHistory') : t('discover.allHistory') }}
+        </button>
+      </section>
       <div class="chip-row scroll" role="group" :aria-label="t('discover.subjectFilter')">
         <button
           v-for="chip in SUBJECTS"
@@ -830,6 +909,11 @@ defineExpose({ loadPage });
 </template>
 
 <style scoped>
+.search-history { margin: var(--space-3) 0; max-height: 45vh; overflow: auto; }
+.history-heading, .search-history li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.search-history ul { list-style: none; margin: 0; padding: 0; }
+.history-query { flex: 1; text-align: left; overflow-wrap: anywhere; min-height: var(--tap); }
+
 .discover-search {
   position: sticky;
   top: calc(var(--header-h) + env(safe-area-inset-top));

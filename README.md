@@ -12,10 +12,10 @@ You host it. There is no public service. One named club per instance.
 
 </div>
 
-- **Shelves** — Want to read → Reading → Finished / Did not finish. Drag on desktop; filter grid on a phone.
+- **Shelves** — Want to read → Reading → Finished / Did not finish. Drag on desktop; organize the cover grid on a phone. Finished books are grouped by completion month, with editable reading dates.
 - **Club pick** — Home is the current book: meeting countdown, everyone’s progress, and a next-up vote.
 - **Diary** — Short notes at a reading position (“at 45%”, “Finished ★★★★☆”). Spoiler-shielded for members who are behind; one level of replies and emoji reactions.
-- **Discover** — Search by title, author, or ISBN ([Open Library](https://openlibrary.org), or [Google Books](https://developers.google.com/books) only when `GOOGLE_BOOKS_API_KEY` is set). Trending row, subject shelves, and **add your own** when the catalog misses.
+- **Discover** — Search by title, author, or ISBN ([Open Library](https://openlibrary.org), or [Google Books](https://developers.google.com/books) only when `GOOGLE_BOOKS_API_KEY` is set). Private search history follows your account across devices (last 20 terms, individually or fully deletable). Trending row, subject shelves, and **add your own** when the catalog misses.
 - **Looks** — Four palettes (Paper, Slate, Forest, Ink) in light / dark / system, per member. Optional profile photo; initials if you skip it. English or German, toggled in Settings.
 - **Push** — Web Push for meetings, a new pick, and diary notes.
 - **One box** — FastAPI + the Vue app in a single image. SQLite WAL. No Redis, no Postgres. amd64 and arm64.

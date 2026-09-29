@@ -91,6 +91,8 @@ def place_item(
     item: ShelfEntry,
     status: ShelfStatus,
     position: int,
+    *,
+    stamp_dates: bool = True,
 ) -> None:
     source_status = item.status
     source_changed = source_status != status
@@ -108,7 +110,8 @@ def place_item(
     siblings.insert(insert_at, item)
     item.status = status
     item.updated_at = utcnow()
-    apply_reading_dates(item, status, changed=source_changed)
+    if stamp_dates:
+        apply_reading_dates(item, status, changed=source_changed)
     for index, row in enumerate(siblings):
         row.position = index
 

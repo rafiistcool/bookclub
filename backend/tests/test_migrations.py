@@ -68,6 +68,9 @@ def test_legacy_database_is_upgraded_in_place(tmp_path):
     assert missing_columns(engine) == {}
 
     with engine.begin() as conn:
+        history_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(search_history)"))}
+        assert {"user_id", "query", "normalized_query", "last_used_at"} <= history_cols
+        assert conn.execute(text("SELECT COUNT(*) FROM search_history")).scalar() == 0
         shelf_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(shelf)"))}
         assert {"rating", "take", "dnf_reason", "progress", "started_at", "finished_at"} <= shelf_cols
         book_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(books)"))}

@@ -79,3 +79,40 @@ def test_dnf_has_start_but_no_finish(client):
     item = _add(client, "did_not_finish", dnf_reason="Too long")
     assert item["started_at"] is not None
     assert item["finished_at"] is None
+
+
+def test_edit_and_clear_finish_date_survive_reordering(client, monkeypatch):
+    from app.config import get_settings
+    monkeypatch.setenv('BOOKCLUB_TZ', 'Pacific/Kiritimati')
+    get_settings.cache_clear()
+    register(client, 'ada')
+    item = _add(client, 'finished')
+    edited = _patch(client, item['id'], finished_on='2025-07-01')
+    # Noon on July 1 in UTC+14 is still June 30 in UTC.
+    assert edited['finished_at'].startswith('2025-06-30T22:00:00')
+    assert edited['started_at'] <= edited['finished_at']
+    assert client.get('/api/shelf').json()['timezone'] == 'Pacific/Kiritimati'
+    moved = _patch(client, item['id'], position=0, status='finished')
+    assert moved['finished_at'] == edited['finished_at']
+    assert _patch(client, item['id'], finished_on=None)['finished_at'] is None
+    assert _patch(client, item['id'], position=0, status='finished')['finished_at'] is None
+    assert _patch(client, item['id'], rating=4)['finished_at'] is None
+
+
+def test_invalid_finish_date_does_not_modify_entry(client):
+    register(client, 'ada')
+    item = _add(client, 'want_to_read')
+    assert client.patch(f"/api/shelf/{item['id']}", json={'finished_on': '2025-07-01'}).status_code == 400
+    assert client.patch(f"/api/shelf/{item['id']}", json={'status': 'finished', 'finished_on': '2999-01-01'}).status_code == 400
+    assert client.get('/api/shelf').json()['items'][0]['status'] == 'want_to_read'
+    assert client.patch(f"/api/shelf/{item['id']}", json={'finished_on': 'invalid'}).status_code == 400
+
+
+def test_reread_replaces_completion_without_duplicate(client):
+    register(client, 'ada')
+    item = _add(client, 'finished')
+    _patch(client, item['id'], finished_on='2020-07-01')
+    _patch(client, item['id'], status='currently_reading')
+    finished = _patch(client, item['id'], status='finished')
+    assert not finished['finished_at'].startswith('2020-07')
+    assert len(client.get('/api/shelf').json()['items']) == 1

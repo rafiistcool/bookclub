@@ -21,6 +21,7 @@ import type {
   VoteApplyResult,
   VoteBook,
   SearchPage,
+  SearchHistoryEntry,
   SearchParams,
   ShelfItem,
   ShelfList,
@@ -69,6 +70,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
+  searchHistory: () => request<SearchHistoryEntry[]>("/api/search-history"),
+  rememberSearch: (query: string) => request<SearchHistoryEntry[]>("/api/search-history", {
+    method: "POST", body: JSON.stringify({ query }),
+  }),
+  deleteSearchHistory: (id?: number) => request<void>(
+    id === undefined ? "/api/search-history" : `/api/search-history/${id}`, { method: "DELETE" },
+  ),
   config: () => request<ClubConfig>("/api/config"),
   me: () => request<User>("/api/auth/me"),
   register: (body: { username: string; password: string; invite_code: string }) =>
@@ -135,7 +143,7 @@ export const api = {
     year: number | null;
     status: Status;
   } & FinishNote) => request<ShelfItem>("/api/shelf", { method: "POST", body: JSON.stringify(body) }),
-  patchShelf: (id: number, body: { status?: Status; position?: number } & FinishNote) =>
+  patchShelf: (id: number, body: { status?: Status; position?: number; finished_on?: string | null } & FinishNote) =>
     request<ShelfItem>(`/api/shelf/${id}`, {
       method: "PATCH",
       body: JSON.stringify(body),

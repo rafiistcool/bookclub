@@ -192,7 +192,20 @@
     "removeTitle": "Remove “{title}”?",
     "removeBlurb": "It leaves your shelf along with your rating and notes. You can undo this right after.",
     "nothingHere": "Nothing here.",
-    "dragHere": "Drag a book here."
+    "dragHere": "Drag a book here.",
+    "organize": "Organize shelf",
+    "doneOrdering": "Done organizing",
+    "organizeHint": "Drag a handle to reorder books. Use the book menu to change its status.",
+    "dragBook": "Reorder {title}",
+    "changeStatus": "Change reading status",
+    "editDate": "Change reading date",
+    "movePrevious": "Move earlier",
+    "moveNext": "Move later",
+    "noReadingDate": "No reading date",
+    "finishedOn": "Finished on",
+    "clearDate": "Remove reading date",
+    "dateSaved": "Reading date saved",
+    "orderSaved": "Shelf order saved"
   },
   "favorites": {
     "heading": "Favourites",
@@ -302,7 +315,13 @@
       "biography": "Biography",
       "horror": "Horror",
       "young_adult": "Young adult"
-    }
+    },
+    "recentSearches": "Recent searches",
+    "clearHistory": "Clear history",
+    "allHistory": "Show all",
+    "lessHistory": "Show less",
+    "removeSearch": "Remove search: {query}",
+    "historyDeleteFailed": "Could not delete search history. Try again."
   },
   "book": {
     "stillLoading": "Still loading this book… {n}s so far.",
@@ -455,6 +474,9 @@
     "bookNotInClub": "That book is not in the club yet",
     "duplicateFavourite": "Each book can only be a favourite once",
     "tooManyFavourites": "At most 3 favourites",
-    "favouritesFull": "You already have 3 favourites"
+    "favouritesFull": "You already have 3 favourites",
+    "readingDateFinished": "Reading dates can only be set for finished books.",
+    "readingDateFuture": "The reading date cannot be in the future.",
+    "historyNotFound": "That search is no longer in your history."
   }
 }

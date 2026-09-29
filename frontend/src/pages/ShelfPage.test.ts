@@ -5,10 +5,12 @@ import type { Favorite, ShelfItem } from "../types";
 
 const myShelf = vi.fn();
 const clubPick = vi.fn();
+const patchShelf = vi.fn();
 
 vi.mock("../api/client", () => ({
   ApiError: class ApiError extends Error {},
   api: {
+    patchShelf: (...args: unknown[]) => patchShelf(...args),
     myShelf: (...args: unknown[]) => myShelf(...args),
     clubPick: (...args: unknown[]) => clubPick(...args),
   },
@@ -16,6 +18,7 @@ vi.mock("../api/client", () => ({
 
 import { useSession } from "../stores/session";
 import ShelfPage from "./ShelfPage.vue";
+import ShelfBoard from "../components/ShelfBoard.vue";
 
 function favorite(position: number, title: string): Favorite {
   return {
@@ -91,6 +94,7 @@ describe("ShelfPage favourites portrait", () => {
   beforeEach(() => {
     myShelf.mockReset();
     clubPick.mockReset();
+    patchShelf.mockReset();
     Object.defineProperty(window, "matchMedia", {
       writable: true,
       configurable: true,
@@ -125,4 +129,42 @@ describe("ShelfPage favourites portrait", () => {
     expect(portrait.text()).toContain("1");
     expect(portrait.text()).toContain("2");
   });
+  it("offers mobile organization and rolls back failed moves while blocking overlapping moves", async () => {
+    const first = item(1, "First"), second = { ...item(2, "Second"), position: 1 };
+    const wrapper = await mountShelf([], [first, second]);
+    expect(wrapper.find(".drag-handle").exists()).toBe(false);
+    await wrapper.get(".organize-button").trigger("click");
+    expect(wrapper.findAll(".drag-handle")).toHaveLength(2);
+    let reject!: (reason: Error) => void;
+    patchShelf.mockReturnValue(new Promise((_resolve, no) => { reject = no; }));
+    const board = wrapper.getComponent(ShelfBoard);
+    board.vm.$emit("dropped", second, "want_to_read", 0);
+    await flushPromises();
+    expect(board.props("disabled")).toBe(true);
+    expect(wrapper.findAll(".book-tile-title").map((node) => node.text())).toEqual(["Second", "First"]);
+    board.vm.$emit("dropped", first, "finished", 0);
+    expect(patchShelf).toHaveBeenCalledTimes(1);
+    reject(new Error("offline"));
+    await flushPromises();
+    expect(board.props("disabled")).toBe(false);
+    expect(wrapper.findAll(".book-tile-title").map((node) => node.text())).toEqual(["First", "Second"]);
+    wrapper.unmount();
+  });
+
+  it("edits reading dates and moves the book to the matching month", async () => {
+    const book = { ...item(1, "Circe"), status: "finished" as const, finished_at: "2026-07-10T12:00:00Z" };
+    const wrapper = await mountShelf([], [book]);
+    expect(wrapper.text()).toContain("July 2026");
+    await wrapper.get(".card-actions > button").trigger("click");
+    await wrapper.findAll(".card-menu-content button").find((button) => button.text() === "Change reading date")!.trigger("click");
+    await wrapper.get('input[type="date"]').setValue("2026-06-15");
+    patchShelf.mockResolvedValue({ ...book, finished_at: "2026-06-15T12:00:00Z" });
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(patchShelf).toHaveBeenCalledWith(1, { finished_on: "2026-06-15" });
+    expect(wrapper.text()).toContain("June 2026");
+    expect(wrapper.text()).not.toContain("July 2026");
+    wrapper.unmount();
+  });
+
 });
