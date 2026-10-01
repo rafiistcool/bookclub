@@ -116,3 +116,39 @@ def test_reread_replaces_completion_without_duplicate(client):
     finished = _patch(client, item['id'], status='finished')
     assert not finished['finished_at'].startswith('2020-07')
     assert len(client.get('/api/shelf').json()['items']) == 1
+
+
+def test_move_between_months_saves_order_and_date_together(client, monkeypatch):
+    from app.config import get_settings
+    monkeypatch.setenv('BOOKCLUB_TZ', 'Europe/Berlin')
+    get_settings.cache_clear()
+    register(client, 'ada')
+    first = _add(client, 'finished', rating=5, take='Keep my review')
+    second = client.post('/api/shelf', json={**BOOK, 'ol_work_key': '/works/OL2W', 'status': 'finished'}).json()
+    _patch(client, first['id'], finished_on='2025-09-23')
+    moved = _patch(client, first['id'], shelf_position=1, finished_on='2025-08-01')
+    assert moved['shelf_position'] == 1
+    assert moved['finished_at'].startswith('2025-08-01T10:00:00')
+    assert moved['status'] == 'finished'
+    assert moved['rating'] == 5
+    assert moved['take'] == 'Keep my review'
+    persisted = {row['id']: row for row in client.get('/api/shelf').json()['items']}
+    assert persisted[first['id']]['finished_at'] == moved['finished_at']
+    assert persisted[second['id']]['shelf_position'] == 0
+    # Reordering within August must preserve the completion date.
+    reordered = _patch(client, first['id'], shelf_position=0)
+    assert reordered['finished_at'] == moved['finished_at']
+    before = client.get('/api/shelf').json()['items']
+    response = client.patch(f"/api/shelf/{first['id']}", json={'shelf_position': 1, 'finished_on': '2999-01-01'})
+    assert response.status_code == 400
+    assert client.get('/api/shelf').json()['items'] == before
+
+
+def test_cannot_change_another_members_completion_month(client):
+    register(client, 'ada')
+    item = _add(client, 'finished')
+    invite = client.post('/api/invites').json()['code']
+    client.post('/api/auth/logout')
+    assert register(client, 'grace', invite=invite).status_code == 201
+    response = client.patch(f"/api/shelf/{item['id']}", json={'shelf_position': 0, 'finished_on': '2025-08-01'})
+    assert response.status_code == 404

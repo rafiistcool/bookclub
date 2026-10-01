@@ -14,34 +14,38 @@ export function clubDate(iso: string | null | undefined, timeZone: string): stri
   return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
-export type ShelfGroup = { key: string; status: Status; month: string; items: ShelfItem[] };
-
-export function shelfGroups(items: ShelfItem[], timeZone: string, includeCurrentMonth = false): ShelfGroup[] {
-  const sorted = [...items].sort((a, b) => a.position - b.position || a.id - b.id);
-  return STATUSES.flatMap((status): ShelfGroup[] => {
-    const rows = sorted.filter((item) => item.status === status);
-    if (status !== "finished") return [{ key: status, status, month: "", items: rows }];
-    const months = new Map<string, ShelfItem[]>();
-    if (includeCurrentMonth) months.set(clubDate(new Date().toISOString(), timeZone).slice(0, 7), []);
-    for (const item of rows) {
-      const month = clubDate(item.finished_at, timeZone).slice(0, 7);
-      if (!months.has(month)) months.set(month, []);
-      months.get(month)!.push(item);
-    }
-    return [...months.keys()].sort().reverse().map((month) => ({
-      key: `finished:${month}`, status, month, items: months.get(month)!,
-    }));
-  });
+/** Match the API's initial order and keep manual placements across statuses. */
+export function orderedShelf(items: ShelfItem[]): ShelfItem[] {
+  return [...items].sort((a, b) =>
+    Number(a.shelf_position != null) - Number(b.shelf_position != null)
+    || (a.shelf_position ?? STATUSES.indexOf(a.status)) - (b.shelf_position ?? STATUSES.indexOf(b.status))
+    || a.position - b.position || a.id - b.id);
 }
 
-// Month groups are only a view over the existing per-status order. Translate
-// the drop's visible neighbours to the position expected by the shelf API.
-export function dropPosition(all: ShelfItem[], rows: ShelfItem[], item: ShelfItem, status: Status): number {
-  const siblings = all.filter((row) => row.status === status && row.id !== item.id)
-    .sort((a, b) => a.position - b.position || a.id - b.id);
-  const index = rows.findIndex((row) => row.id === item.id);
-  const next = rows[index + 1];
+export function readingMonth(item: ShelfItem, timezone: string): string {
+  return item.status === "finished" ? clubDate(item.finished_at, timezone).slice(0, 7) : "";
+}
+
+export function readingMonthLabel(month: string, locale: string): string {
+  if (!month) return "";
+  return new Intl.DateTimeFormat(locale, { month: "long", year: "numeric", timeZone: "UTC" })
+    .format(new Date(`${month}-01T12:00:00Z`));
+}
+
+/** The finished filter is chronological; manual order breaks ties within a month. */
+export function visibleShelf(items: ShelfItem[], filter: "all" | Status, timezone: string): ShelfItem[] {
+  const rows = orderedShelf(items).filter((item) => filter === "all" || item.status === filter);
+  return filter === "finished"
+    ? rows.sort((a, b) => readingMonth(b, timezone).localeCompare(readingMonth(a, timezone)))
+    : rows;
+}
+
+/** Map a filtered drop to the full shelf without rearranging hidden books. */
+export function shelfDropPosition(all: ShelfItem[], visible: ShelfItem[], item: ShelfItem): number {
+  const siblings = orderedShelf(all).filter((row) => row.id !== item.id);
+  const index = visible.findIndex((row) => row.id === item.id);
+  const next = visible[index + 1];
   if (next) return siblings.findIndex((row) => row.id === next.id);
-  const previous = rows[index - 1];
+  const previous = visible[index - 1];
   return previous ? siblings.findIndex((row) => row.id === previous.id) + 1 : siblings.length;
 }

@@ -12,7 +12,7 @@ You host it. There is no public service. One named club per instance.
 
 </div>
 
-- **Shelves** — Want to read → Reading → Finished / Did not finish. Drag on desktop; organize the cover grid on a phone. Finished books are grouped by completion month, with editable reading dates.
+- **Shelves** — Cover grids with a visible reading status on every book. Hold and drag to arrange books; tap a status to change it. Finished books are grouped by completion month, newest first, in both All and Finished views. Drag within a month to reorder, or into another month to correct the completion month. Empty months can be added as drop targets. Order and date changes sync across devices. Under the expanded book actions, enter a month/year or an exact date; month-only changes use the first day of that month in the club timezone.
 - **Club pick** — Home is the current book: meeting countdown, everyone’s progress, and a next-up vote.
 - **Diary** — Short notes at a reading position (“at 45%”, “Finished ★★★★☆”). Spoiler-shielded for members who are behind; one level of replies and emoji reactions.
 - **Discover** — Search by title, author, or ISBN ([Open Library](https://openlibrary.org), or [Google Books](https://developers.google.com/books) only when `GOOGLE_BOOKS_API_KEY` is set). Private search history follows your account across devices (last 20 terms, individually or fully deletable). Trending row, subject shelves, and **add your own** when the catalog misses.
@@ -105,6 +105,34 @@ Open **[http://localhost:5173](http://localhost:5173)** — not port 8000.
 
 **Tests.** Backend, venv active: `pytest`. Frontend: `npm run typecheck`, `npm test`, `npm run build`. CI runs all of those on every push and pull request.
 
+### Local demo
+
+An isolated demo includes three members, eight fictional books, shelves in all
+four stages, a current and past club pick, diary entries with spoilers and
+replies, reading checkpoints, and a next-up vote. The demo uses `data/demo.db`;
+running the seed again preserves edits made while testing.
+
+Start the backend from the repository root:
+
+```bash
+cd backend
+.venv/bin/python -m app.seed_demo
+DEBUG=1 DATABASE_PATH="$PWD/../data/demo.db" BOOKCLUB_NAME="Demo-Buchclub" BOOKCLUB_TZ=Europe/Berlin BOOKCLUB_HTTPS=0 SECRET_KEY=local-demo-secret-for-bookclub GOOGLE_BOOKS_API_KEY= .venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+In a second terminal, from the repository root:
+
+```bash
+cd frontend
+npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
+```
+
+Open [http://127.0.0.1:5173](http://127.0.0.1:5173) and sign in as `demo` with
+password `DemoBuecher2026!`. The other demo members, `anna` and `max`, use the
+same password. The unused invite `DEMOTEST2026` can register an extra test
+member. These credentials and settings are for a local demo only. Vue changes
+update through Vite; Python changes reload the API.
+
 One-process run without Docker (build the Vue app, then serve API + UI from uvicorn):
 
 ```bash
@@ -137,7 +165,7 @@ Invite-only, no email. Any signed-in member can mint invites. Members change the
 |---|---|
 | `/` | Club pick, meeting, progress, that book’s diary, next-up vote, past picks |
 | `/discover` | Search + browse the catalog; add-your-own when it misses |
-| `/shelf` | Your columns (phone: status filter over a cover grid) |
+| `/shelf` | Your cover grid, reading-status filters, and saved book order |
 | `/club` | Members, TBR overlap, recent diary across all books, next-up vote |
 | `/club/:username` | A member’s shelf and ratings |
 | `/book/:workId` | Synopsis, club rating, shelf actions, full diary |

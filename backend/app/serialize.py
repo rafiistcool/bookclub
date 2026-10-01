@@ -76,6 +76,7 @@ def shelf_item_out(entry: ShelfEntry) -> ShelfItemOut:
         id=entry.id or 0,
         status=entry.status,
         position=entry.position,
+        shelf_position=entry.shelf_position,
         updated_at=entry.updated_at,
         started_at=entry.started_at,
         finished_at=entry.finished_at,

@@ -72,7 +72,8 @@ def test_legacy_database_is_upgraded_in_place(tmp_path):
         assert {"user_id", "query", "normalized_query", "last_used_at"} <= history_cols
         assert conn.execute(text("SELECT COUNT(*) FROM search_history")).scalar() == 0
         shelf_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(shelf)"))}
-        assert {"rating", "take", "dnf_reason", "progress", "started_at", "finished_at"} <= shelf_cols
+        assert {"rating", "take", "dnf_reason", "progress", "started_at", "finished_at", "shelf_position"} <= shelf_cols
+        assert conn.execute(text("SELECT shelf_position FROM shelf WHERE id = 1")).scalar() is None
         book_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(books)"))}
         assert {
             "description",

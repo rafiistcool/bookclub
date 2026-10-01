@@ -14,6 +14,7 @@ const props = defineProps<{
   isbn?: string | null;
   imageUrl?: string | null;
   status?: Status | null;
+  hideStatus?: boolean;
   clubPick?: boolean;
   showAuthors?: boolean;
   /** The owner's stars, shown under the title for finished books. */
@@ -38,7 +39,7 @@ const props = defineProps<{
       />
       <span v-if="clubPick" class="badge book-tile-badge club-pick">{{ t("common.club") }}</span>
       <span
-        v-else-if="props.status"
+        v-else-if="props.status && !hideStatus"
         class="badge book-tile-badge"
         :class="props.status"
       >

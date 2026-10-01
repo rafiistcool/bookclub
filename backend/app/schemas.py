@@ -249,6 +249,7 @@ class ShelfItemOut(BaseModel):
     id: int
     status: ShelfStatus
     position: int
+    shelf_position: int | None = None
     updated_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -339,6 +340,7 @@ class ShelfPatchIn(BaseModel):
     finished_on: date | None = None
     status: ShelfStatus | None = None
     position: int | None = Field(default=None, ge=0)
+    shelf_position: int | None = Field(default=None, ge=0)
     rating: int | None = Field(default=None, ge=1, le=5)
     take: str | None = None
     dnf_reason: str | None = None

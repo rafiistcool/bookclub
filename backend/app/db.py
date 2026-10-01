@@ -64,6 +64,7 @@ COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {
         "cover_image_url": "VARCHAR",
     },
     "shelf": {
+        "shelf_position": "INTEGER",
         "rating": "INTEGER",
         "take": "VARCHAR DEFAULT ''",
         "dnf_reason": "VARCHAR DEFAULT ''",

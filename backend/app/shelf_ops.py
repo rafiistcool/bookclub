@@ -129,6 +129,25 @@ def place_item(
             row.position = index
 
 
+def place_on_shelf(session: Session, item: ShelfEntry, position: int) -> None:
+    """Reorder the whole shelf without changing status, dates, or reviews.
+
+    Until manually arranged, unread books come first. Newly added books
+    (without a shelf_position yet) appear before an existing manual order.
+    """
+    status_order = {status: index for index, status in enumerate(ShelfStatus)}
+    rows = list(session.exec(select(ShelfEntry).where(ShelfEntry.user_id == item.user_id)).all())
+    rows.sort(key=lambda row: (
+        row.shelf_position is not None,
+        row.shelf_position if row.shelf_position is not None else status_order[row.status],
+        row.position, row.id or 0,
+    ))
+    rows = [row for row in rows if row.id != item.id]
+    rows.insert(min(position, len(rows)), item)
+    for index, row in enumerate(rows):
+        row.shelf_position = index
+
+
 def apply_finish_fields(
     entry: ShelfEntry,
     status: ShelfStatus,

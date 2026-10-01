@@ -33,6 +33,15 @@ export const i18n = createI18n({
   messages: { en, de },
 });
 
+// Update the instance installed on the app when Vite reloads a catalog.
+// Recreating this module alone leaves mounted components using old messages.
+if (import.meta.hot) {
+  import.meta.hot.accept(["./en.json", "./de.json"], ([english, german]) => {
+    if (english) i18n.global.setLocaleMessage("en", english.default);
+    if (german) i18n.global.setLocaleMessage("de", german.default);
+  });
+}
+
 export function applyLocale(locale: Locale): void {
   i18n.global.locale.value = locale;
   if (typeof document !== "undefined") {

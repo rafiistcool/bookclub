@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { HeartIcon } from "@heroicons/vue/24/outline";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
@@ -8,23 +9,22 @@ import FavoritePortrait from "../components/FavoritePortrait.vue";
 import MeetingSheet from "../components/MeetingSheet.vue";
 import ShelfBoard from "../components/ShelfBoard.vue";
 import TileSkeleton from "../components/TileSkeleton.vue";
-import { DESKTOP, useMediaQuery } from "../composables/useMediaQuery";
 import { STATUSES, statusLabel, statusShort, type Status } from "../constants";
 import { tp } from "../i18n";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
-import { clubDate, dropPosition, shelfGroups } from "../shelf";
+import { clubDate, orderedShelf, readingMonth, shelfDropPosition, visibleShelf } from "../shelf";
 import type { ClubPick, Favorite, ShelfItem } from "../types";
 
 type Filter = "all" | Status;
 
 const { t } = useI18n();
-const desktop = useMediaQuery(DESKTOP);
 const session = useSession();
 const toast = useToast();
 
 const items = ref<ShelfItem[]>([]);
 const favorites = ref<Favorite[]>([]);
+const showFavorites = ref(false);
 const error = ref("");
 const loaded = ref(false);
 const filter = ref<Filter>("all");
@@ -32,10 +32,10 @@ const removing = ref<ShelfItem | null>(null);
 const settingPick = ref<ShelfItem | null>(null);
 const clubPick = ref<ClubPick | null>(null);
 const clubTimezone = ref("UTC");
-const organizing = ref(false);
 const saving = ref(false);
 const editing = ref<{ item: ShelfItem; action: "status" | "date" } | null>(null);
 const dateValue = ref("");
+const datePrecision = ref<"month" | "day">("month");
 const today = computed(() => clubDate(new Date().toISOString(), clubTimezone.value));
 
 const counts = computed(() => {
@@ -70,26 +70,21 @@ async function load() {
   }
 }
 
-async function onDropped(item: ShelfItem, status: Status, position: number) {
+async function onReordered(item: ShelfItem, position: number, month?: string) {
   if (saving.value) return;
-  const snapshot = items.value.map((row) => ({ ...row }));
+  const changedMonth = month !== undefined && month !== readingMonth(item, clubTimezone.value);
+  if (changedMonth && item.status !== "finished") return;
+  const finishedOn = month ? `${month}-01` : null;
+  const snapshot = items.value;
+  const rows = orderedShelf(items.value).filter((row) => row.id !== item.id);
+  rows.splice(Math.min(position, rows.length), 0, changedMonth
+    ? { ...item, finished_at: finishedOn ? `${finishedOn}T12:00:00Z` : null } : item);
+  items.value = rows.map((row, index) => ({ ...row, shelf_position: index }));
   saving.value = true;
-  // Mirror the server's per-status order immediately, including its source gap.
-  const siblings = items.value.filter((row) => row.status === status && row.id !== item.id)
-    .sort((a, b) => a.position - b.position || a.id - b.id);
-  const moved = { ...item, status };
-  if (status !== item.status) moved.finished_at = status === "finished" ? new Date().toISOString() : null;
-  siblings.splice(Math.min(position, siblings.length), 0, moved);
-  siblings.forEach((row, index) => { row.position = index; });
-  const remaining = items.value.filter((row) => row.status !== status && row.id !== item.id);
-  if (item.status !== status) remaining.filter((row) => row.status === item.status)
-    .sort((a, b) => a.position - b.position || a.id - b.id)
-    .forEach((row, index) => { row.position = index; });
-  items.value = [...remaining, ...siblings];
   try {
-    const saved = await api.patchShelf(item.id, { status, position });
+    const saved = await api.patchShelf(item.id, { shelf_position: position, ...(changedMonth ? { finished_on: finishedOn } : {}) });
     items.value = items.value.map((row) => row.id === saved.id ? saved : row);
-    toast.show(t(status === item.status ? "shelf.orderSaved" : "shelf.movedTo", { status: statusLabel(status) }));
+    toast.show(t(changedMonth ? "shelf.dateSaved" : "shelf.orderSaved"));
   } catch (err) {
     items.value = snapshot;
     toast.show(err instanceof ApiError ? err.message : t("shelf.moveFailed"));
@@ -102,34 +97,68 @@ function onAction(item: ShelfItem, action: "status" | "date" | "previous" | "nex
   if (saving.value) return;
   if (action === "status" || action === "date") {
     editing.value = { item, action };
-    dateValue.value = clubDate(item.finished_at, clubTimezone.value);
+    datePrecision.value = "month";
+    dateValue.value = clubDate(item.finished_at, clubTimezone.value).slice(0, 7);
     return;
   }
-  const group = shelfGroups(items.value, clubTimezone.value).find((group) => group.items.some((row) => row.id === item.id));
-  if (!group) return;
-  const rows = [...group.items];
+  const rows = visibleShelf(items.value, filter.value, clubTimezone.value).filter(row =>
+    item.status === "finished"
+      ? row.status === "finished" && readingMonth(row, clubTimezone.value) === readingMonth(item, clubTimezone.value)
+      : row.status !== "finished");
   const index = rows.findIndex((row) => row.id === item.id);
   const target = index + (action === "previous" ? -1 : 1);
   if (target < 0 || target >= rows.length) return;
   rows.splice(index, 1);
   rows.splice(target, 0, item);
-  void onDropped(item, item.status, dropPosition(items.value, rows, item, item.status));
+  editing.value = null;
+  void onReordered(item, shelfDropPosition(items.value, rows, item));
 }
 
-function changeStatus(status: Status) {
+async function changeStatus(status: Status) {
   const item = editing.value?.item;
   if (!item || saving.value) return;
   editing.value = null;
-  void onDropped(item, status, 0);
+  saving.value = true;
+  try {
+    const saved = await api.patchShelf(item.id, { status, position: 0 });
+    // The API maintains the old per-status positions for the initial order.
+    const oldStatus = item.status;
+    items.value = items.value.map((row) => {
+      if (row.id === saved.id) return saved;
+      if (row.status === status) return { ...row, position: row.position + 1 };
+      if (row.status === oldStatus && row.position > item.position) return { ...row, position: row.position - 1 };
+      return row;
+    });
+    toast.show(t("shelf.movedTo", { status: statusLabel(status) }));
+  } catch (err) {
+    toast.show(err instanceof ApiError ? err.message : t("shelf.moveFailed"));
+  } finally {
+    saving.value = false;
+  }
+}
+
+function bookAction(action: "remove" | "pick" | "nominate") {
+  const item = editing.value?.item;
+  if (!item || saving.value) return;
+  editing.value = null;
+  if (action === "remove") removing.value = item;
+  else if (action === "pick") settingPick.value = item;
+  else void nominate(item);
+}
+
+function changeDatePrecision() {
+  if (!dateValue.value) return;
+  dateValue.value = datePrecision.value === "month" ? dateValue.value.slice(0, 7) : `${dateValue.value.slice(0, 7)}-01`;
 }
 
 async function saveDate(clear = false) {
   const item = editing.value?.item;
   if (!item || saving.value) return;
-  if (!clear && (!dateValue.value || dateValue.value > today.value)) return;
+  const finishedOn = datePrecision.value === "month" ? `${dateValue.value}-01` : dateValue.value;
+  if (!clear && (!dateValue.value || finishedOn > today.value)) return;
   saving.value = true;
   try {
-    const saved = await api.patchShelf(item.id, { finished_on: clear ? null : dateValue.value });
+    const saved = await api.patchShelf(item.id, { finished_on: clear ? null : finishedOn });
     items.value = items.value.map((row) => row.id === saved.id ? saved : row);
     editing.value = null;
     toast.show(t("shelf.dateSaved"));
@@ -213,7 +242,7 @@ onMounted(load);
 </script>
 
 <template>
-  <section>
+  <section class="shelf-page">
     <div class="page-head shelf-head">
       <Avatar :username="session.user?.username ?? ''" :src="session.user?.avatar_url" size="lg" />
       <div>
@@ -222,12 +251,15 @@ onMounted(load);
           {{ t("shelf.lede", { books: tp("shelf.books", counts.all), reading: counts.currently_reading }) }}
         </p>
       </div>
+      <button v-if="loaded && !error" type="button" class="icon-btn favorites-toggle"
+        :aria-label="t('favorites.portraitLabel')" :aria-expanded="showFavorites" aria-controls="shelf-favorites"
+        @click="showFavorites = !showFavorites">
+        <HeartIcon aria-hidden="true" />
+      </button>
     </div>
-    <FavoritePortrait
-      v-if="loaded && !error"
-      :items="favorites"
-      :empty-hint="t('favorites.emptyOwn')"
-    />
+    <div v-if="loaded && !error && showFavorites" id="shelf-favorites" class="shelf-favorites">
+      <FavoritePortrait :items="favorites" :empty-hint="t('favorites.emptyOwn')" />
+    </div>
 
     <p v-if="error" class="error">{{ error }}</p>
 
@@ -245,7 +277,7 @@ onMounted(load);
     </div>
 
     <template v-else>
-      <div v-if="!desktop" class="segmented shelf-filter" role="group" :aria-label="t('shelf.filterByStatus')">
+      <div class="segmented shelf-filter" role="group" :aria-label="t('shelf.filterByStatus')">
         <button
           type="button"
           :aria-pressed="filter === 'all'"
@@ -265,17 +297,11 @@ onMounted(load);
         </button>
       </div>
 
-      <button v-if="!desktop" class="btn btn-ghost organize-button" type="button"
-        :aria-pressed="organizing" :disabled="saving" @click="organizing = !organizing">
-        {{ organizing ? t('shelf.doneOrdering') : t('shelf.organize') }}
-      </button>
-      <p v-if="!desktop && organizing" class="fine subtle">{{ t('shelf.organizeHint') }}</p>
+      <p class="visually-hidden shelf-drag-hint">{{ t(filter === 'finished' || filter === 'all' ? 'shelf.chronologicalHint' : 'shelf.directDragHint') }}</p>
       <ShelfBoard
-        :items="items" :grid="!desktop" :organizing="!desktop && organizing"
-        :filter="desktop ? 'all' : filter" :timezone="clubTimezone" :disabled="saving"
+        :items="items" :filter="filter" :disabled="saving" :timezone="clubTimezone"
         :club-pick-key="clubPick?.book.ol_work_key"
-        @dropped="onDropped" @action="onAction"
-        @remove="removing = $event" @club-pick="settingPick = $event" @nominate="nominate"
+        @reordered="onReordered" @action="onAction"
       />
     </template>
 
@@ -285,10 +311,32 @@ onMounted(load);
       <div v-if="editing.action === 'status'" class="stack">
         <button v-for="status in STATUSES" :key="status" type="button" class="btn btn-ghost btn-block"
           :disabled="saving || status === editing.item.status" @click="changeStatus(status)">{{ statusLabel(status) }}</button>
+        <details class="shelf-more-actions">
+          <summary>{{ t('shelf.moreActions') }}</summary>
+          <div class="stack">
+            <button v-if="editing.item.status === 'finished'" type="button" class="btn btn-ghost btn-block"
+              @click="onAction(editing.item, 'date')">{{ t('shelf.editDate') }}</button>
+            <button type="button" class="btn btn-ghost btn-block"
+              @click="onAction(editing.item, 'previous')">{{ t('shelf.movePrevious') }}</button>
+            <button type="button" class="btn btn-ghost btn-block"
+              @click="onAction(editing.item, 'next')">{{ t('shelf.moveNext') }}</button>
+            <button type="button" class="btn btn-ghost btn-block" @click="bookAction('pick')">{{ t('card.setPick') }}</button>
+            <button type="button" class="btn btn-ghost btn-block" @click="bookAction('nominate')">{{ t('card.nominate') }}</button>
+            <button type="button" class="btn btn-ghost btn-block" @click="bookAction('remove')">{{ t('common.remove') }}</button>
+          </div>
+        </details>
+        <button type="button" class="btn btn-ghost btn-block" @click="editing = null">{{ t('common.cancel') }}</button>
       </div>
       <form v-else class="stack" @submit.prevent="saveDate()">
-        <label for="finished-on">{{ t('shelf.finishedOn') }}</label>
-        <input id="finished-on" v-model="dateValue" type="date" :max="today" required :disabled="saving" />
+        <label for="date-precision">{{ t('shelf.datePrecision') }}</label>
+        <select id="date-precision" v-model="datePrecision" :disabled="saving" @change="changeDatePrecision">
+          <option value="month">{{ t('shelf.monthAndYear') }}</option>
+          <option value="day">{{ t('shelf.exactDate') }}</option>
+        </select>
+        <label for="finished-on">{{ t(datePrecision === 'month' ? 'shelf.completionMonth' : 'shelf.finishedOn') }}</label>
+        <input id="finished-on" v-model="dateValue" :type="datePrecision === 'month' ? 'month' : 'date'"
+          :min="datePrecision === 'month' ? '0001-01' : '0001-01-01'"
+          :max="datePrecision === 'month' ? today.slice(0, 7) : today" required :disabled="saving" />
         <button class="btn btn-primary" type="submit" :disabled="saving || !dateValue || dateValue > today">{{ t('common.save') }}</button>
         <button class="btn btn-ghost" type="button" :disabled="saving" @click="saveDate(true)">{{ t('shelf.clearDate') }}</button>
       </form>
@@ -325,7 +373,23 @@ onMounted(load);
 </template>
 
 <style scoped>
-.organize-button { margin-bottom: var(--space-4); }
+.shelf-head { position: relative; padding-right: 42px; margin-bottom: var(--space-6); }
+.shelf-head > div { min-width: 0; }
+.shelf-head h1 { font-size: clamp(1.5rem, 6.7vw, 2rem); }
+.shelf-head .lede { font-size: var(--text-sm); line-height: var(--leading-snug); margin-top: var(--space-1); }
+.shelf-head :deep(.avatar) { width: 64px; height: 64px; }
+.favorites-toggle { position: absolute; top: 0; right: -6px; color: var(--border-strong); }
+.favorites-toggle svg { width: 26px; height: 26px; }
+.favorites-toggle[aria-expanded="true"] { color: var(--accent); }
+.shelf-favorites { margin-bottom: var(--space-5); }
+.shelf-filter { font-family: var(--serif); }
+@media (max-width: 359px) {
+  .shelf-head :deep(.avatar) { width: 48px; height: 48px; }
+  .shelf-head { gap: var(--space-3); }
+  .shelf-filter button { padding-inline: var(--space-1); font-size: var(--text-xs); }
+}
+.shelf-more-actions summary { cursor: pointer; padding-block: var(--space-3); font-size: var(--text-sm); }
+.shelf-more-actions .stack { padding-bottom: var(--space-3); }
 .shelf-head {
   display: flex;
   align-items: center;

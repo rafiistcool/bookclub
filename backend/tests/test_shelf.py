@@ -253,3 +253,47 @@ def test_invalid_finish_fields(client):
         json={"status": "did_not_finish", "dnf_reason": "x" * 201},
     )
     assert long_reason.status_code == 400
+
+
+def test_free_shelf_order_persists_without_changing_reading_metadata(client):
+    register(client, "ada")
+    want = _add(client).json()
+    reading = _add(client, ol_work_key="/works/OL2W", status="currently_reading", progress=35).json()
+    finished = _add(client, ol_work_key="/works/OL3W", status="finished", rating=5, take="Loved it").json()
+    client.patch(f"/api/shelf/{finished['id']}", json={"finished_on": "2025-04-12"})
+    before = {row["id"]: row for row in client.get("/api/shelf").json()["items"]}
+
+    moved = client.patch(f"/api/shelf/{finished['id']}", json={"shelf_position": 0})
+    assert moved.status_code == 200
+    rows = client.get("/api/shelf").json()["items"]
+    assert [row["id"] for row in sorted(rows, key=lambda row: row["shelf_position"])] == [finished["id"], want["id"], reading["id"]]
+    for row in rows:
+        for field in ("status", "position", "rating", "take", "progress", "started_at", "finished_at", "updated_at"):
+            assert row[field] == before[row["id"]][field]
+
+    # Reordering at the far end clamps safely and produces contiguous ranks.
+    assert client.patch(f"/api/shelf/{finished['id']}", json={"shelf_position": 99}).status_code == 200
+    rows = sorted(client.get("/api/shelf").json()["items"], key=lambda row: row["shelf_position"])
+    assert [row["id"] for row in rows] == [want["id"], reading["id"], finished["id"]]
+    assert [row["shelf_position"] for row in rows] == [0, 1, 2]
+    assert client.patch(f"/api/shelf/{finished['id']}", json={"shelf_position": -1}).status_code == 400
+
+
+def test_free_order_is_private_and_survives_status_changes_and_new_books(client):
+    register(client, "ada")
+    first = _add(client).json()
+    second = _add(client, ol_work_key="/works/OL2W", status="finished").json()
+    client.patch(f"/api/shelf/{second['id']}", json={"shelf_position": 0})
+    changed = client.patch(f"/api/shelf/{first['id']}", json={"status": "currently_reading"})
+    assert changed.json()["shelf_position"] == 1
+    newest = _add(client, ol_work_key="/works/OL3W").json()
+    assert newest["shelf_position"] is None
+    client.patch(f"/api/shelf/{newest['id']}", json={"shelf_position": 2})
+    before = client.get("/api/shelf").json()["items"]
+    assert [row["id"] for row in sorted(before, key=lambda row: row["shelf_position"])] == [second["id"], first["id"], newest["id"]]
+
+    invite = client.post("/api/invites").json()["code"]
+    client.post("/api/auth/logout")
+    register(client, "grace", invite=invite)
+    assert client.patch(f"/api/shelf/{first['id']}", json={"shelf_position": 0}).status_code == 404
+    assert client.get("/api/shelf", params={"username": "ada"}).json()["items"] == before

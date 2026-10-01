@@ -1,70 +1,50 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
-import { useI18n } from "vue-i18n";
+import { ref, watch } from "vue";
 import { VueDraggable } from "vue-draggable-plus";
-import { clubDate, dropPosition, type ShelfGroup } from "../shelf";
 import type { ShelfItem } from "../types";
-import type { Status } from "../constants";
 import BookCard from "./BookCard.vue";
 
 const props = defineProps<{
-  group: ShelfGroup; items: ShelfItem[]; timezone: string;
-  grid?: boolean; organizing?: boolean; readonly?: boolean; disabled?: boolean;
-  clubPickKey?: string | null;
+  items: ShelfItem[]; month?: string; readonly?: boolean; disabled?: boolean;
+  clubPickKey?: string | null; timezone: string; emptyHint: string;
 }>();
 const emit = defineEmits<{
-  dropped: [item: ShelfItem, status: Status, position: number];
   action: [item: ShelfItem, action: "status" | "date" | "previous" | "next"];
-  remove: [item: ShelfItem]; clubPick: [item: ShelfItem]; nominate: [item: ShelfItem];
+  moved: [item: ShelfItem, rows: ShelfItem[], month?: string];
 }>();
-const { t, locale } = useI18n();
 const rows = ref<ShelfItem[]>([]);
-watch(() => props.group.items, (items) => { rows.value = [...items]; }, { immediate: true, deep: true });
-const monthLabel = computed(() => props.group.month
-  ? new Intl.DateTimeFormat(locale.value, { month: "long", year: "numeric", timeZone: "UTC" })
-    .format(new Date(`${props.group.month}-01T12:00:00Z`))
-  : t("shelf.noReadingDate"));
-const dragGroup = computed(() => ({
-  name: "shelf",
-  put: (_to: unknown, _from: unknown, element: HTMLElement) => {
-    if (props.disabled || (props.grid && !props.organizing)) return false;
-    if (props.group.status !== "finished") return true;
-    const item = props.items.find((row) => String(row.id) === element.dataset.id);
-    if (!item) return false;
-    const month = item.status === "finished"
-      ? clubDate(item.finished_at, props.timezone).slice(0, 7)
-      : clubDate(new Date().toISOString(), props.timezone).slice(0, 7);
-    return month === props.group.month;
-  },
-}));
-function dropped(event: { newIndex?: number }) {
-  const item = rows.value[event.newIndex ?? 0];
-  if (item) emit("dropped", item, props.group.status, dropPosition(props.items, rows.value, item, props.group.status));
+watch(() => props.items, items => { rows.value = [...items]; }, { immediate: true, deep: true });
+function moved(event: { newDraggableIndex?: number; newIndex?: number }) {
+  if (props.readonly || props.disabled) return;
+  const item = rows.value[event.newDraggableIndex ?? event.newIndex ?? 0];
+  if (item) emit("moved", item, rows.value, props.month);
 }
 </script>
 
 <template>
-  <div class="shelf-group">
-    <h4 v-if="group.status === 'finished'" class="month-heading">{{ monthLabel }} · {{ group.items.length }}</h4>
-    <VueDraggable v-model="rows" :class="grid ? 'book-grid' : 'column-body'"
-      :group="dragGroup" :animation="180" filter=".no-drag"
-      :handle="grid ? '.drag-handle' : undefined"
-      :disabled="readonly || disabled || (grid && !organizing)"
-      ghost-class="card-ghost" @add="dropped" @update="dropped">
-      <BookCard v-for="item in rows" :key="item.id" :data-id="item.id"
-        :item="item" :grid="grid" :readonly="readonly" :organizing="organizing"
-        :disabled="disabled" :club-pick-key="clubPickKey"
-        @action="emit('action', item, $event)" @remove="emit('remove', item)"
-        @club-pick="emit('clubPick', item)" @nominate="emit('nominate', item)" />
-    </VueDraggable>
-    <p v-if="!rows.length" class="fine subtle">{{ readonly || grid && !organizing ? t('shelf.nothingHere') : t('shelf.dragHere') }}</p>
-  </div>
+  <VueDraggable v-model="rows" class="book-grid shelf-grid" :class="{ 'empty-month': !rows.length }"
+    :data-empty-hint="emptyHint" :data-month="month"
+    :group="month === undefined ? 'shelf-active' : 'shelf-finished'"
+    :animation="180" :disabled="readonly || disabled" :delay="250" :delay-on-touch-only="true"
+    :touch-start-threshold="5" :fallback-tolerance="5"
+    :prevent-on-filter="false" filter=".no-drag" draggable=".shelf-card"
+    ghost-class="card-ghost" chosen-class="card-chosen" @add="moved" @update="moved">
+    <BookCard v-for="item in rows" :key="item.id" :data-id="item.id"
+      :timezone="timezone" :item="item" :readonly="readonly" :disabled="disabled" :club-pick-key="clubPickKey"
+      @action="emit('action', item, $event)" />
+  </VueDraggable>
 </template>
 
 <style scoped>
-.month-heading { margin: var(--space-3) 0; font-size: var(--text-sm); }
-.column-body { display: flex; flex-direction: column; gap: var(--space-2); min-height: 60px; }
-.book-grid { min-height: 60px; }
-.card-ghost { opacity: 0.35; }
-.shelf-group + .shelf-group { margin-top: var(--space-5); }
+.shelf-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: stretch; gap: var(--space-6) var(--space-5); }
+.empty-month { min-height: 88px; border: 1px dashed var(--border); border-radius: var(--radius-sm); }
+.empty-month::after { content: attr(data-empty-hint); grid-column: 1 / -1; align-self: center; text-align: center; font-size: var(--text-sm); color: var(--text-muted); pointer-events: none; }
+.card-ghost { opacity: 0.3; }
+.card-chosen { cursor: grabbing; }
+@media (max-width: 359px) {
+  .shelf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 720px) {
+  .shelf-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+}
 </style>

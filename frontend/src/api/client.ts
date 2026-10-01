@@ -143,7 +143,7 @@ export const api = {
     year: number | null;
     status: Status;
   } & FinishNote) => request<ShelfItem>("/api/shelf", { method: "POST", body: JSON.stringify(body) }),
-  patchShelf: (id: number, body: { status?: Status; position?: number; finished_on?: string | null } & FinishNote) =>
+  patchShelf: (id: number, body: { status?: Status; position?: number; shelf_position?: number; finished_on?: string | null } & FinishNote) =>
     request<ShelfItem>(`/api/shelf/${id}`, {
       method: "PATCH",
       body: JSON.stringify(body),

@@ -26,7 +26,7 @@ from app.schemas import (
 )
 from app.favorites import favorite_out, list_favorites
 from app.serialize import shelf_item_out, user_out
-from app.shelf_ops import apply_finish_fields, apply_progress, place_item, upsert_book
+from app.shelf_ops import apply_finish_fields, apply_progress, place_item, place_on_shelf, upsert_book
 
 router = APIRouter(prefix="/api/shelf", tags=["shelf"])
 
@@ -218,6 +218,7 @@ def update_shelf_item(
     if (
         payload.status is None
         and payload.position is None
+        and payload.shelf_position is None
         and "rating" not in payload.model_fields_set
         and "take" not in payload.model_fields_set
         and "dnf_reason" not in payload.model_fields_set
@@ -259,7 +260,10 @@ def update_shelf_item(
             status,
             payload.progress if "progress" in payload.model_fields_set else entry.progress,
         )
-    place_item(session, entry, status, position, stamp_dates=status != previous_status)
+    if payload.shelf_position is not None:
+        place_on_shelf(session, entry, payload.shelf_position)
+    if payload.shelf_position is None or payload.status is not None or payload.position is not None:
+        place_item(session, entry, status, position, stamp_dates=status != previous_status)
     if "finished_on" in payload.model_fields_set:
         entry.finished_at = (
             datetime.combine(payload.finished_on, time(12), tzinfo=zone).astimezone(timezone.utc)
