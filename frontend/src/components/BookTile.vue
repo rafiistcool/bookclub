@@ -47,7 +47,6 @@ const props = defineProps<{
       </span>
     </span>
     <span class="book-tile-title">{{ title }}</span>
-    <span v-if="showAuthors && authors" class="book-tile-sub">{{ authors }}</span>
     <span
       v-if="rating && status === 'finished'"
       class="book-tile-sub stars"
@@ -55,5 +54,6 @@ const props = defineProps<{
     >
       {{ starLabel(rating) }}
     </span>
+    <span v-if="showAuthors && authors" class="book-tile-sub">{{ authors }}</span>
   </RouterLink>
 </template>

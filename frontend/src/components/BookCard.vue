@@ -26,7 +26,7 @@ const monthLabel = computed(() => readingMonthLabel(month.value, locale.value));
   <article class="shelf-card" :class="{ 'readonly-card': readonly }">
     <BookTile :ol-work-key="item.book.ol_work_key" :title="item.book.title"
       :authors="item.book.authors" :cover-id="item.book.cover_id"
-      :image-url="item.book.cover_url" :status="item.status" hide-status
+      :image-url="item.book.cover_url" :status="item.status" :rating="item.rating" hide-status
       :club-pick="item.book.ol_work_key === clubPickKey" show-authors />
     <span v-if="readonly" class="shelf-status">
       <span class="status-label">{{ statusShort(item.status) }}<span v-if="item.status === 'currently_reading' && item.progress != null" class="nums"> {{ item.progress }}%</span></span>
@@ -53,6 +53,7 @@ const monthLabel = computed(() => readingMonthLabel(month.value, locale.value));
 .shelf-card :deep(.book-tile-cover) { margin-bottom: var(--space-1); }
 .shelf-card :deep(.book-tile-title) { font-size: var(--text-sm); line-height: 1.3; min-height: 2.6em; }
 .shelf-card :deep(.book-tile-sub) { font-size: var(--text-xs); color: var(--text-muted); }
+.shelf-card :deep(.stars) { color: var(--accent); }
 .shelf-status {
   display: flex;
   align-items: center;
