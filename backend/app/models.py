@@ -126,6 +126,8 @@ class ShelfEntry(SQLModel, table=True):
     book_id: int = Field(foreign_key="books.id")
     status: ShelfStatus = Field(index=True)
     position: int = Field(default=0)
+    # Optional manual order across all reading statuses.
+    shelf_position: Optional[int] = Field(default=None)
     rating: Optional[int] = Field(default=None)
     take: str = Field(default="", max_length=140)
     dnf_reason: str = Field(default="", max_length=200)

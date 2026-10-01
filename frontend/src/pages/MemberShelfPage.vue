@@ -103,7 +103,7 @@ watch(() => route.params.username, load);
         </button>
       </div>
 
-      <ShelfBoard :items="items" :filter="filter" :timezone="timezone" grid readonly />
+      <ShelfBoard :items="items" :filter="filter" :timezone="timezone" readonly />
     </template>
   </section>
 </template>

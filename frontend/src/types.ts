@@ -30,6 +30,7 @@ export type ShelfItem = {
   status: Status;
   position: number;
   updated_at: string;
+  shelf_position?: number | null;
   book: Book;
   rating: number | null;
   take: string;
