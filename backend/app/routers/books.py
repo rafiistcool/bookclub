@@ -17,6 +17,7 @@ from app.models import Book, ClubPick, Quote, ShelfEntry, ShelfStatus, User
 from app.googlebooks import (
     GoogleBooksError,
     VolumeDetails,
+    cached_volume_details,
     fetch_volume,
     google_books_enabled,
     google_http_exception,
@@ -1106,6 +1107,10 @@ async def _load_google_catalog(
     When the Google key is set, a miss is a 404 — no Open Library ISBN
     fallback. Without a key, ISBN rows can still refresh from Open Library.
     """
+    if google_books_enabled() and not bypass_cache:
+        cached = cached_volume_details(work_id)
+        if cached is not None:
+            return cached
     if is_google_work_id(work_id):
         volume_id = google_volume_id(work_id)
         if volume_id is None:

@@ -155,6 +155,14 @@ def create_app() -> FastAPI:
         if assets.is_dir():
             app.mount("/assets", StaticFiles(directory=assets), name="assets")
 
+        def app_html(index: Path) -> HTMLResponse:
+            # Hashed JS chunks change on deployment. Never reuse an old shell
+            # that points to assets no longer present in the new container.
+            return HTMLResponse(
+                brand_index_html(index.read_text(encoding="utf-8"), settings),
+                headers={"Cache-Control": "no-store"},
+            )
+
         @app.get("/{full_path:path}")
         def spa(full_path: str):
             if full_path.startswith("api/"):
@@ -162,17 +170,15 @@ def create_app() -> FastAPI:
             if full_path in {"", "index.html"}:
                 index = STATIC_DIR / "index.html"
                 if index.is_file():
-                    return HTMLResponse(brand_index_html(index.read_text(encoding="utf-8"), settings))
+                    return app_html(index)
             candidate = (STATIC_DIR / full_path).resolve()
             if candidate.is_file() and STATIC_DIR in candidate.parents:
                 if candidate.name == "index.html":
-                    return HTMLResponse(
-                        brand_index_html(candidate.read_text(encoding="utf-8"), settings)
-                    )
+                    return app_html(candidate)
                 return FileResponse(candidate)
             index = STATIC_DIR / "index.html"
             if index.is_file():
-                return HTMLResponse(brand_index_html(index.read_text(encoding="utf-8"), settings))
+                return app_html(index)
             return JSONResponse(status_code=404, content={"detail": "Not found"})
 
     return app

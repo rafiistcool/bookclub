@@ -303,6 +303,28 @@ def volume_details(volume: dict) -> VolumeDetails | None:
     )
 
 
+def cached_volume_details(work_id: str) -> VolumeDetails | None:
+    """Open displayed results even when a second ISBN search would miss or fail.
+
+    Search responses already request all VOLUME_FIELDS. Keep their existing
+    bounded cache and expiry, and import only the book the member opens.
+    """
+    key = work_key(work_id)
+    now = time()
+    for cache_key, (expires, payload) in reversed(list(_cache.items())):
+        if expires <= now:
+            continue
+        items = payload.get("items")
+        if not isinstance(items, list):
+            continue
+        for volume in items:
+            hit = map_volume(volume)
+            if hit is not None and hit.ol_work_key == key:
+                _cache.move_to_end(cache_key)
+                return volume_details(volume)
+    return None
+
+
 def google_search_query(query: str, subject: str = "") -> str:
     isbn = extract_isbn(query)
     if isbn:
@@ -414,9 +436,19 @@ async def _fetch_json(
 
     loop = asyncio.get_running_loop()
     pending: asyncio.Future[dict] = loop.create_future()
+    # An owner with no followers still needs to observe the shared exception.
+    pending.add_done_callback(lambda future: None if future.cancelled() else future.exception())
     _inflight[cache_key] = pending
     try:
-        payload = await _fetch_json_uncached(url, params)
+        try:
+            payload = await _fetch_json_uncached(url, params)
+        except GoogleBooksError as exc:
+            if exc.status not in {502, 503, 504}:
+                raise
+            # Retry a transient provider failure once, shared by all waiters.
+            # Never retry quota/auth errors or replace them with empty results.
+            await asyncio.sleep(0.3)
+            payload = await _fetch_json_uncached(url, params)
         if cache_empty or not _empty_volume_items(payload):
             _cache_set(cache_key, payload)
         pending.set_result(payload)

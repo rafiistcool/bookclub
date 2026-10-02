@@ -463,6 +463,157 @@ def test_detail_imports_from_google_not_open_library(gb):
     assert _FakeClient.calls == []
 
 
+@pytest.mark.parametrize(
+    "path,params",
+    [
+        ("/api/books/search", {"q": "circe"}),
+        ("/api/books/trending", {"limit": 14}),
+        ("/api/books/subjects/fiction", {"limit": 14}),
+    ],
+)
+@pytest.mark.parametrize("volume", [CIRCE_VOLUME, NO_ISBN_VOLUME])
+@pytest.mark.parametrize("upstream_status", [429, 503])
+def test_opening_discovered_book_does_not_call_google(gb, path, params, volume, upstream_status):
+    from app.googlebooks import google_books_cooling_down
+
+    _FakeClient.gb_items = [volume]
+    discovered = gb.get(path, params=params)
+    assert discovered.status_code == 200
+    key = discovered.json()["items"][0]["ol_work_key"]
+    assert _book_row(gb, key) is None  # Browsing does not import every result.
+
+    # Opening an already displayed result must also work during an outage.
+    _FakeClient.gb_status = upstream_status
+    _FakeClient.calls = []
+    opened = gb.get("/api/books/works/" + key.rsplit("/", 1)[-1])
+    assert opened.status_code == 200, opened.text
+    assert opened.json()["title"] == volume["volumeInfo"]["title"]
+    assert opened.json()["description"] == volume_details(volume).description
+    assert _book_row(gb, key) is not None
+    assert _FakeClient.calls == []
+    assert not google_books_cooling_down()
+
+    # Further discovery still works; opening a book did not trip a global block.
+    _FakeClient.gb_status = None
+    assert gb.get("/api/books/search", params={"q": "another query"}).status_code == 200
+    assert len(_FakeClient.calls) == 1
+
+
+@pytest.mark.parametrize("isbn", ["9781408857892", "9788835713951"])
+def test_title_hit_opens_even_when_google_isbn_lookup_misses(gb, isbn):
+    volume = {
+        **CIRCE_VOLUME,
+        "volumeInfo": {
+            **CIRCE_VOLUME["volumeInfo"],
+            "title": "A Court of Mist and Fury",
+            "industryIdentifiers": [{"type": "ISBN_13", "identifier": isbn}],
+        },
+    }
+    _FakeClient.gb_items = [volume]
+    found = gb.get("/api/books/search", params={"q": "A Court of Mist and fury"})
+    assert found.status_code == 200
+    assert found.json()["items"][0]["ol_work_key"] == f"/works/ISBN{isbn}"
+    _FakeClient.gb_items = []  # The follow-up isbn: search would return a 404.
+    _FakeClient.calls = []
+    opened = gb.get(f"/api/books/works/ISBN{isbn}")
+    assert opened.status_code == 200, opened.text
+    assert opened.json()["title"] == "A Court of Mist and Fury"
+    assert _FakeClient.calls == []
+
+
+def test_google_transient_503_is_retried_once(gb, monkeypatch):
+    original_get = _FakeClient.get
+    calls = []
+
+    async def get(self, url, params=None, headers=None):
+        calls.append(url)
+        if len(calls) == 1:
+            return _FakeResponse({"error": {"message": "Service temporarily unavailable."}}, url, status_code=503)
+        return await original_get(self, url, params=params, headers=headers)
+
+    monkeypatch.setattr(_FakeClient, "get", get)
+    response = gb.get("/api/books/trending")
+    assert response.status_code == 200
+    assert response.json()["items"][0]["title"] == "Circe"
+    assert len(calls) == 2
+    assert gb.get("/api/books/trending").status_code == 200
+    assert len(calls) == 2
+
+
+def test_google_persistent_503_stops_after_one_retry_and_can_recover(gb):
+    from app.googlebooks import google_books_cooling_down
+
+    _FakeClient.gb_status = 503
+    response = gb.get("/api/books/trending")
+    assert response.status_code == 502
+    assert len(_FakeClient.calls) == 2
+    assert not google_books_cooling_down()
+    _FakeClient.gb_status = None
+    assert gb.get("/api/books/trending").status_code == 200
+    assert len(_FakeClient.calls) == 3
+
+
+def test_google_failure_does_not_leave_unobserved_future(monkeypatch):
+    import asyncio
+    import gc
+    from app import googlebooks
+
+    async def run():
+        failures = []
+        loop = asyncio.get_running_loop()
+        loop.set_exception_handler(lambda _loop, context: failures.append(context))
+
+        async def unavailable(*args):
+            raise googlebooks.GoogleBooksError(status=500)
+
+        monkeypatch.setattr(googlebooks, "_fetch_json_uncached", unavailable)
+        with pytest.raises(googlebooks.GoogleBooksError):
+            await googlebooks._fetch_json("test", cache_key="failure-test", params={})
+        await asyncio.sleep(0)
+        gc.collect()
+        assert failures == []
+        assert "failure-test" not in googlebooks._inflight
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("detail_route", ["works", "work"])
+def test_discovered_book_opens_during_existing_google_cooldown(gb, detail_route):
+    gb.get("/api/books/trending")
+    _FakeClient.gb_status = 429
+    assert gb.get("/api/books/search", params={"q": "uncached"}).status_code == 429
+    _FakeClient.calls = []
+    opened = gb.get(f"/api/books/{detail_route}/ISBN9780316769488")
+    assert opened.status_code == 200, opened.text
+    assert opened.json()["description"] == "A witch on an island."
+    assert _FakeClient.calls == []
+
+
+def test_discovered_book_refresh_still_fetches_fresh_metadata(gb):
+    gb.get("/api/books/trending")
+    _FakeClient.gb_items = [{
+        **CIRCE_VOLUME,
+        "volumeInfo": {**CIRCE_VOLUME["volumeInfo"], "description": "Updated synopsis."},
+    }]
+    _FakeClient.calls = []
+    refreshed = gb.post("/api/books/works/ISBN9780316769488/refresh")
+    assert refreshed.status_code == 200
+    assert refreshed.json()["description"] == "Updated synopsis."
+    assert len(_FakeClient.calls) == 1
+
+
+def test_expired_discovery_does_not_supply_book_details(gb, monkeypatch):
+    from app import googlebooks
+
+    gb.get("/api/books/trending")
+    later = googlebooks.time() + googlebooks._CACHE_TTL + 1
+    monkeypatch.setattr(googlebooks, "time", lambda: later)
+    _FakeClient.calls = []
+    opened = gb.get("/api/books/works/ISBN9780316769488")
+    assert opened.status_code == 200
+    assert len(_FakeClient.calls) == 1
+
+
 def test_volume_key_detail_and_refresh(gb):
     body = gb.get("/api/books/works/GBabcVolumeId1").json()
     assert body["ol_work_key"] == "/works/GBabcVolumeId1"

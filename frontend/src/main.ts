@@ -1,6 +1,7 @@
 import { createPinia } from "pinia";
 import { createApp } from "vue";
 import App from "./App.vue";
+import { installAssetRecovery } from "./assetRecovery";
 import { i18n } from "./i18n";
 import router from "./router";
 import { useClub } from "./stores/club";
@@ -8,6 +9,7 @@ import { useLocale } from "./stores/locale";
 import { useTheme } from "./stores/theme";
 import "./styles/index.css";
 
+installAssetRecovery();
 const app = createApp(App);
 app.use(createPinia());
 app.use(i18n);
