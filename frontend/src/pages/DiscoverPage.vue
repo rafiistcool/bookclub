@@ -65,8 +65,11 @@ const toast = useToast();
 const SHORT_QUERY = computed(() => t("discover.shortQuery"));
 
 const history = ref<SearchHistoryEntry[]>([]);
+const historyOpen = ref(false);
 const historyExpanded = ref(false);
 const historyBusy = ref(false);
+const searchForm = ref<HTMLFormElement | null>(null);
+const searchInput = ref<HTMLInputElement | null>(null);
 let historyVersion = 0;
 let historyWrites = Promise.resolve();
 
@@ -122,6 +125,40 @@ function repeatSearch(value: string) {
 }
 
 const query = ref("");
+const matchingHistory = computed(() => {
+  const term = query.value.trim().toLocaleLowerCase();
+  return history.value.filter((entry) => entry.query.toLocaleLowerCase().includes(term));
+});
+const showHistory = computed(() => historyOpen.value && matchingHistory.value.length > 0);
+
+function openHistory() {
+  if (historyOpen.value) return;
+  historyOpen.value = true;
+  void loadHistory();
+}
+
+function closeHistory() {
+  historyOpen.value = false;
+  historyExpanded.value = false;
+}
+
+function leaveSearch(event: FocusEvent) {
+  if (!(event.relatedTarget instanceof Node) || !searchForm.value?.contains(event.relatedTarget)) {
+    closeHistory();
+  }
+}
+
+function dismissHistory(event: PointerEvent) {
+  if (event.target instanceof Node && !searchForm.value?.contains(event.target)) closeHistory();
+}
+
+function escapeHistory(event: KeyboardEvent) {
+  if (!showHistory.value) return;
+  event.preventDefault();
+  searchInput.value?.focus();
+  closeHistory();
+}
+
 const submittedQuery = ref("");
 const subject = ref("");
 const sortPick = ref<"" | Exclude<SearchSort, "relevance">>("");
@@ -513,6 +550,8 @@ function syncRoute() {
 }
 
 function submitSearch() {
+  closeHistory();
+  searchInput.value?.blur();
   submittedQuery.value = query.value.trim();
   if (submittedQuery.value && !shortQuery.value) rememberSearch(submittedQuery.value);
   const unchanged = router.currentRoute.value.query.q === submittedQuery.value
@@ -591,6 +630,7 @@ watch(sentinel, (el, previous) => {
 });
 
 onMounted(() => {
+  document.addEventListener("pointerdown", dismissHistory);
   void loadHistory();
   observer = new IntersectionObserver(
     (entries) => {
@@ -604,6 +644,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  document.removeEventListener("pointerdown", dismissHistory);
   observer?.disconnect();
   observer = null;
   requestSeq += 1;
@@ -624,56 +665,76 @@ defineExpose({ loadPage });
     </div>
 
     <div class="discover-search">
-      <form role="search" @submit.prevent="submitSearch">
-        <span class="search-field">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.8"
-            stroke-linecap="round"
-            aria-hidden="true"
+      <form
+        ref="searchForm"
+        role="search"
+        @submit.prevent="submitSearch"
+        @focusout="leaveSearch"
+        @keydown.esc="escapeHistory"
+      >
+        <div class="search-input-wrap">
+          <span class="search-field">
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              aria-hidden="true"
+            >
+              <circle cx="11" cy="11" r="6.4" />
+              <path d="M15.8 15.8 20.2 20.2" />
+            </svg>
+            <input
+              ref="searchInput"
+              v-model="query"
+              @focus="openHistory"
+              @click="openHistory"
+              @input="historyOpen = true; historyExpanded = false"
+              type="search"
+              inputmode="search"
+              autocomplete="off"
+              :aria-controls="showHistory ? 'search-history' : undefined"
+              :placeholder="t('discover.placeholder')"
+              :aria-label="t('discover.searchAria')"
+            />
+            <button
+              v-if="query || submittedQuery"
+              class="text-btn"
+              type="button"
+              @click="clearSearch"
+            >
+              {{ t("common.clear") }}
+            </button>
+          </span>
+          <section
+            v-if="showHistory"
+            id="search-history"
+            class="search-history"
+            :aria-label="t('discover.recentSearches')"
+            :aria-busy="historyBusy"
+            @pointerdown.prevent
           >
-            <circle cx="11" cy="11" r="6.4" />
-            <path d="M15.8 15.8 20.2 20.2" />
-          </svg>
-          <input
-            v-model="query"
-            @focus="loadHistory"
-            type="search"
-            inputmode="search"
-            :placeholder="t('discover.placeholder')"
-            :aria-label="t('discover.searchAria')"
-          />
-          <button
-            v-if="query || submittedQuery"
-            class="text-btn"
-            type="button"
-            @click="clearSearch"
-          >
-            {{ t("common.clear") }}
-          </button>
-        </span>
+            <div class="history-heading">
+              <strong>{{ t('discover.recentSearches') }}</strong>
+              <button type="button" class="text-btn" :disabled="historyBusy" @click="deleteHistory()">{{ t('discover.clearHistory') }}</button>
+            </div>
+            <ul>
+              <li v-for="entry in (historyExpanded ? matchingHistory : matchingHistory.slice(0, 5))" :key="entry.id">
+                <button type="button" class="text-btn history-query" @click="repeatSearch(entry.query)">{{ entry.query }}</button>
+                <button type="button" class="icon-btn" :disabled="historyBusy"
+                  :aria-label="t('discover.removeSearch', { query: entry.query })" @click="deleteHistory(entry.id)">×</button>
+              </li>
+            </ul>
+            <button v-if="matchingHistory.length > 5" type="button" class="text-btn" @click="historyExpanded = !historyExpanded">
+              {{ historyExpanded ? t('discover.lessHistory') : t('discover.allHistory') }}
+            </button>
+          </section>
+        </div>
         <button class="btn btn-primary" type="submit">{{ t("discover.search") }}</button>
       </form>
-      <section v-if="!query.trim() && history.length" class="search-history" :aria-label="t('discover.recentSearches')" :aria-busy="historyBusy">
-        <div class="history-heading">
-          <strong>{{ t('discover.recentSearches') }}</strong>
-          <button type="button" class="text-btn" :disabled="historyBusy" @click="deleteHistory()">{{ t('discover.clearHistory') }}</button>
-        </div>
-        <ul>
-          <li v-for="entry in (historyExpanded ? history : history.slice(0, 5))" :key="entry.id">
-            <button type="button" class="text-btn history-query" @click="repeatSearch(entry.query)">{{ entry.query }}</button>
-            <button type="button" class="icon-btn" :disabled="historyBusy"
-              :aria-label="t('discover.removeSearch', { query: entry.query })" @click="deleteHistory(entry.id)">×</button>
-          </li>
-        </ul>
-        <button v-if="history.length > 5" type="button" class="text-btn" @click="historyExpanded = !historyExpanded">
-          {{ historyExpanded ? t('discover.lessHistory') : t('discover.allHistory') }}
-        </button>
-      </section>
       <div class="chip-row scroll" role="group" :aria-label="t('discover.subjectFilter')">
         <button
           v-for="chip in SUBJECTS"
@@ -916,10 +977,28 @@ defineExpose({ loadPage });
 </template>
 
 <style scoped>
-.search-history { margin: var(--space-3) 0; max-height: 45vh; overflow: auto; }
+.search-input-wrap { flex: 1; min-width: 0; }
+.search-history {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  left: 0;
+  right: 0;
+  z-index: 1;
+  max-height: min(300px, 35vh);
+  max-height: min(300px, 35dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--elev-float);
+}
 .history-heading, .search-history li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.history-heading { flex-wrap: wrap; font-size: var(--text-sm); }
 .search-history ul { list-style: none; margin: 0; padding: 0; }
 .history-query { flex: 1; text-align: left; overflow-wrap: anywhere; min-height: var(--tap); }
+.search-history li:hover { background: var(--surface-2); }
 
 .discover-search {
   position: sticky;
@@ -933,6 +1012,7 @@ defineExpose({ loadPage });
 }
 
 .discover-search form {
+  position: relative;
   display: flex;
   gap: var(--space-2);
   margin-bottom: var(--space-2);
