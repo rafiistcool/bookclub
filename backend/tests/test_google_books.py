@@ -364,7 +364,10 @@ def test_empty_google_response_does_not_freeze_retries(gb, monkeypatch, empty_pa
 
     async def get(self, url, params=None, headers=None):
         calls.append(url)
-        if len(calls) == 1:
+        # Keep the optional browse topic fallback empty too; the next user
+        # request must still reach the recovered provider.
+        empty_calls = 2 if path in {"/api/books/trending", "/api/books/subjects/fiction"} else 1
+        if len(calls) <= empty_calls:
             return _FakeResponse(empty_payload, url)
         return await original_get(self, url, params=params, headers=headers)
 
@@ -380,9 +383,10 @@ def test_empty_google_response_does_not_freeze_retries(gb, monkeypatch, empty_pa
     assert retry.status_code == 200
     body = retry.json()
     assert (body if "/isbn/" in path else body["items"][0])["title"] == "Circe"
-    assert len(calls) == 2
+    expected_calls = 3 if path in {"/api/books/trending", "/api/books/subjects/fiction"} else 2
+    assert len(calls) == expected_calls
     assert gb.get(path, params=params).json() == body
-    assert len(calls) == 2  # Successful nonempty results still use the cache.
+    assert len(calls) == expected_calls  # Nonempty results still use the cache.
     assert _open_library_urls() == []
 
 
@@ -391,6 +395,75 @@ def test_search_google_429_does_not_fall_back(gb):
     response = gb.get("/api/books/search", params={"q": "circe"})
     assert response.status_code == 429
     assert "busy" in response.json()["detail"].lower()
+    assert _open_library_urls() == []
+
+
+@pytest.mark.parametrize(
+    "path,params,topic,order",
+    [
+        ("/api/books/trending", {"limit": 14}, "fiction", "newest"),
+        ("/api/books/subjects/fiction", {"limit": 14}, "fiction", None),
+        ("/api/books/subjects/science_fiction", {"limit": 14}, "science fiction", None),
+        ("/api/books/search", {"subject": "fantasy"}, "fantasy", None),
+    ],
+)
+def test_empty_subject_preview_recovers_with_google_topic_search(
+    gb, monkeypatch, caplog, path, params, topic, order,
+):
+    original_get = _FakeClient.get
+    sent = []
+
+    async def get(self, url, params=None, headers=None):
+        sent.append(dict(params or {}))
+        if str((params or {}).get("q", "")).startswith("subject:"):
+            return _FakeResponse({"totalItems": 0}, url)
+        return await original_get(self, url, params=params, headers=headers)
+
+    monkeypatch.setattr(_FakeClient, "get", get)
+    _FakeClient.gb_total = 1000
+    result = gb.get(path, params=params)
+    assert result.status_code == 200
+    assert result.json()["items"][0]["title"] == "Circe"
+    assert result.json()["has_more"] is False  # Do not mix subject/topic pages.
+    assert [request["q"] for request in sent] == [f'subject:"{topic}"', topic]
+    assert sent[1].get("orderBy") == order
+    assert sent[1]["maxResults"] == params.get("limit", 24)
+    assert "fallback_items=1" in caplog.text
+    assert _open_library_urls() == []
+
+    # Suggestions are real catalog results and retain the detail hotfix.
+    assert gb.get("/api/books/works/ISBN9780316769488").status_code == 200
+    assert len(sent) == 2
+
+
+@pytest.mark.parametrize("params", [
+    {"q": "nonexistent", "subject": "fiction"},
+    {"subject": "fiction", "page": 2},
+])
+def test_empty_explicit_search_or_later_page_is_not_broadened(gb, params):
+    _FakeClient.gb_items = []
+    result = gb.get("/api/books/search", params=params)
+    assert result.status_code == 200
+    assert result.json()["items"] == []
+    assert result.json()["has_more"] is False
+    assert len(_FakeClient.params_for("googleapis.com/books")) == 1
+
+
+@pytest.mark.parametrize("status,expected", [(429, 429), (500, 502)])
+@pytest.mark.parametrize("fail_primary", [True, False])
+def test_subject_fallback_keeps_provider_errors_visible(gb, monkeypatch, status, expected, fail_primary):
+    calls = []
+
+    async def get(self, url, params=None, headers=None):
+        calls.append(params)
+        if not fail_primary and len(calls) == 1:
+            return _FakeResponse({"totalItems": 0}, url)
+        return _FakeResponse({"error": {"message": "unavailable"}}, url, status_code=status)
+
+    monkeypatch.setattr(_FakeClient, "get", get)
+    result = gb.get("/api/books/subjects/fiction")
+    assert result.status_code == expected
+    assert len(calls) == (1 if fail_primary else 2)
     assert _open_library_urls() == []
 
 
