@@ -281,6 +281,7 @@
     "stillLoading": "Still loading shelves… {n}s so far.",
     "trending": "Trending today",
     "nothingTrending": "Nothing trending right now.",
+    "nothingInSubject": "The catalog currently has no books for this subject.",
     "seeAll": "See all",
     "shelfLoadFailed": "Could not load this shelf.",
     "searchInstead": "Search it instead",

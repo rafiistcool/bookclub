@@ -750,8 +750,15 @@ defineExpose({ loadPage });
             show-authors
           />
         </div>
-        <p v-else class="fine subtle row-fallback">
-          {{ row.error || t("discover.shelfLoadFailed") }}
+        <p v-else-if="row.error" class="fine subtle row-fallback">
+          {{ row.error }}
+          <button class="text-btn" type="button" @click="retryRow(row)">{{ t("common.tryAgain") }}</button>
+          <button class="text-btn" type="button" @click="toggleSubject(row.subject)">
+            {{ t("discover.searchInstead") }}
+          </button>
+        </p>
+        <p v-else class="fine subtle row-empty">
+          {{ t("discover.nothingInSubject") }}
           <button class="text-btn" type="button" @click="retryRow(row)">{{ t("common.tryAgain") }}</button>
           <button class="text-btn" type="button" @click="toggleSubject(row.subject)">
             {{ t("discover.searchInstead") }}

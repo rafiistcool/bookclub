@@ -390,8 +390,10 @@ async def _fetch_json_uncached(url: str, params: dict[str, str | int]) -> dict:
 
 
 def _empty_volume_items(payload: dict) -> bool:
+    # Google can omit items entirely on a successful zero-result response.
+    # Treat it like an empty list so a transient miss cannot stick for 18h.
     items = payload.get("items")
-    return isinstance(items, list) and len(items) == 0
+    return not isinstance(items, list) or not items
 
 
 async def _fetch_json(

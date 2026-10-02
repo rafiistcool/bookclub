@@ -216,6 +216,36 @@ describe("DiscoverPage", () => {
     await flushPromises();
     expect(wrapper.text()).toContain("Dune");
   });
+
+  it.each(["en", "de"] as const)("does not report successful empty shelves as errors in %s", async (locale) => {
+    const previousLocale = i18n.global.locale.value;
+    i18n.global.locale.value = locale;
+    trending.mockResolvedValue(page([]));
+    subject.mockResolvedValue(page([]));
+    const { wrapper } = await mountDiscover();
+    try {
+      expect(wrapper.text()).not.toContain(i18n.global.t("discover.shelfLoadFailed"));
+      expect(wrapper.findAll(".row-empty")).toHaveLength(5);
+      expect(wrapper.text()).toContain(i18n.global.t("discover.nothingInSubject"));
+      expect(wrapper.findAll(".row-fallback")).toHaveLength(0);
+      expect(wrapper.text()).toContain(i18n.global.t("discover.nothingTrending"));
+    } finally {
+      wrapper.unmount();
+      i18n.global.locale.value = previousLocale;
+    }
+  });
+
+  it("clears a subject error when retry succeeds with an empty list", async () => {
+    subject.mockRejectedValueOnce(new Error("down"));
+    const { wrapper } = await mountDiscover();
+    subject.mockResolvedValue(page([]));
+    await wrapper.get(".row-fallback button").trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).not.toContain(i18n.global.t("discover.shelfLoadFailed"));
+    expect(wrapper.findAll(".row-fallback")).toHaveLength(0);
+    expect(wrapper.findAll(".row-empty")).toHaveLength(1);
+    wrapper.unmount();
+  });
 });
 
 describe("DiscoverPage search results", () => {

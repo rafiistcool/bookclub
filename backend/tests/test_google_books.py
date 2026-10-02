@@ -348,6 +348,44 @@ def test_search_empty_google_does_not_fall_back(gb):
     assert _open_library_urls() == []
 
 
+@pytest.mark.parametrize("empty_payload", [{"totalItems": 0}, {"totalItems": 0, "items": []}])
+@pytest.mark.parametrize(
+    "path,params",
+    [
+        ("/api/books/search", {"q": "circe"}),
+        ("/api/books/trending", {}),
+        ("/api/books/subjects/fiction", {}),
+        ("/api/books/isbn/9780316769488", {}),
+    ],
+)
+def test_empty_google_response_does_not_freeze_retries(gb, monkeypatch, empty_payload, path, params):
+    original_get = _FakeClient.get
+    calls = []
+
+    async def get(self, url, params=None, headers=None):
+        calls.append(url)
+        if len(calls) == 1:
+            return _FakeResponse(empty_payload, url)
+        return await original_get(self, url, params=params, headers=headers)
+
+    monkeypatch.setattr(_FakeClient, "get", get)
+    first = gb.get(path, params=params)
+    if "/isbn/" in path:
+        assert first.status_code == 404
+    else:
+        assert first.status_code == 200
+        assert first.json()["items"] == []
+
+    retry = gb.get(path, params=params)
+    assert retry.status_code == 200
+    body = retry.json()
+    assert (body if "/isbn/" in path else body["items"][0])["title"] == "Circe"
+    assert len(calls) == 2
+    assert gb.get(path, params=params).json() == body
+    assert len(calls) == 2  # Successful nonempty results still use the cache.
+    assert _open_library_urls() == []
+
+
 def test_search_google_429_does_not_fall_back(gb):
     _FakeClient.gb_status = 429
     response = gb.get("/api/books/search", params={"q": "circe"})
@@ -846,4 +884,3 @@ def test_later_empty_google_page_has_more_false_when_total_stays_high(gb):
     assert page2.json()["items"] == []
     assert page2.json()["has_more"] is False
     assert _open_library_urls() == []
-

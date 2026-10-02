@@ -281,6 +281,7 @@
     "stillLoading": "Regale laden noch… {n} s bisher.",
     "trending": "Heute im Trend",
     "nothingTrending": "Gerade nichts im Trend.",
+    "nothingInSubject": "Der Katalog liefert gerade keine Bücher für dieses Thema.",
     "seeAll": "Alle ansehen",
     "shelfLoadFailed": "Dieses Regal konnte nicht geladen werden.",
     "searchInstead": "Stattdessen suchen",
