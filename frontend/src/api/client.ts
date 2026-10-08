@@ -30,6 +30,7 @@ import type {
 import { t } from "../i18n";
 import { translateApiError } from "../i18n/apiErrors";
 import type { FinishNote, Status } from "../constants";
+import type { PhysicalShelfLayout } from "../physicalShelf";
 
 export class ApiError extends Error {
   status: number;
@@ -132,6 +133,10 @@ export const api = {
       body: JSON.stringify(body),
     }),
   myShelf: () => request<ShelfList>("/api/shelf"),
+  physicalShelfLayout: () => request<PhysicalShelfLayout>("/api/shelf/physical-layout"),
+  savePhysicalShelfLayout: (layout: PhysicalShelfLayout) => request<PhysicalShelfLayout>("/api/shelf/physical-layout", {
+    method: "PUT", body: JSON.stringify(layout),
+  }),
   friendShelf: (username: string) =>
     request<ShelfList>(`/api/shelf?username=${encodeURIComponent(username)}`),
   addToShelf: (body: {

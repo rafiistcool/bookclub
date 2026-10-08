@@ -1,5 +1,6 @@
 import re
 from datetime import date, datetime
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -396,6 +397,42 @@ class ShelfListOut(BaseModel):
     user: UserOut
     items: list[ShelfItemOut]
     favorites: list[FavoriteOut] = []
+
+
+class PhysicalSpine(BaseModel):
+    color: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
+    width: int = Field(ge=26, le=64, strict=True)
+
+    @field_validator("color")
+    @classmethod
+    def normalized_color(cls, value: str) -> str:
+        return value.lower()
+
+
+class PhysicalShelfLayout(BaseModel):
+    # IDs belong to shelf entries rather than the shared book catalog.
+    rows: list[list[Annotated[int, Field(strict=True, gt=0)]]] = Field(
+        default_factory=lambda: [[], [], []], min_length=1, max_length=12
+    )
+    material: Literal["oak", "walnut", "white"] = "oak"
+    spines: dict[str, PhysicalSpine] = Field(default_factory=dict, max_length=2000)
+
+    @field_validator("rows")
+    @classmethod
+    def rows_ok(cls, value: list[list[int]]) -> list[list[int]]:
+        ids = [entry_id for row in value for entry_id in row]
+        if len(ids) > 2000:
+            raise ValueError("At most 2000 books fit on the physical shelf")
+        if len(ids) != len(set(ids)):
+            raise ValueError("Each book can only appear once on the physical shelf")
+        return value
+
+    @field_validator("spines")
+    @classmethod
+    def spine_keys_ok(cls, value: dict[str, PhysicalSpine]) -> dict[str, PhysicalSpine]:
+        if any(not re.fullmatch(r"[1-9][0-9]{0,18}", key) for key in value):
+            raise ValueError("Spine appearances must refer to shelf entry IDs")
+        return value
 
 
 class GoodreadsSkipOut(BaseModel):

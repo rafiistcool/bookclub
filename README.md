@@ -166,12 +166,21 @@ Invite-only, no email. Any signed-in member can mint invites. Members change the
 | `/` | Club pick, meeting, progress, that book’s diary, next-up vote, past picks |
 | `/discover` | Search + browse the catalog; add-your-own when it misses |
 | `/shelf` | Your cover grid, reading-status filters, and saved book order |
+| `/shelf/physical` | A personal bookshelf with draggable spines, shelf finishes, and saved placements |
 | `/club` | Members, TBR overlap, recent diary across all books, next-up vote |
 | `/club/:username` | A member’s shelf and ratings |
 | `/book/:workId` | Synopsis, club rating, shelf actions, full diary |
 | `/settings` | Theme, invites, Goodreads import, SQLite backup, notifications, password |
 
 Old paths (`/library`, `/friends`, `/overlap`, `/invites`, `/pick`) still redirect.
+
+Choose **Open real bookshelf** on the Shelf tab to arrange books across wooden
+shelves. On a phone, hold a spine briefly before dragging. Tap or keyboard-focus
+a book to change its colour and thickness, or move it with the position controls.
+Spines use a stable colour palette and available page counts; they are generated
+rather than photographs of an edition's actual spine. Placements, custom spines,
+and the shelf finish save to your account without changing reading statuses or
+completion dates. A failed save restores the previous arrangement.
 
 ```
 backend/           FastAPI, tests

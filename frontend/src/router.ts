@@ -26,6 +26,7 @@ const router = createRouter({
         { path: "", component: () => import("./pages/HomePage.vue") },
         { path: "discover", component: () => import("./pages/DiscoverPage.vue") },
         { path: "shelf", component: () => import("./pages/ShelfPage.vue") },
+        { path: "shelf/physical", component: () => import("./pages/PhysicalShelfPage.vue") },
         { path: "club", component: () => import("./pages/ClubPage.vue") },
         {
           path: "club/:username",

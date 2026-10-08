@@ -2,6 +2,7 @@ from datetime import datetime, time, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
+from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
@@ -15,10 +16,11 @@ from app.goodreads import (
     lookup_catalog,
     parse_goodreads_csv,
 )
-from app.models import ShelfEntry, ShelfStatus, User
+from app.models import ShelfEntry, ShelfStatus, User, UserPhysicalShelfLayout
 from app.schemas import (
     GoodreadsImportOut,
     GoodreadsSkipOut,
+    PhysicalShelfLayout,
     ShelfAddIn,
     ShelfItemOut,
     ShelfListOut,
@@ -208,6 +210,53 @@ async def import_goodreads(
     )
 
 
+def _owned_shelf_ids(session: Session, me: User) -> set[int]:
+    return set(session.exec(select(ShelfEntry.id).where(ShelfEntry.user_id == me.id)).all())
+
+
+@router.get("/physical-layout", response_model=PhysicalShelfLayout)
+def get_physical_shelf_layout(
+    me: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> PhysicalShelfLayout:
+    saved = session.get(UserPhysicalShelfLayout, me.id)
+    if saved is None:
+        return PhysicalShelfLayout()
+    layout = PhysicalShelfLayout.model_validate_json(saved.layout_json)
+    owned_ids = _owned_shelf_ids(session, me)
+    # Deletions can also happen through database restores or maintenance. Keep
+    # row boundaries intact while filtering entries that no longer exist.
+    return PhysicalShelfLayout(
+        rows=[[entry_id for entry_id in row if entry_id in owned_ids] for row in layout.rows],
+        material=layout.material,
+        spines={key: spine for key, spine in layout.spines.items() if int(key) in owned_ids},
+    )
+
+
+@router.put("/physical-layout", response_model=PhysicalShelfLayout)
+def save_physical_shelf_layout(
+    payload: PhysicalShelfLayout,
+    me: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> PhysicalShelfLayout:
+    referenced_ids = {entry_id for row in payload.rows for entry_id in row}
+    referenced_ids.update(int(key) for key in payload.spines)
+    if not referenced_ids <= _owned_shelf_ids(session, me):
+        raise HTTPException(status_code=400, detail="Physical shelf books must be on your shelf")
+    # An atomic upsert also handles two devices saving their first layout at
+    # once. This layout never writes reading status or the list's order.
+    statement = insert(UserPhysicalShelfLayout).values(
+        user_id=me.id, layout_json=payload.model_dump_json()
+    )
+    session.execute(
+        statement.on_conflict_do_update(
+            index_elements=["user_id"], set_={"layout_json": statement.excluded.layout_json}
+        )
+    )
+    session.commit()
+    return payload
+
+
 @router.patch("/{entry_id}", response_model=ShelfItemOut)
 def update_shelf_item(
     entry_id: int,
@@ -301,6 +350,15 @@ def remove_shelf_item(
         raise HTTPException(status_code=404, detail="Book not on your shelf")
     status = entry.status
     activity.record(session, me, "shelf_removed", book=entry.book, status=status.value)
+    saved_layout = session.get(UserPhysicalShelfLayout, me.id)
+    if saved_layout is not None:
+        # SQLite may reuse the highest deleted shelf ID for a subsequent book.
+        # Remove the old appearance in the same transaction as the deletion.
+        layout = PhysicalShelfLayout.model_validate_json(saved_layout.layout_json)
+        layout.rows = [[value for value in row if value != entry_id] for row in layout.rows]
+        layout.spines.pop(str(entry_id), None)
+        saved_layout.layout_json = layout.model_dump_json()
+        session.add(saved_layout)
     session.delete(entry)
     session.flush()
     leftovers = session.exec(

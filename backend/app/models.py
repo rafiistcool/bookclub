@@ -149,6 +149,16 @@ class ShelfEntry(SQLModel, table=True):
     book: Optional[Book] = Relationship(back_populates="shelf_entries")
 
 
+class UserPhysicalShelfLayout(SQLModel, table=True):
+    """One independent, private physical shelf arrangement per member."""
+
+    __tablename__ = "physical_shelf_layouts"
+
+    user_id: int = Field(primary_key=True, foreign_key="users.id", ondelete="CASCADE")
+    # JSON holds shelf entry IDs, material, and optional spine appearances.
+    layout_json: str = Field(default='{"rows":[[],[],[]],"material":"oak","spines":{}}')
+
+
 FAVORITE_LIMIT = 3
 
 

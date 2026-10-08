@@ -21,6 +21,7 @@ export type Book = {
   cover_id: number | null;
   year: number | null;
   cover_url: string | null;
+  pages?: number | null;
 };
 
 export type ShelfItem = {
