@@ -3,15 +3,20 @@ import type { ShelfItem } from "./types";
 
 export type ShelfMaterial = "oak" | "walnut" | "white";
 export type SpineStyle = { color: string; width: number };
+export type DecorationKind = "plant" | "vase" | "candle" | "frame";
+export type ShelfDecoration = { kind: DecorationKind; color: string };
+export type ShelfObjectId = number | string;
 export type PhysicalShelfLayout = {
-  rows: number[][];
+  rows: ShelfObjectId[][];
   material: ShelfMaterial;
   spines: Record<string, SpineStyle>;
+  decorations?: Record<string, ShelfDecoration>;
 };
 
-const MIN_ROWS = 3;
+const DEFAULT_ROWS = 3;
 const MAX_ROWS = 12;
 const ROW_CAPACITY = 560;
+const DECORATION_WIDTHS: Record<DecorationKind, number> = { plant: 76, vase: 58, candle: 50, frame: 74 };
 const LIGHT_INK = "#fff8ed";
 const DARK_INK = "#2f2b26";
 const PALETTE = [
@@ -72,12 +77,21 @@ export function defaultSpine(item: ShelfItem): SpineStyle & { height: number; in
 export function reconcileLayout(layout: PhysicalShelfLayout, items: ShelfItem[]): PhysicalShelfLayout {
   const ordered = orderedShelf(items);
   const byId = new Map(ordered.map((item) => [item.id, item]));
-  const seen = new Set<number>();
-  const rows: number[][] = Array.from({ length: Math.max(MIN_ROWS, Math.min(MAX_ROWS, layout.rows.length)) }, () => []);
-  layout.rows.forEach((row, rowIndex) => {
+  const seen = new Set<ShelfObjectId>();
+  const savedRows = layout.rows ?? [];
+  const rows: ShelfObjectId[][] = Array.from({ length: Math.min(MAX_ROWS, savedRows.length || DEFAULT_ROWS) }, () => []);
+  const decorations: Record<string, ShelfDecoration> = {};
+  savedRows.forEach((row, rowIndex) => {
     const target = rows[Math.min(rowIndex, MAX_ROWS - 1)]!;
     row.forEach((id) => {
-      if (!byId.has(id) || seen.has(id)) return;
+      if (seen.has(id)) return;
+      if (typeof id === "number") {
+        if (!byId.has(id)) return;
+      } else {
+        if (!id.startsWith("decor:") || id.length <= "decor:".length
+          || !layout.decorations || !Object.prototype.hasOwnProperty.call(layout.decorations, id)) return;
+        decorations[id] = { ...layout.decorations![id]! };
+      }
       seen.add(id);
       target.push(id);
     });
@@ -86,9 +100,11 @@ export function reconcileLayout(layout: PhysicalShelfLayout, items: ShelfItem[])
   for (const [id, style] of Object.entries(layout.spines)) {
     if (byId.has(Number(id))) spines[id] = { ...style };
   }
-  const width = (id: number) => spines[String(id)]?.width ?? defaultSpine(byId.get(id)!).width;
+  const width = (id: ShelfObjectId) => typeof id === "string"
+    ? decorationWidth(decorations[id]!.kind)
+    : spines[String(id)]?.width ?? defaultSpine(byId.get(id)!).width;
   let rowIndex = rows.reduce((last, row, index) => row.length ? index : last, 0);
-  let occupied = rows[rowIndex]!.reduce((total, id) => total + width(id), 0);
+  let occupied = rows[rowIndex]!.reduce<number>((total, id) => total + width(id), 0);
   for (const item of ordered) {
     if (seen.has(item.id)) continue;
     const bookWidth = width(item.id);
@@ -101,14 +117,26 @@ export function reconcileLayout(layout: PhysicalShelfLayout, items: ShelfItem[])
     occupied += bookWidth;
     seen.add(item.id);
   }
-  return { rows, material: layout.material, spines };
+  return { rows, material: layout.material, spines, decorations };
 }
 
-/** The insertion index refers to the destination after removing the moving book. */
-export function moveBook(layout: PhysicalShelfLayout, id: number, targetRow: number, targetIndex: number): PhysicalShelfLayout {
+/** Width used by shelf packing and the visual decoration footprint. */
+export function decorationWidth(kind: DecorationKind): number {
+  return DECORATION_WIDTHS[kind];
+}
+
+function copiedAppearance(layout: PhysicalShelfLayout) {
+  return {
+    spines: Object.fromEntries(Object.entries(layout.spines).map(([key, style]) => [key, { ...style }])),
+    decorations: Object.fromEntries(Object.entries(layout.decorations ?? {}).map(([key, decoration]) => [key, { ...decoration }])),
+  };
+}
+
+/** The insertion index refers to the destination after removing the moving object. */
+export function moveBook(layout: PhysicalShelfLayout, id: ShelfObjectId, targetRow: number, targetIndex: number): PhysicalShelfLayout {
   if (!Number.isInteger(targetRow) || targetRow < 0 || targetRow >= layout.rows.length
     || !Number.isFinite(targetIndex) || !layout.rows.some((row) => row.includes(id))) return layout;
-  const seen = new Set<number>();
+  const seen = new Set<ShelfObjectId>();
   const rows = layout.rows.map((row) => row.filter((bookId) => {
     if (bookId === id || seen.has(bookId)) return false;
     seen.add(bookId);
@@ -119,6 +147,15 @@ export function moveBook(layout: PhysicalShelfLayout, id: number, targetRow: num
   return {
     ...layout,
     rows,
-    spines: Object.fromEntries(Object.entries(layout.spines).map(([key, style]) => [key, { ...style }])),
+    ...copiedAppearance(layout),
   };
+}
+
+/** Remove a shelf board, keeping its objects together on the nearest remaining board. */
+export function removeShelfRow(layout: PhysicalShelfLayout, index: number): PhysicalShelfLayout {
+  if (!Number.isInteger(index) || index < 0 || index >= layout.rows.length || layout.rows.length <= 1) return layout;
+  const rows = layout.rows.map((row) => [...row]);
+  const removed = rows.splice(index, 1)[0]!;
+  rows[index === 0 ? 0 : index - 1]!.push(...removed);
+  return { ...layout, rows, ...copiedAppearance(layout) };
 }

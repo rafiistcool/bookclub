@@ -489,8 +489,6 @@
     "historyNotFound": "Diese Suche ist nicht mehr in deinem Verlauf."
   },
   "physicalShelf": {
-    "open": "Echtes Regal öffnen",
-    "openHint": "Gib deinen Büchern einen Platz. Ganz nach deinem Geschmack.",
     "back": "Zurück zu deinen Büchern",
     "eyebrow": "Ein Zuhause für deine Geschichten",
     "title": "Dein echtes Regal",
@@ -524,6 +522,27 @@
     "chooseColor": "Farbe {color} wählen",
     "retry": "Erneut versuchen",
     "loading": "Wird geladen …",
-    "close": "Schließen"
+    "close": "Schließen",
+    "view": "Regalansicht wählen",
+    "bookView": "Bücher",
+    "shelfView": "Regal",
+    "removeRow": "Regalfach {number} entfernen",
+    "lastRow": "Ein Regalfach bleibt immer erhalten.",
+    "removeRowHint": "Inhalt ins benachbarte Fach verschieben und Brett entfernen",
+    "addDecoration": "Deko hinzufügen",
+    "decorate": "Ein bisschen mehr Zuhause",
+    "decorationHint": "Kleine Dinge, die dein Regal persönlich machen. Du kannst sie danach frei zwischen den Büchern verschieben.",
+    "plant": "Pflanze",
+    "vase": "Vase",
+    "candle": "Kerze",
+    "frame": "Bilderrahmen",
+    "plantHint": "Ein bisschen Grün",
+    "vaseHint": "Schlichte Keramik",
+    "candleHint": "Warmes Licht",
+    "frameHint": "Eine kleine Erinnerung",
+    "decorationLabel": "{name}. Gestalten oder verschieben.",
+    "decorationColor": "Farbe",
+    "saveDecoration": "Deko speichern",
+    "removeDecoration": "Aus dem Regal nehmen"
   }
 }

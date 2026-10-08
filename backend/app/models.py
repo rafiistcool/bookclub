@@ -155,8 +155,8 @@ class UserPhysicalShelfLayout(SQLModel, table=True):
     __tablename__ = "physical_shelf_layouts"
 
     user_id: int = Field(primary_key=True, foreign_key="users.id", ondelete="CASCADE")
-    # JSON holds shelf entry IDs, material, and optional spine appearances.
-    layout_json: str = Field(default='{"rows":[[],[],[]],"material":"oak","spines":{}}')
+    # JSON holds shelf entry IDs, decorations, material, and spine appearances.
+    layout_json: str = Field(default='{"rows":[[],[],[]],"material":"oak","spines":{},"decorations":{}}')
 
 
 FAVORITE_LIMIT = 3

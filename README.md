@@ -174,13 +174,17 @@ Invite-only, no email. Any signed-in member can mint invites. Members change the
 
 Old paths (`/library`, `/friends`, `/overlap`, `/invites`, `/pick`) still redirect.
 
-Choose **Open real bookshelf** on the Shelf tab to arrange books across wooden
+Choose **Bookshelf** in the view switch on the Shelf tab to arrange books across wooden
 shelves. On a phone, hold a spine briefly before dragging. Tap or keyboard-focus
 a book to change its colour and thickness, or move it with the position controls.
 Spines use a stable colour palette and available page counts; they are generated
 rather than photographs of an edition's actual spine. Placements, custom spines,
 and the shelf finish save to your account without changing reading statuses or
 completion dates. A failed save restores the previous arrangement.
+Add plants, vases, candles, or picture frames and drag them between the books.
+Decorations have their own colour and position controls. Remove a shelf board
+using its bin button; all its books and decorations move to an adjacent shelf.
+At least one shelf remains, and Undo restores the last successful change.
 
 ```
 backend/           FastAPI, tests

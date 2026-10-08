@@ -489,8 +489,6 @@
     "historyNotFound": "That search is no longer in your history."
   },
   "physicalShelf": {
-    "open": "Open real bookshelf",
-    "openHint": "Give your books a place. Arrange them your way.",
     "back": "Back to your shelf",
     "eyebrow": "A little room for your stories",
     "title": "Your real bookshelf",
@@ -524,6 +522,27 @@
     "chooseColor": "Choose colour {color}",
     "retry": "Try again",
     "loading": "Loading…",
-    "close": "Close"
+    "close": "Close",
+    "view": "Choose shelf view",
+    "bookView": "Books",
+    "shelfView": "Bookshelf",
+    "removeRow": "Remove shelf {number}",
+    "lastRow": "Your bookshelf always keeps one shelf.",
+    "removeRowHint": "Move the contents to an adjacent shelf and remove this shelf",
+    "addDecoration": "Add decoration",
+    "decorate": "Make yourself at home",
+    "decorationHint": "Little things that make your bookshelf yours. Move them freely between your books afterwards.",
+    "plant": "Plant",
+    "vase": "Vase",
+    "candle": "Candle",
+    "frame": "Picture frame",
+    "plantHint": "A little greenery",
+    "vaseHint": "Simple ceramics",
+    "candleHint": "A warm glow",
+    "frameHint": "A little memory",
+    "decorationLabel": "{name}. Customise or move.",
+    "decorationColor": "Colour",
+    "saveDecoration": "Save decoration",
+    "removeDecoration": "Remove from bookshelf"
   }
 }

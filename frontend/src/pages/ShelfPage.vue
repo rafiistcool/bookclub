@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { HeartIcon, Bars3BottomLeftIcon, ArrowUpRightIcon } from "@heroicons/vue/24/outline";
+import { HeartIcon } from "@heroicons/vue/24/outline";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
@@ -8,6 +8,7 @@ import BottomSheet from "../components/BottomSheet.vue";
 import FavoritePortrait from "../components/FavoritePortrait.vue";
 import MeetingSheet from "../components/MeetingSheet.vue";
 import ShelfBoard from "../components/ShelfBoard.vue";
+import ShelfViewSwitch from "../components/ShelfViewSwitch.vue";
 import TileSkeleton from "../components/TileSkeleton.vue";
 import { STATUSES, statusLabel, statusShort, type Status } from "../constants";
 import { tp } from "../i18n";
@@ -263,11 +264,7 @@ onMounted(load);
 
     <p v-if="error" class="error">{{ error }}</p>
 
-    <RouterLink v-if="loaded && !error" to="/shelf/physical" class="open-physical-shelf">
-      <span class="physical-shelf-icon"><Bars3BottomLeftIcon aria-hidden="true" /></span>
-      <span><strong>{{ t('physicalShelf.open') }}</strong><small>{{ t('physicalShelf.openHint') }}</small></span>
-      <ArrowUpRightIcon class="physical-shelf-arrow" aria-hidden="true" />
-    </RouterLink>
+    <div v-if="loaded && !error" class="shelf-view-toolbar"><ShelfViewSwitch active="books" /></div>
 
     <div v-if="!loaded" class="book-grid" aria-hidden="true">
       <TileSkeleton :count="9" />
@@ -379,13 +376,7 @@ onMounted(load);
 </template>
 
 <style scoped>
-.open-physical-shelf { display: flex; align-items: center; gap: 14px; padding: 15px 18px; margin-bottom: var(--space-6); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); color: var(--text); text-decoration: none; }
-.open-physical-shelf:hover { border-color: var(--accent-line); background: var(--accent-soft); }
-.open-physical-shelf strong { display: block; font-family: var(--serif); font-size: var(--text-lg); }
-.open-physical-shelf small { display: block; color: var(--text-muted); }
-.physical-shelf-icon { padding: 9px; border-radius: var(--radius-sm); background: var(--surface-2); color: var(--accent); }
-.physical-shelf-icon svg, .physical-shelf-arrow { width: 22px; height: 22px; }
-.physical-shelf-arrow { margin-left: auto; flex-shrink: 0; color: var(--text-muted); }
+.shelf-view-toolbar { margin-bottom: var(--space-5); }
 .shelf-head { position: relative; padding-right: 42px; margin-bottom: var(--space-6); }
 .shelf-head > div { min-width: 0; }
 .shelf-head h1 { font-size: clamp(1.5rem, 6.7vw, 2rem); }

@@ -227,9 +227,13 @@ def get_physical_shelf_layout(
     # Deletions can also happen through database restores or maintenance. Keep
     # row boundaries intact while filtering entries that no longer exist.
     return PhysicalShelfLayout(
-        rows=[[entry_id for entry_id in row if entry_id in owned_ids] for row in layout.rows],
+        rows=[
+            [entry_id for entry_id in row if isinstance(entry_id, str) or entry_id in owned_ids]
+            for row in layout.rows
+        ],
         material=layout.material,
         spines={key: spine for key, spine in layout.spines.items() if int(key) in owned_ids},
+        decorations=layout.decorations,
     )
 
 
@@ -239,7 +243,9 @@ def save_physical_shelf_layout(
     me: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> PhysicalShelfLayout:
-    referenced_ids = {entry_id for row in payload.rows for entry_id in row}
+    referenced_ids = {
+        entry_id for row in payload.rows for entry_id in row if isinstance(entry_id, int)
+    }
     referenced_ids.update(int(key) for key in payload.spines)
     if not referenced_ids <= _owned_shelf_ids(session, me):
         raise HTTPException(status_code=400, detail="Physical shelf books must be on your shelf")

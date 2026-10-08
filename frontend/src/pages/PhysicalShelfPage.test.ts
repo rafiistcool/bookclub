@@ -1,7 +1,9 @@
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { VueDraggable, type DraggableEvent, type UseDraggableReturn } from "vue-draggable-plus";
 import { statusLabel } from "../constants";
+import type { DecorationKind, ShelfDecoration, ShelfObjectId } from "../physicalShelf";
 import type { ShelfItem } from "../types";
 
 const myShelf = vi.fn();
@@ -22,9 +24,10 @@ vi.mock("../api/client", () => ({
 import PhysicalShelfPage from "./PhysicalShelfPage.vue";
 
 type Layout = {
-  rows: number[][];
+  rows: ShelfObjectId[][];
   material: "oak" | "walnut" | "white";
   spines: Record<string, { color?: string; width?: number }>;
+  decorations?: Record<string, ShelfDecoration>;
 };
 
 const draggable = {
@@ -48,17 +51,29 @@ function item(id: number, title: string, status: ShelfItem["status"] = "want_to_
 
 const books = [item(1, "First"), item(2, "Finished", "finished"), item(3, "Reading", "currently_reading")];
 const saved: Layout = { rows: [[2, 1], [3], []], material: "walnut", spines: { "2": { color: "#123456", width: 40 } } };
+const decorated: Layout = {
+  ...saved,
+  rows: [[2, "decor:plant-1", 1], [3, "decor:frame-1"], []],
+  decorations: {
+    "decor:plant-1": { kind: "plant", color: "#b57b5c" },
+    "decor:frame-1": { kind: "frame", color: "#77533e" },
+  },
+};
 
 function rowBooks(wrapper: VueWrapper): string[][] {
   return wrapper.findAll(".physical-shelf-row").map((row) => row.findAll(".book-spine").map((book) => book.text()));
 }
 
-async function render(layout: Layout = saved) {
+function rowObjects(wrapper: VueWrapper): string[][] {
+  return wrapper.findAll(".physical-shelf-row").map((row) => row.findAll(".shelf-object").map((object) => object.attributes("data-id")!));
+}
+
+async function render(layout: Layout = saved, realDraggable = false) {
   myShelf.mockResolvedValue({ items: structuredClone(books), favorites: [], timezone: "Europe/Berlin" });
   physicalShelfLayout.mockResolvedValue(structuredClone(layout));
   const pinia = createPinia();
   setActivePinia(pinia);
-  const wrapper = mount(PhysicalShelfPage, { global: { plugins: [pinia], stubs: { VueDraggable: draggable } } });
+  const wrapper = mount(PhysicalShelfPage, { global: { plugins: [pinia], stubs: { VueDraggable: realDraggable ? false : draggable } } });
   await flushPromises();
   return wrapper;
 }
@@ -159,6 +174,174 @@ describe("physical bookshelf", () => {
     expect(rowBooks(wrapper)[0][0]).toContain("Finished");
     expect(rowBooks(wrapper)[0][1]).toContain("First");
     expect(rowBooks(wrapper)[2]).toEqual([]);
+    expect(patchShelf).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("removes occupied boards without losing objects, and keeps the saved single board on reload", async () => {
+    const wrapper = await render(decorated);
+    await wrapper.findAll(".remove-shelf-row")[1].trigger("click");
+    await flushPromises();
+    const merged: Layout = savePhysicalShelfLayout.mock.calls[0][0];
+    expect(merged.rows).toEqual([[2, "decor:plant-1", 1, 3, "decor:frame-1"], []]);
+    expect(merged.decorations).toEqual(decorated.decorations);
+    expect(merged.spines).toEqual(saved.spines);
+    expect(rowObjects(wrapper)).toEqual([["2", "decor:plant-1", "1", "3", "decor:frame-1"], []]);
+    await wrapper.findAll(".remove-shelf-row")[1].trigger("click");
+    await flushPromises();
+    const reduced: Layout = savePhysicalShelfLayout.mock.calls[1][0];
+    expect(reduced.rows).toHaveLength(1);
+    wrapper.unmount();
+
+    const restored = await render(reduced);
+    expect(rowObjects(restored)).toEqual([["2", "decor:plant-1", "1", "3", "decor:frame-1"]]);
+    expect(restored.get(".remove-shelf-row").attributes("disabled")).toBeDefined();
+    await restored.get(".remove-shelf-row").trigger("click");
+    expect(savePhysicalShelfLayout).toHaveBeenCalledTimes(2);
+    restored.unmount();
+  });
+
+  it("restores an occupied board and its decoration after a failed removal", async () => {
+    const wrapper = await render(decorated);
+    let reject!: (error: Error) => void;
+    savePhysicalShelfLayout.mockReturnValueOnce(new Promise((_resolve, fail) => { reject = fail; }));
+    await wrapper.findAll(".remove-shelf-row")[0].trigger("click");
+    expect(rowObjects(wrapper)).toHaveLength(2);
+    expect(wrapper.get(".add-decoration").attributes("disabled")).toBeDefined();
+    expect(wrapper.findAll(".remove-shelf-row").every((button) => button.attributes("disabled") !== undefined)).toBe(true);
+    reject(new Error("offline"));
+    await flushPromises();
+    expect(rowObjects(wrapper)).toEqual(decorated.rows.map((row) => row.map(String)));
+    expect(wrapper.get(".add-decoration").attributes("disabled")).toBeUndefined();
+    expect(savePhysicalShelfLayout.mock.calls[0][0].decorations).toEqual(decorated.decorations);
+    expect(patchShelf).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it.each<DecorationKind>(["plant", "vase", "candle", "frame"])("adds a %s decoration to the chosen board and persists its identity", async (kind) => {
+    const wrapper = await render();
+    await wrapper.get(".add-decoration").trigger("click");
+    expect(wrapper.findAll(".decoration-choice")).toHaveLength(4);
+    await wrapper.get(".decoration-row").setValue("1");
+    await wrapper.get(`.decoration-choice[data-kind="${kind}"]`).trigger("click");
+    await flushPromises();
+    const submitted: Layout = savePhysicalShelfLayout.mock.calls[0][0];
+    const [id] = Object.keys(submitted.decorations!);
+    expect(id).toMatch(/^decor:[\da-f-]+$/i);
+    expect(submitted.decorations![id]).toMatchObject({ kind, color: expect.stringMatching(/^#[\da-f]{6}$/i) });
+    expect(submitted.rows).toEqual([[2, 1], [3, id], []]);
+    expect(submitted.spines).toEqual(saved.spines);
+    expect(wrapper.find(".decoration-row").exists()).toBe(false);
+    expect(wrapper.get(`.shelf-decoration[data-kind="${kind}"]`).attributes("data-id")).toBe(id);
+    expect(patchShelf).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("restores the existing objects and decoration records when adding decoration fails", async () => {
+    const wrapper = await render(decorated);
+    await wrapper.get(".add-decoration").trigger("click");
+    await wrapper.get(".decoration-row").setValue("2");
+    savePhysicalShelfLayout.mockRejectedValueOnce(new Error("offline"));
+    await wrapper.get('.decoration-choice[data-kind="vase"]').trigger("click");
+    await flushPromises();
+    expect(Object.keys(savePhysicalShelfLayout.mock.calls[0][0].decorations)).toHaveLength(3);
+    expect(rowObjects(wrapper)).toEqual(decorated.rows.map((row) => row.map(String)));
+    expect(wrapper.findAll(".shelf-decoration")).toHaveLength(2);
+    expect(wrapper.find('.shelf-decoration[data-kind="vase"]').exists()).toBe(false);
+    expect(wrapper.get(".add-decoration").attributes("disabled")).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it("persists a decoration dragged between mixed rows together with its appearance", async () => {
+    const wrapper = await render(decorated);
+    const rows = wrapper.findAllComponents(draggable);
+    rows[0].vm.$emit("start");
+    rows[0].vm.$emit("update:modelValue", [2, 1]);
+    rows[1].vm.$emit("update:modelValue", [3, "decor:plant-1", "decor:frame-1"]);
+    rows[0].vm.$emit("end");
+    await flushPromises();
+    const submitted: Layout = savePhysicalShelfLayout.mock.calls[0][0];
+    expect(submitted.rows).toEqual([[2, 1], [3, "decor:plant-1", "decor:frame-1"], []]);
+    expect(submitted.decorations).toEqual(decorated.decorations);
+    expect(submitted.spines).toEqual(saved.spines);
+    expect(rowObjects(wrapper)).toEqual(submitted.rows.map((row) => row.map(String)));
+    expect(patchShelf).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("keeps exactly one decoration node after the real drag library restores and updates mixed rows", async () => {
+    const wrapper = await render(decorated, true);
+    const rows = wrapper.findAllComponents(VueDraggable);
+    const source = rows[0].element as HTMLElement;
+    const destination = rows[1].element as HTMLElement;
+    const moving = wrapper.get('.shelf-decoration[data-id="decor:plant-1"]').element as HTMLElement;
+    const sourceDrag = rows[0].vm as unknown as UseDraggableReturn;
+    const destinationDrag = rows[1].vm as unknown as UseDraggableReturn;
+    const event = {
+      item: moving, from: source, to: destination,
+      oldIndex: 1, oldDraggableIndex: 1, newIndex: 1, newDraggableIndex: 1,
+      clone: moving.cloneNode(true), pullMode: true,
+    } as unknown as DraggableEvent<ShelfObjectId>;
+
+    // Sortable moves the DOM node, then the library restores it for Vue's keyed update.
+    sourceDrag.option("onStart")!(event);
+    destination.insertBefore(moving, destination.children[1]);
+    destinationDrag.option("onAdd")!(event);
+    sourceDrag.option("onRemove")!(event);
+    sourceDrag.option("onEnd")!(event);
+    await flushPromises();
+
+    expect(savePhysicalShelfLayout).toHaveBeenCalledTimes(1);
+    expect(savePhysicalShelfLayout.mock.calls[0][0].rows).toEqual([[2, 1], [3, "decor:plant-1", "decor:frame-1"], []]);
+    expect(rowObjects(wrapper)).toEqual([["2", "1"], ["3", "decor:plant-1", "decor:frame-1"], []]);
+    expect(wrapper.findAll('.shelf-decoration[data-id="decor:plant-1"]')).toHaveLength(1);
+    expect(wrapper.findAll(".book-spine")).toHaveLength(3);
+    wrapper.unmount();
+  });
+
+  it("edits decoration color locally before saving it without changing books or other decorations", async () => {
+    const wrapper = await render(decorated);
+    await wrapper.get('.shelf-decoration[data-id="decor:plant-1"]').trigger("click");
+    expect(wrapper.find(".decoration-editor").exists()).toBe(true);
+    await wrapper.get(".decoration-color").setValue("#aabbcc");
+    expect(savePhysicalShelfLayout).not.toHaveBeenCalled();
+    await wrapper.get(".decoration-editor").trigger("submit");
+    await flushPromises();
+    const submitted: Layout = savePhysicalShelfLayout.mock.calls[0][0];
+    expect(submitted.decorations).toEqual({ ...decorated.decorations, "decor:plant-1": { kind: "plant", color: "#aabbcc" } });
+    expect(submitted.rows).toEqual(decorated.rows);
+    expect(submitted.spines).toEqual(saved.spines);
+    expect(wrapper.find(".decoration-editor").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("moves decoration through the accessible position controls", async () => {
+    const wrapper = await render(decorated);
+    await wrapper.get('.shelf-decoration[data-id="decor:plant-1"]').trigger("click");
+    expect(wrapper.get(".move-book-row").attributes("aria-label")).toBeTruthy();
+    await wrapper.get(".move-book-right").trigger("click");
+    await flushPromises();
+    expect(savePhysicalShelfLayout.mock.calls[0][0].rows).toEqual([[2, 1, "decor:plant-1"], [3, "decor:frame-1"], []]);
+    await wrapper.get(".move-book-row").setValue("2");
+    await flushPromises();
+    expect(savePhysicalShelfLayout.mock.calls[1][0].rows).toEqual([[2, 1], [3, "decor:frame-1"], ["decor:plant-1"]]);
+    expect(savePhysicalShelfLayout.mock.calls[1][0].decorations).toEqual(decorated.decorations);
+    expect(rowObjects(wrapper)[2]).toEqual(["decor:plant-1"]);
+    wrapper.unmount();
+  });
+
+  it("removes decoration while preserving every book, book style and other decoration", async () => {
+    const wrapper = await render(decorated);
+    await wrapper.get('.shelf-decoration[data-id="decor:plant-1"]').trigger("click");
+    await wrapper.get(".remove-decoration").trigger("click");
+    await flushPromises();
+    const submitted: Layout = savePhysicalShelfLayout.mock.calls[0][0];
+    expect(submitted.rows).toEqual([[2, 1], [3, "decor:frame-1"], []]);
+    expect(submitted.decorations).toEqual({ "decor:frame-1": decorated.decorations!["decor:frame-1"] });
+    expect(submitted.spines).toEqual(saved.spines);
+    expect(wrapper.find(".decoration-editor").exists()).toBe(false);
+    expect(wrapper.findAll(".book-spine")).toHaveLength(3);
+    expect(wrapper.findAll(".shelf-decoration")).toHaveLength(1);
     expect(patchShelf).not.toHaveBeenCalled();
     wrapper.unmount();
   });
