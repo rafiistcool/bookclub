@@ -496,7 +496,6 @@
   },
   "physicalShelf": {
     "title": "Your real bookshelf",
-    "bookCount": "{count} books",
     "material": "Finish",
     "oak": "Oak",
     "walnut": "Walnut",

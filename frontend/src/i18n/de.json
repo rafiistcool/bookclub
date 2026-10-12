@@ -496,7 +496,6 @@
   },
   "physicalShelf": {
     "title": "Dein Bücherregal",
-    "bookCount": "{count} Bücher",
     "material": "Material",
     "oak": "Eiche",
     "walnut": "Nussbaum",
@@ -563,7 +562,7 @@
     "globe": "Globus",
     "globeHint": "Fernweh inklusive",
     "memberTitle": "Regal von {name}",
-    "memberBookSheet": "Aus {name}s Regal",
+    "memberBookSheet": "Aus dem Regal von {name}",
     "memberEmpty": "{name} hat noch keine Bücher im Regal."
   }
 }

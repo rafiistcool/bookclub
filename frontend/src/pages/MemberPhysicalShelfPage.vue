@@ -4,6 +4,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { api, ApiError } from "../api/client";
+import { tp } from "../i18n";
 import Avatar from "../components/Avatar.vue";
 import BottomSheet from "../components/BottomSheet.vue";
 import PhysicalShelf from "../components/PhysicalShelf.vue";
@@ -58,7 +59,7 @@ watch(() => route.params.username, load);
       <Avatar :username="username" :src="avatarUrl" size="lg" />
       <div>
         <h1>{{ t("physicalShelf.memberTitle", { name: username }) }}</h1>
-        <p v-if="loaded && !error" class="lede nums">{{ t("physicalShelf.bookCount", { count: items.length }) }}</p>
+        <p v-if="loaded && !error" class="lede nums">{{ tp("shelf.books", items.length) }}</p>
       </div>
     </div>
     <div class="member-shelf-switch"><ShelfViewSwitch active="physical" :base="`/club/${username}`" /></div>

@@ -142,12 +142,15 @@ async function submit() {
   const body = draft.value.trim();
   if (!body || posting.value || !diary.value) return;
   posting.value = true;
+  const key = draftId.value;
   try {
     const created = await api.addDiaryEntry(workId(props.workKey), {
       body,
       spoiler_upto: spoiler.value,
       book: diary.value.book_id ? undefined : props.book,
     });
+    // Posted: forget the draft now, even if the page changes before the field clears.
+    saveDraft(key, "");
     diary.value.items = [...diary.value.items, created];
     if (!diary.value.book_id) await load();
     draft.value = "";
@@ -483,6 +486,11 @@ watch(
 /* On phones the composer rides above the tab bar while the diary is on screen,
    so writing never means scrolling past every entry first. */
 @media (max-width: 1023px) {
+  /* A long draft scrolls inside the field instead of covering the diary. */
+  .compose.open textarea {
+    max-height: 30vh;
+  }
+
   .compose {
     position: sticky;
     bottom: calc(var(--nav-h) + env(safe-area-inset-bottom));

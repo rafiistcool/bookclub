@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
 import colorsys
 from io import BytesIO
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from PIL import Image, UnidentifiedImageError
 
 from app.branding import open_library_ua
 from app.config import get_settings
+from app.covers import is_allowed_cover_host, is_open_library_cover_host
 from app.models import Book
 from app.serialize import book_cover_url
 
 COVER_TIMEOUT = httpx.Timeout(4.0)
+MAX_REDIRECTS = 3
+FETCH_DEADLINE = 8.0
 MAX_COVER_BYTES = 1_500_000
 MAX_COVER_PIXELS = 4_000_000
 # Open Library answers a missing cover with a 1×1 pixel when asked nicely.
@@ -31,31 +36,62 @@ def spine_cover_url(book: Book) -> str | None:
     return url
 
 
+def _fetchable(url: str) -> bool:
+    """Only the cover hosts themselves, and the archive.org hosts Open Library redirects to."""
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.port is not None or parsed.username or parsed.password:
+        return False
+    host = (parsed.hostname or "").lower()
+    return (
+        is_open_library_cover_host(host)
+        or is_allowed_cover_host(host)
+        or host == "archive.org"
+        or host.endswith(".archive.org")
+    )
+
+
+async def _fetch(url: str) -> bytes | None:
+    headers = {"User-Agent": open_library_ua(get_settings())}
+    async with httpx.AsyncClient(timeout=COVER_TIMEOUT, follow_redirects=False) as client:
+        for _ in range(MAX_REDIRECTS + 1):
+            # Every hop is checked before it is requested, so a redirect can
+            # never point the server at another host.
+            if not _fetchable(url):
+                return None
+            async with client.stream("GET", url, headers=headers) as response:
+                if response.is_redirect and response.headers.get("location"):
+                    url = urljoin(url, response.headers["location"])
+                    continue
+                if response.status_code in (404, 410):
+                    return None
+                if response.status_code != 200:
+                    # Throttling, denials and server errors pass: try again on a later visit.
+                    raise httpx.HTTPStatusError(
+                        f"cover host answered {response.status_code}",
+                        request=response.request,
+                        response=response,
+                    )
+                chunks: list[bytes] = []
+                size = 0
+                async for chunk in response.aiter_bytes():
+                    size += len(chunk)
+                    if size > MAX_COVER_BYTES:
+                        return None
+                    chunks.append(chunk)
+                return b"".join(chunks)
+    return None
+
+
 async def fetch_cover(url: str) -> bytes | None:
     """Cover bytes, or None when the host says there is no usable cover.
 
-    Network trouble and upstream 5xx raise httpx.HTTPError so the caller can
-    retry later instead of recording "no cover" for good.
+    Network trouble, throttling and upstream errors raise httpx.HTTPError so
+    the caller can retry later instead of recording "no cover" for good.
     """
-    if not url.startswith("https://"):
-        return None
-    headers = {"User-Agent": open_library_ua(get_settings())}
-    async with httpx.AsyncClient(
-        timeout=COVER_TIMEOUT, follow_redirects=True, max_redirects=3
-    ) as client:
-        async with client.stream("GET", url, headers=headers) as response:
-            if response.status_code >= 500:
-                response.raise_for_status()
-            if response.status_code != 200 or response.url.scheme != "https":
-                return None
-            chunks: list[bytes] = []
-            size = 0
-            async for chunk in response.aiter_bytes():
-                size += len(chunk)
-                if size > MAX_COVER_BYTES:
-                    return None
-                chunks.append(chunk)
-    return b"".join(chunks)
+    try:
+        return await asyncio.wait_for(_fetch(url), FETCH_DEADLINE)
+    except asyncio.TimeoutError as exc:
+        raise httpx.TimeoutException("cover fetch took too long") from exc
 
 
 def dominant_color(data: bytes) -> str | None:
@@ -68,7 +104,7 @@ def dominant_color(data: bytes) -> str | None:
         if min(width, height) < MIN_COVER_EDGE or width * height > MAX_COVER_PIXELS:
             return None
         image = image.convert("RGB")
-    except (Image.DecompressionBombError, UnidentifiedImageError, OSError, ValueError):
+    except (Image.DecompressionBombError, UnidentifiedImageError, OSError, ValueError, SyntaxError):
         return None
 
     # Publisher borders and scan edges are not what a reader remembers.

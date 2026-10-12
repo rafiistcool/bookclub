@@ -3,6 +3,7 @@ import { ArrowLeftIcon, ArrowUturnLeftIcon, CheckIcon, LightBulbIcon, PaintBrush
 import { computed, nextTick, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
+import { tp } from "../i18n";
 import BottomSheet from "../components/BottomSheet.vue";
 import PhysicalShelf from "../components/PhysicalShelf.vue";
 import ShelfBookInfo from "../components/ShelfBookInfo.vue";
@@ -125,7 +126,11 @@ function removeRow(index: number) {
 function addDecoration(kind: DecorationKind) {
   if (saving.value || Object.keys(decorations.value).length >= 100) return;
   const next = copy(layout.value);
-  const id = `decor:${crypto.randomUUID()}`;
+  // randomUUID needs a secure context; a club served over plain http on a LAN has none.
+  const uid = typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const id = `decor:${uid}`;
   next.decorations = { ...next.decorations, [id]: { kind, color: decorationColors[kind] } };
   const row = Math.max(0, Math.min(decorationRow.value, next.rows.length - 1));
   next.rows[row].push(id);
@@ -252,7 +257,7 @@ onMounted(load);
       <div>
         <h1>{{ t('physicalShelf.title') }}</h1>
         <p v-if="loaded && !error" class="shelf-meta">
-          <span class="shelf-book-count">{{ t('physicalShelf.bookCount', { count: items.length }) }}</span>
+          <span class="shelf-book-count">{{ tp('shelf.books', items.length) }}</span>
           <span class="save-notice" role="status" aria-live="polite"><CheckIcon v-if="notice === t('physicalShelf.saved')" aria-hidden="true" />{{ notice || t('physicalShelf.autoSave') }}</span>
         </p>
       </div>

@@ -1,4 +1,4 @@
-import type { ObjectDirective } from "vue";
+import { nextTick, type ObjectDirective } from "vue";
 
 // Phones have no resize handle, so a fixed-height textarea hides everything
 // past its first few lines. Browsers with field-sizing grow it in CSS.
@@ -18,7 +18,8 @@ export const vAutosize: ObjectDirective<HTMLTextAreaElement> = {
     const onInput = () => fit(el);
     listeners.set(el, onInput);
     el.addEventListener("input", onInput);
-    fit(el);
+    // After v-model has filled in a prefilled value, whatever the attribute order.
+    void nextTick(() => fit(el));
   },
   // Also covers drafts that are filled or cleared from code, e.g. after posting.
   updated: fit,

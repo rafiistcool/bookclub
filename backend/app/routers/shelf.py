@@ -290,7 +290,14 @@ async def _resolve_spine_color(book: Book) -> str | None:
         data = await spine_color.fetch_cover(url)
     except httpx.HTTPError:
         return None
-    return (spine_color.dominant_color(data) if data else None) or ""
+    except Exception:  # e.g. httpx.InvalidURL: this cover will never load
+        return ""
+    if not data:
+        return ""
+    try:
+        return spine_color.dominant_color(data) or ""
+    except Exception:  # Pillow raises more than it documents on damaged files
+        return ""
 
 
 @router.post("/spine-colors", response_model=SpineColorsOut)

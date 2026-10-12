@@ -201,27 +201,27 @@ function compartment(row: ShelfObjectId[], index: number) {
 
 <style scoped>
 /* The room: a pool of warm light on the wall and a soft shadow on the floor. */
-.shelf-room { position: relative; padding: 34px 26px 26px; background: radial-gradient(ellipse 75% 60% at 50% 0, color-mix(in srgb, #ffcf8f 13%, transparent), transparent 72%); }
+.shelf-room { position: relative; padding: 34px 26px 26px; background: radial-gradient(ellipse 75% 60% at 50% 0, #ffcf8f21, transparent 72%); }
 .shelf-room::after { content: ''; position: absolute; left: 6%; right: 6%; bottom: 12px; height: 26px; border-radius: 50%; background: #000; opacity: .28; filter: blur(14px); pointer-events: none; }
 
 .physical-shelf {
-  --wood: #c0935f; --wood-light: #dcb685; --wood-hi: #f0d2a6; --wood-dark: #8c6239; --wood-back: #9d774c; --grain: #5a381b; --shelf-label: #3f2a17;
+  --wood: #c0935f; --wood-light: #dcb685; --wood-hi: #f0d2a6; --wood-dark: #8c6239; --wood-back: #9d774c; --grain: #5a381b; --grain-9: #5a381b17; --grain-5: #5a381b0d; --grain-10: #5a381b1a; --grain-6: #5a381b0f; --shelf-label: #3f2a17;
   --spine-scale: 1; --row-h: 212px; --plank: 15px; --frame: 15px;
   position: relative; z-index: 1; padding: 13px var(--frame) 0; border-radius: 3px;
   background:
-    repeating-linear-gradient(90.6deg, transparent 0 5px, color-mix(in srgb, var(--grain) 9%, transparent) 5px 6px, transparent 6px 13px, color-mix(in srgb, var(--grain) 5%, transparent) 13px 15px),
+    repeating-linear-gradient(90.6deg, transparent 0 5px, var(--grain-9) 5px 6px, transparent 6px 13px, var(--grain-5) 13px 15px),
     linear-gradient(90deg, var(--wood-light), var(--wood) 15px, var(--wood) calc(100% - 15px), var(--wood-dark));
   box-shadow: 0 22px 40px -18px #000000a6, 0 2px 6px #00000040, inset 0 1px 0 var(--wood-hi), inset 1px 0 0 #ffffff30, inset -1px 0 0 #00000030;
 }
 /* Top board, overhanging the carcass slightly. */
 .physical-shelf::before { content: ''; position: absolute; left: -7px; right: -7px; top: -7px; height: 12px; border-radius: 2px; background: linear-gradient(180deg, var(--wood-hi), var(--wood-light) 30%, var(--wood) 75%, var(--wood-dark)); box-shadow: 0 4px 6px -2px #00000066; }
-.physical-shelf[data-material="walnut"] { --wood: #6a4732; --wood-light: #8a6046; --wood-hi: #a87c5e; --wood-dark: #3b261b; --wood-back: #4a3023; --grain: #1c0f08; --shelf-label: #e9d3bb; }
-.physical-shelf[data-material="white"] { --wood: #ebe7dd; --wood-light: #f8f5ee; --wood-hi: #ffffff; --wood-dark: #c0b9aa; --wood-back: #cfc9bb; --grain: #7f7663; --shelf-label: #5d5648; }
-.physical-shelf[data-material="black"] { --wood: #2c2b2d; --wood-light: #403e40; --wood-hi: #5d5a5b; --wood-dark: #131213; --wood-back: #1d1c1e; --grain: #000000; --shelf-label: #d8d2c8; }
+.physical-shelf[data-material="walnut"] { --wood: #6a4732; --wood-light: #8a6046; --wood-hi: #a87c5e; --wood-dark: #3b261b; --wood-back: #4a3023; --grain: #1c0f08; --grain-9: #1c0f0817; --grain-5: #1c0f080d; --grain-10: #1c0f081a; --grain-6: #1c0f080f; --shelf-label: #e9d3bb; }
+.physical-shelf[data-material="white"] { --wood: #ebe7dd; --wood-light: #f8f5ee; --wood-hi: #ffffff; --wood-dark: #c0b9aa; --wood-back: #cfc9bb; --grain: #7f7663; --grain-9: #7f766317; --grain-5: #7f76630d; --grain-10: #7f76631a; --grain-6: #7f76630f; --shelf-label: #5d5648; }
+.physical-shelf[data-material="black"] { --wood: #2c2b2d; --wood-light: #403e40; --wood-hi: #5d5a5b; --wood-dark: #131213; --wood-back: #1d1c1e; --grain: #000000; --grain-9: #00000017; --grain-5: #0000000d; --grain-10: #0000001a; --grain-6: #0000000f; --shelf-label: #d8d2c8; }
 
 /* String lights draped under the top board: a scalloped wire with a bulb in each dip. */
 .shelf-lights {
-  --wire: color-mix(in srgb, var(--wood-hi) 38%, #0d0906);
+  --wire: #4d3c2b;
   position: absolute; z-index: 3; left: var(--frame); right: var(--frame); top: 13px; height: 30px; pointer-events: none;
   background:
     radial-gradient(circle at 50% 15px, #fff6d8 0 2.2px, #ffd27a 3.4px, transparent 4.6px) 0 0 / 46px 30px round no-repeat,
@@ -242,13 +242,13 @@ function compartment(row: ShelfObjectId[], index: number) {
     linear-gradient(to top, var(--wood-dark) 0, var(--wood) 3px, var(--wood-light) calc(var(--plank) - 2px), var(--wood-hi) calc(var(--plank) - 1px), var(--wood-hi) var(--plank), transparent var(--plank)) 0 0 / 100% var(--tile),
     linear-gradient(to top, transparent var(--plank), #00000052 var(--plank), #0000001c calc(var(--plank) + 7px), transparent calc(var(--plank) + 22px)) 0 0 / 100% var(--tile),
     linear-gradient(to bottom, #00000075 0, #00000038 14px, #00000012 46px, transparent 90px) 0 0 / 100% var(--tile),
-    repeating-linear-gradient(90.4deg, transparent 0 9px, color-mix(in srgb, var(--grain) 10%, transparent) 9px 10px, transparent 10px 27px, color-mix(in srgb, var(--grain) 6%, transparent) 27px 29px),
+    repeating-linear-gradient(90.4deg, transparent 0 9px, var(--grain-10) 9px 10px, transparent 10px 27px, var(--grain-6) 27px 29px),
     var(--wood-back);
 }
 .shelf-base { height: 22px; background: linear-gradient(180deg, #00000040, transparent 5px), linear-gradient(180deg, var(--wood), var(--wood-dark)); box-shadow: inset 0 -1px 0 #00000040; }
 
 .shelf-object { --obj-h: calc(145px * var(--spine-scale)); flex-shrink: 0; height: var(--obj-h); margin: calc(var(--row-h) - var(--obj-h)) 0 var(--plank); }
-.skeleton-spine { --obj-h: calc(var(--spine-height) * var(--spine-scale)); width: calc(var(--spine-width) * var(--spine-scale)); border-radius: 2px 2px 0 0; background: color-mix(in srgb, var(--wood-hi) 34%, transparent); }
+.skeleton-spine { --obj-h: calc(var(--spine-height) * var(--spine-scale)); width: calc(var(--spine-width) * var(--spine-scale)); border-radius: 2px 2px 0 0; background: #ffffff26; }
 .book-spine {
   --obj-h: calc(var(--spine-height) * var(--spine-scale));
   position: relative; display: flex; align-items: center; flex-direction: column; width: calc(var(--spine-width) * var(--spine-scale)); border: 0; border-radius: 2px 2px 0 0; padding: calc(20px * var(--spine-scale)) 3px calc(10px * var(--spine-scale)); color: var(--spine-ink);
@@ -264,8 +264,12 @@ function compartment(row: ShelfObjectId[], index: number) {
 .spine-cap, .book-spine::after { content: ''; position: absolute; left: 0; right: 0; height: calc(5px * var(--spine-scale)); border-top: 1px solid currentColor; border-bottom: 1px solid currentColor; opacity: .42; pointer-events: none; }
 .spine-cap { top: calc(8px * var(--spine-scale)); }
 .book-spine::after { bottom: calc(8px * var(--spine-scale)); }
-.book-spine:hover, .book-face:hover { transform: translateY(-9px); filter: brightness(1.08); }
-.book-spine:hover { box-shadow: 6px 10px 12px -4px #00000080, inset 0 1px 0 #ffffff38; }
+/* Hover lifts only where there is a real pointer; on touch they would stick after a tap. */
+@media (hover: hover) {
+  .book-spine:hover, .book-face:hover { transform: translateY(-9px); filter: brightness(1.08); }
+  .book-spine:hover { box-shadow: 6px 10px 12px -4px #00000080, inset 0 1px 0 #ffffff38; }
+  .shelf-decoration:not(:disabled):hover { transform: translateY(-4px); }
+}
 .book-spine:focus-visible, .book-face:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; transform: translateY(-9px); }
 .physical-shelf[data-dragging] .shelf-object:hover { transform: none; filter: none; }
 .physical-shelf[data-readonly] .shelf-object { cursor: pointer; }
@@ -317,8 +321,11 @@ function compartment(row: ShelfObjectId[], index: number) {
 .book-face :deep(.cover) { height: 100%; border-radius: 2px; box-shadow: 5px 3px 8px -2px #00000080, inset 0 1px 0 #ffffff30; pointer-events: none; }
 
 .spine-ghost { opacity: .25; }
+/* The gap left by a dragged lying book rests on the board and keeps its room. */
+.book-spine[data-display="flat"].spine-ghost { --lift: 0px; margin-left: 0; }
 .spine-chosen { cursor: grabbing; }
-.spine-dragging { rotate: -5deg; box-shadow: 9px 12px 18px #00000055; }
+/* The drag clone lives on <body>, outside the shelf that defines these. */
+.spine-dragging { --spine-scale: 1; --row-h: 212px; --plank: 15px; rotate: -5deg; box-shadow: 9px 12px 18px #00000055; }
 .empty-compartment { position: absolute; inset: 0 0 var(--plank); display: grid; place-items: center; padding: 0 56px; text-align: center; font-family: var(--serif); font-style: italic; color: var(--shelf-label); opacity: .5; font-size: var(--text-sm); pointer-events: none; }
 .remove-shelf-row { position: absolute; z-index: 4; right: 4px; top: 4px; display: grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: 50%; background: transparent; color: var(--shelf-label); opacity: 0; transition: opacity var(--dur-fast), background var(--dur-fast); }
 .physical-shelf-row:hover .remove-shelf-row, .remove-shelf-row:focus-visible { opacity: .6; }
@@ -328,7 +335,6 @@ function compartment(row: ShelfObjectId[], index: number) {
 .remove-shelf-row svg { width: 16px; height: 16px; }
 @media (hover: none) { .remove-shelf-row { opacity: .4; } }
 .shelf-decoration { width: calc(var(--decoration-width) * var(--spine-scale)); display: block; margin-inline: 6px; padding: 0; border: 0; background: none; cursor: grab; user-select: none; transition: transform var(--dur-base) var(--ease); filter: drop-shadow(3px 3px 3px #00000045); }
-.shelf-decoration:not(:disabled):hover { transform: translateY(-4px); }
 .shelf-decoration:focus-visible { outline-offset: 3px; }
 .shelf-decoration :deep(svg) { pointer-events: none; }
 
@@ -336,6 +342,7 @@ function compartment(row: ShelfObjectId[], index: number) {
   .shelf-room { padding: 22px 6px 22px; }
   .physical-shelf { padding: 10px var(--frame) 0; --spine-scale: .86; --row-h: 184px; --plank: 12px; --frame: 10px; }
   .shelf-lights { top: 10px; }
+  .spine-dragging { --spine-scale: .86; --row-h: 184px; --plank: 12px; }
   .shelf-compartment { padding: 0 12px; }
   .shelf-base { height: 16px; }
 }

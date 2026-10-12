@@ -146,3 +146,37 @@ def test_spine_colors_only_cover_the_callers_shelf_and_need_a_login(client, monk
 
     monkeypatch.setattr(spine_color, "fetch_cover", fake_fetch)
     assert client.post("/api/shelf/spine-colors").json() == {"colors": {}, "remaining": 0}
+
+
+def test_only_cover_hosts_are_ever_requested():
+    assert spine_color._fetchable("https://covers.openlibrary.org/b/id/1-M.jpg")
+    assert spine_color._fetchable("https://ia800100.us.archive.org/1/items/x/y.jpg")
+    assert spine_color._fetchable("https://books.google.com/books/content?id=1")
+    for url in (
+        "http://covers.openlibrary.org/b/id/1-M.jpg",
+        "https://covers.openlibrary.org:8443/b/id/1-M.jpg",
+        "https://user@covers.openlibrary.org/b/id/1-M.jpg",
+        "https://127.0.0.1/b/id/1-M.jpg",
+        "https://example.com/cover.jpg",
+        "https://archive.org.example.com/cover.jpg",
+    ):
+        assert not spine_color._fetchable(url), url
+
+
+def test_one_broken_cover_does_not_block_the_others(client, monkeypatch):
+    register(client, "ada")
+    broken = _add(client, 1, cover_id=111)
+    fine = _add(client, 2, cover_id=222)
+
+    async def fake_fetch(url: str) -> bytes:
+        if "111" in url:
+            raise ValueError("not a URL httpx can parse")
+        return _jpeg((40, 120, 60))
+
+    monkeypatch.setattr(spine_color, "fetch_cover", fake_fetch)
+    result = client.post("/api/shelf/spine-colors")
+    assert result.status_code == 200
+    assert list(result.json()["colors"]) == [str(fine["book"]["id"])]
+    # The broken one is settled, so it is not retried on every visit.
+    assert client.post("/api/shelf/spine-colors").json() == {"colors": {}, "remaining": 0}
+    assert broken["book"]["id"] != fine["book"]["id"]
