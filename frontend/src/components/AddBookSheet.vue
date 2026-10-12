@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vAutosize } from "../autosize";
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
@@ -73,7 +74,7 @@ async function submit() {
       </label>
       <label class="field">
         <span>{{ t("addBook.notes") }}</span>
-        <textarea v-model="description" rows="3" maxlength="4000" />
+        <textarea v-autosize v-model="description" rows="3" maxlength="4000" />
       </label>
       <p v-if="error" class="fine danger">{{ error }}</p>
       <div class="btn-row">

@@ -22,6 +22,8 @@ export type Book = {
   year: number | null;
   cover_url: string | null;
   pages?: number | null;
+  /** Dominant cover colour, once the server has sampled it. */
+  spine_color?: string | null;
 };
 
 export type ShelfItem = {
@@ -130,7 +132,8 @@ export type Member = {
   currently_reading_preview: {
     title: string;
     cover_id: number | null;
-    cover_url?: string | null;
+      cover_url?: string | null;
+    ol_work_key?: string;
   }[];
   avatar_url?: string | null;
 };

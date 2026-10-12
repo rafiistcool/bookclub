@@ -4,7 +4,8 @@ export type NavItem = {
   to: string;
   labelKey: string;
   icon: NavIconName;
-  /** Mobile keeps four tabs; Settings lives behind the account button. */
+  /** A shorter label for the phone tab bar, where five tabs share the width. */
+  shortLabelKey?: string;
   bottomBar: boolean;
 };
 
@@ -13,7 +14,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { to: "/discover", labelKey: "nav.discover", icon: "discover", bottomBar: true },
   { to: "/shelf", labelKey: "nav.shelf", icon: "shelf", bottomBar: true },
   { to: "/club", labelKey: "nav.club", icon: "club", bottomBar: true },
-  { to: "/settings", labelKey: "nav.settings", icon: "settings", bottomBar: false },
+  { to: "/settings", labelKey: "nav.settings", shortLabelKey: "nav.settingsShort", icon: "settings", bottomBar: true },
 ];
 
 export function isActive(path: string, to: string): boolean {

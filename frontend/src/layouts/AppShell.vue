@@ -68,7 +68,7 @@ const avatarUrl = computed(() => session.user?.avatar_url ?? null);
         :aria-current="isActive(route.path, item.to) ? 'page' : undefined"
       >
         <NavIcon :name="item.icon" />
-        {{ t(item.labelKey) }}
+        {{ t(item.shortLabelKey ?? item.labelKey) }}
       </RouterLink>
     </nav>
   </div>
@@ -120,7 +120,7 @@ const avatarUrl = computed(() => session.user?.avatar_url ?? null);
   height: calc(var(--nav-h) + env(safe-area-inset-bottom));
   padding: var(--space-1) var(--space-2) env(safe-area-inset-bottom);
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   background: var(--bg-translucent-strong);
   backdrop-filter: blur(12px);
   border-top: 1px solid var(--border);

@@ -133,7 +133,14 @@ export const api = {
       body: JSON.stringify(body),
     }),
   myShelf: () => request<ShelfList>("/api/shelf"),
-  physicalShelfLayout: () => request<PhysicalShelfLayout>("/api/shelf/physical-layout"),
+  physicalShelfLayout: (username?: string) =>
+    request<PhysicalShelfLayout>(
+      `/api/shelf/physical-layout${username ? `?username=${encodeURIComponent(username)}` : ""}`,
+    ),
+  spineColors: () =>
+    request<{ colors: Record<string, string>; remaining: number }>("/api/shelf/spine-colors", {
+      method: "POST",
+    }),
   savePhysicalShelfLayout: (layout: PhysicalShelfLayout) => request<PhysicalShelfLayout>("/api/shelf/physical-layout", {
     method: "PUT", body: JSON.stringify(layout),
   }),

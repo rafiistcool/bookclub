@@ -11,6 +11,7 @@ import {
   remoteCoverUrl,
   type CoverSize,
 } from "../constants";
+import { bindingColor, spineInk } from "../physicalShelf";
 
 const { t } = useI18n();
 
@@ -41,6 +42,11 @@ const sources = computed(() => {
     );
   }
   return urls.filter((url): url is string => Boolean(url));
+});
+// Same cloth colour as the book's spine on the bookshelf page.
+const binding = computed(() => {
+  const color = bindingColor(props.workKey || props.title);
+  return { "--binding": color, "--binding-ink": spineInk(color) };
 });
 const src = computed(() => (broken.value ? null : (sources.value[sourceIndex.value] ?? null)));
 
@@ -89,10 +95,11 @@ watch(
 </script>
 
 <template>
-  <span class="cover" :class="`size-${size}`">
-    <!-- The monogram sits underneath so a slow or missing cover still reads
-         as a book instead of an empty rectangle. -->
+  <span class="cover" :class="`size-${size}`" :style="binding">
+    <!-- A cloth binding sits underneath so a slow or missing cover still
+         reads as a book instead of an empty rectangle. -->
     <span class="monogram" aria-hidden="true">{{ monogram(title) }}</span>
+    <span class="binding-title" aria-hidden="true">{{ title }}</span>
     <img
       v-if="src"
       :src="src"

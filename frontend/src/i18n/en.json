@@ -6,7 +6,8 @@
     "club": "Club",
     "settings": "Settings",
     "settingsAndTheme": "Settings and theme",
-    "settingsFor": "Settings for {name}"
+    "settingsFor": "Settings for {name}",
+    "settingsShort": "Profile"
   },
   "cover": {
     "alt": "Cover of {title}"
@@ -32,7 +33,8 @@
     "copy": "Copy",
     "nominate": "Nominate",
     "showMore": "Show more",
-    "genericError": "Something went wrong. Try again."
+    "genericError": "Something went wrong. Try again.",
+    "showLess": "Show less"
   },
   "status": {
     "want_to_read": "Want to read",
@@ -167,7 +169,8 @@
     "noNominations": "No nominations yet. Nominate a book from its page and the club votes on what comes next.",
     "pastPicks": "Past picks",
     "meetingTitle": "Meeting",
-    "saveMeeting": "Save meeting"
+    "saveMeeting": "Save meeting",
+    "yourProgress": "Your progress"
   },
   "shelf": {
     "title": "Your shelf",
@@ -269,7 +272,8 @@
     "overlapBlurb": "Books two or more of you have on Want to read. The shortest path to a pick everyone already wants.",
     "overlapBlurbReading": "Books two or more of you have on Want to read or Reading. The shortest path to a pick everyone already wants.",
     "overlapFailed": "Could not load the overlap",
-    "noOverlap": "No shared wants yet. Add a few books to Want to read and check back."
+    "noOverlap": "No shared wants yet. Add a few books to Want to read and check back.",
+    "toCurrentBook": "Go to the current club book"
   },
   "discover": {
     "title": "Discover",
@@ -419,7 +423,8 @@
     "safeUpto": "Safe up to {n}%",
     "spoilerPreview": "Spoiler-flagged note",
     "readersBlur": "Readers below this point see it blurred",
-    "removeFlag": "Remove flag"
+    "removeFlag": "Remove flag",
+    "writeFirst": "Write the first note"
   },
   "vote": {
     "title": "Next-up vote",
@@ -489,26 +494,22 @@
     "historyNotFound": "That search is no longer in your history."
   },
   "physicalShelf": {
-    "back": "Back to your shelf",
-    "eyebrow": "A little room for your stories",
     "title": "Your real bookshelf",
-    "lede": "Favourite stories, a place of their own.",
     "bookCount": "{count} books",
     "material": "Finish",
     "oak": "Oak",
     "walnut": "Walnut",
     "white": "White",
-    "dragHint": "Drag books to arrange them. On mobile, press and hold. Tap a spine to customise it.",
+    "dragHint": "Drag to rearrange (press and hold on a phone). Tap a book to change its colour, thickness and place.",
     "dropHere": "Room for your next favourite",
     "emptyShelf": "Your stories belong here",
     "addRow": "Add a shelf",
-    "autoSave": "Changes save automatically",
+    "autoSave": "saves automatically",
     "saving": "Saving…",
-    "saved": "Shelf saved",
+    "saved": "Saved",
     "saveFailed": "Could not save your shelf. Your last arrangement has been restored.",
     "loadFailed": "Could not load your bookshelf.",
-    "spineHint": "Spines get a consistent colour palette and thickness based on the page count, when available. Tap a book to adjust its colour, thickness or position.",
-    "bookLabel": "{title} by {author}. Customise spine or move book.",
+    "bookLabel": "{title} by {author}. Show details.",
     "editSpine": "Make it your own",
     "color": "Spine colour",
     "width": "Spine thickness",
@@ -543,6 +544,25 @@
     "decorationLabel": "{name}. Customise or move.",
     "decorationColor": "Colour",
     "saveDecoration": "Save decoration",
-    "removeDecoration": "Remove from bookshelf"
+    "removeDecoration": "Remove from bookshelf",
+    "addRowShort": "Board",
+    "addDecorationShort": "Decor",
+    "black": "Black",
+    "lights": "String lights",
+    "bookSheet": "From your shelf",
+    "restyle": "Restyle on the shelf",
+    "backToBook": "Back",
+    "display": "Placement",
+    "display_spine": "Upright",
+    "display_flat": "Lying flat",
+    "display_cover": "Cover out",
+    "automatic": "Automatic",
+    "bookend": "Bookend",
+    "bookendHint": "Keeps the row upright",
+    "globe": "Globe",
+    "globeHint": "For wanderlust",
+    "memberTitle": "{name}'s bookshelf",
+    "memberBookSheet": "From {name}'s shelf",
+    "memberEmpty": "{name} has no books on the shelf yet."
   }
 }

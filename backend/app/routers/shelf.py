@@ -1,4 +1,7 @@
+import asyncio
 from datetime import datetime, time, timezone
+
+import httpx
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
@@ -6,7 +9,7 @@ from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
-from app import activity
+from app import activity, spine_color
 from app.config import get_settings
 from app.timezone import club_zone, resolved_timezone
 from app.deps import get_current_user, get_session
@@ -16,7 +19,7 @@ from app.goodreads import (
     lookup_catalog,
     parse_goodreads_csv,
 )
-from app.models import ShelfEntry, ShelfStatus, User, UserPhysicalShelfLayout
+from app.models import Book, ShelfEntry, ShelfStatus, User, UserPhysicalShelfLayout
 from app.schemas import (
     GoodreadsImportOut,
     GoodreadsSkipOut,
@@ -25,6 +28,7 @@ from app.schemas import (
     ShelfItemOut,
     ShelfListOut,
     ShelfPatchIn,
+    SpineColorsOut,
 )
 from app.favorites import favorite_out, list_favorites
 from app.serialize import shelf_item_out, user_out
@@ -216,24 +220,35 @@ def _owned_shelf_ids(session: Session, me: User) -> set[int]:
 
 @router.get("/physical-layout", response_model=PhysicalShelfLayout)
 def get_physical_shelf_layout(
+    username: str | None = Query(default=None),
     me: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> PhysicalShelfLayout:
-    saved = session.get(UserPhysicalShelfLayout, me.id)
+    # Members can look at each other's bookshelves, like their reading lists.
+    # Only the owner can save one.
+    if username:
+        owner = session.exec(select(User).where(User.username == username.lower())).first()
+        if owner is None:
+            raise HTTPException(status_code=404, detail="No member with that name")
+    else:
+        owner = me
+    saved = session.get(UserPhysicalShelfLayout, owner.id)
     if saved is None:
         return PhysicalShelfLayout()
     layout = PhysicalShelfLayout.model_validate_json(saved.layout_json)
-    owned_ids = _owned_shelf_ids(session, me)
+    owned_ids = _owned_shelf_ids(session, owner)
     # Deletions can also happen through database restores or maintenance. Keep
     # row boundaries intact while filtering entries that no longer exist.
-    return PhysicalShelfLayout(
-        rows=[
-            [entry_id for entry_id in row if isinstance(entry_id, str) or entry_id in owned_ids]
-            for row in layout.rows
-        ],
-        material=layout.material,
-        spines={key: spine for key, spine in layout.spines.items() if int(key) in owned_ids},
-        decorations=layout.decorations,
+    return layout.model_copy(
+        update={
+            "rows": [
+                [entry_id for entry_id in row if isinstance(entry_id, str) or entry_id in owned_ids]
+                for row in layout.rows
+            ],
+            "spines": {
+                key: spine for key, spine in layout.spines.items() if int(key) in owned_ids
+            },
+        }
     )
 
 
@@ -261,6 +276,52 @@ def save_physical_shelf_layout(
     )
     session.commit()
     return payload
+
+
+SPINE_COLOR_BATCH = 12
+
+
+async def _resolve_spine_color(book: Book) -> str | None:
+    """A colour, "" when the book has no usable cover, None to try again later."""
+    url = spine_color.spine_cover_url(book)
+    if not url:
+        return ""
+    try:
+        data = await spine_color.fetch_cover(url)
+    except httpx.HTTPError:
+        return None
+    return (spine_color.dominant_color(data) if data else None) or ""
+
+
+@router.post("/spine-colors", response_model=SpineColorsOut)
+async def resolve_spine_colors(
+    me: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> SpineColorsOut:
+    """Sample cover colours for the caller's books that have none yet, a batch at a time."""
+    pending = session.exec(
+        select(Book)
+        .join(ShelfEntry, ShelfEntry.book_id == Book.id)
+        .where(ShelfEntry.user_id == me.id, Book.spine_color.is_(None))
+        .order_by(Book.id)
+    ).all()
+    batch = pending[:SPINE_COLOR_BATCH]
+    results = await asyncio.gather(*(_resolve_spine_color(book) for book in batch))
+    colors: dict[int, str] = {}
+    unresolved = 0
+    for book, color in zip(batch, results):
+        if color is None:
+            unresolved += 1
+            continue
+        book.spine_color = color
+        session.add(book)
+        if color and book.id is not None:
+            colors[book.id] = color
+    session.commit()
+    # After a failed fetch report nothing left to do, or a client would keep
+    # asking while the cover host is down. The next visit tries again.
+    remaining = 0 if unresolved else len(pending) - len(batch)
+    return SpineColorsOut(colors=colors, remaining=remaining)
 
 
 @router.patch("/{entry_id}", response_model=ShelfItemOut)

@@ -82,6 +82,7 @@ def test_legacy_database_is_upgraded_in_place(tmp_path):
             "ol_rating",
             "details_fetched_at",
             "cover_image_url",
+            "spine_color",
         } <= book_cols
         user_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(users)"))}
         assert {

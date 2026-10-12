@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vAutosize } from "../autosize";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
@@ -483,10 +484,12 @@ watch(workId, load);
                 </button>
               </div>
               <label class="field">
-                <span>{{ t("book.oneLineTake") }}</span>
-                <input
+                <span class="field-head">{{ t("book.oneLineTake") }}<span class="finer subtle nums">{{ takeDraft.length }}/140</span></span>
+                <textarea
                   v-model="takeDraft"
-                  type="text"
+                  v-autosize
+                  class="short-note"
+                  rows="2"
                   maxlength="140"
                   :placeholder="t('book.takePlaceholder')"
                 />
@@ -503,10 +506,12 @@ watch(workId, load);
 
             <div v-if="book.on_shelf === 'did_not_finish'" class="control-block">
               <label class="field">
-                <span>{{ t("book.dnfWhy") }}</span>
-                <input
+                <span class="field-head">{{ t("book.dnfWhy") }}<span class="finer subtle nums">{{ reasonDraft.length }}/200</span></span>
+                <textarea
                   v-model="reasonDraft"
-                  type="text"
+                  v-autosize
+                  class="short-note"
+                  rows="2"
                   maxlength="200"
                   :placeholder="t('common.optional')"
                 />
@@ -715,6 +720,21 @@ watch(workId, load);
 
 .control-block .field {
   margin-bottom: 0;
+}
+
+.field-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.field-head .finer {
+  font-weight: 400;
+}
+
+.field textarea.short-note {
+  min-height: 4.25rem;
 }
 
 .control-block .btn {

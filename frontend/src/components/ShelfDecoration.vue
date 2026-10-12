@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { useId } from "vue";
+import type { DecorationKind } from "../physicalShelf";
 
 defineProps<{
-  kind: "plant" | "vase" | "candle" | "frame";
+  kind: DecorationKind;
   color: string;
 }>();
 
@@ -118,6 +119,36 @@ const paint = (name: string) => `url(#${id}-${name})`;
       <path d="M34 122 Q50 127 66 122" fill="none" stroke="#edce93" stroke-width=".9" opacity=".54" />
       <path d="M45 132 L45 145 Q41 149 32 151 L28 154 Q50 159 72 154 L68 151 Q59 149 55 145 L55 132Z" :fill="paint('brass')" />
       <path d="M45 145 Q50 147 55 145 M32 152 Q50 157 68 152" fill="none" stroke="#efdab0" stroke-width=".8" opacity=".28" />
+    </g>
+
+    <g v-else-if="kind === 'bookend'">
+      <ellipse cx="50" cy="157" rx="36" ry="2" fill="#211910" opacity=".16" />
+      <!-- An arch-shaped block: heavy enough to hold a row upright. -->
+      <path d="M16 156 L16 98 A34 34 0 0 1 84 98 L84 156Z M35 156 L35 101 A15 15 0 0 1 65 101 L65 156Z" fill-rule="evenodd" fill="currentColor" />
+      <path d="M16 156 L16 98 A34 34 0 0 1 84 98 L84 156Z M35 156 L35 101 A15 15 0 0 1 65 101 L65 156Z" fill-rule="evenodd" :fill="paint('surface')" />
+      <path d="M35 156 L35 101 A15 15 0 0 1 65 101 L65 156" fill="none" stroke="#120d09" stroke-width="1.6" opacity=".3" />
+      <path d="M18 98 A32 32 0 0 1 82 98" fill="none" stroke="#fff3df" stroke-width="1.2" opacity=".3" />
+      <path d="M17 154 L83 154" stroke="#120d09" stroke-width="1" opacity=".25" />
+    </g>
+
+    <g v-else-if="kind === 'globe'">
+      <ellipse cx="50" cy="157" rx="30" ry="2" fill="#211910" opacity=".16" />
+      <path d="M45 122 L45 143 Q41 148 31 150 L27 154 Q50 159 73 154 L69 150 Q59 148 55 143 L55 122Z" :fill="paint('brass')" />
+      <path d="M32 152 Q50 157 68 152" fill="none" stroke="#efdab0" stroke-width=".8" opacity=".3" />
+      <!-- Meridian arm, tilted like the axis. -->
+      <path d="M71 36 A42 42 0 0 1 50 124" fill="none" :stroke="paint('brass')" stroke-width="3.4" stroke-linecap="round" />
+      <circle cx="50" cy="76" r="35" fill="currentColor" />
+      <g fill="#93a17f" opacity=".92">
+        <path d="M30 55 C38 46 49 47 53 54 C57 61 50 66 46 72 C42 79 46 87 39 90 C32 92 26 83 24 75 C22 67 25 60 30 55Z" />
+        <path d="M60 60 C67 56 77 62 79 71 C81 80 76 90 69 93 C63 95 61 87 63 80 C65 74 56 66 60 60Z" />
+        <path d="M44 98 C50 95 58 98 60 104 C58 108 50 110 45 107 C42 104 42 100 44 98Z" />
+      </g>
+      <circle cx="50" cy="76" r="35" :fill="paint('surface')" />
+      <path d="M29 53 C36 44 48 41 58 44" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" opacity=".28" />
+      <g fill="none" stroke="#ffffff" stroke-width=".6" opacity=".16">
+        <ellipse cx="50" cy="76" rx="35" ry="12" /><ellipse cx="50" cy="76" rx="14" ry="35" />
+      </g>
+      <circle cx="71" cy="36" r="3" :fill="paint('brass')" />
     </g>
 
     <g v-else>

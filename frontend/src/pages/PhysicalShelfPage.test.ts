@@ -25,8 +25,9 @@ import PhysicalShelfPage from "./PhysicalShelfPage.vue";
 
 type Layout = {
   rows: ShelfObjectId[][];
-  material: "oak" | "walnut" | "white";
-  spines: Record<string, { color?: string; width?: number }>;
+  material: "oak" | "walnut" | "white" | "black";
+  lights?: boolean;
+  spines: Record<string, { color?: string; width?: number; display?: string }>;
   decorations?: Record<string, ShelfDecoration>;
 };
 
@@ -117,6 +118,7 @@ describe("physical bookshelf", () => {
   it("moves books with the keyboard controls across rows and leaves reading status untouched", async () => {
     const wrapper = await render();
     await wrapper.findAll(".book-spine")[0].trigger("click");
+    await wrapper.get(".edit-spine").trigger("click");
     await wrapper.get(".move-book-right").trigger("click");
     await flushPromises();
     expect(savePhysicalShelfLayout.mock.calls[0][0].rows).toEqual([[1, 2], [3], []]);
@@ -149,6 +151,7 @@ describe("physical bookshelf", () => {
   it("keeps spine edits local until they are applied, then persists colour and width together", async () => {
     const wrapper = await render();
     await wrapper.findAll(".book-spine")[0].trigger("click");
+    await wrapper.get(".edit-spine").trigger("click");
     await wrapper.get(".spine-color").setValue("#aabbcc");
     await wrapper.get(".spine-width").setValue("52");
     expect(savePhysicalShelfLayout).not.toHaveBeenCalled();
@@ -218,10 +221,69 @@ describe("physical bookshelf", () => {
     wrapper.unmount();
   });
 
-  it.each<DecorationKind>(["plant", "vase", "candle", "frame"])("adds a %s decoration to the chosen board and persists its identity", async (kind) => {
+  it("shows the book first and only opens the styling controls on request", async () => {
+    const wrapper = await render();
+    await wrapper.findAll(".book-spine")[0].trigger("click");
+    expect(wrapper.get(".spine-sheet-book").text()).toContain("Finished");
+    expect(wrapper.get(".open-book").attributes("href")).toBe("/book/OL2W");
+    expect(wrapper.find(".spine-editor").exists()).toBe(false);
+    await wrapper.get(".edit-spine").trigger("click");
+    expect(wrapper.find(".spine-editor").exists()).toBe(true);
+    await wrapper.get(".back-to-book").trigger("click");
+    expect(wrapper.find(".spine-editor").exists()).toBe(false);
+    expect(savePhysicalShelfLayout).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("stores how a book is placed and lets colour and thickness follow the book again", async () => {
+    const wrapper = await render();
+    // Book 2 has a hand-picked colour and width; book 1 has none.
+    await wrapper.get('.book-spine[data-id="2"]').trigger("click");
+    await wrapper.get(".edit-spine").trigger("click");
+    await wrapper.get('.spine-display [data-display="flat"]').trigger("click");
+    await wrapper.get(".reset-spine-color").trigger("click");
+    await wrapper.get(".reset-spine-width").trigger("click");
+    await wrapper.get(".spine-editor").trigger("submit");
+    await flushPromises();
+    expect(savePhysicalShelfLayout.mock.calls[0][0].spines).toEqual({ "2": { display: "flat" } });
+    expect(wrapper.get('.shelf-object[data-id="2"]').attributes("data-display")).toBe("flat");
+
+    await wrapper.get('.book-spine[data-id="1"]').trigger("click");
+    await wrapper.get(".edit-spine").trigger("click");
+    await wrapper.get('.spine-display [data-display="cover"]').trigger("click");
+    await wrapper.get(".spine-editor").trigger("submit");
+    await flushPromises();
+    expect(savePhysicalShelfLayout.mock.calls[1][0].spines).toEqual({ "1": { display: "cover" }, "2": { display: "flat" } });
+    expect(wrapper.get('.shelf-object[data-id="1"]').classes()).toContain("book-face");
+
+    // Back to a plain upright spine: nothing is left to store for the book.
+    await wrapper.get('.shelf-object[data-id="1"]').trigger("click");
+    await wrapper.get(".edit-spine").trigger("click");
+    await wrapper.get('.spine-display [data-display="spine"]').trigger("click");
+    await wrapper.get(".spine-editor").trigger("submit");
+    await flushPromises();
+    expect(savePhysicalShelfLayout.mock.calls[2][0].spines).toEqual({ "2": { display: "flat" } });
+    wrapper.unmount();
+  });
+
+  it("switches the string lights and the black finish without touching the rows", async () => {
+    const wrapper = await render();
+    expect(wrapper.find(".shelf-lights").exists()).toBe(false);
+    await wrapper.get(".toggle-lights").trigger("click");
+    await flushPromises();
+    expect(savePhysicalShelfLayout.mock.calls[0][0]).toMatchObject({ lights: true, rows: saved.rows });
+    expect(wrapper.find(".shelf-lights").exists()).toBe(true);
+    expect(wrapper.get(".toggle-lights").attributes("aria-pressed")).toBe("true");
+    await wrapper.get('.material-choice[data-material="black"]').trigger("click");
+    await flushPromises();
+    expect(savePhysicalShelfLayout.mock.calls[1][0]).toMatchObject({ lights: true, material: "black" });
+    wrapper.unmount();
+  });
+
+  it.each<DecorationKind>(["plant", "vase", "candle", "frame", "bookend", "globe"])("adds a %s decoration to the chosen board and persists its identity", async (kind) => {
     const wrapper = await render();
     await wrapper.get(".add-decoration").trigger("click");
-    expect(wrapper.findAll(".decoration-choice")).toHaveLength(4);
+    expect(wrapper.findAll(".decoration-choice")).toHaveLength(6);
     await wrapper.get(".decoration-row").setValue("1");
     await wrapper.get(`.decoration-choice[data-kind="${kind}"]`).trigger("click");
     await flushPromises();

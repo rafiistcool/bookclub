@@ -37,6 +37,7 @@ def list_members(
                 continue
             preview.append(
                 ReadingPreview(
+                    ol_work_key=entry.book.ol_work_key,
                     title=entry.book.title,
                     cover_id=entry.book.cover_id,
                     cover_url=book_cover_url(entry.book),

@@ -14,6 +14,17 @@ PATH = "/api/shelf/physical-layout"
 DEFAULT = {"rows": [[], [], []], "material": "oak", "spines": {}, "decorations": {}}
 
 
+def _out(layout: dict) -> dict:
+    """A layout as the API returns it, with the optional fields at their defaults."""
+    return {
+        "lights": False,
+        **layout,
+        "spines": {
+            key: {"display": "spine", **spine} for key, spine in layout.get("spines", {}).items()
+        },
+    }
+
+
 def _add(client, work: int, **overrides):
     response = client.post(
         "/api/shelf",
@@ -38,7 +49,7 @@ def test_layout_persists_on_reload_and_restart_without_changing_reading_data(cli
     first = _add(client, 1, status="currently_reading", progress=30)
     second = _add(client, 2, status="finished", rating=5, take="A favourite")
     before = client.get("/api/shelf").json()["items"]
-    assert client.get(PATH).json() == DEFAULT
+    assert client.get(PATH).json() == _out(DEFAULT)
     layout = {
         "rows": [["decor:plant", second["id"], "decor:vase"], [], [first["id"], "decor:frame"], ["decor:candle"]],
         "material": "walnut",
@@ -57,8 +68,8 @@ def test_layout_persists_on_reload_and_restart_without_changing_reading_data(cli
     }
     saved = client.put(PATH, json=layout)
     assert saved.status_code == 200, saved.text
-    assert saved.json() == expected
-    assert client.get(PATH).json() == expected
+    assert saved.json() == _out(expected)
+    assert client.get(PATH).json() == _out(expected)
     assert client.get("/api/shelf").json()["items"] == before
 
     # A new app instance connects to the same database; storage is durable.
@@ -66,15 +77,15 @@ def test_layout_persists_on_reload_and_restart_without_changing_reading_data(cli
 
     with TestClient(create_app()) as restarted:
         assert login(restarted, "ada").status_code == 204
-        assert restarted.get(PATH).json() == expected
+        assert restarted.get(PATH).json() == _out(expected)
         replacement = {"rows": [[], [first["id"], second["id"]]], "material": "white", "spines": {}, "decorations": {}}
-        assert restarted.put(PATH, json=replacement).json() == replacement
-    assert client.get(PATH).json() == replacement
+        assert restarted.put(PATH, json=replacement).json() == _out(replacement)
+    assert client.get(PATH).json() == _out(replacement)
     with Session(client.app.state.engine) as session:
         assert session.get(UserPhysicalShelfLayout, 1).layout_json
 
 
-def test_layout_is_private_and_rejects_other_members_and_book_ids(client):
+def test_members_can_view_a_layout_but_only_its_owner_can_change_it(client):
     register(client, "ada")
     ada_book = _add(client, 1)
     layout = {
@@ -90,7 +101,11 @@ def test_layout_is_private_and_rejects_other_members_and_book_ids(client):
     # The shared book has a different shelf entry ID for each member.
     grace_book = _add(client, 1)
     assert grace_book["id"] != grace_book["book"]["id"]
-    assert client.get(PATH, params={"username": "ada"}).json() == DEFAULT
+    # Grace sees Ada's bookshelf, and looking at it leaves her own untouched.
+    assert client.get(PATH, params={"username": "ada"}).json() == _out(layout)
+    assert client.get(PATH, params={"username": "ADA"}).json() == _out(layout)
+    assert client.get(PATH, params={"username": "nobody"}).status_code == 404
+    assert client.get(PATH).json() == _out(DEFAULT)
     assert client.put(PATH, json=layout).status_code == 400
     assert client.put(PATH, json={"rows": [[grace_book["book"]["id"]]]}).status_code == 400
     assert client.put(PATH, json={"spines": {str(ada_book["id"]): {"color": "#224466", "width": 30}}}).status_code == 400
@@ -102,9 +117,9 @@ def test_layout_is_private_and_rejects_other_members_and_book_ids(client):
     }
     assert client.put(PATH, json=grace_layout).status_code == 200
     assert login(client, "ada").status_code == 204
-    assert client.get(PATH).json() == layout
+    assert client.get(PATH).json() == _out(layout)
     assert login(client, "grace").status_code == 204
-    assert client.get(PATH).json() == grace_layout
+    assert client.get(PATH).json() == _out(grace_layout)
 
 
 def test_status_changes_do_not_move_books_and_deleted_entries_are_pruned(client):
@@ -125,15 +140,15 @@ def test_status_changes_do_not_move_books_and_deleted_entries_are_pruned(client)
     }
     assert client.put(PATH, json=layout).status_code == 200
     assert client.patch(f"/api/shelf/{first['id']}", json={"status": "finished"}).status_code == 200
-    assert client.get(PATH).json() == layout
+    assert client.get(PATH).json() == _out(layout)
     newest = _add(client, 3)
     assert newest["id"] not in {entry_id for row in client.get(PATH).json()["rows"] for entry_id in row}
     assert client.delete(f"/api/shelf/{first['id']}").status_code == 204
-    assert client.get(PATH).json() == {
+    assert client.get(PATH).json() == _out({
         **layout,
         "rows": [["decor:plant"], ["decor:frame", second["id"]], []],
         "spines": {str(second["id"]): layout["spines"][str(second["id"])]},
-    }
+    })
 
 
 def test_deleted_spine_does_not_leak_to_a_book_with_a_reused_id(client):
@@ -147,7 +162,7 @@ def test_deleted_spine_does_not_leak_to_a_book_with_a_reused_id(client):
     # No intervening GET; the delete itself must clean the stored layout.
     replacement = _add(client, 2)
     assert replacement["id"] == first["id"]
-    assert client.get(PATH).json() == {"rows": [[], []], "material": "oak", "spines": {}, "decorations": {}}
+    assert client.get(PATH).json() == _out({"rows": [[], []], "material": "oak", "spines": {}, "decorations": {}})
 
 
 def test_get_prunes_entries_removed_outside_the_shelf_endpoint(client):
@@ -164,14 +179,14 @@ def test_get_prunes_entries_removed_outside_the_shelf_endpoint(client):
     with Session(client.app.state.engine) as session:
         session.delete(session.get(ShelfEntry, first["id"]))
         session.commit()
-    assert client.get(PATH).json() == {
+    assert client.get(PATH).json() == _out({
         **DEFAULT,
         "rows": [["decor:plant", "decor:vase"], [], []],
         "decorations": {
             "decor:plant": {"kind": "plant", "color": "#123456"},
             "decor:vase": {"kind": "vase", "color": "#abcdef"},
         },
-    }
+    })
 
 
 @pytest.mark.parametrize(
@@ -245,7 +260,7 @@ def test_invalid_layout_does_not_replace_previous_layout(client, invalid):
     assert client.put(PATH, json=layout).status_code == 200
     rejected = client.put(PATH, json=invalid)
     assert rejected.status_code == 400, rejected.text
-    assert client.get(PATH).json() == layout
+    assert client.get(PATH).json() == _out(layout)
 
 
 def test_legacy_stored_layout_still_loads_and_prunes_missing_books(client):
@@ -262,14 +277,14 @@ def test_legacy_stored_layout_still_loads_and_prunes_missing_books(client):
     with Session(client.app.state.engine) as session:
         session.add(UserPhysicalShelfLayout(user_id=1, layout_json=json.dumps(legacy)))
         session.commit()
-    assert client.get(PATH).json() == {
+    assert client.get(PATH).json() == _out({
         "rows": [[], [first["id"]], []],
         "material": "walnut",
         "spines": {str(first["id"]): legacy["spines"][str(first["id"])]},
         "decorations": {},
-    }
+    })
     assert client.delete(f"/api/shelf/{first['id']}").status_code == 204
-    assert client.get(PATH).json() == {**DEFAULT, "material": "walnut"}
+    assert client.get(PATH).json() == _out({**DEFAULT, "material": "walnut"})
 
 
 def test_decorations_can_be_saved_without_books_and_removed(client):
@@ -280,10 +295,10 @@ def test_decorations_can_be_saved_without_books_and_removed(client):
         "rows": [[decoration_id]],
         "decorations": {decoration_id: {"kind": "plant", "color": "#123456"}},
     }
-    assert client.put(PATH, json=layout).json() == layout
-    assert client.get(PATH).json() == layout
-    assert client.put(PATH, json=DEFAULT).json() == DEFAULT
-    assert client.get(PATH).json() == DEFAULT
+    assert client.put(PATH, json=layout).json() == _out(layout)
+    assert client.get(PATH).json() == _out(layout)
+    assert client.put(PATH, json=DEFAULT).json() == _out(DEFAULT)
+    assert client.get(PATH).json() == _out(DEFAULT)
 
 
 def test_mixed_layout_limits_books_and_decorations_separately():
@@ -308,3 +323,61 @@ def test_shelf_book_exposes_known_page_count(client):
         session.add(book)
         session.commit()
     assert client.get("/api/shelf").json()["items"][0]["book"]["pages"] == 480
+
+
+def test_spines_can_follow_the_book_and_choose_how_it_stands(client):
+    register(client, "ada")
+    first = _add(client, 1)
+    second = _add(client, 2)
+    third = _add(client, 3)
+    layout = {
+        "rows": [[first["id"], second["id"], third["id"]]],
+        "material": "black",
+        "lights": True,
+        "spines": {
+            # Only the placement is chosen; colour and width keep following the book.
+            str(first["id"]): {"display": "flat"},
+            str(second["id"]): {"display": "cover", "color": "#ABCDEF"},
+            str(third["id"]): {"width": 40},
+        },
+        "decorations": {},
+    }
+    expected = {
+        **layout,
+        "spines": {
+            str(first["id"]): {"display": "flat", "color": None, "width": None},
+            str(second["id"]): {"display": "cover", "color": "#abcdef", "width": None},
+            str(third["id"]): {"display": "spine", "color": None, "width": 40},
+        },
+    }
+    assert client.put(PATH, json=layout).json() == expected
+    # Lights and placements survive the pruning pass on read.
+    assert client.get(PATH).json() == expected
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        {"spines": {"1": {"display": "upside-down"}}},
+        {"lights": "sometimes"},
+        {"material": "pine"},
+    ],
+)
+def test_new_layout_options_are_validated(client, invalid):
+    register(client, "ada")
+    _add(client, 1)
+    assert client.put(PATH, json={"rows": [[1]], **invalid}).status_code == 400
+
+
+def test_new_decorations_are_accepted(client):
+    register(client, "ada")
+    layout = {
+        "rows": [["decor:bookend", "decor:globe"]],
+        "material": "oak",
+        "spines": {},
+        "decorations": {
+            "decor:bookend": {"kind": "bookend", "color": "#363638"},
+            "decor:globe": {"kind": "globe", "color": "#33485f"},
+        },
+    }
+    assert client.put(PATH, json=layout).json() == _out(layout)

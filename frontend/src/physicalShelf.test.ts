@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decorationWidth, defaultSpine, moveBook, reconcileLayout, removeShelfRow, spineInk, type PhysicalShelfLayout, type ShelfObjectId } from "./physicalShelf";
+import { decorationWidth, defaultSpine, faceHeight, moveBook, reconcileLayout, removeShelfRow, shelfFootprint, spineInk, stackSlots, type PhysicalShelfLayout, type ShelfObjectId } from "./physicalShelf";
 import type { ShelfItem } from "./types";
 
 const item = (id: number, position = id, pages?: number | null): ShelfItem => ({
@@ -188,10 +188,65 @@ describe("generated book spines", () => {
     }
   });
 
+  it("prefers the colour sampled from the real cover over the palette", () => {
+    const plain = item(1);
+    const sampled = { ...plain, book: { ...plain.book, spine_color: "#123456" } };
+    expect(defaultSpine(sampled)).toMatchObject({ color: "#123456", ink: spineInk("#123456") });
+    expect(defaultSpine(sampled).width).toBe(defaultSpine(plain).width);
+    expect(defaultSpine({ ...plain, book: { ...plain.book, spine_color: null } }).color).toBe(defaultSpine(plain).color);
+  });
+
   it("chooses light ink on dark colors and dark ink on light colors, including shorthand hex", () => {
     expect(spineInk("#101010")).toBe("#fff8ed");
     expect(spineInk("#fafafa")).toBe("#2f2b26");
     expect(spineInk("#000")).toBe(spineInk("#000000"));
     expect(spineInk("#FFF")).toBe(spineInk("#ffffff"));
+  });
+});
+
+describe("book placements", () => {
+  it("takes the room each placement needs along the board", () => {
+    const book = item(1, 0, 360);
+    const spine = defaultSpine(book);
+    expect(shelfFootprint(book)).toBe(44);
+    expect(shelfFootprint(book, { width: 30 })).toBe(30);
+    expect(shelfFootprint(book, { display: "flat", width: 30 })).toBe(spine.height);
+    expect(shelfFootprint(book, { display: "cover" })).toBe(Math.round(faceHeight(book) * 2 / 3));
+    expect(faceHeight(book)).toBeLessThanOrEqual(spine.height);
+  });
+
+  it("packs new books around lying and face-out ones by their real footprint", () => {
+    const books = [item(1), item(2), item(3)];
+    const wide = { ...layout([[1], [], []]), spines: { "1": { display: "flat" as const } } };
+    const occupied = shelfFootprint(books[0]!, wide.spines["1"]);
+    expect(occupied).toBeGreaterThan(defaultSpine(books[0]!).width);
+    const result = reconcileLayout(wide, books);
+    expect(result.rows.flat().sort()).toEqual([1, 2, 3]);
+    expect(result.spines).toEqual({ "1": { display: "flat" } });
+  });
+
+  it("carries the string lights through reconciliation", () => {
+    expect(reconcileLayout({ ...layout([[], [], []]), lights: true }, []).lights).toBe(true);
+    expect(reconcileLayout(layout([[], [], []]), []).lights).toBe(false);
+  });
+
+  it("piles neighbouring lying books and starts a new pile when one gets too high", () => {
+    const lying = (id: number) => id >= 10 ? null : { length: 150 + id * 5, thickness: 40 };
+    const slots = stackSlots([1, 2, 10, 3, "decor:a", 4, 5, 6, 7], lying);
+    // 1 and 2 share a pile as long as the longer book.
+    expect(slots.get(1)).toEqual({ lift: 0, span: 160, level: 0 });
+    expect(slots.get(2)).toEqual({ lift: 40, span: 160, level: 1 });
+    // An upright book or a decoration ends the pile.
+    expect(slots.get(3)).toEqual({ lift: 0, span: 165, level: 0 });
+    expect(slots.has(10)).toBe(false);
+    // Four 40px books would be 160px high: the fourth starts its own pile.
+    expect([4, 5, 6, 7].map((id) => slots.get(id)!.level)).toEqual([0, 1, 2, 0]);
+    expect(slots.get(6)).toEqual({ lift: 80, span: 180, level: 2 });
+    expect(slots.get(7)).toEqual({ lift: 0, span: 185, level: 0 });
+  });
+
+  it("never piles more than five books", () => {
+    const slots = stackSlots([1, 2, 3, 4, 5, 6], () => ({ length: 150, thickness: 26 }));
+    expect([1, 2, 3, 4, 5, 6].map((id) => slots.get(id)!.level)).toEqual([0, 1, 2, 3, 4, 0]);
   });
 });

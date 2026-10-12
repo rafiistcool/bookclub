@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { vAutosize } from "../autosize";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { api, ApiError } from "../api/client";
 import { workId } from "../constants";
 import type { Status } from "../constants";
 import { countEntries, defaultSpoilerUpto } from "../diary";
+import { draftKey, loadDraft, saveDraft } from "../drafts";
 import { tp } from "../i18n";
+import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 
 const { t } = useI18n();
@@ -27,6 +30,7 @@ const props = defineProps<{
 const REPLY_PREVIEW = 2;
 
 const toast = useToast();
+const session = useSession();
 const route = useRoute();
 const diary = ref<Diary | null>(null);
 const loaded = ref(false);
@@ -39,11 +43,22 @@ const spoiler = ref<number | null>(null);
 const spoilerTouched = ref(false);
 const posting = ref(false);
 const composer = ref<HTMLTextAreaElement | null>(null);
+const composeForm = ref<HTMLFormElement | null>(null);
+// The composer rests as one line and opens up once someone starts writing.
+const composing = ref(false);
+const composeOpen = computed(() => composing.value || draft.value.length > 0);
 
 const replyTo = ref<number | null>(null);
 const replyDraft = ref("");
 const replySpoiler = ref<number | null>(null);
 const expandedReplies = ref<Set<number>>(new Set());
+
+const draftId = computed(() => draftKey(session.user?.username, workId(props.workKey)));
+const replyDraftId = (entryId: number) => draftKey(session.user?.username, workId(props.workKey), "reply", entryId);
+watch(draft, (text) => saveDraft(draftId.value, text));
+watch(replyDraft, (text) => {
+  if (replyTo.value != null) saveDraft(replyDraftId(replyTo.value), text);
+});
 
 const items = computed(() => diary.value?.items ?? []);
 const myProgress = computed(() => diary.value?.my_progress ?? null);
@@ -136,6 +151,7 @@ async function submit() {
     diary.value.items = [...diary.value.items, created];
     if (!diary.value.book_id) await load();
     draft.value = "";
+    composing.value = false;
     spoilerTouched.value = false;
     resetSpoilerDefault();
   } catch (err) {
@@ -147,7 +163,7 @@ async function submit() {
 
 function startReply(entry: Entry) {
   replyTo.value = entry.id;
-  replyDraft.value = "";
+  replyDraft.value = loadDraft(replyDraftId(entry.id));
   replySpoiler.value = defaultSpoilerUpto(myProgress.value, myStatus.value);
 }
 
@@ -163,6 +179,7 @@ async function submitReply(parent: Entry) {
     });
     parent.replies = [...parent.replies, created];
     expandReplies(parent.id);
+    saveDraft(replyDraftId(parent.id), "");
     replyTo.value = null;
     replyDraft.value = "";
   } catch (err) {
@@ -215,8 +232,15 @@ async function remove(entry: Entry) {
   }
 }
 
+// A tap elsewhere folds an empty composer away again. Listening for the tap,
+// not for blur, keeps its own buttons usable on phones that never focus them.
+function foldComposer(event: PointerEvent) {
+  if (!draft.value.trim() && !composeForm.value?.contains(event.target as Node)) composing.value = false;
+}
+
 async function focusComposer() {
   showAll.value = true;
+  composing.value = true;
   await nextTick();
   composer.value?.scrollIntoView({ behavior: "smooth", block: "center" });
   composer.value?.focus();
@@ -224,13 +248,20 @@ async function focusComposer() {
 
 defineExpose({ focusComposer, reload: load });
 
-onMounted(load);
+onMounted(() => {
+  draft.value = loadDraft(draftId.value);
+  document.addEventListener("pointerdown", foldComposer);
+  void load();
+});
+onBeforeUnmount(() => document.removeEventListener("pointerdown", foldComposer));
 watch(
   () => props.workKey,
   () => {
     loaded.value = false;
     showAll.value = false;
     spoilerTouched.value = false;
+    replyTo.value = null;
+    draft.value = loadDraft(draftId.value);
     void load();
   },
 );
@@ -295,6 +326,7 @@ watch(
                 <label class="field">
                   <span class="visually-hidden">{{ t("diary.replyToAria", { name: entry.author }) }}</span>
                   <textarea
+                    v-autosize
                     v-model="replyDraft"
                     rows="2"
                     maxlength="1000"
@@ -322,23 +354,33 @@ watch(
           </DiaryEntry>
         </li>
       </ol>
-      <p v-else class="fine subtle">
-        {{ t("diary.empty") }}
-      </p>
+      <div v-else class="diary-empty">
+        <p class="fine subtle">{{ t("diary.empty") }}</p>
+        <button class="btn btn-ghost btn-sm" type="button" @click="focusComposer">
+          {{ t("diary.writeFirst") }}
+        </button>
+      </div>
     </template>
 
-    <form class="compose" @submit.prevent="submit">
+    <form
+      ref="composeForm"
+      class="compose"
+      :class="{ open: composeOpen }"
+      @submit.prevent="submit"
+      @focusin="composing = true"
+    >
       <label class="field">
         <span class="visually-hidden">{{ t("diary.writeAria") }}</span>
         <textarea
+          v-autosize
           ref="composer"
           v-model="draft"
-          rows="3"
+          :rows="composeOpen ? 3 : 1"
           maxlength="1000"
           :placeholder="t('diary.placeholder')"
         />
       </label>
-      <div class="compose-row">
+      <div v-show="composeOpen" class="compose-row">
         <SpoilerControl
           :model-value="spoiler"
           @update:model-value="
@@ -361,9 +403,17 @@ watch(
 </template>
 
 <style scoped>
+/* A flex column, not a grid: a sticky grid item cannot leave its own track. */
 .diary {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: var(--space-3);
+}
+
+.diary-empty {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
 }
 
 .skeleton-block {
@@ -371,7 +421,7 @@ watch(
 }
 
 .show-all {
-  justify-self: start;
+  align-self: flex-start;
 }
 
 .diary-list {
@@ -417,6 +467,32 @@ watch(
 .compose-actions {
   display: flex;
   gap: var(--space-2);
+}
+
+/* Resting state: one line, however long the placeholder is. */
+.compose:not(.open) textarea {
+  field-sizing: fixed;
+  min-height: var(--tap);
+  height: var(--tap);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  resize: none;
+}
+
+/* On phones the composer rides above the tab bar while the diary is on screen,
+   so writing never means scrolling past every entry first. */
+@media (max-width: 1023px) {
+  .compose {
+    position: sticky;
+    bottom: calc(var(--nav-h) + env(safe-area-inset-bottom));
+    z-index: 10;
+    margin: 0 calc(-1 * var(--space-4));
+    padding: var(--space-2) var(--space-4);
+    background: var(--bg-translucent-strong);
+    backdrop-filter: blur(12px);
+    border-top: 1px solid var(--border);
+  }
 }
 
 @media (min-width: 1024px) {

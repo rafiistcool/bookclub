@@ -1,16 +1,20 @@
 <script setup lang="ts">
 import { Squares2X2Icon } from "@heroicons/vue/24/outline";
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import NavIcon from "./NavIcon.vue";
 
-defineProps<{ active: "books" | "physical" }>();
+// `base` points the switch at another member's shelves: /club/<name>.
+const props = defineProps<{ active: "books" | "physical"; base?: string }>();
+const booksPath = computed(() => props.base ?? "/shelf");
+const shelfPath = computed(() => props.base ? `${props.base}/shelf` : "/shelf/physical");
 const { t } = useI18n();
 </script>
 
 <template>
   <nav class="shelf-view-switch" :aria-label="t('physicalShelf.view')">
-    <RouterLink to="/shelf" :aria-current="active === 'books' ? 'page' : undefined"><Squares2X2Icon aria-hidden="true" />{{ t('physicalShelf.bookView') }}</RouterLink>
-    <RouterLink to="/shelf/physical" :aria-current="active === 'physical' ? 'page' : undefined"><NavIcon name="shelf" :size="17" />{{ t('physicalShelf.shelfView') }}</RouterLink>
+    <RouterLink :to="booksPath" :aria-current="active === 'books' ? 'page' : undefined"><Squares2X2Icon aria-hidden="true" />{{ t('physicalShelf.bookView') }}</RouterLink>
+    <RouterLink :to="shelfPath" :aria-current="active === 'physical' ? 'page' : undefined"><NavIcon name="shelf" :size="17" />{{ t('physicalShelf.shelfView') }}</RouterLink>
   </nav>
 </template>
 

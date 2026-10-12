@@ -29,6 +29,10 @@ const router = createRouter({
         { path: "shelf/physical", component: () => import("./pages/PhysicalShelfPage.vue") },
         { path: "club", component: () => import("./pages/ClubPage.vue") },
         {
+          path: "club/:username/shelf",
+          component: () => import("./pages/MemberPhysicalShelfPage.vue"),
+        },
+        {
           path: "club/:username",
           component: () => import("./pages/MemberShelfPage.vue"),
         },

@@ -1,14 +1,18 @@
 import { orderedShelf } from "./shelf";
 import type { ShelfItem } from "./types";
 
-export type ShelfMaterial = "oak" | "walnut" | "white";
-export type SpineStyle = { color: string; width: number };
-export type DecorationKind = "plant" | "vase" | "candle" | "frame";
+export type ShelfMaterial = "oak" | "walnut" | "white" | "black";
+/** Standing spine-out, lying in a stack, or facing out with its cover. */
+export type SpineDisplay = "spine" | "flat" | "cover";
+/** Anything left out follows the book: its cover colour and page count, standing upright. */
+export type SpineStyle = { color?: string | null; width?: number | null; display?: SpineDisplay };
+export type DecorationKind = "plant" | "vase" | "candle" | "frame" | "bookend" | "globe";
 export type ShelfDecoration = { kind: DecorationKind; color: string };
 export type ShelfObjectId = number | string;
 export type PhysicalShelfLayout = {
   rows: ShelfObjectId[][];
   material: ShelfMaterial;
+  lights?: boolean;
   spines: Record<string, SpineStyle>;
   decorations?: Record<string, ShelfDecoration>;
 };
@@ -16,7 +20,10 @@ export type PhysicalShelfLayout = {
 const DEFAULT_ROWS = 3;
 const MAX_ROWS = 12;
 const ROW_CAPACITY = 560;
-const DECORATION_WIDTHS: Record<DecorationKind, number> = { plant: 76, vase: 58, candle: 50, frame: 74 };
+const DECORATION_WIDTHS: Record<DecorationKind, number> = { plant: 76, vase: 58, candle: 50, frame: 74, bookend: 66, globe: 72 };
+const MAX_FACE_HEIGHT = 172;
+const MAX_STACK_HEIGHT = 150;
+const MAX_STACK_BOOKS = 5;
 const LIGHT_INK = "#fff8ed";
 const DARK_INK = "#2f2b26";
 const PALETTE = [
@@ -45,6 +52,11 @@ function luminance(color: string): number | null {
   return 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
 }
 
+/** Stable cloth colour for a work, shared by fallback spines and fallback covers. */
+export function bindingColor(key: string): string {
+  return PALETTE[stableHash(key) % PALETTE.length]!;
+}
+
 /** Pick the stronger contrast against a custom hex spine color. */
 export function spineInk(color: string): string {
   const background = luminance(color);
@@ -57,9 +69,10 @@ export function spineInk(color: string): string {
 }
 
 /** Edition-independent fallback when a catalogue does not supply a real spine. */
-export function defaultSpine(item: ShelfItem): SpineStyle & { height: number; ink: string; variant: number } {
+export function defaultSpine(item: ShelfItem): { color: string; width: number; height: number; ink: string; variant: number } {
   const hash = stableHash(item.book.ol_work_key || `${item.book.title}:${item.book.authors}`);
-  const color = PALETTE[hash % PALETTE.length]!;
+  // A colour sampled from the real cover beats the palette.
+  const color = item.book.spine_color || PALETTE[hash % PALETTE.length]!;
   const pages = item.book.pages;
   const width = typeof pages === "number" && Number.isFinite(pages) && pages > 0
     ? Math.min(64, Math.max(26, Math.round(24 + pages / 18)))
@@ -102,7 +115,7 @@ export function reconcileLayout(layout: PhysicalShelfLayout, items: ShelfItem[])
   }
   const width = (id: ShelfObjectId) => typeof id === "string"
     ? decorationWidth(decorations[id]!.kind)
-    : spines[String(id)]?.width ?? defaultSpine(byId.get(id)!).width;
+    : shelfFootprint(byId.get(id)!, spines[String(id)]);
   let rowIndex = rows.reduce((last, row, index) => row.length ? index : last, 0);
   let occupied = rows[rowIndex]!.reduce<number>((total, id) => total + width(id), 0);
   for (const item of ordered) {
@@ -117,7 +130,55 @@ export function reconcileLayout(layout: PhysicalShelfLayout, items: ShelfItem[])
     occupied += bookWidth;
     seen.add(item.id);
   }
-  return { rows, material: layout.material, spines, decorations };
+  return { rows, material: layout.material, lights: Boolean(layout.lights), spines, decorations };
+}
+
+/** Height of a book standing with its cover to the front. */
+export function faceHeight(item: ShelfItem): number {
+  return Math.min(MAX_FACE_HEIGHT, defaultSpine(item).height);
+}
+
+/** Room a book takes along the board, depending on how it is placed. */
+export function shelfFootprint(item: ShelfItem, style?: SpineStyle): number {
+  const base = defaultSpine(item);
+  if (style?.display === "flat") return base.height;
+  if (style?.display === "cover") return Math.round(faceHeight(item) * 2 / 3);
+  return style?.width ?? base.width;
+}
+
+export type StackSlot = { lift: number; span: number; level: number };
+
+/**
+ * Neighbouring lying books pile up. For each one: how far it is lifted, how
+ * long its pile is, and its level from the board. A pile that would get too
+ * tall or too high starts a new one beside it.
+ */
+export function stackSlots(
+  row: ShelfObjectId[],
+  lying: (id: number) => { length: number; thickness: number } | null,
+): Map<number, StackSlot> {
+  const slots = new Map<number, StackSlot>();
+  let pile: { id: number; length: number; thickness: number }[] = [];
+  let height = 0;
+  const settle = () => {
+    const span = Math.max(0, ...pile.map((book) => book.length));
+    let lift = 0;
+    pile.forEach((book, level) => {
+      slots.set(book.id, { lift, span, level });
+      lift += book.thickness;
+    });
+    pile = [];
+    height = 0;
+  };
+  for (const id of row) {
+    const book = typeof id === "number" ? lying(id) : null;
+    if (!book) { settle(); continue; }
+    if (pile.length >= MAX_STACK_BOOKS || (pile.length && height + book.thickness > MAX_STACK_HEIGHT)) settle();
+    pile.push({ id: id as number, ...book });
+    height += book.thickness;
+  }
+  settle();
+  return slots;
 }
 
 /** Width used by shelf packing and the visual decoration footprint. */

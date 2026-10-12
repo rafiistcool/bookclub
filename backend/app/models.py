@@ -98,6 +98,8 @@ class Book(SQLModel, table=True):
     cover_id: Optional[int] = None
     # Remote cover (Google Books imageLinks). Preferred over cover_id / OL CDN.
     cover_image_url: Optional[str] = Field(default=None, max_length=512)
+    # Dominant cover colour as "#rrggbb". None: not looked at yet. "": no usable cover.
+    spine_color: Optional[str] = Field(default=None, max_length=7)
     year: Optional[int] = None
     description: str = Field(default="")
     pages: Optional[int] = None

@@ -100,4 +100,34 @@ describe("ClubPage recently written", () => {
     expect(row.classes()).not.toContain("shielded");
     expect(row.text()).toContain(SECRET);
   });
+
+  it("unfolds a long note in place instead of only linking away", async () => {
+    const long = `${"A thought that keeps going. ".repeat(8)}\nAnd a second paragraph.`;
+    const wrapper = await mountClub([
+      feedItem({ entry: { ...feedItem().entry, body: long, spoiler_upto: null } }),
+    ]);
+    const body = wrapper.get(".feed-body");
+    expect(body.text()).toContain("…");
+    expect(body.text()).not.toContain("second paragraph");
+    const more = wrapper.get(".feed-more");
+    expect(more.attributes("aria-expanded")).toBe("false");
+    await more.trigger("click");
+    expect(wrapper.get(".feed-body").text()).toContain("And a second paragraph.");
+    expect(wrapper.get(".feed-more").attributes("aria-expanded")).toBe("true");
+    // The row still leads to the note itself.
+    expect(wrapper.get("a.feed-head").attributes("href")).toBe("/book/OL1W#entry-11");
+    await wrapper.get(".feed-more").trigger("click");
+    expect(wrapper.get(".feed-body").text()).not.toContain("second paragraph");
+  });
+
+  it("offers nothing to unfold for short notes or shielded spoilers", async () => {
+    const short = await mountClub([
+      feedItem({ entry: { ...feedItem().entry, body: "Loved it.", spoiler_upto: null } }),
+    ]);
+    expect(short.find(".feed-more").exists()).toBe(false);
+    const long = `${SECRET} `.repeat(8);
+    const shielded = await mountClub([feedItem({ entry: { ...feedItem().entry, body: long } })]);
+    expect(shielded.find(".feed-more").exists()).toBe(false);
+    expect(shielded.html()).not.toContain(SECRET);
+  });
 });

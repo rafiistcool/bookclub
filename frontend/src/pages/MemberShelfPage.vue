@@ -5,6 +5,7 @@ import { useRoute } from "vue-router";
 import { api, ApiError } from "../api/client";
 import Avatar from "../components/Avatar.vue";
 import ShelfBoard from "../components/ShelfBoard.vue";
+import ShelfViewSwitch from "../components/ShelfViewSwitch.vue";
 import FavoritePortrait from "../components/FavoritePortrait.vue";
 import TileSkeleton from "../components/TileSkeleton.vue";
 import { STATUSES, statusShort, type Status } from "../constants";
@@ -74,6 +75,9 @@ watch(() => route.params.username, load);
       </div>
     </div>
     <FavoritePortrait v-if="loaded && !error" :items="favorites" />
+    <div v-if="loaded && !error && items.length" class="member-shelf-switch">
+      <ShelfViewSwitch active="books" :base="`/club/${username}`" />
+    </div>
 
     <p v-if="error" class="error">{{ error }}</p>
 
@@ -117,6 +121,10 @@ watch(() => route.params.username, load);
   display: flex;
   align-items: center;
   gap: var(--space-4);
+}
+
+.member-shelf-switch {
+  margin-bottom: var(--space-3);
 }
 
 .shelf-filter {

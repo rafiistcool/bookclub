@@ -52,8 +52,10 @@ export function spoilerLabel(upto: number | null): string {
   return t("diary.safeUpto", { n: upto });
 }
 
+export const EXCERPT_LENGTH = 140;
+
 /** Trim to a single line of at most `max` characters, ellipsis included. */
-export function excerpt(body: string, max = 140): string {
+export function excerpt(body: string, max = EXCERPT_LENGTH): string {
   const flat = body.replace(/\s+/g, " ").trim();
   if (flat.length <= max) return flat;
   return `${flat.slice(0, max - 1).trimEnd()}…`;
