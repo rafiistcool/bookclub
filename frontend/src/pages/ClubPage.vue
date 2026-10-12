@@ -6,7 +6,7 @@ import Avatar from "../components/Avatar.vue";
 import BookCover from "../components/BookCover.vue";
 import NextUpVote from "../components/NextUpVote.vue";
 import { bookPath, statusShort } from "../constants";
-import { clubFeedPreview, isShielded, positionMarker } from "../diary";
+import { clubFeedPreview, EXCERPT_LENGTH, isShielded, positionMarker } from "../diary";
 import { formatClubDate } from "../i18n/dates";
 import { useClub } from "../stores/club";
 import { useLocale } from "../stores/locale";
@@ -54,6 +54,35 @@ async function loadFeed(more = false) {
     feedLoaded.value = true;
     feedBusy.value = false;
   }
+}
+
+const expandedFeed = ref<Set<number>>(new Set());
+// Notes the two-line preview cannot show in full: cut by length, or clamped at this width.
+const clampedFeed = ref<Set<number>>(new Set());
+
+function measureFeedBody(id: number, el: HTMLElement | null) {
+  if (!el || expandedFeed.value.has(id)) return;
+  const clamped = el.scrollHeight > el.clientHeight + 1;
+  if (clamped !== clampedFeed.value.has(id)) {
+    const next = new Set(clampedFeed.value);
+    if (clamped) next.add(id);
+    else next.delete(id);
+    clampedFeed.value = next;
+  }
+}
+
+function feedExpandable(item: DiaryFeedItem): boolean {
+  if (item.entry.deleted || isShielded(item.entry, item.my_progress, item.my_status)) return false;
+  if (expandedFeed.value.has(item.entry.id)) return true;
+  const body = item.entry.body.trim();
+  return body.length > EXCERPT_LENGTH || body.includes("\n") || clampedFeed.value.has(item.entry.id);
+}
+
+function toggleFeed(id: number) {
+  const next = new Set(expandedFeed.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  expandedFeed.value = next;
 }
 
 function entryPath(item: DiaryFeedItem): string {
@@ -165,6 +194,7 @@ watch(includeReading, loadOverlap);
                 :key="book.title"
                 :title="book.title"
                 :cover-id="book.cover_id"
+                :work-key="book.ol_work_key"
                 :image-url="book.cover_url"
                 size="xs"
               />
@@ -180,22 +210,26 @@ watch(includeReading, loadOverlap);
       </div>
       <p v-if="feedError" class="error">{{ feedError }}</p>
       <div v-else-if="!feedLoaded" class="skeleton member-skeleton" aria-hidden="true" />
-      <p v-else-if="feed.length === 0" class="fine subtle">
-        {{ t("club.nothingWritten") }}
-      </p>
+      <div v-else-if="feed.length === 0" class="feed-empty">
+        <p class="fine subtle">{{ t("club.nothingWritten") }}</p>
+        <RouterLink class="btn btn-ghost btn-sm" to="/">{{ t("club.toCurrentBook") }}</RouterLink>
+      </div>
       <template v-else>
         <ol class="feed-list">
           <li v-for="item in feed" :key="item.entry.id">
-            <RouterLink class="feed-row" :to="entryPath(item)">
-              <BookCover
-                :title="item.book.title"
-                :cover-id="item.book.cover_id"
-                :work-key="item.book.ol_work_key"
-                :image-url="item.book.cover_url"
-                size="xs"
-              />
+            <!-- Not one big link: the note can be unfolded in place. -->
+            <article class="feed-row">
+              <RouterLink class="feed-cover" :to="entryPath(item)" tabindex="-1" aria-hidden="true">
+                <BookCover
+                  :title="item.book.title"
+                  :cover-id="item.book.cover_id"
+                  :work-key="item.book.ol_work_key"
+                  :image-url="item.book.cover_url"
+                  size="xs"
+                />
+              </RouterLink>
               <span class="feed-meta">
-                <span class="feed-head">
+                <RouterLink class="feed-head" :to="entryPath(item)">
                   <strong>{{ item.entry.author }}</strong>
                   <span class="finer subtle">
                     <template v-if="item.parent_author">
@@ -204,10 +238,13 @@ watch(includeReading, loadOverlap);
                     <template v-else>{{ t("club.on") }}</template>
                     {{ item.book.title }}
                   </span>
-                </span>
+                </RouterLink>
                 <span
-                  class="feed-body clamp-2"
+                  :ref="(el) => measureFeedBody(item.entry.id, el as HTMLElement | null)"
+                  class="feed-body"
                   :class="{
+                    'clamp-2': !expandedFeed.has(item.entry.id),
+                    expanded: expandedFeed.has(item.entry.id),
                     shielded: isShielded(item.entry, item.my_progress, item.my_status),
                   }"
                 >
@@ -218,8 +255,17 @@ watch(includeReading, loadOverlap);
                   >
                     {{ t("club.spoilerFlagged") }}
                   </span>
-                  {{ clubFeedPreview(item) }}
+                  {{ expandedFeed.has(item.entry.id) ? item.entry.body.trim() : clubFeedPreview(item) }}
                 </span>
+                <button
+                  v-if="feedExpandable(item)"
+                  class="text-btn feed-more"
+                  type="button"
+                  :aria-expanded="expandedFeed.has(item.entry.id)"
+                  @click="toggleFeed(item.entry.id)"
+                >
+                  {{ expandedFeed.has(item.entry.id) ? t("common.showLess") : t("common.showMore") }}
+                </button>
                 <span class="finer subtle feed-foot">
                   <template v-if="positionMarker(item.entry)">
                     {{ positionMarker(item.entry) }} ·
@@ -230,7 +276,7 @@ watch(includeReading, loadOverlap);
                   </template>
                 </span>
               </span>
-            </RouterLink>
+            </article>
           </li>
         </ol>
         <button
@@ -388,12 +434,16 @@ watch(includeReading, loadOverlap);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  color: inherit;
-  text-decoration: none;
 }
 
-.feed-row:hover {
-  border-color: var(--border-strong);
+.feed-cover {
+  flex-shrink: 0;
+}
+
+.feed-empty {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
 }
 
 .feed-meta {
@@ -404,6 +454,8 @@ watch(includeReading, loadOverlap);
 }
 
 .feed-head {
+  color: inherit;
+  text-decoration: none;
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -422,6 +474,16 @@ watch(includeReading, loadOverlap);
 
 .feed-body.shielded {
   font-style: italic;
+}
+
+.feed-body.expanded {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.feed-more {
+  justify-self: start;
+  font-size: var(--text-sm);
 }
 
 .feed-foot {

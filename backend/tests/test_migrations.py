@@ -82,6 +82,7 @@ def test_legacy_database_is_upgraded_in_place(tmp_path):
             "ol_rating",
             "details_fetched_at",
             "cover_image_url",
+            "spine_color",
         } <= book_cols
         user_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(users)"))}
         assert {
@@ -123,6 +124,7 @@ def test_legacy_database_is_upgraded_in_place(tmp_path):
             "pick_milestones",
             "quotes",
             "user_favorites",
+            "physical_shelf_layouts",
         } <= tables
         favorite_indexes = {
             row[1]
@@ -132,6 +134,10 @@ def test_legacy_database_is_upgraded_in_place(tmp_path):
         assert len(favorite_indexes) >= 2
         favorite_fks = conn.execute(text("PRAGMA foreign_key_list(user_favorites)")).fetchall()
         assert {row[6] for row in favorite_fks} == {"CASCADE"}
+        layout_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(physical_shelf_layouts)"))}
+        assert {"user_id", "layout_json"} == layout_cols
+        layout_fks = conn.execute(text("PRAGMA foreign_key_list(physical_shelf_layouts)")).fetchall()
+        assert {row[6] for row in layout_fks} == {"CASCADE"}
 
     # Running again is a no-op.
     init_db(path)

@@ -66,6 +66,7 @@ def book_out(book: Book) -> BookOut:
         year=book.year,
         cover_url=book_cover_url(book),
         pages=book.pages,
+        spine_color=book.spine_color or None,
     )
 
 

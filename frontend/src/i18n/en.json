@@ -6,7 +6,8 @@
     "club": "Club",
     "settings": "Settings",
     "settingsAndTheme": "Settings and theme",
-    "settingsFor": "Settings for {name}"
+    "settingsFor": "Settings for {name}",
+    "settingsShort": "Profile"
   },
   "cover": {
     "alt": "Cover of {title}"
@@ -32,7 +33,8 @@
     "copy": "Copy",
     "nominate": "Nominate",
     "showMore": "Show more",
-    "genericError": "Something went wrong. Try again."
+    "genericError": "Something went wrong. Try again.",
+    "showLess": "Show less"
   },
   "status": {
     "want_to_read": "Want to read",
@@ -167,7 +169,8 @@
     "noNominations": "No nominations yet. Nominate a book from its page and the club votes on what comes next.",
     "pastPicks": "Past picks",
     "meetingTitle": "Meeting",
-    "saveMeeting": "Save meeting"
+    "saveMeeting": "Save meeting",
+    "yourProgress": "Your progress"
   },
   "shelf": {
     "title": "Your shelf",
@@ -269,7 +272,8 @@
     "overlapBlurb": "Books two or more of you have on Want to read. The shortest path to a pick everyone already wants.",
     "overlapBlurbReading": "Books two or more of you have on Want to read or Reading. The shortest path to a pick everyone already wants.",
     "overlapFailed": "Could not load the overlap",
-    "noOverlap": "No shared wants yet. Add a few books to Want to read and check back."
+    "noOverlap": "No shared wants yet. Add a few books to Want to read and check back.",
+    "toCurrentBook": "Go to the current club book"
   },
   "discover": {
     "title": "Discover",
@@ -420,7 +424,8 @@
     "safeUpto": "Safe up to {n}%",
     "spoilerPreview": "Spoiler-flagged note",
     "readersBlur": "Readers below this point see it blurred",
-    "removeFlag": "Remove flag"
+    "removeFlag": "Remove flag",
+    "writeFirst": "Write the first note"
   },
   "vote": {
     "title": "Next-up vote",
@@ -488,5 +493,76 @@
     "readingDateFinished": "Reading dates can only be set for finished books.",
     "readingDateFuture": "The reading date cannot be in the future.",
     "historyNotFound": "That search is no longer in your history."
+  },
+  "physicalShelf": {
+    "title": "Your real bookshelf",
+    "material": "Finish",
+    "oak": "Oak",
+    "walnut": "Walnut",
+    "white": "White",
+    "dragHint": "Drag to rearrange (press and hold on a phone). Tap a book to change its colour, thickness and place.",
+    "dropHere": "Room for your next favourite",
+    "emptyShelf": "Your stories belong here",
+    "addRow": "Add a shelf",
+    "autoSave": "saves automatically",
+    "saving": "Saving…",
+    "saved": "Saved",
+    "saveFailed": "Could not save your shelf. Your last arrangement has been restored.",
+    "loadFailed": "Could not load your bookshelf.",
+    "bookLabel": "{title} by {author}. Show details.",
+    "editSpine": "Make it your own",
+    "color": "Spine colour",
+    "width": "Spine thickness",
+    "position": "Place in your shelf",
+    "left": "← Left",
+    "right": "Right →",
+    "chooseRow": "Move to shelf",
+    "row": "Shelf {number}",
+    "apply": "Save book spine",
+    "openBook": "Open book",
+    "chooseColor": "Choose colour {color}",
+    "retry": "Try again",
+    "loading": "Loading…",
+    "close": "Close",
+    "view": "Choose shelf view",
+    "bookView": "Books",
+    "shelfView": "Bookshelf",
+    "removeRow": "Remove shelf {number}",
+    "lastRow": "Your bookshelf always keeps one shelf.",
+    "removeRowHint": "Move the contents to an adjacent shelf and remove this shelf",
+    "addDecoration": "Add decoration",
+    "decorate": "Make yourself at home",
+    "decorationHint": "Little things that make your bookshelf yours. Move them freely between your books afterwards.",
+    "plant": "Plant",
+    "vase": "Vase",
+    "candle": "Candle",
+    "frame": "Picture frame",
+    "plantHint": "A little greenery",
+    "vaseHint": "Simple ceramics",
+    "candleHint": "A warm glow",
+    "frameHint": "A little memory",
+    "decorationLabel": "{name}. Customise or move.",
+    "decorationColor": "Colour",
+    "saveDecoration": "Save decoration",
+    "removeDecoration": "Remove from bookshelf",
+    "addRowShort": "Board",
+    "addDecorationShort": "Decor",
+    "black": "Black",
+    "lights": "String lights",
+    "bookSheet": "From your shelf",
+    "restyle": "Restyle on the shelf",
+    "backToBook": "Back",
+    "display": "Placement",
+    "display_spine": "Upright",
+    "display_flat": "Lying flat",
+    "display_cover": "Cover out",
+    "automatic": "Automatic",
+    "bookend": "Bookend",
+    "bookendHint": "Keeps the row upright",
+    "globe": "Globe",
+    "globeHint": "For wanderlust",
+    "memberTitle": "{name}'s bookshelf",
+    "memberBookSheet": "From {name}'s shelf",
+    "memberEmpty": "{name} has no books on the shelf yet."
   }
 }

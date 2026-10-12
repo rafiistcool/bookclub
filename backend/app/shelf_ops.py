@@ -10,6 +10,17 @@ def _usable_cover(cover_id: int | None) -> int | None:
     return cover_id if cover_id is not None and cover_id > 0 else None
 
 
+def _set_cover(book: Book, cover_id: int | None, cover_image_url: str | None) -> None:
+    """Apply new cover sources; a changed cover gets its spine colour sampled again."""
+    before = (book.cover_id, book.cover_image_url)
+    if cover_id is not None:
+        book.cover_id = cover_id
+    if cover_image_url is not None:
+        book.cover_image_url = cover_image_url
+    if (book.cover_id, book.cover_image_url) != before:
+        book.spine_color = None
+
+
 def upsert_book(
     session: Session,
     *,
@@ -39,10 +50,7 @@ def upsert_book(
     book.title = title
     if authors:
         book.authors = authors
-    if cover_id is not None:
-        book.cover_id = cover_id
-    if cover_image_url is not None:
-        book.cover_image_url = cover_image_url
+    _set_cover(book, cover_id, cover_image_url)
     if year is not None:
         book.year = year
     return book
@@ -66,12 +74,7 @@ def apply_book_details(
         book.title = title
     if authors:
         book.authors = authors
-    cover_id = _usable_cover(cover_id)
-    if cover_id is not None:
-        book.cover_id = cover_id
-    remote = storable_cover_image_url(cover_image_url)
-    if remote is not None:
-        book.cover_image_url = remote
+    _set_cover(book, _usable_cover(cover_id), storable_cover_image_url(cover_image_url))
     if year is not None:
         book.year = year
     if description is not None:

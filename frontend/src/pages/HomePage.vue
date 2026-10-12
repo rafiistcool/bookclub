@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
 import Avatar from "../components/Avatar.vue";
@@ -34,6 +34,20 @@ const error = ref("");
 const loaded = ref(false);
 const editingMeeting = ref(false);
 const busy = ref(false);
+const diary = ref<InstanceType<typeof BookDiary> | null>(null);
+const progressDraft = ref(0);
+
+// My own row among the readers carries my progress for the club pick.
+const me = computed(
+  () => pick.value?.readers.find((row) => row.username === session.user?.username) ?? null,
+);
+watch(
+  () => me.value?.progress,
+  (progress) => {
+    progressDraft.value = progress ?? 0;
+  },
+  { immediate: true },
+);
 
 const readers = computed(() =>
   [...(pick.value?.readers ?? [])].sort((a, b) => {
@@ -99,6 +113,40 @@ async function startReading() {
     } else {
       toast.show(err instanceof ApiError ? err.message : t("home.addFailed"));
     }
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function saveProgress() {
+  const current = pick.value;
+  if (!current?.shelf_id || busy.value) return;
+  busy.value = true;
+  try {
+    const item = await api.patchShelf(current.shelf_id, { progress: progressDraft.value });
+    if (me.value) me.value.progress = item.progress;
+    toast.show(t("book.progressSaved", { n: progressDraft.value }));
+    // Spoiler shields in the diary depend on how far I am.
+    void diary.value?.reload();
+  } catch (err) {
+    progressDraft.value = me.value?.progress ?? 0;
+    toast.show(err instanceof ApiError ? err.message : t("book.saveFailed"));
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function beginReading() {
+  const current = pick.value;
+  if (!current?.shelf_id || busy.value) return;
+  busy.value = true;
+  try {
+    const item = await api.patchShelf(current.shelf_id, { status: "currently_reading", position: 0 });
+    current.on_shelf = item.status;
+    toast.show(t("home.addedToReading"));
+    await load();
+  } catch (err) {
+    toast.show(err instanceof ApiError ? err.message : t("book.saveFailed"));
   } finally {
     busy.value = false;
   }
@@ -175,6 +223,23 @@ onMounted(load);
 
           <p v-if="pick.note" class="note">{{ pick.note }}</p>
 
+          <div v-if="pick.on_shelf === 'currently_reading' && pick.shelf_id" class="hero-progress">
+            <label class="progress-label" for="home-progress">
+              <span>{{ t("home.yourProgress") }}</span>
+              <strong class="nums">{{ progressDraft }}%</strong>
+            </label>
+            <input
+              id="home-progress"
+              v-model.number="progressDraft"
+              type="range"
+              min="0"
+              max="100"
+              step="5"
+              :disabled="busy"
+              @change="saveProgress"
+            />
+          </div>
+
           <div class="btn-row hero-actions">
             <RouterLink
               class="btn btn-primary"
@@ -188,6 +253,15 @@ onMounted(load);
               type="button"
               :disabled="busy"
               @click="startReading"
+            >
+              {{ t("home.startReading") }}
+            </button>
+            <button
+              v-else-if="pick.on_shelf === 'want_to_read' && pick.shelf_id"
+              class="btn btn-ghost"
+              type="button"
+              :disabled="busy"
+              @click="beginReading"
             >
               {{ t("home.startReading") }}
             </button>
@@ -212,7 +286,8 @@ onMounted(load);
             {{ t("home.finishedOf", { finished: finishedCount, total: readers.length || 0 }) }}
           </span>
         </div>
-        <div v-if="readers.length" class="rail reader-rail">
+        <template v-if="readers.length">
+        <div class="rail reader-rail">
           <RouterLink
             v-for="row in readers"
             :key="row.username"
@@ -231,9 +306,16 @@ onMounted(load);
             <span v-else-if="row.rating" class="finer stars">
               {{ starLabel(row.rating) }}
             </span>
-            <span v-if="row.take" class="finer subtle clamp-2">{{ row.take }}</span>
           </RouterLink>
         </div>
+        <ul v-if="readers.some((row) => row.take)" class="reader-takes">
+          <li v-for="row in readers.filter((reader) => reader.take)" :key="row.username">
+            <strong>{{ row.username }}</strong>
+            <span v-if="row.rating" class="finer stars">{{ starLabel(row.rating) }}</span>
+            <p>{{ row.take }}</p>
+          </li>
+        </ul>
+        </template>
         <p v-else class="fine subtle">
           {{ t("home.nobodyAdded") }}
         </p>
@@ -241,6 +323,7 @@ onMounted(load);
 
       <section class="section thread-section">
         <BookDiary
+          ref="diary"
           :work-key="pick.book.ol_work_key"
           :book="pick.book"
           :preview="3"
@@ -282,9 +365,13 @@ onMounted(load);
         </span>
         <span class="fine">{{ t("home.voteArrow") }}</span>
       </RouterLink>
-      <p v-else class="fine subtle">
-        {{ t("home.noNominations") }}
-      </p>
+      <div v-else class="next-up-empty">
+        <p class="fine subtle">{{ t("home.noNominations") }}</p>
+        <div class="btn-row">
+          <RouterLink class="btn btn-ghost btn-sm" to="/shelf">{{ t("home.pickFromShelf") }}</RouterLink>
+          <RouterLink class="btn btn-ghost btn-sm" to="/discover">{{ t("home.findBook") }}</RouterLink>
+        </div>
+      </div>
     </section>
 
     <section v-if="history.length" class="section past-section" aria-labelledby="past">
@@ -362,6 +449,33 @@ onMounted(load);
   font-size: var(--text-2xl);
 }
 
+.hero-progress {
+  display: grid;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+  max-width: 420px;
+}
+
+.progress-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.hero-progress input[type="range"] {
+  width: 100%;
+  min-height: var(--tap);
+  accent-color: var(--accent);
+}
+
+.next-up-empty {
+  display: grid;
+  gap: var(--space-2);
+}
+
 .hero-authors {
   color: var(--text-muted);
   font-size: var(--text-lg);
@@ -399,6 +513,33 @@ onMounted(load);
 
 .reader-chip:hover {
   border-color: var(--border-strong);
+}
+
+/* Takes are shown in full: the chips are too narrow for a whole sentence. */
+.reader-takes {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reader-takes li {
+  padding: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.reader-takes strong {
+  margin-right: var(--space-2);
+}
+
+.reader-takes p {
+  margin-top: var(--space-1);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .reader-name {

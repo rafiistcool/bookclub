@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vAutosize } from "../autosize";
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import type { Status } from "../constants";
@@ -119,7 +120,7 @@ watch(
     <form v-else-if="editing" class="entry-edit" @submit.prevent="saveEdit">
       <label class="field">
         <span class="visually-hidden">{{ t("diary.editAria") }}</span>
-        <textarea v-model="editDraft" rows="3" maxlength="1000" />
+        <textarea v-autosize v-model="editDraft" rows="3" maxlength="1000" />
       </label>
       <div class="entry-edit-row">
         <SpoilerControl v-model="editSpoiler" />

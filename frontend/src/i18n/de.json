@@ -6,7 +6,8 @@
     "club": "Club",
     "settings": "Einstellungen",
     "settingsAndTheme": "Einstellungen und Design",
-    "settingsFor": "Einstellungen für {name}"
+    "settingsFor": "Einstellungen für {name}",
+    "settingsShort": "Profil"
   },
   "cover": {
     "alt": "Cover von {title}"
@@ -32,7 +33,8 @@
     "copy": "Kopieren",
     "nominate": "Nominieren",
     "showMore": "Mehr anzeigen",
-    "genericError": "Etwas ist schiefgelaufen. Versuch es nochmal."
+    "genericError": "Etwas ist schiefgelaufen. Versuch es nochmal.",
+    "showLess": "Weniger anzeigen"
   },
   "status": {
     "want_to_read": "Will ich lesen",
@@ -167,7 +169,8 @@
     "noNominations": "Noch keine Nominierungen. Nominiere ein Buch auf seiner Seite, und der Club stimmt über das Nächste ab.",
     "pastPicks": "Vergangene Club-Bücher",
     "meetingTitle": "Treffen",
-    "saveMeeting": "Treffen speichern"
+    "saveMeeting": "Treffen speichern",
+    "yourProgress": "Dein Fortschritt"
   },
   "shelf": {
     "title": "Mein Regal",
@@ -269,7 +272,8 @@
     "overlapBlurb": "Bücher, die mindestens zwei von euch auf Will ich lesen haben. Der kürzeste Weg zu einem Buch, das alle schon wollen.",
     "overlapBlurbReading": "Bücher, die mindestens zwei von euch auf Will ich lesen oder Lese ich haben. Der kürzeste Weg zu einem Buch, das alle schon wollen.",
     "overlapFailed": "Die Überschneidung konnte nicht geladen werden",
-    "noOverlap": "Noch keine gemeinsamen Wünsche. Legt ein paar Bücher auf Will ich lesen und schaut wieder vorbei."
+    "noOverlap": "Noch keine gemeinsamen Wünsche. Legt ein paar Bücher auf Will ich lesen und schaut wieder vorbei.",
+    "toCurrentBook": "Zum aktuellen Club-Buch"
   },
   "discover": {
     "title": "Entdecken",
@@ -420,7 +424,8 @@
     "safeUpto": "Sicher bis {n} %",
     "spoilerPreview": "Notiz mit Spoiler-Hinweis",
     "readersBlur": "Wer dahinter liegt, sieht sie unscharf",
-    "removeFlag": "Hinweis entfernen"
+    "removeFlag": "Hinweis entfernen",
+    "writeFirst": "Ersten Eintrag schreiben"
   },
   "vote": {
     "title": "Abstimmung fürs Nächste",
@@ -488,5 +493,76 @@
     "readingDateFinished": "Ein Lesedatum ist nur für gelesene Bücher möglich.",
     "readingDateFuture": "Das Lesedatum darf nicht in der Zukunft liegen.",
     "historyNotFound": "Diese Suche ist nicht mehr in deinem Verlauf."
+  },
+  "physicalShelf": {
+    "title": "Dein Bücherregal",
+    "material": "Material",
+    "oak": "Eiche",
+    "walnut": "Nussbaum",
+    "white": "Weiß",
+    "dragHint": "Ziehen zum Umstellen (am Handy kurz gedrückt halten). Antippen, um Farbe, Dicke und Platz zu ändern.",
+    "dropHere": "Platz für dein nächstes Lieblingsbuch",
+    "emptyShelf": "Hier sind deine Geschichten zu Hause",
+    "addRow": "Regalbrett hinzufügen",
+    "autoSave": "speichert automatisch",
+    "saving": "Wird gespeichert …",
+    "saved": "Gespeichert",
+    "saveFailed": "Dein Regal konnte nicht gespeichert werden. Die letzte Anordnung wurde wiederhergestellt.",
+    "loadFailed": "Dein Bücherregal konnte nicht geladen werden.",
+    "bookLabel": "{title} von {author}. Details anzeigen.",
+    "editSpine": "Dein Buch, dein Stil",
+    "color": "Farbe des Buchrückens",
+    "width": "Dicke des Buchrückens",
+    "position": "Platz im Regal",
+    "left": "← Links",
+    "right": "Rechts →",
+    "chooseRow": "In ein anderes Regalfach verschieben",
+    "row": "Regalfach {number}",
+    "apply": "Buchrücken speichern",
+    "openBook": "Buch öffnen",
+    "chooseColor": "Farbe {color} wählen",
+    "retry": "Erneut versuchen",
+    "loading": "Wird geladen …",
+    "close": "Schließen",
+    "view": "Regalansicht wählen",
+    "bookView": "Bücher",
+    "shelfView": "Regal",
+    "removeRow": "Regalfach {number} entfernen",
+    "lastRow": "Ein Regalfach bleibt immer erhalten.",
+    "removeRowHint": "Inhalt ins benachbarte Fach verschieben und Brett entfernen",
+    "addDecoration": "Deko hinzufügen",
+    "decorate": "Ein bisschen mehr Zuhause",
+    "decorationHint": "Kleine Dinge, die dein Regal persönlich machen. Du kannst sie danach frei zwischen den Büchern verschieben.",
+    "plant": "Pflanze",
+    "vase": "Vase",
+    "candle": "Kerze",
+    "frame": "Bilderrahmen",
+    "plantHint": "Ein bisschen Grün",
+    "vaseHint": "Schlichte Keramik",
+    "candleHint": "Warmes Licht",
+    "frameHint": "Eine kleine Erinnerung",
+    "decorationLabel": "{name}. Gestalten oder verschieben.",
+    "decorationColor": "Farbe",
+    "saveDecoration": "Deko speichern",
+    "removeDecoration": "Aus dem Regal nehmen",
+    "addRowShort": "Brett",
+    "addDecorationShort": "Deko",
+    "black": "Schwarz",
+    "lights": "Lichterkette",
+    "bookSheet": "Aus deinem Regal",
+    "restyle": "Im Regal gestalten",
+    "backToBook": "Zurück",
+    "display": "Aufstellung",
+    "display_spine": "Stehend",
+    "display_flat": "Liegend",
+    "display_cover": "Cover vorn",
+    "automatic": "Automatisch",
+    "bookend": "Buchstütze",
+    "bookendHint": "Hält die Reihe",
+    "globe": "Globus",
+    "globeHint": "Fernweh inklusive",
+    "memberTitle": "Regal von {name}",
+    "memberBookSheet": "Aus dem Regal von {name}",
+    "memberEmpty": "{name} hat noch keine Bücher im Regal."
   }
 }

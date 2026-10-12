@@ -1,7 +1,8 @@
 import re
 from datetime import date, datetime
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.covers import storable_cover_image_url
 from app.i18n import DEFAULT_LOCALE, LOCALES, is_locale
@@ -146,6 +147,8 @@ class BookOut(BaseModel):
     year: int | None
     cover_url: str | None
     pages: int | None = None
+    # Dominant cover colour for the physical shelf; None until one is known.
+    spine_color: str | None = None
 
 
 class SearchHit(BaseModel):
@@ -398,6 +401,76 @@ class ShelfListOut(BaseModel):
     favorites: list[FavoriteOut] = []
 
 
+class PhysicalSpine(BaseModel):
+    # A missing colour or width follows the book: its cover colour and page count.
+    color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
+    width: int | None = Field(default=None, ge=26, le=64, strict=True)
+    # Standing spine-out, lying in a stack, or facing out with its cover.
+    display: Literal["spine", "flat", "cover"] = "spine"
+
+    @field_validator("color")
+    @classmethod
+    def normalized_color(cls, value: str | None) -> str | None:
+        return value.lower() if value else value
+
+
+DecorationId = Annotated[str, Field(strict=True, pattern=r"^decor:[a-zA-Z0-9_-]{1,64}$")]
+PhysicalShelfItemId = Annotated[int, Field(strict=True, gt=0)] | DecorationId
+
+
+class PhysicalDecoration(BaseModel):
+    kind: Literal["plant", "vase", "candle", "frame", "bookend", "globe"]
+    color: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
+
+    @field_validator("color")
+    @classmethod
+    def normalized_color(cls, value: str) -> str:
+        return value.lower()
+
+
+class PhysicalShelfLayout(BaseModel):
+    # Numeric IDs belong to shelf entries; decorations use a separate namespace.
+    rows: list[list[PhysicalShelfItemId]] = Field(
+        default_factory=lambda: [[], [], []], min_length=1, max_length=12
+    )
+    material: Literal["oak", "walnut", "white", "black"] = "oak"
+    lights: bool = False
+    spines: dict[str, PhysicalSpine] = Field(default_factory=dict, max_length=2000)
+    decorations: dict[DecorationId, PhysicalDecoration] = Field(default_factory=dict, max_length=100)
+
+    @field_validator("rows")
+    @classmethod
+    def rows_ok(cls, value: list[list[PhysicalShelfItemId]]) -> list[list[PhysicalShelfItemId]]:
+        ids = [entry_id for row in value for entry_id in row]
+        if len(ids) > 2100:
+            raise ValueError("At most 2100 items fit on the physical shelf")
+        if sum(isinstance(entry_id, int) for entry_id in ids) > 2000:
+            raise ValueError("At most 2000 books fit on the physical shelf")
+        if len(ids) != len(set(ids)):
+            raise ValueError("Each item can only appear once on the physical shelf")
+        return value
+
+    @field_validator("spines")
+    @classmethod
+    def spine_keys_ok(cls, value: dict[str, PhysicalSpine]) -> dict[str, PhysicalSpine]:
+        if any(not re.fullmatch(r"[1-9][0-9]{0,18}", key) for key in value):
+            raise ValueError("Spine appearances must refer to shelf entry IDs")
+        return value
+
+    @model_validator(mode="after")
+    def decorations_match_rows(self) -> "PhysicalShelfLayout":
+        referenced = {entry_id for row in self.rows for entry_id in row if isinstance(entry_id, str)}
+        if referenced != self.decorations.keys():
+            raise ValueError("Each decoration must appear exactly once on the physical shelf")
+        return self
+
+
+class SpineColorsOut(BaseModel):
+    # Book id -> "#rrggbb" for the books resolved by this call.
+    colors: dict[int, str]
+    remaining: int
+
+
 class GoodreadsSkipOut(BaseModel):
     title: str
     reason: str
@@ -410,6 +483,7 @@ class GoodreadsImportOut(BaseModel):
 
 
 class ReadingPreview(BaseModel):
+    ol_work_key: str = ""
     title: str
     cover_id: int | None
     cover_url: str | None = None

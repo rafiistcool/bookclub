@@ -8,6 +8,7 @@ import BottomSheet from "../components/BottomSheet.vue";
 import FavoritePortrait from "../components/FavoritePortrait.vue";
 import MeetingSheet from "../components/MeetingSheet.vue";
 import ShelfBoard from "../components/ShelfBoard.vue";
+import ShelfViewSwitch from "../components/ShelfViewSwitch.vue";
 import TileSkeleton from "../components/TileSkeleton.vue";
 import { STATUSES, statusLabel, statusShort, type Status } from "../constants";
 import { tp } from "../i18n";
@@ -263,6 +264,8 @@ onMounted(load);
 
     <p v-if="error" class="error">{{ error }}</p>
 
+    <div v-if="loaded && !error" class="shelf-view-toolbar"><ShelfViewSwitch active="books" /></div>
+
     <div v-if="!loaded" class="book-grid" aria-hidden="true">
       <TileSkeleton :count="9" />
     </div>
@@ -373,6 +376,7 @@ onMounted(load);
 </template>
 
 <style scoped>
+.shelf-view-toolbar { margin-bottom: var(--space-5); }
 .shelf-head { position: relative; padding-right: 42px; margin-bottom: var(--space-6); }
 .shelf-head > div { min-width: 0; }
 .shelf-head h1 { font-size: clamp(1.5rem, 6.7vw, 2rem); }

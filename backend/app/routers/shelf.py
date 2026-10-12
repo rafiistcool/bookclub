@@ -1,11 +1,15 @@
+import asyncio
 from datetime import datetime, time, timezone
+
+import httpx
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
+from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
-from app import activity
+from app import activity, spine_color
 from app.config import get_settings
 from app.timezone import club_zone, resolved_timezone
 from app.deps import get_current_user, get_session
@@ -15,14 +19,16 @@ from app.goodreads import (
     lookup_catalog,
     parse_goodreads_csv,
 )
-from app.models import ShelfEntry, ShelfStatus, User
+from app.models import Book, ShelfEntry, ShelfStatus, User, UserPhysicalShelfLayout
 from app.schemas import (
     GoodreadsImportOut,
     GoodreadsSkipOut,
+    PhysicalShelfLayout,
     ShelfAddIn,
     ShelfItemOut,
     ShelfListOut,
     ShelfPatchIn,
+    SpineColorsOut,
 )
 from app.favorites import favorite_out, list_favorites
 from app.serialize import shelf_item_out, user_out
@@ -208,6 +214,123 @@ async def import_goodreads(
     )
 
 
+def _owned_shelf_ids(session: Session, me: User) -> set[int]:
+    return set(session.exec(select(ShelfEntry.id).where(ShelfEntry.user_id == me.id)).all())
+
+
+@router.get("/physical-layout", response_model=PhysicalShelfLayout)
+def get_physical_shelf_layout(
+    username: str | None = Query(default=None),
+    me: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> PhysicalShelfLayout:
+    # Members can look at each other's bookshelves, like their reading lists.
+    # Only the owner can save one.
+    if username:
+        owner = session.exec(select(User).where(User.username == username.lower())).first()
+        if owner is None:
+            raise HTTPException(status_code=404, detail="No member with that name")
+    else:
+        owner = me
+    saved = session.get(UserPhysicalShelfLayout, owner.id)
+    if saved is None:
+        return PhysicalShelfLayout()
+    layout = PhysicalShelfLayout.model_validate_json(saved.layout_json)
+    owned_ids = _owned_shelf_ids(session, owner)
+    # Deletions can also happen through database restores or maintenance. Keep
+    # row boundaries intact while filtering entries that no longer exist.
+    return layout.model_copy(
+        update={
+            "rows": [
+                [entry_id for entry_id in row if isinstance(entry_id, str) or entry_id in owned_ids]
+                for row in layout.rows
+            ],
+            "spines": {
+                key: spine for key, spine in layout.spines.items() if int(key) in owned_ids
+            },
+        }
+    )
+
+
+@router.put("/physical-layout", response_model=PhysicalShelfLayout)
+def save_physical_shelf_layout(
+    payload: PhysicalShelfLayout,
+    me: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> PhysicalShelfLayout:
+    referenced_ids = {
+        entry_id for row in payload.rows for entry_id in row if isinstance(entry_id, int)
+    }
+    referenced_ids.update(int(key) for key in payload.spines)
+    if not referenced_ids <= _owned_shelf_ids(session, me):
+        raise HTTPException(status_code=400, detail="Physical shelf books must be on your shelf")
+    # An atomic upsert also handles two devices saving their first layout at
+    # once. This layout never writes reading status or the list's order.
+    statement = insert(UserPhysicalShelfLayout).values(
+        user_id=me.id, layout_json=payload.model_dump_json()
+    )
+    session.execute(
+        statement.on_conflict_do_update(
+            index_elements=["user_id"], set_={"layout_json": statement.excluded.layout_json}
+        )
+    )
+    session.commit()
+    return payload
+
+
+SPINE_COLOR_BATCH = 12
+
+
+async def _resolve_spine_color(book: Book) -> str | None:
+    """A colour, "" when the book has no usable cover, None to try again later."""
+    url = spine_color.spine_cover_url(book)
+    if not url:
+        return ""
+    try:
+        data = await spine_color.fetch_cover(url)
+    except httpx.HTTPError:
+        return None
+    except Exception:  # e.g. httpx.InvalidURL: this cover will never load
+        return ""
+    if not data:
+        return ""
+    try:
+        return spine_color.dominant_color(data) or ""
+    except Exception:  # Pillow raises more than it documents on damaged files
+        return ""
+
+
+@router.post("/spine-colors", response_model=SpineColorsOut)
+async def resolve_spine_colors(
+    me: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> SpineColorsOut:
+    """Sample cover colours for the caller's books that have none yet, a batch at a time."""
+    pending = session.exec(
+        select(Book)
+        .join(ShelfEntry, ShelfEntry.book_id == Book.id)
+        .where(ShelfEntry.user_id == me.id, Book.spine_color.is_(None))
+        .order_by(Book.id)
+    ).all()
+    batch = pending[:SPINE_COLOR_BATCH]
+    results = await asyncio.gather(*(_resolve_spine_color(book) for book in batch))
+    colors: dict[int, str] = {}
+    unresolved = 0
+    for book, color in zip(batch, results):
+        if color is None:
+            unresolved += 1
+            continue
+        book.spine_color = color
+        session.add(book)
+        if color and book.id is not None:
+            colors[book.id] = color
+    session.commit()
+    # After a failed fetch report nothing left to do, or a client would keep
+    # asking while the cover host is down. The next visit tries again.
+    remaining = 0 if unresolved else len(pending) - len(batch)
+    return SpineColorsOut(colors=colors, remaining=remaining)
+
+
 @router.patch("/{entry_id}", response_model=ShelfItemOut)
 def update_shelf_item(
     entry_id: int,
@@ -301,6 +424,15 @@ def remove_shelf_item(
         raise HTTPException(status_code=404, detail="Book not on your shelf")
     status = entry.status
     activity.record(session, me, "shelf_removed", book=entry.book, status=status.value)
+    saved_layout = session.get(UserPhysicalShelfLayout, me.id)
+    if saved_layout is not None:
+        # SQLite may reuse the highest deleted shelf ID for a subsequent book.
+        # Remove the old appearance in the same transaction as the deletion.
+        layout = PhysicalShelfLayout.model_validate_json(saved_layout.layout_json)
+        layout.rows = [[value for value in row if value != entry_id] for row in layout.rows]
+        layout.spines.pop(str(entry_id), None)
+        saved_layout.layout_json = layout.model_dump_json()
+        session.add(saved_layout)
     session.delete(entry)
     session.flush()
     leftovers = session.exec(

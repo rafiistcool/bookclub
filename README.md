@@ -166,12 +166,31 @@ Invite-only, no email. Any signed-in member can mint invites. Members change the
 | `/` | Club pick, meeting, progress, that book’s diary, next-up vote, past picks |
 | `/discover` | Search + browse the catalog; add-your-own when it misses |
 | `/shelf` | Your cover grid, reading-status filters, and saved book order |
+| `/shelf/physical` | A personal bookshelf with draggable spines, shelf finishes, and saved placements |
 | `/club` | Members, TBR overlap, recent diary across all books, next-up vote |
 | `/club/:username` | A member’s shelf and ratings |
+| `/club/:username/shelf` | A member’s bookshelf, as they arranged it (view only) |
 | `/book/:workId` | Synopsis, club rating, shelf actions, full diary |
 | `/settings` | Theme, invites, Goodreads import, SQLite backup, notifications, password |
 
 Old paths (`/library`, `/friends`, `/overlap`, `/invites`, `/pick`) still redirect.
+
+Choose **Bookshelf** in the view switch on the Shelf tab to arrange books across wooden
+shelves. On a phone, hold a spine briefly before dragging. Tap or keyboard-focus
+a book to see it, then restyle it: colour, thickness, and whether it stands
+upright, lies in a stack with its neighbours, or faces out with its cover. Move
+it with the position controls. Spines take their colour from the book's cover
+when it has one (the server samples the cover image once) and from a stable
+palette otherwise, with thickness from the page count; they are generated
+rather than photographs of an edition's actual spine. Placements, custom spines,
+and the shelf finish save to your account without changing reading statuses or
+completion dates. A failed save restores the previous arrangement.
+Add plants, vases, candles, picture frames, bookends, or a globe and drag them
+between the books, or switch on the string lights. Decorations have their own
+colour and position controls. Other members can look at your bookshelf from
+your shelf page; only you can change it. Remove a shelf board
+using its bin button; all its books and decorations move to an adjacent shelf.
+At least one shelf remains, and Undo restores the last successful change.
 
 ```
 backend/           FastAPI, tests
