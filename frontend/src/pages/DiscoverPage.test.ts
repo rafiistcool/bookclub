@@ -216,6 +216,36 @@ describe("DiscoverPage", () => {
     await flushPromises();
     expect(wrapper.text()).toContain("Dune");
   });
+
+  it.each(["en", "de"] as const)("does not report successful empty shelves as errors in %s", async (locale) => {
+    const previousLocale = i18n.global.locale.value;
+    i18n.global.locale.value = locale;
+    trending.mockResolvedValue(page([]));
+    subject.mockResolvedValue(page([]));
+    const { wrapper } = await mountDiscover();
+    try {
+      expect(wrapper.text()).not.toContain(i18n.global.t("discover.shelfLoadFailed"));
+      expect(wrapper.findAll(".row-empty")).toHaveLength(5);
+      expect(wrapper.text()).toContain(i18n.global.t("discover.nothingInSubject"));
+      expect(wrapper.findAll(".row-fallback")).toHaveLength(0);
+      expect(wrapper.text()).toContain(i18n.global.t("discover.nothingTrending"));
+    } finally {
+      wrapper.unmount();
+      i18n.global.locale.value = previousLocale;
+    }
+  });
+
+  it("clears a subject error when retry succeeds with an empty list", async () => {
+    subject.mockRejectedValueOnce(new Error("down"));
+    const { wrapper } = await mountDiscover();
+    subject.mockResolvedValue(page([]));
+    await wrapper.get(".row-fallback button").trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).not.toContain(i18n.global.t("discover.shelfLoadFailed"));
+    expect(wrapper.findAll(".row-fallback")).toHaveLength(0);
+    expect(wrapper.findAll(".row-empty")).toHaveLength(1);
+    wrapper.unmount();
+  });
 });
 
 describe("DiscoverPage search results", () => {
@@ -403,6 +433,8 @@ describe("DiscoverPage search history", () => {
 
   it("shows five recent terms, expands, and reruns a selected search", async () => {
     const { wrapper } = await mountDiscover();
+    expect(wrapper.find(".search-history").exists()).toBe(false);
+    await wrapper.get("input[type=search]").trigger("focus");
     expect(wrapper.findAll(".history-query")).toHaveLength(5);
     await wrapper.findAll("button").find((button) => button.text() === "Show all")!.trigger("click");
     expect(wrapper.findAll(".history-query")).toHaveLength(7);
@@ -411,6 +443,67 @@ describe("DiscoverPage search history", () => {
     expect(rememberSearch).toHaveBeenCalledWith("Book 1");
     expect(search).toHaveBeenCalled();
     expect((wrapper.get("input[type=search]").element as HTMLInputElement).value).toBe("Book 1");
+    expect(wrapper.find(".search-history").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("filters recent terms while typing and hides the dropdown when none match", async () => {
+    const { wrapper } = await mountDiscover();
+    const input = wrapper.get("input[type=search]");
+    await input.trigger("focus");
+    await input.setValue("  bOOK 2  ");
+    expect(wrapper.findAll(".history-query").map((button) => button.text())).toEqual(["Book 2"]);
+    await input.setValue("Circe");
+    expect(wrapper.find(".search-history").exists()).toBe(false);
+    await input.setValue("");
+    expect(wrapper.findAll(".history-query")).toHaveLength(5);
+    expect(search).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("dismisses with Escape, outside pointer presses, and focus leaving the search", async () => {
+    const { wrapper } = await mountDiscover();
+    const input = wrapper.get("input[type=search]");
+    await input.trigger("focus");
+    await input.trigger("keydown", { key: "Escape" });
+    expect(wrapper.find(".search-history").exists()).toBe(false);
+    await input.trigger("click");
+    expect(wrapper.find(".search-history").exists()).toBe(true);
+    document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    await nextTick();
+    expect(wrapper.find(".search-history").exists()).toBe(false);
+    await input.trigger("focus");
+    await input.trigger("focusout", { relatedTarget: wrapper.get(".history-query").element });
+    expect(wrapper.find(".search-history").exists()).toBe(true);
+    await wrapper.get(".history-query").trigger("focusout", { relatedTarget: document.body });
+    expect(wrapper.find(".search-history").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("stays closed when history finishes loading after focus has left", async () => {
+    const loading = deferred<Array<{ id: number; query: string; last_used_at: string }>>();
+    searchHistory.mockReturnValue(loading.promise);
+    const { wrapper } = await mountDiscover();
+    const input = wrapper.get("input[type=search]");
+    await input.trigger("focus");
+    await input.trigger("focusout");
+    loading.resolve([{ id: 1, query: "Circe", last_used_at: "2026-07-01T12:00:00Z" }]);
+    await flushPromises();
+    expect(wrapper.find(".search-history").exists()).toBe(false);
+    await input.trigger("focus");
+    expect(wrapper.get(".history-query").text()).toBe("Circe");
+    wrapper.unmount();
+  });
+
+  it("closes the dropdown when a new search is submitted", async () => {
+    const { wrapper } = await mountDiscover();
+    await wrapper.get("input[type=search]").trigger("focus");
+    await wrapper.get("input[type=search]").setValue("Book");
+    expect(wrapper.find(".search-history").exists()).toBe(true);
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(wrapper.find(".search-history").exists()).toBe(false);
+    expect(rememberSearch).toHaveBeenCalledWith("Book");
     wrapper.unmount();
   });
 
@@ -432,6 +525,7 @@ describe("DiscoverPage search history", () => {
 
   it("deletes one term or all terms without changing search results", async () => {
     const { wrapper } = await mountDiscover();
+    await wrapper.get("input[type=search]").trigger("focus");
     await wrapper.get('button[aria-label="Remove search: Book 1"]').trigger("click");
     await flushPromises();
     expect(deleteSearchHistory).toHaveBeenCalledWith(1);

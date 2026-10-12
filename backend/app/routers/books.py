@@ -17,6 +17,7 @@ from app.models import Book, ClubPick, Quote, ShelfEntry, ShelfStatus, User
 from app.googlebooks import (
     GoogleBooksError,
     VolumeDetails,
+    cached_volume_details,
     fetch_volume,
     google_books_enabled,
     google_http_exception,
@@ -520,15 +521,33 @@ async def fetch_google_catalog(
     limit: int,
     detail: str = SEARCH_UNAVAILABLE,
 ) -> SearchPage:
-    """Google Books search/browse. Empty miss stays empty — no Open Library."""
+    """Google Books search/browse, with topic suggestions for empty shelves."""
+    topic_fallback = False
     try:
         items, total = await search_volumes(
             query, subject=subject, sort=_google_sort(sort), page=page, limit=limit
         )
+        if not items and not query and subject and page == 1:
+            # Google can return HTTP 200 with no items for a subject-only
+            # query even though ordinary topic searches still find books.
+            # Recover the browse preview with one Google topic search. Never
+            # broaden a member's explicit search or a later pagination miss.
+            topic_fallback = True
+            items, total = await search_volumes(
+                subject.replace("_", " "),
+                sort=_google_sort(sort), page=1, limit=limit,
+            )
+            logger.warning(
+                "google books empty subject shelf subject=%s fallback_items=%d",
+                subject, len(items),
+            )
     except GoogleBooksError as exc:
         raise _google_http_error(exc, detail=detail) from exc
     return SearchPage(
-        items=items, page=page, has_more=bool(items) and page * limit < total
+        items=items, page=page,
+        # Topic suggestions are a single preview; subsequent subject pages
+        # belong to a different result set and must not be appended to it.
+        has_more=not topic_fallback and bool(items) and page * limit < total,
     )
 
 
@@ -542,7 +561,8 @@ async def fetch_catalog(
 ) -> SearchPage:
     """Google Books when a key is set; Open Library otherwise.
 
-    With a key: empty Google results stay empty (add-your-own). Hard Google
+    With a key: empty explicit searches stay empty (add-your-own); an empty
+    first subject page can offer Google topic suggestions. Hard Google
     failures (5xx / timeout / 429) return a classified error. Title and
     Popular map to Google relevance; New maps to newest. No Open Library
     fallback.
@@ -1106,6 +1126,10 @@ async def _load_google_catalog(
     When the Google key is set, a miss is a 404 — no Open Library ISBN
     fallback. Without a key, ISBN rows can still refresh from Open Library.
     """
+    if google_books_enabled() and not bypass_cache:
+        cached = cached_volume_details(work_id)
+        if cached is not None:
+            return cached
     if is_google_work_id(work_id):
         volume_id = google_volume_id(work_id)
         if volume_id is None:
