@@ -16,9 +16,10 @@ from app.covers import is_allowed_cover_host, is_open_library_cover_host
 from app.models import Book
 from app.serialize import book_cover_url
 
-COVER_TIMEOUT = httpx.Timeout(4.0)
+# archive.org, where Open Library keeps its covers, often takes several seconds per hop.
+COVER_TIMEOUT = httpx.Timeout(8.0)
 MAX_REDIRECTS = 3
-FETCH_DEADLINE = 8.0
+FETCH_DEADLINE = 15.0
 MAX_COVER_BYTES = 1_500_000
 MAX_COVER_PIXELS = 4_000_000
 # Open Library answers a missing cover with a 1×1 pixel when asked nicely.
