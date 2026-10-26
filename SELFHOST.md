@@ -37,15 +37,19 @@ tailnet hostname at whatever machine you have.
 - Your own reverse proxy if you want HTTPS (see below). The image does not
   bundle one.
 
-The image is published for amd64 and arm64 (Raspberry Pi 4+, most NAS boxes).
+The image is published for amd64 only. On arm64 (Raspberry Pi, many NAS boxes),
+build it from a clone with `docker build -t bookclub .` and set `image: bookclub`
+in your compose file.
 
 ## 2. Docker Compose (recommended)
 
-Releases are published to `ghcr.io/rafiistcool/bookclub`. You do not need to
-clone the repository: the compose file in the repo is an example to copy and
-edit. In an empty directory:
+Releases are published to `git.tillhome.de/rafiistcool/bookclub`. The registry
+needs a sign-in, so run `docker login git.tillhome.de` once with an account on
+that Forgejo instance. You do not need to clone the repository: the compose
+file in the repo is an example to copy and edit. In an empty directory:
 
 ```bash
+docker login git.tillhome.de
 curl -fsSLO https://raw.githubusercontent.com/rafiistcool/bookclub/main/docker-compose.yml
 curl -fsSL  https://raw.githubusercontent.com/rafiistcool/bookclub/main/.env.example -o .env
 # set BOOKCLUB_NAME (and optional BOOKCLUB_THEME / BOOKCLUB_PUBLIC_URL)
@@ -56,8 +60,8 @@ docker compose logs -f bookclub
 
 Open `http://<that-machine>:8000`.
 
-The example pins `ghcr.io/rafiistcool/bookclub:latest`. To control when you
-take upgrades, pin a minor (`:0.1`) or an exact version (`:0.1.0`) instead;
+The example pins `git.tillhome.de/rafiistcool/bookclub:latest`. To control when you
+take upgrades, pin a minor (`:0.10`) or an exact version (`:0.10.0`) instead;
 see [Releases](#7-releases) for how tags are produced.
 
 On first start the app writes two files next to the database:
@@ -233,9 +237,10 @@ Production rules:
 
 ## 7. Releases
 
-Images are built by `.github/workflows/release.yml` only when a `v*` git tag
-is pushed — branch pushes and pull requests never publish anything. A tag
-`v1.2.3` produces these tags on `ghcr.io/rafiistcool/bookclub`:
+Images are built by `.forgejo/workflows/release.yml` on the Forgejo runner only
+when a `v*` git tag is pushed to Forgejo — branch pushes and pull requests never
+publish anything. A tag `v1.2.3` produces these tags on
+`git.tillhome.de/rafiistcool/bookclub`:
 
 | Tag | Moves when |
 |---|---|
@@ -252,6 +257,6 @@ git push origin v0.1.0
 ```
 
 The workflow runs the backend and frontend test suites first, then builds
-and pushes a multi-arch image. `backend/pyproject.toml` carries a `version`
+and pushes an amd64 image. `backend/pyproject.toml` carries a `version`
 for the Python package; it is informational and does not have to match the
 tag.
