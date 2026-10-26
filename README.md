@@ -2,10 +2,6 @@
 
 # Bookclub
 
-[![Latest release](https://img.shields.io/github/v/release/rafiistcool/bookclub)](https://github.com/rafiistcool/bookclub/releases/latest)
-[![GHCR](https://img.shields.io/badge/ghcr.io-rafiistcool%2Fbookclub-1F6FEB?logo=github)](https://github.com/rafiistcool/bookclub/pkgs/container/bookclub)
-[![CI](https://img.shields.io/github/actions/workflow/status/rafiistcool/bookclub/ci.yml?branch=main&label=CI)](https://github.com/rafiistcool/bookclub/actions/workflows/ci.yml)
-
 **A private book club for 2–5 people.** Invite-only shelves, one shared pick, and a spoiler-shielded diary — one container, one SQLite file.
 
 You host it. There is no public service. One named club per instance.
@@ -17,8 +13,7 @@ You host it. There is no public service. One named club per instance.
 - **Diary** — Short notes at a reading position (“at 45%”, “Finished ★★★★☆”). Spoiler-shielded for members who are behind; one level of replies and emoji reactions.
 - **Discover** — Search by title, author, or ISBN ([Open Library](https://openlibrary.org), or [Google Books](https://developers.google.com/books) only when `GOOGLE_BOOKS_API_KEY` is set). Private search history follows your account across devices (last 20 terms, individually or fully deletable). Trending row, subject shelves, and **add your own** when the catalog misses.
 - **Looks** — Four palettes (Paper, Slate, Forest, Ink) in light / dark / system, per member. Optional profile photo; initials if you skip it. English or German, toggled in Settings.
-- **Push** — Web Push for meetings, a new pick, and diary notes.
-- **One box** — FastAPI + the Vue app in a single image. SQLite WAL. No Redis, no Postgres. amd64 and arm64.
+- **One box** — FastAPI + the Vue app in a single image. SQLite WAL. No Redis, no Postgres. amd64.
 
 <p align="center">
   <img src="docs/discover.png" alt="Discover: search Open Library by title, author, or ISBN, with trending and subject shelves" width="900" />
@@ -32,9 +27,10 @@ You host it. There is no public service. One named club per instance.
 
 ## Self-host
 
-Releases ship as `ghcr.io/rafiistcool/bookclub` (amd64 + arm64). No clone needed:
+Releases ship as `git.tillhome.de/rafiistcool/bookclub` (amd64). The registry needs a sign-in, so log in once with an account on that Forgejo instance. No clone needed:
 
 ```bash
+docker login git.tillhome.de
 mkdir bookclub && cd bookclub
 curl -fsSLO https://raw.githubusercontent.com/rafiistcool/bookclub/main/docker-compose.yml
 curl -fsSL  https://raw.githubusercontent.com/rafiistcool/bookclub/main/.env.example -o .env
@@ -46,7 +42,7 @@ docker compose logs -f bookclub
 
 Open `http://<host>:8000`. Register with the first-run invite (printed once in the logs, and written to `data/.bootstrap_invite`), then mint more from **Settings → Invites**.
 
-`DEBUG=0` is the Compose default, so `/api/docs` stays closed. Update with `docker compose pull && docker compose up -d`. Pin `:0.4` or `:0.4.0` instead of `:latest` if you want upgrades on your schedule.
+`DEBUG=0` is the Compose default, so `/api/docs` stays closed. Update with `docker compose pull && docker compose up -d`. Pin `:0.10` or `:0.10.0` instead of `:latest` if you want upgrades on your schedule.
 
 Put your own reverse proxy (Caddy, nginx, Tailscale Serve, Cloudflare Tunnel) on the **same host** as the UI, forward `X-Forwarded-Proto`, and leave `BOOKCLUB_HTTPS=auto`. The Vue app calls relative `/api` — there is no split frontend/API origin.
 
@@ -159,7 +155,7 @@ Production is one process: uvicorn serves the API and the built Vue app from `:8
 
 Any member can download `bookclub.db` from **Settings → Backup**, or run `python -m app.backup`. There is no restore-from-upload — replace the files (see [SELFHOST.md](SELFHOST.md)). Schema changes apply on boot.
 
-Invite-only, no email. Any signed-in member can mint invites. Members change their own password under **Settings → Password**; there is no reset link. Treat unused codes like passwords.
+Invite-only, no email. Any signed-in member can mint invites. There is no password change in the app and no reset link. Treat unused codes like passwords.
 
 | Path | What it is |
 |---|---|
@@ -171,7 +167,7 @@ Invite-only, no email. Any signed-in member can mint invites. Members change the
 | `/club/:username` | A member’s shelf and ratings |
 | `/club/:username/shelf` | A member’s bookshelf, as they arranged it (view only) |
 | `/book/:workId` | Synopsis, club rating, shelf actions, full diary |
-| `/settings` | Theme, invites, Goodreads import, SQLite backup, notifications, password |
+| `/settings` | Theme, invites, Goodreads import, SQLite backup |
 
 Old paths (`/library`, `/friends`, `/overlap`, `/invites`, `/pick`) still redirect.
 
@@ -195,7 +191,6 @@ At least one shelf remains, and Undo restores the last successful change.
 ```
 backend/           FastAPI, tests
 frontend/          Vue 3 + Vite + Pinia
-  public/sw.js     Offline shell, cover cache, Web Push
 deploy/            Entrypoint, systemd unit, env example
 data/              SQLite (gitignored except .gitkeep)
 ```
@@ -219,7 +214,7 @@ Compose and `.env` share the same keys. These are the ones that matter on first 
 | `BOOKCLUB_TZ` | `UTC` | IANA timezone for meeting labels. |
 | `GOOGLE_BOOKS_API_KEY` | empty | Optional. Google-only catalog (search, browse, ISBN, Goodreads, covers). Create an API key in Google Cloud Console and enable `books.googleapis.com`. Leave empty for Open Library only. |
 
-Theme accents, port, `PUID`/`PGID`, VAPID, trusted proxies, and the rest: **[`.env.example`](.env.example)** and **[SELFHOST.md](SELFHOST.md)**.
+Theme accents, port, `PUID`/`PGID`, trusted proxies, and the rest: **[`.env.example`](.env.example)** and **[SELFHOST.md](SELFHOST.md)**.
 
 ---
 
@@ -239,8 +234,6 @@ Cookie session: `bookclub_session` (`credentials: include`). While `DEBUG=1`, th
 
 **Logged in on HTTP, not on HTTPS** — the proxy is not forwarding `X-Forwarded-Proto`, or you set `BOOKCLUB_HTTPS=1` on plain HTTP. Leave `BOOKCLUB_HTTPS=auto`.
 
-**Forgot every invite / lost a password** — mint from the server: `docker compose exec bookclub python -m app.create_invite`. There is no reset link; a signed-in member can change their password under Settings. On a toy install, delete `data/bookclub.db*` and start again.
-
-**Push never arrives** — needs HTTPS (or `localhost`). On iPhone, add the app to the Home Screen first. Settings → Notifications → *Send a test*. Rotating `VAPID_PRIVATE_KEY` invalidates every device subscription.
+**Forgot every invite / lost a password** — mint from the server: `docker compose exec bookclub python -m app.create_invite`. There is no password reset. On a toy install, delete `data/bookclub.db*` and start again.
 
 Proxy, NAS, backup, Open Library outages, and upgrades: **[SELFHOST.md](SELFHOST.md)**.

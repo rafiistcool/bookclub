@@ -16,9 +16,9 @@
 services:
   bookclub:
     # Images are published from v* git tags. `latest` is the newest release;
-    # pin a minor (`:0.1`) or an exact version (`:0.1.0`) if you prefer.
-    # See https://github.com/rafiistcool/bookclub/pkgs/container/bookclub
-    image: ghcr.io/rafiistcool/bookclub:latest
+    # pin a minor (`:0.10`) or an exact version (`:0.10.0`) if you prefer.
+    # The registry needs a sign-in: `docker login git.tillhome.de` first.
+    image: git.tillhome.de/rafiistcool/bookclub:latest
     restart: unless-stopped
     init: true
     ports:
