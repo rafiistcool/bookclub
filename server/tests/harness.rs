@@ -335,3 +335,33 @@ async fn multipart_bodies_and_client_settings() {
     assert_eq!(res.text(), "2001:db8::7 yes");
     assert_eq!(client.get("/whoami").await.text(), "0.0.0.0 ");
 }
+
+/// `settle` returns at once while nothing runs in the background (requests leave no reference
+/// to the state behind), and waits for a task that holds a clone of the state.
+#[sqlx::test]
+async fn settle_waits_for_background_tasks(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    ada.get("/api/auth/me").await.assert_status(200);
+    app.anon()
+        .post(
+            "/api/auth/login",
+            json!({"username": "ada", "password": "x"}),
+        )
+        .await
+        .assert_status(401);
+    tokio::time::timeout(std::time::Duration::from_millis(100), app.settle())
+        .await
+        .expect("an idle app settles at once");
+
+    let state = app.state.clone();
+    let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = done.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        drop(state);
+    });
+    app.settle().await;
+    assert!(done.load(std::sync::atomic::Ordering::SeqCst));
+}

@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT coalesce(jsonb_agg(to_jsonb(r) - 'user_id'\n                  ORDER BY r.created_at, r.post_id, r.emoji), '[]') AS \"rows!\"\n           FROM post_reactions r WHERE r.user_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "rows!",
+        "type_info": "Jsonb",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "509498c38748d06ab863f62a817af0414ca164ab3894f773fa71cf74bf2c3559"
+}

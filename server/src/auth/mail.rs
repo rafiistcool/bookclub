@@ -20,6 +20,10 @@ use crate::text::casefold;
 /// The longest a request waits for the mail transport (lettre's own SMTP timeout is a minute).
 const SEND_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// 400 for a verification or reset link that is malformed, unknown, used, expired or no longer
+/// for the account's current address.
+pub const LINK_EXPIRED: &str = "That link has expired or was already used";
+
 /// What an email token is for (`email_tokens.purpose`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
 #[sqlx(type_name = "text", rename_all = "snake_case")]

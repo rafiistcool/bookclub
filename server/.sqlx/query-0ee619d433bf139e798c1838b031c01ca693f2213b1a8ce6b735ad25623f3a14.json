@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT jsonb_build_object(\n               'filed', (SELECT coalesce(jsonb_agg(to_jsonb(r) - 'created_by' - 'decided_by'\n                             ORDER BY r.id), '[]')\n                         FROM catalog_edit_requests r WHERE r.created_by = $1),\n               'decided', (SELECT coalesce(jsonb_agg(jsonb_build_object(\n                               'id', r.id, 'kind', r.kind, 'work_id', r.work_id,\n                               'edition_id', r.edition_id, 'status', r.status,\n                               'decided_at', r.decided_at, 'decision_note', r.decision_note)\n                           ORDER BY r.id), '[]')\n                           FROM catalog_edit_requests r WHERE r.decided_by = $1)) AS \"rows!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "rows!",
+        "type_info": "Jsonb",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "0ee619d433bf139e798c1838b031c01ca693f2213b1a8ce6b735ad25623f3a14"
+}

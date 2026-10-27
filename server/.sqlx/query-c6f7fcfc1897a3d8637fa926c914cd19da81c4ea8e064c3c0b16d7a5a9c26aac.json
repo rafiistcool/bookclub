@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT t.user_id FROM email_tokens t JOIN users u ON u.id = t.user_id\n         WHERE t.token_hash = $1 AND t.purpose = 'reset_password'\n           AND t.used_at IS NULL AND t.expires_at > now()\n           AND u.email = t.email AND u.email_verified_at IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "email_tokens",
+            "name": "user_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c6f7fcfc1897a3d8637fa926c914cd19da81c4ea8e064c3c0b16d7a5a9c26aac"
+}

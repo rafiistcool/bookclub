@@ -471,7 +471,8 @@ pub async fn club_refs(conn: &mut PgConnection, club_ids: &[i64]) -> sqlx::Resul
   ```
 - **Login order** (`auth::login::authenticate`, shared by login and token creation): `login_ip.check_and_hit(ip_key)` → look the account up → `login_failures.check_and_hit(u:<id> | unknown_identifier_key)` → verify → on success `clear` the key and, when `rehash`, hash again. The transaction that creates the session starts with `auth::login::confirm`: it locks the user row (`SELECT password_hash … FOR NO KEY UPDATE`; not `FOR SHARE`, so two rehashing logins of one account cannot deadlock), answers 401 `Wrong username or password` when the hash is no longer the one verified, and stores the rehash. A password change or reset that committed during the verify therefore wins, and one that commits later waits for the login, so its session revocation deletes the new session too. Identifiers are stripped and lowercased; one containing `@` is looked up as a **verified** address (`lower(email) = lower($1)`).
 - **Password change**: read the stored hash → `login_failures.check_and_hit(u:<id>)` → verify the current password (400 `Current password is wrong`) → `clear` the key → 400 `Pick a different password` when the new one equals it → hash → one transaction: store it only over the verified hash (`UPDATE … WHERE id = $1 AND password_hash = <verified>`; 0 rows, i.e. a change or reset committed meanwhile, is 400 `Current password is wrong`), bump `password_changed_at`, delete every other session and token, void every open reset link. A right current password clears the failures even when the answer is `Pick a different password` (reasoned change: the hit was counted before verifying, and Python neither recorded nor cleared there).
-- **Password reset confirm** (Wave 1 step 4) stores the new hash and deletes the sessions in one transaction; `confirm` and the guarded change UPDATE above then keep a racing login or change from outliving it.
+- **Password reset confirm** (§5.5) stores the new hash and deletes the sessions in one transaction; `confirm` and the guarded change UPDATE above then keep a racing login or change from outliving it. It also clears the account's `login_failures` key.
+- **Email change and account deletion** check the password with the same steps (`auth::account::verify_current_password`, §5.5) and guard their transaction by the verified hash: they lock the user row and answer 400 `Current password is wrong` when it changed since the check.
 - **Unknown accounts** run a verify against a fixed dummy hash, so their timing matches.
 - **Rules:**
   - Length ≥ 8 is counted in **characters** (`chars().count()`), with no maximum.
@@ -489,7 +490,7 @@ pub async fn club_refs(conn: &mut PgConnection, club_ids: &[i64]) -> sqlx::Resul
   - `{PUBLIC_URL}/reset-password#token=…`
   - `{PUBLIC_URL}/join/{code}` (invite links; the code is meant to be shared)
 - **Using a token** marks it used, in the same transaction as its effect.
-- **Mail is sent after the transaction commits.** A send failure is logged and does not fail the request. Resend exists for verification, and reset can be requested again. The handler awaits the send (`auth::mail::deliver`, at most 15 s, then it logs and gives up) before it answers, so tests see the mail at once.
+- **Mail is sent after the transaction commits.** A send failure is logged and does not fail the request. Resend exists for verification, and reset can be requested again. The handler awaits the send (`auth::mail::deliver`, at most 15 s, then it logs and gives up) before it answers, so tests see the mail at once. **The one exception is the reset request** (below): it answers first and does its work in a background task, so its timing does not reveal whether an account holds the address; tests wait for it with `TestApp::settle` (§17.2).
 - **API** (`auth::mail`, W1; the email flows of Wave 1 step 4 build on it):
 
   ```rust
@@ -506,12 +507,16 @@ pub async fn club_refs(conn: &mut PgConnection, club_ids: &[i64]) -> sqlx::Resul
   pub async fn verified_holder(conn, email: &str) -> sqlx::Result<Option<Holder>>;
   /// After commit: email_target.check_and_hit(casefold(to)) (silent when over), then send; failures logged.
   pub async fn deliver(state: &AppState, email: Email);
+  pub const LINK_EXPIRED: &str = "That link has expired or was already used";   // verify and reset confirm
   ```
+
+- **Handlers** (Wave 1 step 4): `auth::address` (`verify_email`, `resend_verification`, `change_email`, `dismiss_email_prompt`; strings `EMAIL_IN_USE`, `ADD_EMAIL_FIRST`), `auth::reset` (`request_reset`, `confirm_reset`), `auth::deletion` (`delete_account`, `delete_user`, `TRANSFER_CLUBS_FIRST`, §5.6) and `auth::export` (`export_me`, §5.7). `auth::account::verify_current_password(state, user_id, password) -> ApiResult<String>` is the password check that password change, email change and account deletion share (read the stored hash → `login_failures.check_and_hit(u:<id>)` → verify, 400 `Current password is wrong` → `clear`); it returns the verified hash, which the caller's write is guarded by.
+- **Lock order:** every email flow locks the `users` row (`FOR UPDATE`) before it reads or writes that user's `email_tokens` rows, so two flows of one account cannot deadlock.
 
 **Addresses and uniqueness.** Only **verified** addresses are unique (`users_verified_email_key`), and only verified addresses are used for login by email and for reset. An unverified address is just what someone typed; it cannot squat anyone's address.
 - **Accepted addresses** (`auth::rules::valid_email`, 400 `Enter a valid email address`): at most 254 characters, a plain `local@domain` with an RFC 5322 dot-atom local part (atext plus non-ASCII letters; no quotes, comments, angle brackets, commas, whitespace, control or format characters) and a domain of at least two labels of letters, digits and inner hyphens, which lettre also parses as an `Address` unchanged. Anything a mail library could read as another mailbox (`"a"@b.de`, `(c)a@b.de`, `x<a@b.de>`) is refused, so `verified_holder`, `users_verified_email_key` and the `email_target` limit always see the address the mail goes to. `SmtpEmail` sends to `Mailbox::new(None, address)`, never to a parsed mailbox string. Provider aliases (`a+tag@`, Gmail dots) remain distinct addresses.
 - `users.email` is the account address. On an account with no verified address, a sign-up or `PUT /api/auth/me/email` writes the new address there at once (unverified). On an account with a verified address, the new address lives only on the open `verify_email` token until it is verified; `UserOut.pending_email` shows it.
-- **No enumeration.** Register and `PUT /api/auth/me/email` never reveal whether an address is in use: they answer exactly as for a free address. When the address already belongs to a **verified** account, no verification link is sent; that address gets the "someone tried to use your address" notice instead (§9). The new account keeps an unverified address it can never verify.
+- **No enumeration.** Register and `PUT /api/auth/me/email` never reveal whether an address is in use: they answer exactly as for a free address. When the address already belongs to a **verified** account, no verification link is sent; that address gets the "someone tried to use your address" notice instead (§9). The new account keeps an unverified address it can never verify. `PUT /me/email` on a verified account still issues the (unsent) verification token in that case, so `UserOut.pending_email` shows the address exactly as for a free one, and the old address gets the same "email changed" notice. The reset request answers 204 before it looks anything up.
 
 **Token invalidation** (each in the same transaction as the event):
 
@@ -522,8 +527,13 @@ pub async fn club_refs(conn: &mut PgConnection, club_ids: &[i64]) -> sqlx::Resul
 | Verification succeeds | Every other open `verify_email` and every open `reset_password` token is marked used. |
 | Password change, password reset | Every open `reset_password` token is marked used (plus the session revocation of §5.1). |
 
-- **Verify** accepts a token only when it is open (unused, unexpired), is the user's newest `verify_email` token, and its `email` is the address still pending (`users.email` for an unverified account, else the token address itself). Success sets `users.email = token.email` and `email_verified_at`. If another account verified the same address first, it answers 409 `That email is already in use` (the unique index decides; mapped with `is_unique_violation`). Only the holder of a link can see that, so it does not enumerate.
-- **Reset confirm** requires `token.email = users.email AND users.email_verified_at IS NOT NULL`; anything else is 400 `That link has expired or was already used`.
+- **Verify** accepts a token only when it is open (unused, unexpired), is the user's newest `verify_email` token, and its `email` is the address still pending (`users.email` for an unverified account, else the token address itself). Success sets `users.email = token.email` and `email_verified_at`. If another account verified the same address first, it answers 409 `That email is already in use` (the unique index decides; mapped with `is_unique_violation`); the link stays unused. Only the holder of a link can see that, so it does not enumerate. Verify needs no session and signs nobody in.
+- **Resend** (`POST /api/auth/verify-email/resend`) renews the link of the pending address: the account's own address while it is unverified, else the address of its open email change. An account without an address is 400 `Add an email address first`. A verified account with no change waiting has nothing to verify: 204, nothing is sent and the limit is not touched. Otherwise `email_send_user` counts (429), a new token voids the old one, and the link is sent unless a verified account holds the address (then nothing is sent: the holder had its notice when the address was entered).
+- **`PUT /api/auth/me/email`** (`{email, current_password}`): body validation (400 `Enter a valid email address`) → `verify_current_password` (400 `Current password is wrong`, counts as a login failure, 429 `Too many attempts. Wait a few minutes.`) → `email_send_user` (429 `Slow down a little. Try again later.`) → one transaction: lock the user row, 400 `Current password is wrong` when the hash changed since the check, void every open reset link; then
+  - the account's own verified address (compared with `lower()`, like the unique index) cancels a pending change: every open verification link is voided, nothing is sent;
+  - otherwise an unverified (or missing) address is replaced at once, and a verification token is issued for the new address in every case (it voids the older one) → commit → the "email changed" notice to the old address when it is verified, then the link to the new address, or the "address in use" notice (`Attempt::EmailChange`) to the verified account that holds it.
+- **Reset request** (`POST /api/auth/password-reset`, `{email}` stripped, not validated): `reset_ip.check_and_hit(ip_key)` (429 `Too many attempts. Wait a few minutes.`) → 204 at once. A spawned task then looks the address up among verified accounts (`verified_holder`), applies `reset_account` (3 an hour, silent), issues the reset token for the stored address and delivers the link. An unknown or unverified address does nothing.
+- **Reset confirm** requires `token.email = users.email AND users.email_verified_at IS NOT NULL`; anything else is 400 `That link has expired or was already used`. Order: body validation (400 `New password must be at least 8 characters`) → the token is checked read-only first, so a made-up token costs no argon2 work → hash → one transaction: lock the user row, mark the token used (re-checked), check the address rule, store the hash and bump `password_changed_at`, delete every session and token of the user, void every open reset link → commit → `login_failures.clear(u:<id>)` (the link proves the mailbox, so someone else's failed guesses no longer lock the owner out). A refused link stays unused.
 - **Rate limits** (§10.1): `PUT /me/email` and resend share the per-account `email_send_user` bucket (3 per hour, 429 `Slow down a little. Try again later.`). Every mail to an address (verification link, notice, reset) also counts against `email_target` (6 per day per case-folded address across all accounts); over it, the mail is silently not sent and the response is unchanged.
 - **Sign-up gate:** `SIGNUP_MODE=invite` is the Phase 1/2 default (a closed beta until #55). Sign-up then requires a valid invite: a club invite (it also joins the club) or a sign-up invite minted by an instance admin (club_id NULL). With `SIGNUP_MODE=open` a code is optional, and a given code must still be valid.
 - **Sign-up order** (`POST /api/auth/register`): body validation (400, every message in field order: username, email, password, timezone, locale) → `signup_ip.check_and_hit(ip_key)` (429; every validated attempt counts) → username taken (409) → no code in invite mode (400 `Sign-up needs an invite code right now`; a code that normalises to nothing counts as none) → hash → one transaction: insert the user (a concurrent same-name sign-up is 409 through `users_username_key`), consume the invite (400 `That invite code is not valid`), join its club, issue the verification token **or**, when a verified account holds the address, nothing; create the session; delete the caller's previous cookie session → commit → send the link or the notice → 201 `UserOut` with `Set-Cookie`. Any failure rolls the account and the invite use back.
@@ -533,16 +543,16 @@ pub async fn club_refs(conn: &mut PgConnection, club_ids: &[i64]) -> sqlx::Resul
 
 ### 5.6 Account deletion (`DELETE /api/auth/me`)
 
-Everything below runs in one transaction, after the password is verified:
+Body `{password}`. The password is checked with `auth::account::verify_current_password` (§5.5): 400 `Current password is wrong`, which counts as a login failure (429 `Too many attempts. Wait a few minutes.` after ten). Everything below then runs in one transaction (`auth::deletion::delete_user`), which first locks the user row `FOR UPDATE` and answers 400 `Current password is wrong` when the hash changed since the check. The lock makes every concurrent write that references the user (a new post, reaction or shelf entry) wait and then fail, instead of slipping in after the deletes.
 
-1. **Clubs the user owns.** If any of them has other members: 409 `Transfer or delete your clubs first`. Clubs where the user is the sole member are deleted. (Each owned club row is locked first, so a concurrent join cannot slip in.)
+1. **Clubs the user owns.** If any of them has other members: 409 `Transfer or delete your clubs first`. Clubs where the user is the sole member are deleted. (Each owned club row is locked first, in id order, and the members are counted in a new statement after the locks, so a concurrent join cannot slip in. A membership write that makes the user owner of another club meanwhile is caught by the deferred `clubs_have_owner` check at COMMIT, which is also answered 409 `Transfer or delete your clubs first`.)
 2. **Posts:**
-   - The user's posts that have replies by others become tombstones (body `''`, spoiler NULL, `deleted_at` now).
-   - All other posts of the user are deleted.
+   - First, the user's posts that nobody else replied to are deleted (with the user's own replies under them, in one statement).
+   - Then every post of the user that is left (others replied to it) becomes a tombstone (body `''`, spoiler NULL, `deleted_at` kept or now). Tombstoning "everything left" instead of re-checking the replies means a reply deleted between the two statements cannot leave a live post without an author.
    - Their reactions cascade.
    - `author_id` then becomes NULL through the foreign key. Live posts can't exist at this point; the `posts_live_has_author` check enforces it.
    - A diary tombstone with `author_id` NULL stays visible to whoever can see the author of one of its replies, so the other users' replies stay visible to the same people as before (`bc_visible_posts`).
-3. **Media:** delete **every** avatar media row the user uploaded (`media WHERE kind = 'avatar' AND uploaded_by = $user`, not only the current one) and remember their storage prefixes. Cover photos the user uploaded are catalog contributions: they stay, with `uploaded_by` set to NULL by the FK.
+3. **Media:** delete **every** avatar media row the user uploaded (`media WHERE kind = 'avatar' AND (uploaded_by = $user OR id = users.avatar_media_id)`, not only the current one) and remember their storage prefixes (`storage_key`). Cover photos the user uploaded are catalog contributions: they stay, with `uploaded_by` set to NULL by the FK.
 4. **Delete the user.** This cascades:
    - sessions and email tokens
    - shelf, layout, favourites, quotes, search history, import jobs
@@ -552,7 +562,7 @@ Everything below runs in one transaction, after the password is verified:
    These references are set to NULL instead: picks (`set_by`), nominations (`nominated_by`), milestones (`created_by`), invites (`created_by`), invite uses, `invited_by`, clubs (`created_by`), works and editions (`created_by`), edit requests and reports.
 
    Other users' `reaction` events keep only `author_id` (a user id, never a username, §15). Identity ids are never reused, so after the deletion the feed shows the author as null; no later account can inherit the name.
-5. **After commit:** delete the remembered media bytes, and clear the cookie.
+5. **After commit:** delete the remembered media bytes (`MediaStore::delete_prefix`; a failure is logged), and answer 204 with a clearing `Set-Cookie`, also to a bearer-token request.
 
 **The decision #39 asks for:** club posts are **deleted**; they are only kept as an anonymous tombstone when others replied to them. Activity events are deleted. Structural club records (picks, nominations) stay, without the name.
 
@@ -560,7 +570,14 @@ Everything below runs in one transaction, after the password is verified:
 
 ### 5.7 DSGVO export (`GET /api/auth/me/export`)
 
-The response is a ZIP built in memory: personal data is small, and 50 MB is the upper bound. It contains `data.json` and `media/`.
+The response is a ZIP built in memory: personal data is small, and 50 MB is the upper bound. It contains `data.json` and `media/`. It is `auth::export::export_me`:
+
+- 5 exports per user and hour (`export_user`, 429 `Slow down a little. Try again later.`).
+- Every section is read in one `REPEATABLE READ, READ ONLY` transaction, so the sections agree with each other.
+- The response carries `Content-Type: application/zip`, `Content-Disposition: attachment; filename="bookclub-export-<username>-<YYYYMMDD>.zip"` (today in the user's time zone) and `Cache-Control: no-store`.
+- Most rows are the table row as Postgres renders it (`to_jsonb(row)`) minus the reference to the user, plus readable names (`work_title`, `club_name`), so a column added later is exported without a code change. Sessions use an allow-list (never `token_hash`); the profile drops `password_hash`.
+- Timestamps are RFC 3339 in UTC with `Z`, like the API (§12): the string value of every key ending in `_at` that parses as RFC 3339 is rewritten (`posts.progress_at` is a number and `posts.status_at` a status, so they stay).
+- `catalog_contributions` is `{works, editions}`, `edit_requests` `{filed, decided}`, `reports` `{filed, resolved}`, `physical_shelf_layout` an object or null; every other key is an array. `invite_uses` names the club and the time, never the code (the invite belongs to whoever created it).
 
 **`data.json`** holds one key per foreign-key column that references `users(id)`:
 
@@ -592,11 +609,11 @@ The response is a ZIP built in memory: personal data is small, and 50 MB is the 
 | `reports` (filed / resolved) | `reports.created_by`, `reports.resolved_by` |
 | `uploaded_media` (avatars and cover photos) | `media.uploaded_by` |
 
-**`media/`** holds the avatar file and the cover photos the user uploaded.
+**`media/`** holds the avatar file and the cover photos the user uploaded: every stored variant of every `uploaded_media` row (`uploaded_by` = the user, plus the current avatar) that was not taken down, as `media/<public_id>/<variant>.<webp|jpg>`, stored without recompression. Each `uploaded_media` entry lists its paths in `files`; a removed picture is listed with `files: []`.
 
 **Exempt, with the reason in the test's allow-list:** `email_tokens.user_id` (one-time secrets that expire within 48 h; the only personal datum on them, a pending address, is exported as `profile.pending_email`).
 
-**Completeness test.** It reads `pg_constraint` for every foreign-key column that references `users(id)` and asserts that each `table.column` is either a source in the table above (the test holds the same list) or in the allow-list. A new column that points at users fails it until it is exported or exempted with a reason. (Matching on column names would also hit `work_authors.author_id`, which references `authors`.)
+**Completeness test** (`tests/auth_export.rs`, `SOURCES` and `EXEMPT`). It reads `pg_constraint` for every foreign-key column that references `users(id)` and asserts that each `table.column` is either a source in the table above (the test holds the same list) or in the allow-list, and that `data.json` has exactly the keys of the table. A second test gives one user a row behind every one of these columns and checks that each section holds it and nothing of another user. A new column that points at users fails it until it is exported or exempted with a reason. (Matching on column names would also hit `work_authors.author_id`, which references `authors`.)
 
 ### 5.8 Cross-site requests (CSRF)
 
@@ -1421,6 +1438,8 @@ impl TestApp {
     pub fn sent_emails(&self) -> Vec<Email>;
     pub fn last_link_token(&self, to: &str) -> String;               // reads the #token= fragment
     pub async fn upstream_requests(&self) -> Vec<wiremock::Request>; // assert "no outbound call"
+    pub async fn settle(&self);                                      // waits (≤ 10 s) until no background task
+                                                                     // holds the state: the reset mail, a Goodreads job
     pub async fn exec(&self, sql: &str);                              // raw SQL (move time, corrupt rows); panics on error
     pub async fn scalar_i64(&self, sql: &str) -> i64;                 // e.g. "SELECT count(*) FROM users"
 }
@@ -1487,6 +1506,8 @@ impl FakeCatalog {
 // resolve_isbn_remote and resolve_text have no local step. A FakeHit::New with an ISBN is created with
 // upsert_edition_with_work(WorkGrouping::NewWork, Mode::Refresh), without one with upsert_work.
 ```
+
+`TestApp::settle` counts the references to the state's shared parts (every request and every background task holds a clone of `AppState`) and returns once the count is back to its value when the app was built. A test that keeps its own clone of `app.state` must drop it before it calls `settle`.
 
 **`tests/common/visibility.rs`** is the template for `tests/<pkg>_visibility.rs` (§6.5). `Viewers::new(&app)` returns
 

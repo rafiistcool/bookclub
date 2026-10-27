@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT coalesce(jsonb_agg((to_jsonb(n) - 'nominated_by')\n                      || jsonb_build_object('club_name', c.name, 'work_title', w.title)\n                  ORDER BY n.id), '[]') AS \"rows!\"\n           FROM next_up_nominations n\n           JOIN clubs c ON c.id = n.club_id\n           JOIN works w ON w.id = n.work_id\n           WHERE n.nominated_by = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "rows!",
+        "type_info": "Jsonb",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "db305d1e51d7d0de72518972d769e00613f2ae165b1b835c7d09b08fc2e287ba"
+}

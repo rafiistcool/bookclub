@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT coalesce(jsonb_agg(jsonb_build_object(\n                      'id', s.id, 'kind', s.kind, 'label', s.label, 'created_at', s.created_at,\n                      'last_used_at', s.last_used_at, 'expires_at', s.expires_at)\n                  ORDER BY s.id), '[]') AS \"rows!\"\n           FROM sessions s WHERE s.user_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "rows!",
+        "type_info": "Jsonb",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "de4dcf95f8140b81e4fd8be84b2777a0edfc92435a51025e7670467af08ca4ab"
+}

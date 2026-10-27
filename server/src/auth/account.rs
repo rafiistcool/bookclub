@@ -244,25 +244,7 @@ pub async fn change_password(
     State(state): State<AppState>,
     ApiJson(body): ApiJson<PasswordChangeIn>,
 ) -> ApiResult<StatusCode> {
-    let stored = sqlx::query_scalar!("SELECT password_hash FROM users WHERE id = $1", user.id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(AppError::unauthorized)?;
-    let key = format!("u:{}", user.id);
-    state
-        .limits
-        .login_failures
-        .check_and_hit(&key)
-        .map_err(too_many)?;
-    let verdict = state
-        .passwords
-        .verify(&body.current_password, Some(&stored))
-        .await;
-    if !verdict.is_match() {
-        return Err(AppError::bad_request(msg::CURRENT_PASSWORD_WRONG));
-    }
-    // The hit above was counted before verifying; the right password proves the user.
-    state.limits.login_failures.clear(&key);
+    let stored = verify_current_password(&state, user.id, &body.current_password).await?;
     if body.current_password == body.new_password {
         return Err(AppError::bad_request(msg::PICK_DIFFERENT_PASSWORD));
     }
@@ -293,4 +275,46 @@ pub async fn change_password(
     mail::void_open_tokens(&mut tx, user.id, TokenPurpose::ResetPassword).await?;
     tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Checks the signed-in user's password before a sensitive change (password, email address,
+/// account deletion) and returns the stored hash it was verified against.
+///
+/// A wrong password counts as a login failure: `login_failures.check_and_hit("u:<id>")` runs
+/// **before** verifying, so concurrent guesses cannot pass together (429 `Too many attempts.
+/// Wait a few minutes.` once 10 are counted); the right password clears the key. A wrong one is
+/// 400 `Current password is wrong`. The caller's write must be guarded by the returned hash
+/// (`… WHERE password_hash = <hash>`, or a locked re-read), so a change or reset that commits
+/// meanwhile wins.
+pub(crate) async fn verify_current_password(
+    state: &AppState,
+    user_id: i64,
+    password: &str,
+) -> ApiResult<String> {
+    let stored = sqlx::query_scalar!("SELECT password_hash FROM users WHERE id = $1", user_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(AppError::unauthorized)?;
+    let key = account_key(user_id);
+    state
+        .limits
+        .login_failures
+        .check_and_hit(&key)
+        .map_err(too_many)?;
+    if !state
+        .passwords
+        .verify(password, Some(&stored))
+        .await
+        .is_match()
+    {
+        return Err(AppError::bad_request(msg::CURRENT_PASSWORD_WRONG));
+    }
+    // The hit above was counted before verifying; the right password proves the user.
+    state.limits.login_failures.clear(&key);
+    Ok(stored)
+}
+
+/// The rate-limit key of an account, `u:<id>`: `login_failures` and every per-account limit.
+pub(crate) fn account_key(user_id: i64) -> String {
+    format!("u:{user_id}")
 }

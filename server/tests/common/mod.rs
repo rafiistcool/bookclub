@@ -64,6 +64,8 @@ pub struct TestApp {
     pub catalog: Arc<FakeCatalog>,
     pub media: Arc<MemMediaStore>,
     router: Router,
+    /// References to the state while no request or background task runs (see `settle`).
+    idle_refs: usize,
 }
 
 /// A club made by [`TestApp::club`].
@@ -151,8 +153,10 @@ impl TestApp {
             catalog,
             media_service,
         };
+        let router = app(state.clone());
         TestApp {
-            router: app(state.clone()),
+            idle_refs: Arc::strong_count(&state.limits),
+            router,
             db,
             state,
             upstream,
@@ -366,6 +370,20 @@ impl TestApp {
                 )
             })
             .unwrap_or_else(|| panic!("no mail with a token link to {to}"))
+    }
+
+    /// Waits until no background task holds the app state any more: the mail of
+    /// `POST /api/auth/password-reset`, which is sent after the answer, or a Goodreads import
+    /// job. Every task holds a clone of `AppState`, so the reference count of its shared parts
+    /// returns to its idle value. Panics after 10 seconds.
+    pub async fn settle(&self) {
+        for _ in 0..1000 {
+            if Arc::strong_count(&self.state.limits) <= self.idle_refs {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("a background task still runs after 10 seconds");
     }
 
     /// Every request the upstream server received, e.g. to assert "no outbound call".

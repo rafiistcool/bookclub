@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM posts p\n         WHERE p.author_id = $1\n           AND NOT EXISTS (\n               SELECT 1 FROM posts r WHERE r.parent_id = p.id AND r.author_id IS DISTINCT FROM $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "50f72973bad88f36a7db6c32b4458c61d608c58e619d5a0b789c0b6f6d2da27e"
+}

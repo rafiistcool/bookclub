@@ -2,12 +2,16 @@
 //! and export (docs/phase1/conventions.md §5, endpoint-map §2).
 
 pub mod account;
+pub mod address;
+pub mod deletion;
+pub mod export;
 pub mod extract;
 pub mod login;
 pub mod mail;
 pub mod origin;
 pub mod password;
 pub mod random;
+pub mod reset;
 pub mod rules;
 pub mod session;
 pub mod signup;
@@ -40,9 +44,16 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(signup::register))
         .routes(routes!(login::login))
         .routes(routes!(login::logout))
-        .routes(routes!(account::me))
+        .routes(routes!(account::me, deletion::delete_account))
         .routes(routes!(account::update_preferences))
         .routes(routes!(account::change_password))
+        .routes(routes!(address::verify_email))
+        .routes(routes!(address::resend_verification))
+        .routes(routes!(address::change_email))
+        .routes(routes!(address::dismiss_email_prompt))
+        .routes(routes!(reset::request_reset))
+        .routes(routes!(reset::confirm_reset))
+        .routes(routes!(export::export_me))
         .routes(routes!(
             account::notifications,
             account::update_notifications
