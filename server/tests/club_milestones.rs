@@ -202,18 +202,27 @@ async fn milestones_crud_and_threads(db: PgPool) {
         .post(&url, json!({"title": "Too late"}))
         .await
         .assert_detail(400, "That pick is closed");
-    let added: Vec<(Value,)> = sqlx::query_as(
-        "SELECT payload FROM events WHERE kind = 'milestone_added' AND club_id = $1 ORDER BY id",
-    )
-    .bind(f.club.id)
-    .fetch_all(&f.app.db)
-    .await
-    .unwrap();
+    // The feed has `milestone_added`, newest first, with the pick.
+    let feed = f
+        .ada
+        .get(&format!("/api/clubs/{}/activity", f.club.slug))
+        .await
+        .json();
+    let added: Vec<(Value, Value)> = feed["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["kind"] == "milestone_added")
+        .map(|item| (item["payload"].clone(), item["pick_id"].clone()))
+        .collect();
     assert_eq!(
         added,
         [
-            (json!({"title": "Part one", "due_at": "2030-01-05T20:00:00Z"}),),
-            (json!({"title": "Part two"}),)
+            (json!({"title": "Part two"}), json!(f.pick_id)),
+            (
+                json!({"title": "Part one", "due_at": "2030-01-05T20:00:00Z"}),
+                json!(f.pick_id)
+            )
         ]
     );
 }

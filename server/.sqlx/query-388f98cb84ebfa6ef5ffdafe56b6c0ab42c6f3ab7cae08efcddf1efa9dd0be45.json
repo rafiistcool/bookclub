@@ -1,0 +1,72 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.work_id AS \"work_id!\", u.username, w.title, w.subjects, w.ol_rating\n           FROM bc_visible_shelf($1) s\n           JOIN club_memberships m ON m.club_id = $2 AND m.user_id = s.user_id\n           JOIN users u ON u.id = s.user_id\n           JOIN works w ON w.id = s.work_id\n           WHERE s.status = 'want_to_read'\n             AND NOT EXISTS (SELECT 1 FROM club_picks p\n                             WHERE p.club_id = $2 AND p.work_id = s.work_id)\n             AND NOT EXISTS (SELECT 1 FROM next_up_nominations n\n                             JOIN next_up_votes v ON v.id = n.vote_id\n                             WHERE v.club_id = $2 AND v.ended_at IS NULL\n                               AND n.work_id = s.work_id)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "work_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "username",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "username"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "title",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "subjects",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "subjects"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "ol_rating",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "ol_rating"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "388f98cb84ebfa6ef5ffdafe56b6c0ab42c6f3ab7cae08efcddf1efa9dd0be45"
+}

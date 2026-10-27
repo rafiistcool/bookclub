@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT w.subjects AS \"subjects!\"\n           FROM club_picks p JOIN works w ON w.id = p.work_id\n           WHERE p.club_id = $1 AND p.ended_at IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "subjects!",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "subjects"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2b2b1260ad96cee6f15ca4977d15bb41128da9f1666ef04ed272fdc478727f28"
+}

@@ -1,7 +1,8 @@
 //! The role table of #45 (endpoint-map §9, work-plan appendix "club" 1): every CLUB route with
-//! an allowed and a denied case. Members read everything; admins set and clear the pick and the
-//! meeting and manage milestones. Each row gets a fresh club, the denied case runs first and
-//! must change nothing, and the allowed caller is the least privileged one that may.
+//! an allowed and a denied case. Members read everything, nominate and cast; admins set and
+//! clear the pick and the meeting, manage milestones, set the vote's deadline and apply the
+//! winner. The home feed needs only a session. Each row gets a fresh club, the denied case runs
+//! first and must change nothing, and the allowed caller is the least privileged one that may.
 
 mod common;
 
@@ -12,10 +13,12 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 
 /// The module tags whose every operation must have a row.
-const TAGS: [&str; 1] = ["picks"];
+const TAGS: [&str; 4] = ["picks", "votes", "overlap", "activity"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Who {
+    /// No session.
+    Anonymous,
     /// A verified user in another club.
     Outsider,
     /// A member whose address is not verified.
@@ -24,8 +27,9 @@ enum Who {
     Admin,
 }
 
-/// One row: `METHOD path` with `{slug}`, `{pick_id}`, `{milestone_id}` and `{work_id}` filled
-/// in; the denied caller with the expected answer; the allowed caller with the expected status.
+/// One row: `METHOD path` with `{slug}`, `{pick_id}`, `{milestone_id}`, `{work_id}` and
+/// `{nomination_id}` filled in; the denied caller with the expected answer; the allowed caller
+/// with the expected status.
 struct Row {
     route: &'static str,
     body: Option<Value>,
@@ -104,17 +108,72 @@ fn rows() -> Vec<Row> {
             not_an_admin,
             (Admin, 204),
         ),
+        row(
+            "GET /api/clubs/{slug}/vote",
+            None,
+            not_a_member,
+            (UnverifiedMember, 200),
+        ),
+        row(
+            "PATCH /api/clubs/{slug}/vote",
+            Some(json!({"closes_at": "2030-01-01T18:00"})),
+            not_an_admin,
+            (Admin, 200),
+        ),
+        row(
+            "POST /api/clubs/{slug}/vote/nominations",
+            Some(json!({"work_id": "{work_id}"})),
+            not_a_member,
+            (UnverifiedMember, 201),
+        ),
+        row(
+            "POST /api/clubs/{slug}/vote/cast",
+            Some(json!({"nomination_id": "{nomination_id}"})),
+            not_a_member,
+            (UnverifiedMember, 200),
+        ),
+        row(
+            "POST /api/clubs/{slug}/vote/apply",
+            Some(json!({"nomination_id": "{nomination_id}"})),
+            not_an_admin,
+            (Admin, 200),
+        ),
+        row(
+            "GET /api/clubs/{slug}/vote/suggestions",
+            None,
+            not_a_member,
+            (UnverifiedMember, 200),
+        ),
+        row(
+            "GET /api/clubs/{slug}/overlap",
+            None,
+            not_a_member,
+            (UnverifiedMember, 200),
+        ),
+        row(
+            "GET /api/clubs/{slug}/activity",
+            None,
+            not_a_member,
+            (UnverifiedMember, 200),
+        ),
+        row(
+            "GET /api/activity",
+            None,
+            (Anonymous, 401, "Not signed in"),
+            (UnverifiedMember, 200),
+        ),
     ]
 }
 
-/// One club with a caller of every kind, a current pick with a meeting and a milestone, and a
-/// second work to pick.
+/// One club with a caller of every kind, a current pick with a meeting and a milestone, an open
+/// vote with one nomination, and a second work to pick or nominate.
 struct Fixture {
     callers: Vec<(Who, TestClient)>,
     club: TestClub,
     pick_id: i64,
     milestone_id: i64,
     work_id: i64,
+    nomination_id: i64,
 }
 
 impl Fixture {
@@ -146,8 +205,17 @@ impl Fixture {
             )
             .await;
         milestone.assert_status(201);
+        let wolf = app.work(&format!("Wolf {n}")).await;
+        let vote = owner
+            .post(
+                &format!("/api/clubs/{}/vote/nominations", club.slug),
+                json!({"work_id": wolf.id}),
+            )
+            .await;
+        vote.assert_status(201);
         Fixture {
             callers: vec![
+                (Who::Anonymous, app.anon()),
                 (Who::Outsider, outsider),
                 (Who::UnverifiedMember, unverified_member),
                 (Who::Member, member),
@@ -157,6 +225,7 @@ impl Fixture {
             pick_id,
             milestone_id: milestone.json()["id"].as_i64().unwrap(),
             work_id: next.id,
+            nomination_id: vote.json()["nominations"][0]["id"].as_i64().unwrap(),
         }
     }
 
@@ -165,6 +234,7 @@ impl Fixture {
             .replace("{pick_id}", &self.pick_id.to_string())
             .replace("{milestone_id}", &self.milestone_id.to_string())
             .replace("\"{work_id}\"", &self.work_id.to_string())
+            .replace("\"{nomination_id}\"", &self.nomination_id.to_string())
     }
 
     async fn send(&self, row: &Row, who: Who) -> TestResponse {
@@ -195,6 +265,11 @@ async fn state_of(app: &TestApp) -> Vec<i64> {
         "SELECT count(*) FROM milestones",
         "SELECT coalesce(sum(length(title) + coalesce(range_to, 0)), 0)::bigint FROM milestones",
         "SELECT count(*) FROM events",
+        "SELECT count(*) FROM next_up_votes",
+        "SELECT count(*) FROM next_up_votes WHERE ended_at IS NULL",
+        "SELECT count(closes_at) FROM next_up_votes",
+        "SELECT count(*) FROM next_up_nominations",
+        "SELECT count(*) FROM next_up_ballots",
     ] {
         out.push(app.scalar_i64(sql).await);
     }

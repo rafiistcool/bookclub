@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO next_up_ballots (club_id, vote_id, user_id, nomination_id)\n           VALUES ($1, $2, $3, $4)\n           ON CONFLICT (vote_id, user_id) DO UPDATE SET nomination_id = EXCLUDED.nomination_id\n           RETURNING (xmax = 0) AS \"inserted!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "inserted!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "dcd72d214303495f31b455ef6bebfd843384f40a14fae5a5654ae81fdee8a51f"
+}

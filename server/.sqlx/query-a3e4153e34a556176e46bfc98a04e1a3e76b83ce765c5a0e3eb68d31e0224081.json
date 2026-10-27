@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE next_up_votes SET ended_at = clock_timestamp(), winner_nomination_id = $2\n         WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a3e4153e34a556176e46bfc98a04e1a3e76b83ce765c5a0e3eb68d31e0224081"
+}
