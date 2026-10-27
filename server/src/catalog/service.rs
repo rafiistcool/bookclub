@@ -168,24 +168,7 @@ async fn persist_once(
                 return Ok(None);
             };
             if let CoverCheck::Done(_) = cover {
-                if let Some(media_id) = media {
-                    ingest::set_cover(
-                        conn,
-                        CoverTarget::Edition(edition_id),
-                        media_id,
-                        Source::OpenLibrary,
-                        false,
-                    )
-                    .await?;
-                }
-                // The check ran; a DNB work's first detail view does not repeat it.
-                sqlx::query!(
-                    "UPDATE works SET details_fetched_at = now()
-                     WHERE id = $1 AND source = 'dnb' AND details_fetched_at IS NULL",
-                    work_id
-                )
-                .execute(&mut *conn)
-                .await?;
+                attach_checked_cover(conn, work_id, edition_id, media).await?;
             }
             Ok(Some(Resolved {
                 work_id,
@@ -193,6 +176,39 @@ async fn persist_once(
             }))
         }
     }
+}
+
+/// Records the answer of the one Open Library cover check by ISBN for a DNB work
+/// (conventions §7.4): `media` (the cover's row from `ingest::ol_cover_media`, resolved and
+/// locked before any catalog row) becomes the edition's cover under the provenance rules, and
+/// the check is marked done (`works.details_fetched_at`), so neither a later lookup nor the
+/// first detail view repeats it. Only called when Open Library answered (a cover, none, or 404).
+pub(crate) async fn attach_checked_cover(
+    conn: &mut PgConnection,
+    work_id: i64,
+    edition_id: i64,
+    media: Option<i64>,
+) -> sqlx::Result<()> {
+    if let Some(media_id) = media {
+        ingest::set_cover(
+            conn,
+            CoverTarget::Edition(edition_id),
+            media_id,
+            Source::OpenLibrary,
+            false,
+        )
+        .await?;
+    }
+    // Bookkeeping, not a provenance field: no ingest entry point sets it for a work without an
+    // Open Library id.
+    sqlx::query!(
+        "UPDATE works SET details_fetched_at = now()
+         WHERE id = $1 AND source = 'dnb' AND details_fetched_at IS NULL",
+        work_id
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
 }
 
 #[async_trait::async_trait]

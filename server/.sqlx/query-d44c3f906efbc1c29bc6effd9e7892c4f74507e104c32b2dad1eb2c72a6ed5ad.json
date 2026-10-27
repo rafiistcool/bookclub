@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE works SET details_fetched_at = now()\n         WHERE id = $1 AND source = 'dnb' AND details_fetched_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d44c3f906efbc1c29bc6effd9e7892c4f74507e104c32b2dad1eb2c72a6ed5ad"
+}

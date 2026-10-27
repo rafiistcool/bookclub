@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE legacy_work_keys SET work_id = $2 WHERE work_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9662c88921f3a6595c067584abaffeb801e3b405a39b116f41d8c7d71ce08e9e"
+}

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE next_up_ballots SET nomination_id = $1 WHERE nomination_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9318b9d414d11d9be70b60ede90dc02eb8a95fc69f9d5aa7a8845126af05485a"
+}

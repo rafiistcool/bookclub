@@ -8,12 +8,23 @@
 //! - [`search`]: `GET /api/books/search`, `/trending` and `/subjects/{subject}`.
 //! - [`isbn_lookup`]: `GET /api/books/isbn/{isbn}`.
 //! - [`hits`]: persisting remote hits and building annotated `SearchHit`s.
+//! - [`detail`]: `GET /api/books/works/{work_id}` (`BookDetailOut`, the one-time enrichment of
+//!   stubs) and its refresh.
+//! - [`custom`] and [`editions`]: user-added works and editions.
+//! - [`requests`]: edit and merge requests; [`admin`]: the admin queue and the direct merge.
+//! - [`merge`]: `merge_works`, two works becoming one (conventions §7.6).
 
+pub mod admin;
 pub mod cache;
+pub mod custom;
+pub mod detail;
 pub mod dnb_sru;
+pub mod editions;
 pub mod hits;
 pub mod isbn_lookup;
+pub mod merge;
 pub mod openlibrary;
+pub mod requests;
 pub mod search;
 pub mod service;
 pub mod shared;
@@ -21,6 +32,7 @@ pub mod shared;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+pub use merge::{MergeReport, merge_works};
 pub use service::CatalogService;
 
 use crate::AppState;
@@ -42,6 +54,18 @@ pub const ISBN_NOT_FOUND: &str = "No book found for that ISBN";
 pub const ISBN_UNAVAILABLE: &str = "Could not look that ISBN up right now. Try again.";
 /// The pydantic enum message for a bad `sort` (also `sort=`).
 pub const INVALID_SORT: &str = "Input should be 'readinglog', 'new', 'title' or 'relevance'";
+/// Refresh of a work that is not an Open Library work (user-added, DNB or legacy).
+pub const NOT_FROM_OPEN_LIBRARY: &str = "This book was added by a reader, not Open Library.";
+/// A user-added book whose title is blank after trimming.
+pub const TITLE_REQUIRED: &str = "A title is required";
+/// 409 when a user-added book or edition names an ISBN a source or the catalog knows.
+pub const ISBN_IN_CATALOG: &str = "That ISBN is already in the catalog";
+/// A merge (request) whose two works are one.
+pub const MERGE_INTO_ITSELF: &str = "A book cannot be merged into itself";
+/// Approving a `cover_replace` request whose picture was taken down meanwhile.
+pub const PICTURE_REMOVED: &str = "This picture was removed";
+/// Approving or rejecting a request that is no longer open (admin only).
+pub const REQUEST_DECIDED: &str = "This request was already decided";
 
 /// Catalog routes under `/api/books`.
 pub fn routes() -> OpenApiRouter<AppState> {
@@ -50,11 +74,23 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(search::trending))
         .routes(routes!(search::subject))
         .routes(routes!(isbn_lookup::lookup_isbn))
+        .routes(routes!(custom::create_custom_book))
+        .routes(routes!(detail::get_work))
+        .routes(routes!(detail::refresh_work))
+        .routes(routes!(editions::list_editions, editions::add_edition))
+        .routes(routes!(editions::get_edition))
+        .routes(routes!(requests::request_work_edit))
+        .routes(routes!(requests::request_edition_edit))
+        .routes(routes!(requests::request_merge))
 }
 
 /// Instance-admin routes; every path starts with `/api/admin/`.
 pub fn admin_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
+        .routes(routes!(admin::list_edit_requests))
+        .routes(routes!(admin::approve_edit_request))
+        .routes(routes!(admin::reject_edit_request))
+        .routes(routes!(admin::merge_work))
 }
 
 /// 429 for a busy upstream: `The library is busy. Try again in {n} seconds.` (and
