@@ -2,6 +2,8 @@
 #   docker build -t bookclub-server server
 FROM rust:1.99-slim-trixie AS build
 WORKDIR /src
+# The sqlx query macros check against the committed .sqlx/ data; no database at build time.
+ENV SQLX_OFFLINE=true
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \

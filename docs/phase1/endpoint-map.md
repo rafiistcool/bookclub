@@ -374,6 +374,7 @@ These are not HTTP endpoints; they are listed for completeness. The CLI is `book
 **Platform:**
 - `Slow down a little. Try again later.` (429 from non-auth rate limits)
 - `Cross-site request refused` (403 from the origin check; only hit by misconfigured clients)
+- `Request body is too large` (413 for a JSON body over the route's limit, 1 MiB by default)
 
 **Optional (Discover branches by status; mapping them only translates the text):** the catalog's legacy strings `No such book.`, `Need at least 3 characters. Add the author, or paste an ISBN.`, `Search is too long`, `Could not search the library right now. Try again.`, `Could not load the library right now. Try again.`, `The library is busy. Wait a few seconds and try again.`
 

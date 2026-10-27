@@ -82,6 +82,7 @@ pub fn admin_routes() -> OpenApiRouter<crate::AppState>   // every path starts w
 ```rust
 fn api_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::with_openapi(openapi::ApiDoc::openapi())
+        .merge(health::routes()).merge(openapi::routes())     // GET /api/health, GET /api/openapi.json
         .merge(auth::routes()).merge(clubs::routes())
         .merge(catalog::routes()).merge(harvest::routes()).merge(media::routes())
         .merge(shelf::routes()).merge(posts::routes())
@@ -97,13 +98,16 @@ pub fn app(state: AppState) -> axum::Router {
     let (api, _) = api_router().split_for_parts();
     let (admin, _) = admin_router().split_for_parts();
     // One guard for every admin route: a handler that forgets its InstanceAdmin argument is still guarded.
+    // Applied only when `admin.has_routes()`: axum panics on a route layer over an empty router.
     let admin = admin.route_layer(axum::middleware::from_extractor_with_state::<InstanceAdmin, AppState>(state.clone()));
-    /* api.merge(admin), add /api/health, /api/openapi.json, SPA/404/405 fallbacks and the layers of §3,
+    /* api.merge(admin), the SPA/404/405 fallbacks (spa::fallback, spa::method_not_allowed) and the layers of §3,
        then .with_state(state) */
 }
 ```
 
-Admin handlers still take `InstanceAdmin` as an argument (they need the admin's id); the route layer is the guarantee. Two generic W1 tests walk the OpenAPI document (§17.7): anonymous callers get 401 everywhere except a fixed public allow-list, and signed-in non-admins get 404 on every `/api/admin/*` operation.
+Admin handlers still take `InstanceAdmin` as an argument (they need the admin's id); the route layer is the guarantee.
+
+`GET /api/health` (`health.rs`) and `GET /api/openapi.json` (`openapi.rs`) are documented routes too, with tag `platform` and operation ids `platform_health` and `platform_openapi`. Two generic W1 tests walk the OpenAPI document (§17.7): anonymous callers get 401 everywhere except a fixed public allow-list, and signed-in non-admins get 404 on every `/api/admin/*` operation.
 
 **Path ownership.**
 - Each path string belongs to one package (`endpoint-map.md`).
@@ -134,7 +138,7 @@ pub struct AppState {
 }
 ```
 
-`AppState::new(db, config)` builds the production state. Tests build theirs through the harness (§17).
+`AppState::new(db: PgPool, config: Config) -> anyhow::Result<AppState>` builds the production state (`FsMediaStore` on `MEDIA_DIR`, `LogEmail` or `SmtpEmail` by `EMAIL_TRANSPORT`, `Passwords::new()`, `lookup` = `catalog`). Tests build theirs through the harness (§17).
 
 The fields are frozen after Wave 1. Packages keep their private state inside `CatalogService` / `MediaService`, or in function-local statics where that is trivially safe. They never add fields.
 
@@ -150,6 +154,8 @@ impl MediaService {
     /// after it persisted search, trending or subject hits. W1 stub: no-op.
     pub fn prefetch(&self, media_ids: &[i64]);
 }
+/// The prefetch worker draining that queue until `shutdown`; started by jobs::spawn_all. W1 stub: returns.
+pub async fn media::service::run_prefetch(state: AppState, shutdown: tokio_util::sync::CancellationToken);
 // harvest/mod.rs (HAR)
 pub async fn run_forever(state: AppState, shutdown: tokio_util::sync::CancellationToken);
 // shelf/goodreads.rs (SHELF)
@@ -186,9 +192,9 @@ pub enum ImportError { TargetNotEmpty, Source(String), Upstream(String), Db(sqlx
 There are no global timeouts; handlers bound their outbound calls instead (§10.3).
 
 **Fallbacks:**
-- An unknown `/api/…` path or `/media/…` path gets 404 `{"detail":"Not found"}`.
+- An unknown `/api/…` path (and `/api` itself) or `/media/…` path gets 404 `{"detail":"Not found"}`, whatever the method.
 - A wrong method gets `method_not_allowed_fallback` → 405 `{"detail":"Method Not Allowed"}`.
-- Every other GET or HEAD gets the SPA shell when `STATIC_DIR` is set (`spa.rs`: `ServeDir` for files; `index.html` with `Cache-Control: no-store`; `/assets/*` with `public, max-age=31536000, immutable`; a missing asset is a JSON 404, never the shell).
+- Every other GET or HEAD gets the SPA shell when `STATIC_DIR` is set (`spa.rs`: `ServeDir` for files; `index.html` with `Cache-Control: no-store`; `/assets/*` with `public, max-age=31536000, immutable`; a missing asset is a JSON 404, never the shell). Other methods on those paths get the JSON 405; without `STATIC_DIR` they are all JSON 404s.
 
 ## 4. Errors, extraction, validation
 
@@ -214,6 +220,7 @@ impl AppError {
     pub fn too_many(d: …, retry_after: Option<u64>) -> Self;
     pub fn bad_gateway(d: …) -> Self;
     pub fn internal(e: impl std::fmt::Display) -> Self;   // logs e at ERROR; detail "Internal Server Error"
+    pub fn new(status: StatusCode, d: …) -> Self;          // any other status (405, …)
     pub fn with(mut self, key: &str, value: impl Serialize) -> Self;  // adds an extra top-level field
 }
 impl IntoResponse for AppError { /* JSON {"detail": …, …extra}; Content-Type application/json */ }
@@ -242,6 +249,7 @@ pub fn is_unique_violation(e: &sqlx::Error, constraint: &str) -> bool;
   - `BOOK_NOT_IN_CATALOG = "That book is not in the catalog"`
   - `NO_ENTRY = "No entry with that id"`
   - `NOT_FOUND = "Not found"`
+- The other §11.1 constants are `USERNAME_TAKEN`, `INVITE_INVALID`, `WRONG_CREDENTIALS`, `CURRENT_PASSWORD_WRONG` and `PICK_DIFFERENT_PASSWORD`. W1 also defines the strings several modules return: `INTERNAL` (`Internal Server Error`), `METHOD_NOT_ALLOWED`, `CROSS_SITE_REFUSED`, `VERIFY_EMAIL_FIRST`, `INVALID_TIME_ZONE` (`That is not a valid time zone`), `CLUB_FULL` (`This club is full`), `EDITION_OF_ANOTHER_BOOK` and `MEETING_AT_FORMAT` (`meeting_at must be a date and time`).
 - **Every string of endpoint-map §11.1 is an `error::msg` constant from Wave 1 on**, whichever package returns it, so `tests/api_error_copy.rs` passes in every worktree. That includes the strings SHELF and MED return: `PICTURE_TOO_LARGE`, `PICTURE_TOO_MANY_PIXELS`, `PICTURE_BAD_TYPE`, `PICTURE_NOT_AN_IMAGE`, `FAVOURITE_TWICE`, `AT_MOST_3_FAVOURITES`, `ALREADY_3_FAVOURITES`, `READING_DATE_NEEDS_FINISHED`, `READING_DATE_IN_FUTURE`, `SEARCH_HISTORY_NOT_FOUND`. SHELF and MED use these constants; they never define their own copy.
 - Other strings used by one module are `const`s at the top of that module.
 - Strings are copied **byte for byte** from `endpoint-map.md` and the specs, including the EN DASH in the username message and the trailing period in `No such book.`.
@@ -260,8 +268,8 @@ The specs list several endpoints where validation runs before a 404. Keep those:
 
 `ApiJson<T>` is the only JSON body extractor. Never use `axum::Json` for input; `Json` for output is fine.
 
-1. The `Content-Type` must be `application/json` (parameters allowed). Otherwise 400 `Input should be a valid dictionary or object to extract fields from`.
-2. An empty body gives 400 `Field required`. Unparsable JSON gives 400 `JSON decode error`. A non-object gives 400 `Input should be a valid dictionary or object to extract fields from`.
+1. An empty body gives 400 `Field required`, whatever the content type (checked first, parity with FastAPI). A body over the route's `DefaultBodyLimit` gives 413 `Request body is too large`.
+2. The `Content-Type` must be `application/json` (parameters allowed). Otherwise 400 `Input should be a valid dictionary or object to extract fields from`. Unparsable JSON gives 400 `JSON decode error`. A non-object gives 400 `Input should be a valid dictionary or object to extract fields from`.
 3. The value is deserialised with `serde_path_to_error`. The first serde error maps to a pydantic-style message:
 
    | serde error | detail |
@@ -281,6 +289,8 @@ The specs list several endpoints where validation runs before a 404. Keep those:
 pub trait Validate { fn validate(&mut self, v: &mut Validator) {} }   // default: nothing to check
 pub struct Validator { messages: Vec<String> }
 impl Validator {
+    pub fn new() -> Self; pub fn messages(&self) -> &[String];
+    pub fn into_result(self) -> ApiResult<()>;                          // 400, messages joined by "; "
     pub fn fail(&mut self, msg: impl Into<String>);
     pub fn check(&mut self, ok: bool, msg: &str);
     pub fn range_i64(&mut self, value: Option<i64>, min: i64, max: i64);  // pydantic wording:
@@ -297,6 +307,7 @@ PATCH bodies tell absent from `null` apart with `extract::Patch<T>`:
 ```rust
 #[derive(Default)] pub enum Patch<T> { #[default] Missing, Null, Value(T) }
 // Deserialize: Option<T> → Null | Value. Use with #[serde(default)].
+// impl Patch<T> { pub fn is_missing(&self) -> bool; pub fn into_option(self) -> Option<Option<T>>; pub fn as_option(&self) -> Option<Option<&T>>; }
 // utoipa: #[schema(value_type = Option<T>)]  (document as nullable, optional)
 ```
 
@@ -312,8 +323,8 @@ Where the specs say `null` means "unchanged", use a plain `Option<T>`.
 
 ### 4.5 Query and path
 
-- **`ApiQuery<T>`** maps rejections the same way. Boolean query parameters use `extract::lax_bool`, which accepts `true/false/1/0/yes/no/on/off/t/f/y/n` in any case (parity for `include_reading`). Integer bounds are checked in `Validate` with the pydantic wording.
-- **`ApiPath<T>`:** a non-numeric id gives 400 `Input should be a valid integer, unable to parse string as an integer`. A numeric id that does not exist (or overflows `i64`) is a 404 from the handler.
+- **`ApiQuery<T>`** (`T: DeserializeOwned + Validate`) maps rejections the same way: a missing field is `Field required`, a non-integer `Input should be a valid integer, unable to parse string as an integer`, a bad boolean `Input should be a valid boolean, unable to interpret input`. Boolean query parameters use `#[serde(default, deserialize_with = "crate::extract::lax_bool")]`, which accepts `true/false/1/0/yes/no/on/off/t/f/y/n` in any case (parity for `include_reading`). Integer bounds are checked in `Validate` with the pydantic wording. The message strings are `pub const`s in `extract.rs` (`FIELD_REQUIRED`, `INTEGER_PARSE`, …).
+- **`ApiPath<T>`:** a non-numeric id gives 400 `Input should be a valid integer, unable to parse string as an integer`. A numeric id that does not exist is a 404 from the handler. A numeric id that overflows its type is rejected by `ApiPath` itself with 404 `Not found` (the extractor cannot know the handler's string; no such row can exist).
 
 ### 4.6 Multipart and body limits
 
@@ -340,7 +351,7 @@ impl ApiMultipart {
 
 ### 5.1 Cookie sessions
 
-- **Login** (and register, and token creation) generates 32 random bytes and stores `sha256(bytes)` in `sessions.token_hash`. Randomness everywhere (session and email tokens, public ids, invite codes, slugs) comes from one W1 helper, `auth::random::fill(&mut [u8])`, which uses `rand::TryRng::try_fill_bytes(&mut rand::rngs::SysRng, …)` (rand 0.10 has no `OsRng`; `SysRng` is the OS source and is fallible: an error is a 500).
+- **Login** (and register, and token creation) generates 32 random bytes and stores `sha256(bytes)` in `sessions.token_hash`. Randomness everywhere (session and email tokens, public ids, invite codes, slugs) comes from one W1 helper, `auth::random::fill(&mut [u8])`, which uses `rand::TryRng::try_fill_bytes(&mut rand::rngs::SysRng, …)` (rand 0.10 has no `OsRng`; `SysRng` is the OS source and is fallible: `fill` panics on an OS failure, which the `CatchPanicLayer` turns into a 500).
   - The cookie value is `base64url_nopad(bytes)`.
   - The cookie is `bookclub_session=<value>; Path=/; HttpOnly; SameSite=Lax; Max-Age=34560000`, plus `Secure` unless `COOKIE_SECURE=false` (the DEV_MODE default).
 - **Idle expiry slides.** On every authenticated request, when `last_used_at < now - 1 hour`, the extractor sets `last_used_at = now` and `expires_at = now + 30 days` (cookie) or `+ 90 days` (bearer). The cookie's Max-Age is fixed at 400 days, the browser maximum; the server decides validity.
@@ -534,7 +545,7 @@ On top of that, the **origin check layer** answers 403 `{"detail":"Cross-site re
 - authenticates by cookie, and
 - carries an `Origin` header that is not `PUBLIC_URL`'s origin, not in `CORS_ORIGINS`, and not the Vite origin in DEV_MODE.
 
-Bearer-token requests skip the check. **The frontend sends nothing extra.**
+Bearer-token requests skip the check. **The frontend sends nothing extra.** It is `auth::origin::check` (W1, implemented in step 1); the cookie name is `auth::SESSION_COOKIE`.
 
 ## 6. Visibility policy (#46)
 
@@ -918,7 +929,9 @@ impl RetryAfter {
     pub fn into_error(self, msg: &'static str) -> AppError;
 }
 impl SlidingWindow {
+    pub fn new(limit: u32, window: Duration) -> Self;
     pub fn is_limited(&self, key: &str) -> bool;   // >= limit hits within window (monotonic clock)
+    pub fn check(&self, key: &str) -> Result<(), RetryAfter>;   // is_limited with the wait, records nothing (login)
     pub fn hit(&self, key: &str);                  // record one
     pub fn check_and_hit(&self, key: &str) -> Result<(), RetryAfter>;
     pub fn clear(&self, key: &str);
@@ -979,8 +992,13 @@ pub struct Outbound {
     pub dnb_oai: HostThrottle,            // 1 req/s
     pub urls: UpstreamUrls,               // from config, overridden in tests
 }
+impl Outbound { pub fn new(config: &Config) -> anyhow::Result<Self>; }   // fields are pub: tests swap in fast throttles
+pub fn user_agent(config: &Config) -> String;
 #[derive(Debug, Clone, Copy)] pub struct Throttled;
 impl HostThrottle {
+    pub fn per_second(rate: f64) -> Self;          // evenly spaced slots, no burst
+    /// Time left in the cooldown, e.g. for CAT's "The library is busy. Try again in {n} seconds."
+    pub fn cooldown_remaining(&self) -> Option<Duration>;
     /// Waits for a token for up to `max_wait`, else Err(Throttled).
     /// While a cooldown is active (after an upstream 429: Retry-After or 60 s), fails at once.
     pub async fn acquire(&self, max_wait: Duration) -> Result<(), Throttled>;
@@ -1043,7 +1061,12 @@ pub async fn get_text(o: &Outbound, t: &HostThrottle, url: Url, policy: &RetryPo
 | `DNB_HARVEST_START_DAYS` | `90` | the first run of a set (no `harvested_until` yet) starts this many days back; bulk history is #63 |
 | `RUST_LOG` | `info` | |
 
-`Config::from_lookup` stays testable (the scaffold pattern). Invalid values fail startup with the variable name in the message.
+`Config::from_lookup` (public) stays testable (the scaffold pattern). Invalid values fail startup with the variable name in the message. Details fixed in Wave 1:
+- Empty values count as unset. Booleans accept `true/false/1/0/yes/no/on/off`.
+- `SMTP_URL` and `EMAIL_FROM` are required when the transport is `smtp`. `STATIC_DIR` must be an existing directory.
+- `TRUSTED_PROXIES` entries may also be bare IP addresses (a /32 or /128).
+- `CORS_ORIGINS` entries are reduced to `scheme://host[:port]` and may use any scheme with a host (`capacitor://localhost`).
+- `Config::allowed_origins()` (origin check) and `Config::cors_allowed_origins()` (CORS) apply the DEV_MODE Vite origins `http://localhost:5173` and `http://127.0.0.1:5173`.
 
 ## 12. JSON, time and text
 
@@ -1056,17 +1079,20 @@ pub async fn get_text(o: &Outbound, t: &HostThrottle, url: Url, policy: &RetryPo
 **Timestamps:**
 - Stored as `timestamptz` and loaded as `time::OffsetDateTime`.
 - Serialised with `#[serde(with = "time::serde::rfc3339")]` (or `::option`), always UTC with `Z`. This is a reasoned change that fixes the legacy offset-less strings.
-- Dates are `time::Date`, `YYYY-MM-DD`.
+- Dates are `time::Date`, `YYYY-MM-DD`. They need no attribute: the `time` crate's `serde-human-readable` feature (§18) serialises `Date` as `YYYY-MM-DD` in JSON. Timestamps still need `time::serde::rfc3339`.
 
 **Time zones** (`tz.rs`, `jiff` with `tzdb-bundle-always`, so the slim Docker image needs no tzdata):
 
 ```rust
-pub fn parse_zone(name: &str) -> Result<jiff::tz::TimeZone, InvalidZone>; // validate IANA names on write
+pub fn parse_zone(name: &str) -> Result<jiff::tz::TimeZone, InvalidZone>; // validate IANA names on write; only the
+    // canonical, case-sensitive spelling passes ("Europe/Berlin", not "europe/berlin"), like Python's ZoneInfo
 pub fn zone_or_utc(name: &str) -> jiff::tz::TimeZone;                     // corrupt stored value → UTC
 pub fn parse_meeting(value: Option<&str>, zone: &TimeZone) -> Result<Option<OffsetDateTime>, ()>;
     // None/""/whitespace → None; trailing Z; accepts date-only (midnight), YYYY-MM-DD[T| ]HH[:MM[:SS[.f]]],
     // lowercase t, ±HH:MM/±HHMM/Z; naive values use Disambiguation::Compatible (= Python fold=0); → UTC.
-    // Error → caller returns 400 "meeting_at must be a date and time" (also for closes_at and due_at).
+    // Error → caller returns 400 error::msg::MEETING_AT_FORMAT (also for closes_at and due_at). Fractions may use
+    // '.' or ','. ISO week dates and the basic format (20260822T1900) are rejected. The function carries
+    // #[allow(clippy::result_unit_err)].
 pub fn local_minute(dt: OffsetDateTime, zone: &TimeZone) -> String;  // "%Y-%m-%dT%H:%M"
 pub fn label(dt: OffsetDateTime, zone: &TimeZone) -> String;         // "%a %d %b %Y, %H:%M %Z", English, zero-padded day
 pub fn today(zone: &TimeZone) -> time::Date;
@@ -1160,18 +1186,18 @@ pub async fn record(conn: &mut PgConnection, ev: NewEvent) -> sqlx::Result<i64>;
 
 ## 16. Background jobs and CLI
 
-- `jobs::spawn_all(state, shutdown)` starts (signatures in §3):
+- `jobs::spawn_all(state, shutdown) -> tokio::task::JoinSet<()>` starts (signatures in §3); `serve` cancels `shutdown` on SIGTERM/Ctrl+C and waits up to 10 s for the set:
   - `auth::cleanup` (hourly)
   - `harvest::run_forever` (only when `DNB_HARVEST`)
   - `shelf::goodreads::resume` (once at startup: re-queues `queued`/`running` jobs)
   - the media prefetch worker (`MediaService`, §8)
 - Each periodic job:
-  - takes `pg_try_advisory_lock(<job id>)` for the run, which is safe if a second instance ever runs
+  - takes `pg_try_advisory_lock(<job id>)` for the run, which is safe if a second instance ever runs (`jobs::run_locked(db, lock_id, name, job)` does it, logs and never panics; the keys are `jobs::lock_ids`, e.g. `DNB_HARVEST` for HAR)
   - logs start, end and duration
   - never panics (errors are logged)
 - Jobs are **not** started in tests. Tests call the job function directly.
 - **Goodreads jobs** run as `tokio::spawn` tasks started by the POST handler. The handler commits the job row first, so a crash is resumed at startup.
-- **The CLI** (clap, `main.rs`, W1) has `serve` (default), `import-legacy` (IMP fills `importer::run`), `rematch-legacy` (IMP fills `importer::rematch`: re-resolves legacy bare-facts editions by ISBN, legacy-mapping.md §3.3), `make-admin`, `beta-invite` and `openapi`.
+- **The CLI** (clap, `main.rs`, W1) has `serve` (default), `import-legacy` (IMP fills `importer::run`), `rematch-legacy` (IMP fills `importer::rematch`: re-resolves legacy bare-facts editions by ISBN, legacy-mapping.md §3.3), `make-admin`, `beta-invite` and `openapi`. `import-legacy` and `rematch-legacy` connect and migrate like `serve`, build the production `AppState`, and print `importer::Report` with its `Display` impl (IMP keeps that impl).
 
 ## 17. Testing
 
@@ -1340,7 +1366,7 @@ serde_path_to_error = "0.1.20"
 sha2 = "0.11.1"
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate", "uuid", "time", "json"] }
 thiserror = "2.0.21"
-time = { version = "0.3.55", features = ["serde", "formatting", "parsing", "macros"] }
+time = { version = "0.3.55", features = ["serde", "serde-human-readable", "formatting", "parsing", "macros"] }
 tokio = { version = "1.54.1", features = ["full"] }
 tokio-util = "0.7.20"                              # CancellationToken for graceful job shutdown
 tower = { version = "0.5.3", features = ["util"] }
@@ -1361,6 +1387,7 @@ wiremock = "0.6.5"
 
 **Notes:**
 - `sqlx` gains `json` for `jsonb`.
+- `time` gains `serde-human-readable` (Wave 1): without it `time::Date` serialises as a `(year, ordinal)` tuple.
 - `tower` moves from dev-dependencies to dependencies.
 - **Not used:**
   - `utoipa-scalar`: no docs UI is needed, and its optional `time < 0.3.52` pin would clash.
