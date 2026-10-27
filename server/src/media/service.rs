@@ -122,10 +122,10 @@ impl MediaService {
     /// Queue Open Library covers for background fetching (bounded queue, drops when full).
     /// Called by CAT after it persisted search, trending or subject hits.
     pub fn prefetch(&self, media_ids: &[i64]) {
-        for &media_id in media_ids {
+        for (queued, &media_id) in media_ids.iter().enumerate() {
             if self.queue.try_send(media_id).is_err() {
                 tracing::debug!(
-                    dropped = media_ids.len(),
+                    dropped = media_ids.len() - queued,
                     "the cover prefetch queue is full"
                 );
                 return;

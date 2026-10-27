@@ -9,6 +9,7 @@ use bookclub_server::catalog::shared::books::{BookRef, book_out};
 use bookclub_server::catalog::shared::ingest::{
     self, CoverTarget, Mode, Source, WorkRecord, ol_cover_media, set_cover,
 };
+use bookclub_server::media::service::{CoverOutcome, PREFETCH_POLICY};
 use common::*;
 use image::codecs::jpeg::JpegEncoder;
 use image::{ExtendedColorType, ImageEncoder, Rgb, RgbImage};
@@ -217,13 +218,24 @@ async fn after_a_takedown_nothing_brings_the_cover_back(db: PgPool) {
     .await
     .assert_detail(400, "This picture was removed");
     assert_eq!(cover_of(&app, work).await, None);
-    // The picture's URL, the spine backfill and the prefetch queue fetch nothing.
+    // Neither the picture's URL, the spine backfill nor the prefetch worker's fetch asks for it.
     app.anon()
         .get(&format!("/media/{public_id}/s"))
         .await
         .assert_status(410);
     let colors = ada.post("/api/shelf/spine-colors", json!({})).await;
     assert_eq!(colors.json(), json!({"colors": {}, "remaining": 0}));
+    let media_id = app
+        .scalar_i64(&format!(
+            "SELECT id FROM media WHERE public_id = '{public_id}'"
+        ))
+        .await;
+    let prefetched = app
+        .state
+        .media_service
+        .ensure_cover(&app.db, media_id, PREFETCH_POLICY)
+        .await;
+    assert_eq!(prefetched, CoverOutcome::Removed);
     assert_eq!(cover_requests(&app).await, 1);
     let ol_rows: i64 = app
         .scalar_i64("SELECT count(*) FROM media WHERE ol_cover_id = 111 AND removed_at IS NULL")
