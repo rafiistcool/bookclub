@@ -6,6 +6,9 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::time::Duration;
 
+/// The width of the entity name column (the longest legacy table name).
+const NAME_WIDTH: usize = 22;
+
 /// One entity's line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntityLine {
@@ -75,7 +78,12 @@ impl ReportBuilder {
 
     /// Counts one repaired value of `table.column`.
     pub fn normalised(&mut self, column: &str) {
-        *self.normalised.entry(column.to_owned()).or_default() += 1;
+        self.normalised_by(column, 1);
+    }
+
+    /// Counts `n` repaired values of `table.column`.
+    pub fn normalised_by(&mut self, column: &str, n: u64) {
+        *self.normalised.entry(column.to_owned()).or_default() += n;
     }
 
     /// The rendered lines.
@@ -84,7 +92,7 @@ impl ReportBuilder {
         for e in &self.entities {
             let source = e.source.map_or("-".to_owned(), |n| n.to_string());
             let target = e.target.map_or("DROPPED".to_owned(), |n| n.to_string());
-            let mut line = format!("{:<21} {source} → {target}", e.name);
+            let mut line = format!("{:<NAME_WIDTH$} {source} → {target}", e.name);
             if !e.detail.is_empty() {
                 line.push(' ');
                 line.push_str(&e.detail);
@@ -92,18 +100,22 @@ impl ReportBuilder {
             lines.push(line);
         }
         if self.normalised.is_empty() {
-            lines.push(format!("{:<21} none", "normalised"));
+            lines.push(format!("{:<NAME_WIDTH$} none", "normalised"));
         } else {
             let parts: Vec<String> = self
                 .normalised
                 .iter()
                 .map(|(column, n)| format!("{column} {n}"))
                 .collect();
-            lines.push(format!("{:<21} {}", "normalised", parts.join(", ")));
+            lines.push(format!(
+                "{:<NAME_WIDTH$} {}",
+                "normalised",
+                parts.join(", ")
+            ));
         }
         let secs = self.lookup_wait.as_secs_f64();
         let mut wait = String::new();
-        let _ = write!(wait, "{:<21} {secs:.1} s", "lookup wait");
+        let _ = write!(wait, "{:<NAME_WIDTH$} {secs:.1} s", "lookup wait");
         lines.push(wait);
         section(&mut lines, "merges", &self.merges);
         section(&mut lines, "differences", &self.differences);
@@ -162,11 +174,11 @@ mod tests {
         assert_eq!(
             r.lines(),
             vec![
-                "users                 3 → 3",
-                "club                  - → 1 \"Readers\" (readers-k3x9)",
-                "push_subscriptions    2 → DROPPED (Phase 4)",
-                "normalised            books.pages 2, books.year 1",
-                "lookup wait           0.0 s",
+                "users                  3 → 3",
+                "club                   - → 1 \"Readers\" (readers-k3x9)",
+                "push_subscriptions     2 → DROPPED (Phase 4)",
+                "normalised             books.pages 2, books.year 1",
+                "lookup wait            0.0 s",
                 "merges:",
                 "  book 10 → the work of book 9",
                 "isbn keys:",

@@ -6,7 +6,7 @@ committed (docs/phase1/legacy-mapping.md §0 "Test fixtures").
 
 | File | What it is |
 |---|---|
-| `fresh.sql` | `app.seed_demo` (with `DEMO_DB` overridden) plus the extra rows of docs/phase1/spec/platform.md §5.8: every key class (OL, BC, ISBN matched/unmatched, an ISBN-10 key, an invalid ISBN, GB, OTHER), the normalisation cases (cover id −1, pages 0 and 200000, year 99999, a 1200-character title, a blank title, 60 subjects, subjects that are not JSON), avatars (JPEG with and without MIME type and timestamp, a PNG), used, unused and bootstrap invites, mirrored and unmirrored legacy pick notes, a reaction added and one removed after mirroring, a deleted mirror copy, a tombstone with a reply, layouts (one not JSON), favourites with a gap, an ended vote whose winner is a merged nomination, events of every kind, an edited and a deleted quote, search history and push subscriptions. |
+| `fresh.sql` | `app.seed_demo` (with `DEMO_DB` overridden) plus the extra rows of docs/phase1/spec/platform.md §5.8: every key class (OL, BC, ISBN matched/unmatched, an ISBN-10 key, an invalid ISBN, GB, OTHER), the normalisation cases (cover id −1, pages 0 and 200000, year 99999, a 1200-character title, a blank title, 60 subjects, subjects that are not JSON), avatars (JPEG with and without MIME type and timestamp, a PNG), used, unused and bootstrap invites, mirrored and unmirrored legacy pick notes, a reaction added and one removed after mirroring, a deleted mirror copy (its note id below a mirrored one), a tombstone with a reply, a layout with a decoration, spines, both merge rows and a deleted entry id, one that is not JSON, favourites with a gap and with both merge rows, an ended vote whose winner is a merged nomination, events of every kind, an edited and a deleted quote, search history and push subscriptions. |
 | `migrated.sql` | The hand-written `LEGACY_SCHEMA` of `backend/tests/test_migrations.py`, booted once through `init_db`: the ALTER TABLE shape (nullable `take`/`dnf_reason`, migrated columns appended) and timestamps without fractions, plus a few rows. |
 | `legacy_schema.sql` | `LEGACY_SCHEMA` as written, never booted: a very old database whose `COLUMN_MIGRATIONS` columns and later tables are missing. |
 | `generate.py` | Writes the three files above. |
@@ -33,7 +33,7 @@ Run it whenever the fixture needs new rows or the Python models change, check th
 the same bytes, then run the importer tests:
 
 ```bash
-cd server && cargo test --test importer_run --test importer_books
+cd server && cargo test --test importer_run --test importer_books --test importer_data --test importer_posts
 ```
 
 Tests that need an extra edge case (an x/X key pair, a bad username or timestamp) load a fixture

@@ -64,12 +64,197 @@ pub struct LegacyBook {
     pub details_fetched_at: Option<OffsetDateTime>,
 }
 
+/// `shelf`.
+#[derive(Debug, Clone)]
+pub struct LegacyShelf {
+    pub id: i64,
+    pub user_id: i64,
+    pub book_id: i64,
+    pub status: String,
+    pub position: i64,
+    pub shelf_position: Option<i64>,
+    pub rating: Option<i64>,
+    /// NULL (a migrated database) reads as `''`.
+    pub take: String,
+    pub dnf_reason: String,
+    pub progress: Option<i64>,
+    pub updated_at: OffsetDateTime,
+    pub started_at: Option<OffsetDateTime>,
+    pub finished_at: Option<OffsetDateTime>,
+}
+
+/// `physical_shelf_layouts` (keyed by `user_id`).
+#[derive(Debug, Clone)]
+pub struct LegacyLayout {
+    pub user_id: i64,
+    /// The raw JSON text.
+    pub layout_json: String,
+}
+
+/// `user_favorites`.
+#[derive(Debug, Clone)]
+pub struct LegacyFavorite {
+    pub id: i64,
+    pub user_id: i64,
+    pub book_id: i64,
+    pub position: i64,
+}
+
+/// `club_picks`.
+#[derive(Debug, Clone)]
+pub struct LegacyPick {
+    pub id: i64,
+    pub book_id: i64,
+    pub set_by_id: Option<i64>,
+    pub note: String,
+    pub started_at: OffsetDateTime,
+    pub ended_at: Option<OffsetDateTime>,
+    pub meeting_at: Option<OffsetDateTime>,
+    pub reminder_sent_at: Option<OffsetDateTime>,
+}
+
+/// `pick_milestones`.
+#[derive(Debug, Clone)]
+pub struct LegacyMilestone {
+    pub id: i64,
+    pub pick_id: i64,
+    pub title: String,
+    pub chapter_from: Option<i64>,
+    pub chapter_to: Option<i64>,
+    pub due_at: Option<OffsetDateTime>,
+    pub position: i64,
+    pub created_by_id: Option<i64>,
+    pub created_at: OffsetDateTime,
+}
+
+/// `club_pick_posts`: the legacy pick notes.
+#[derive(Debug, Clone)]
+pub struct LegacyPickPost {
+    pub id: i64,
+    pub pick_id: i64,
+    pub author_id: i64,
+    pub body: String,
+    pub spoiler_upto: Option<i64>,
+    pub milestone_id: Option<i64>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: Option<OffsetDateTime>,
+}
+
+/// `book_posts`: diary entries and the mirror copies of pick notes.
+#[derive(Debug, Clone)]
+pub struct LegacyPost {
+    pub id: i64,
+    pub book_id: i64,
+    pub author_id: i64,
+    pub parent_id: Option<i64>,
+    pub body: String,
+    pub spoiler_upto: Option<i64>,
+    pub progress_at: Option<i64>,
+    pub status_at: Option<String>,
+    pub pick_id: Option<i64>,
+    pub legacy_post_id: Option<i64>,
+    pub deleted_at: Option<OffsetDateTime>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: Option<OffsetDateTime>,
+}
+
+/// `post_reactions` (on `club_pick_posts`) and `book_post_reactions` (on `book_posts`).
+#[derive(Debug, Clone)]
+pub struct LegacyReaction {
+    pub id: i64,
+    pub post_id: i64,
+    pub user_id: i64,
+    pub emoji: String,
+    pub created_at: OffsetDateTime,
+}
+
+/// `quotes`.
+#[derive(Debug, Clone)]
+pub struct LegacyQuote {
+    pub id: i64,
+    pub user_id: i64,
+    pub book_id: i64,
+    pub body: String,
+    pub page: Option<i64>,
+    pub created_at: OffsetDateTime,
+}
+
+/// `next_up_votes`.
+#[derive(Debug, Clone)]
+pub struct LegacyVote {
+    pub id: i64,
+    pub started_at: OffsetDateTime,
+    pub ended_at: Option<OffsetDateTime>,
+    pub closes_at: Option<OffsetDateTime>,
+    pub winner_nomination_id: Option<i64>,
+}
+
+/// `next_up_nominations`.
+#[derive(Debug, Clone)]
+pub struct LegacyNomination {
+    pub id: i64,
+    pub vote_id: i64,
+    pub book_id: i64,
+    pub nominated_by_id: Option<i64>,
+    pub created_at: OffsetDateTime,
+}
+
+/// `next_up_ballots`.
+#[derive(Debug, Clone)]
+pub struct LegacyBallot {
+    pub id: i64,
+    pub vote_id: i64,
+    pub nomination_id: i64,
+    pub user_id: i64,
+    pub created_at: OffsetDateTime,
+}
+
+/// `events`.
+#[derive(Debug, Clone)]
+pub struct LegacyEvent {
+    pub id: i64,
+    pub actor_id: Option<i64>,
+    pub kind: String,
+    pub book_id: Option<i64>,
+    pub pick_id: Option<i64>,
+    /// The raw JSON text.
+    pub payload: String,
+    pub created_at: OffsetDateTime,
+}
+
+/// `search_history`.
+#[derive(Debug, Clone)]
+pub struct LegacySearch {
+    pub id: i64,
+    pub user_id: i64,
+    pub query: String,
+    pub normalized_query: String,
+    pub last_used_at: OffsetDateTime,
+}
+
 /// Everything the importer reads from the legacy database.
 #[derive(Debug, Clone, Default)]
 pub struct LegacyDb {
     pub users: Vec<LegacyUser>,
     pub invites: Vec<LegacyInvite>,
     pub books: Vec<LegacyBook>,
+    pub shelf: Vec<LegacyShelf>,
+    pub layouts: Vec<LegacyLayout>,
+    pub favorites: Vec<LegacyFavorite>,
+    pub picks: Vec<LegacyPick>,
+    pub milestones: Vec<LegacyMilestone>,
+    pub pick_posts: Vec<LegacyPickPost>,
+    pub pick_post_reactions: Vec<LegacyReaction>,
+    pub posts: Vec<LegacyPost>,
+    pub post_reactions: Vec<LegacyReaction>,
+    pub quotes: Vec<LegacyQuote>,
+    pub votes: Vec<LegacyVote>,
+    pub nominations: Vec<LegacyNomination>,
+    pub ballots: Vec<LegacyBallot>,
+    pub events: Vec<LegacyEvent>,
+    pub search_history: Vec<LegacySearch>,
+    /// Rows of `push_subscriptions` (dropped, only counted).
+    pub push_subscriptions: u64,
 }
 
 /// Opens `path` read-only and reads every table the importer maps.
@@ -94,6 +279,22 @@ pub fn read_conn(conn: &Connection) -> Result<LegacyDb, ImportError> {
         users: read_users(conn)?,
         invites: read_invites(conn)?,
         books: read_books(conn)?,
+        shelf: read_shelf(conn)?,
+        layouts: read_layouts(conn)?,
+        favorites: read_favorites(conn)?,
+        picks: read_picks(conn)?,
+        milestones: read_milestones(conn)?,
+        pick_posts: read_pick_posts(conn)?,
+        pick_post_reactions: read_reactions(conn, "post_reactions")?,
+        posts: read_posts(conn)?,
+        post_reactions: read_reactions(conn, "book_post_reactions")?,
+        quotes: read_quotes(conn)?,
+        votes: read_votes(conn)?,
+        nominations: read_nominations(conn)?,
+        ballots: read_ballots(conn)?,
+        events: read_events(conn)?,
+        search_history: read_search_history(conn)?,
+        push_subscriptions: count_rows(conn, "push_subscriptions")?,
     })
 }
 
@@ -200,6 +401,390 @@ fn read_books(conn: &Connection) -> Result<Vec<LegacyBook>, ImportError> {
     )
 }
 
+fn read_shelf(conn: &Connection) -> Result<Vec<LegacyShelf>, ImportError> {
+    rows(
+        conn,
+        "shelf",
+        &[
+            ("id", REQUIRED),
+            ("user_id", REQUIRED),
+            ("book_id", REQUIRED),
+            ("status", REQUIRED),
+            ("position", "0"),
+            ("shelf_position", "NULL"),
+            ("rating", "NULL"),
+            ("take", "''"),
+            ("dnf_reason", "''"),
+            ("progress", "NULL"),
+            ("updated_at", REQUIRED),
+            ("started_at", "NULL"),
+            ("finished_at", "NULL"),
+        ],
+        |r| {
+            Ok(LegacyShelf {
+                id: r.id,
+                user_id: r.req_int("user_id")?,
+                book_id: r.req_int("book_id")?,
+                status: r.req_text("status")?,
+                position: r.int("position")?.unwrap_or(0),
+                shelf_position: r.int("shelf_position")?,
+                rating: r.int("rating")?,
+                take: r.text("take")?.unwrap_or_default(),
+                dnf_reason: r.text("dnf_reason")?.unwrap_or_default(),
+                progress: r.int("progress")?,
+                updated_at: r.req_time("updated_at")?,
+                started_at: r.time("started_at")?,
+                finished_at: r.time("finished_at")?,
+            })
+        },
+    )
+}
+
+fn read_layouts(conn: &Connection) -> Result<Vec<LegacyLayout>, ImportError> {
+    rows_by(
+        conn,
+        "physical_shelf_layouts",
+        "user_id",
+        &[("user_id", REQUIRED), ("layout_json", REQUIRED)],
+        |r| {
+            Ok(LegacyLayout {
+                user_id: r.id,
+                layout_json: r.text("layout_json")?.unwrap_or_default(),
+            })
+        },
+    )
+}
+
+fn read_favorites(conn: &Connection) -> Result<Vec<LegacyFavorite>, ImportError> {
+    rows(
+        conn,
+        "user_favorites",
+        &[
+            ("id", REQUIRED),
+            ("user_id", REQUIRED),
+            ("book_id", REQUIRED),
+            ("position", REQUIRED),
+        ],
+        |r| {
+            Ok(LegacyFavorite {
+                id: r.id,
+                user_id: r.req_int("user_id")?,
+                book_id: r.req_int("book_id")?,
+                position: r.req_int("position")?,
+            })
+        },
+    )
+}
+
+fn read_picks(conn: &Connection) -> Result<Vec<LegacyPick>, ImportError> {
+    rows(
+        conn,
+        "club_picks",
+        &[
+            ("id", REQUIRED),
+            ("book_id", REQUIRED),
+            ("set_by_id", "NULL"),
+            ("note", "''"),
+            ("started_at", REQUIRED),
+            ("ended_at", "NULL"),
+            ("meeting_at", "NULL"),
+            ("reminder_sent_at", "NULL"),
+        ],
+        |r| {
+            Ok(LegacyPick {
+                id: r.id,
+                book_id: r.req_int("book_id")?,
+                set_by_id: r.int("set_by_id")?,
+                note: r.text("note")?.unwrap_or_default(),
+                started_at: r.req_time("started_at")?,
+                ended_at: r.time("ended_at")?,
+                meeting_at: r.time("meeting_at")?,
+                reminder_sent_at: r.time("reminder_sent_at")?,
+            })
+        },
+    )
+}
+
+fn read_milestones(conn: &Connection) -> Result<Vec<LegacyMilestone>, ImportError> {
+    rows(
+        conn,
+        "pick_milestones",
+        &[
+            ("id", REQUIRED),
+            ("pick_id", REQUIRED),
+            ("title", REQUIRED),
+            ("chapter_from", "NULL"),
+            ("chapter_to", "NULL"),
+            ("due_at", "NULL"),
+            ("position", "0"),
+            ("created_by_id", "NULL"),
+            ("created_at", REQUIRED),
+        ],
+        |r| {
+            Ok(LegacyMilestone {
+                id: r.id,
+                pick_id: r.req_int("pick_id")?,
+                title: r.text("title")?.unwrap_or_default(),
+                chapter_from: r.int("chapter_from")?,
+                chapter_to: r.int("chapter_to")?,
+                due_at: r.time("due_at")?,
+                position: r.int("position")?.unwrap_or(0),
+                created_by_id: r.int("created_by_id")?,
+                created_at: r.req_time("created_at")?,
+            })
+        },
+    )
+}
+
+fn read_pick_posts(conn: &Connection) -> Result<Vec<LegacyPickPost>, ImportError> {
+    rows(
+        conn,
+        "club_pick_posts",
+        &[
+            ("id", REQUIRED),
+            ("pick_id", REQUIRED),
+            ("author_id", REQUIRED),
+            ("body", REQUIRED),
+            ("spoiler_upto", "NULL"),
+            ("milestone_id", "NULL"),
+            ("created_at", REQUIRED),
+            ("updated_at", "NULL"),
+        ],
+        |r| {
+            Ok(LegacyPickPost {
+                id: r.id,
+                pick_id: r.req_int("pick_id")?,
+                author_id: r.req_int("author_id")?,
+                body: r.text("body")?.unwrap_or_default(),
+                spoiler_upto: r.int("spoiler_upto")?,
+                milestone_id: r.int("milestone_id")?,
+                created_at: r.req_time("created_at")?,
+                updated_at: r.time("updated_at")?,
+            })
+        },
+    )
+}
+
+fn read_reactions(
+    conn: &Connection,
+    table: &'static str,
+) -> Result<Vec<LegacyReaction>, ImportError> {
+    rows(
+        conn,
+        table,
+        &[
+            ("id", REQUIRED),
+            ("post_id", REQUIRED),
+            ("user_id", REQUIRED),
+            ("emoji", REQUIRED),
+            ("created_at", REQUIRED),
+        ],
+        |r| {
+            Ok(LegacyReaction {
+                id: r.id,
+                post_id: r.req_int("post_id")?,
+                user_id: r.req_int("user_id")?,
+                emoji: r.req_text("emoji")?,
+                created_at: r.req_time("created_at")?,
+            })
+        },
+    )
+}
+
+fn read_posts(conn: &Connection) -> Result<Vec<LegacyPost>, ImportError> {
+    rows(
+        conn,
+        "book_posts",
+        &[
+            ("id", REQUIRED),
+            ("book_id", REQUIRED),
+            ("author_id", REQUIRED),
+            ("parent_id", "NULL"),
+            ("body", REQUIRED),
+            ("spoiler_upto", "NULL"),
+            ("progress_at", "NULL"),
+            ("status_at", "NULL"),
+            ("pick_id", "NULL"),
+            ("legacy_post_id", "NULL"),
+            ("deleted_at", "NULL"),
+            ("created_at", REQUIRED),
+            ("updated_at", "NULL"),
+        ],
+        |r| {
+            Ok(LegacyPost {
+                id: r.id,
+                book_id: r.req_int("book_id")?,
+                author_id: r.req_int("author_id")?,
+                parent_id: r.int("parent_id")?,
+                body: r.text("body")?.unwrap_or_default(),
+                spoiler_upto: r.int("spoiler_upto")?,
+                progress_at: r.int("progress_at")?,
+                status_at: r.text("status_at")?.filter(|s| !s.is_empty()),
+                pick_id: r.int("pick_id")?,
+                legacy_post_id: r.int("legacy_post_id")?,
+                deleted_at: r.time("deleted_at")?,
+                created_at: r.req_time("created_at")?,
+                updated_at: r.time("updated_at")?,
+            })
+        },
+    )
+}
+
+fn read_quotes(conn: &Connection) -> Result<Vec<LegacyQuote>, ImportError> {
+    rows(
+        conn,
+        "quotes",
+        &[
+            ("id", REQUIRED),
+            ("user_id", REQUIRED),
+            ("book_id", REQUIRED),
+            ("body", REQUIRED),
+            ("page", "NULL"),
+            ("created_at", REQUIRED),
+        ],
+        |r| {
+            Ok(LegacyQuote {
+                id: r.id,
+                user_id: r.req_int("user_id")?,
+                book_id: r.req_int("book_id")?,
+                body: r.text("body")?.unwrap_or_default(),
+                page: r.int("page")?,
+                created_at: r.req_time("created_at")?,
+            })
+        },
+    )
+}
+
+fn read_votes(conn: &Connection) -> Result<Vec<LegacyVote>, ImportError> {
+    rows(
+        conn,
+        "next_up_votes",
+        &[
+            ("id", REQUIRED),
+            ("started_at", REQUIRED),
+            ("ended_at", "NULL"),
+            ("closes_at", "NULL"),
+            ("winner_nomination_id", "NULL"),
+        ],
+        |r| {
+            Ok(LegacyVote {
+                id: r.id,
+                started_at: r.req_time("started_at")?,
+                ended_at: r.time("ended_at")?,
+                closes_at: r.time("closes_at")?,
+                winner_nomination_id: r.int("winner_nomination_id")?,
+            })
+        },
+    )
+}
+
+fn read_nominations(conn: &Connection) -> Result<Vec<LegacyNomination>, ImportError> {
+    rows(
+        conn,
+        "next_up_nominations",
+        &[
+            ("id", REQUIRED),
+            ("vote_id", REQUIRED),
+            ("book_id", REQUIRED),
+            ("nominated_by_id", "NULL"),
+            ("created_at", REQUIRED),
+        ],
+        |r| {
+            Ok(LegacyNomination {
+                id: r.id,
+                vote_id: r.req_int("vote_id")?,
+                book_id: r.req_int("book_id")?,
+                nominated_by_id: r.int("nominated_by_id")?,
+                created_at: r.req_time("created_at")?,
+            })
+        },
+    )
+}
+
+fn read_ballots(conn: &Connection) -> Result<Vec<LegacyBallot>, ImportError> {
+    rows(
+        conn,
+        "next_up_ballots",
+        &[
+            ("id", REQUIRED),
+            ("vote_id", REQUIRED),
+            ("nomination_id", REQUIRED),
+            ("user_id", REQUIRED),
+            ("created_at", REQUIRED),
+        ],
+        |r| {
+            Ok(LegacyBallot {
+                id: r.id,
+                vote_id: r.req_int("vote_id")?,
+                nomination_id: r.req_int("nomination_id")?,
+                user_id: r.req_int("user_id")?,
+                created_at: r.req_time("created_at")?,
+            })
+        },
+    )
+}
+
+fn read_events(conn: &Connection) -> Result<Vec<LegacyEvent>, ImportError> {
+    rows(
+        conn,
+        "events",
+        &[
+            ("id", REQUIRED),
+            ("actor_id", "NULL"),
+            ("kind", REQUIRED),
+            ("book_id", "NULL"),
+            ("pick_id", "NULL"),
+            ("payload", "'{}'"),
+            ("created_at", REQUIRED),
+        ],
+        |r| {
+            Ok(LegacyEvent {
+                id: r.id,
+                actor_id: r.int("actor_id")?,
+                kind: r.req_text("kind")?,
+                book_id: r.int("book_id")?,
+                pick_id: r.int("pick_id")?,
+                payload: r.text("payload")?.unwrap_or_else(|| "{}".into()),
+                created_at: r.req_time("created_at")?,
+            })
+        },
+    )
+}
+
+fn read_search_history(conn: &Connection) -> Result<Vec<LegacySearch>, ImportError> {
+    rows(
+        conn,
+        "search_history",
+        &[
+            ("id", REQUIRED),
+            ("user_id", REQUIRED),
+            ("query", REQUIRED),
+            ("normalized_query", "''"),
+            ("last_used_at", REQUIRED),
+        ],
+        |r| {
+            Ok(LegacySearch {
+                id: r.id,
+                user_id: r.req_int("user_id")?,
+                query: r.text("query")?.unwrap_or_default(),
+                normalized_query: r.text("normalized_query")?.unwrap_or_default(),
+                last_used_at: r.req_time("last_used_at")?,
+            })
+        },
+    )
+}
+
+fn count_rows(conn: &Connection, table: &str) -> Result<u64, ImportError> {
+    if !has_table(conn, table)? {
+        return Ok(0);
+    }
+    conn.query_row(&format!("SELECT count(*) FROM \"{table}\""), [], |row| {
+        row.get::<_, i64>(0)
+    })
+    .map(|n| n.max(0) as u64)
+    .map_err(source_error)
+}
+
 // ---------------------------------------------------------------------------------------------
 // Table and row access
 // ---------------------------------------------------------------------------------------------
@@ -239,6 +824,18 @@ fn rows<T>(
     conn: &Connection,
     table: &'static str,
     wanted: &[(&'static str, &'static str)],
+    map: impl FnMut(&Cells<'_>) -> Result<T, ImportError>,
+) -> Result<Vec<T>, ImportError> {
+    rows_by(conn, table, "id", wanted, map)
+}
+
+/// [`rows`] for a table whose integer key column is `key` (`physical_shelf_layouts` has
+/// `user_id`): rows come in key order, and [`Cells::id`] is the key.
+fn rows_by<T>(
+    conn: &Connection,
+    table: &'static str,
+    key: &'static str,
+    wanted: &[(&'static str, &'static str)],
     mut map: impl FnMut(&Cells<'_>) -> Result<T, ImportError>,
 ) -> Result<Vec<T>, ImportError> {
     if !has_table(conn, table)? {
@@ -258,18 +855,18 @@ fn rows<T>(
         }
     }
     let sql = format!(
-        "SELECT {} FROM \"{table}\" ORDER BY \"id\"",
+        "SELECT {} FROM \"{table}\" ORDER BY \"{key}\"",
         select.join(", ")
     );
     let mut stmt = conn.prepare(&sql).map_err(source_error)?;
     let mut result = stmt.query([]).map_err(source_error)?;
     let mut out = Vec::new();
     while let Some(row) = result.next().map_err(source_error)? {
-        let id = match row.get_ref("id").map_err(source_error)? {
+        let id = match row.get_ref(key).map_err(source_error)? {
             ValueRef::Integer(id) => id,
             other => {
                 return Err(ImportError::Source(format!(
-                    "{table}: a row has the id {other:?}, not an integer"
+                    "{table}: a row has the {key} {other:?}, not an integer"
                 )));
             }
         };
@@ -347,6 +944,11 @@ impl Cells<'_> {
             ValueRef::Integer(i) => Ok(Some(i.to_string())),
             ValueRef::Real(f) => Ok(Some(f.to_string())),
         }
+    }
+
+    pub fn req_int(&self, column: &str) -> Result<i64, ImportError> {
+        self.int(column)?
+            .ok_or_else(|| self.error(column, "the value is missing"))
     }
 
     pub fn req_text(&self, column: &str) -> Result<String, ImportError> {

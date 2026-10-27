@@ -41,7 +41,7 @@ INSERT INTO "book_posts" VALUES(3,1,3,NULL,'Ich bin gerade bei Kapitel 6. Die Fi
 INSERT INTO "book_posts" VALUES(4,1,2,NULL,'Ab der Mitte bekommen die Briefe eine neue Bedeutung. Darüber müssen wir beim Treffen sprechen!',65,70,'currently_reading',2,NULL,NULL,'2026-09-01 03:00:00.123456',NULL);
 INSERT INTO "book_posts" VALUES(5,1,1,1,'Ja! Ein perfekter Ort für unser nächstes Treffen.',NULL,45,'currently_reading',2,NULL,NULL,'2026-09-01 10:00:00.123456',NULL);
 INSERT INTO "book_posts" VALUES(6,3,2,NULL,'Alte Notiz zur letzten Lektüre.',10,NULL,NULL,1,1,NULL,'2026-08-02 12:00:00.123456','2026-08-03 12:00:00.123456');
-INSERT INTO "book_posts" VALUES(7,1,3,NULL,'Notiz zum ersten Abschnitt.',30,NULL,NULL,2,2,NULL,'2026-08-26 12:00:00.123456',NULL);
+INSERT INTO "book_posts" VALUES(7,1,3,NULL,'Notiz zum ersten Abschnitt.',30,NULL,NULL,2,3,NULL,'2026-08-26 12:00:00.123456',NULL);
 INSERT INTO "book_posts" VALUES(9,1,2,7,'Antwort auf die Notiz.',NULL,NULL,NULL,NULL,NULL,NULL,'2026-08-28 12:00:00.123456',NULL);
 INSERT INTO "book_posts" VALUES(10,2,3,NULL,'',NULL,NULL,NULL,NULL,NULL,'2026-08-29 12:00:00.123456','2026-08-26 12:00:00.123456','2026-08-29 12:00:00.123456');
 INSERT INTO "book_posts" VALUES(11,2,2,10,'Schade, dass der Eintrag weg ist.',NULL,NULL,NULL,NULL,NULL,NULL,'2026-08-27 12:00:00.123456',NULL);
@@ -95,8 +95,8 @@ CREATE TABLE club_pick_posts (
 	FOREIGN KEY(milestone_id) REFERENCES pick_milestones (id)
 );
 INSERT INTO "club_pick_posts" VALUES(1,1,2,'Alte Notiz zur letzten Lektüre.',10,NULL,'2026-08-02 12:00:00.123456','2026-08-03 12:00:00.123456');
-INSERT INTO "club_pick_posts" VALUES(2,2,3,'Notiz zum ersten Abschnitt.',30,1,'2026-08-26 12:00:00.123456',NULL);
-INSERT INTO "club_pick_posts" VALUES(3,2,1,'Diese Kopie löscht der Autor im Tagebuch.',NULL,NULL,'2026-08-27 12:00:00.123456',NULL);
+INSERT INTO "club_pick_posts" VALUES(2,2,1,'Diese Kopie löscht der Autor im Tagebuch.',NULL,NULL,'2026-08-27 12:00:00.123456',NULL);
+INSERT INTO "club_pick_posts" VALUES(3,2,3,'Notiz zum ersten Abschnitt.',30,1,'2026-08-26 12:00:00.123456',NULL);
 INSERT INTO "club_pick_posts" VALUES(4,2,4,'Neue Notiz nach dem letzten Start.',50,NULL,'2026-08-31 12:00:00.123456',NULL);
 CREATE TABLE club_picks (
 	id INTEGER NOT NULL, 
@@ -151,12 +151,12 @@ INSERT INTO "events" VALUES(22,1,'pick_set',1,2,'{}','2026-09-01 12:00:00.123456
 INSERT INTO "events" VALUES(23,4,'member_joined',NULL,NULL,'{}','2026-08-02 12:00:00.123456');
 INSERT INTO "events" VALUES(24,5,'member_joined',NULL,NULL,'{}','2026-08-12 12:00:00.123456');
 INSERT INTO "events" VALUES(25,2,'note_posted',3,1,'{"post_id": 1}','2026-08-02 12:00:00.123456');
-INSERT INTO "events" VALUES(26,3,'note_posted',1,2,'{"post_id": 2}','2026-08-26 12:00:00.123456');
-INSERT INTO "events" VALUES(27,1,'note_posted',1,2,'{"post_id": 3}','2026-08-27 12:00:00.123456');
+INSERT INTO "events" VALUES(26,3,'note_posted',1,2,'{"post_id": 3}','2026-08-26 12:00:00.123456');
+INSERT INTO "events" VALUES(27,1,'note_posted',1,2,'{"post_id": 2}','2026-08-27 12:00:00.123456');
 INSERT INTO "events" VALUES(28,1,'reaction',3,1,'{"emoji": "🔥", "post_id": 1, "author": "anna"}','2026-08-03 12:00:00.123456');
 INSERT INTO "events" VALUES(29,4,'note_posted',1,2,'{"post_id": 4}','2026-08-31 12:00:00.123456');
 INSERT INTO "events" VALUES(30,1,'reaction',1,2,'{"emoji": "❤️", "post_id": 4, "author": "lena"}','2026-08-31 16:00:00.123456');
-INSERT INTO "events" VALUES(31,2,'reaction',1,2,'{"emoji": "👍", "post_id": 3, "author": "ghost"}','2026-08-28 12:00:00.123456');
+INSERT INTO "events" VALUES(31,2,'reaction',1,2,'{"emoji": "👍", "post_id": 2, "author": "ghost"}','2026-08-28 12:00:00.123456');
 INSERT INTO "events" VALUES(32,1,'quote_added',1,NULL,'{"page": 84, "excerpt": "Manche Geschichten finden uns genau dann, wenn wir sie brauchen."}','2026-09-01 12:00:00.523456');
 INSERT INTO "events" VALUES(33,4,'quote_added',14,NULL,'{"page": 12, "excerpt": "Ursprünglicher Satz."}','2026-08-28 12:00:11.123456');
 INSERT INTO "events" VALUES(34,5,'quote_added',2,NULL,'{"page": 3, "excerpt": "Ein gelöschtes Zitat"}','2026-08-30 12:00:00.123456');
@@ -241,7 +241,7 @@ CREATE TABLE physical_shelf_layouts (
 	PRIMARY KEY (user_id), 
 	FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE
 );
-INSERT INTO "physical_shelf_layouts" VALUES(1,'{"rows": [[1, 2, 3, 4, "decor:plant1"], [19, 20, 99999], []], "material": "walnut", "spines": {"19": {"color": "#A1B2C3", "width": 3}, "20": {"color": "#00ff00", "display": "cover"}, "99999": {"color": "#000000"}}, "decorations": {"decor:plant1": {"kind": "plant", "color": "#2E7D32"}}}');
+INSERT INTO "physical_shelf_layouts" VALUES(1,'{"rows": [[1, 2, 3, 4, "decor:plant1"], [19, 20, 99999], []], "material": "walnut", "spines": {"19": {"color": "#A1B2C3", "width": 30}, "20": {"color": "#00ff00", "display": "cover"}, "99999": {"color": "#000000"}}, "decorations": {"decor:plant1": {"kind": "plant", "color": "#2E7D32"}}}');
 INSERT INTO "physical_shelf_layouts" VALUES(5,'{not json');
 CREATE TABLE pick_milestones (
 	id INTEGER NOT NULL, 
@@ -274,7 +274,7 @@ CREATE TABLE post_reactions (
 );
 INSERT INTO "post_reactions" VALUES(1,1,1,'🔥','2026-08-03 12:00:00.123456');
 INSERT INTO "post_reactions" VALUES(2,1,3,'👍','2026-08-03 12:00:00.123456');
-INSERT INTO "post_reactions" VALUES(3,2,2,'❤️','2026-08-27 12:00:00.123456');
+INSERT INTO "post_reactions" VALUES(3,3,2,'❤️','2026-08-27 12:00:00.123456');
 INSERT INTO "post_reactions" VALUES(4,1,4,'😂','2026-08-30 12:00:00.123456');
 INSERT INTO "post_reactions" VALUES(5,4,1,'❤️','2026-08-31 16:00:00.123456');
 CREATE TABLE push_subscriptions (
@@ -380,8 +380,11 @@ CREATE TABLE user_favorites (
 INSERT INTO "user_favorites" VALUES(1,1,3,1);
 INSERT INTO "user_favorites" VALUES(2,1,5,2);
 INSERT INTO "user_favorites" VALUES(3,1,9,3);
-INSERT INTO "user_favorites" VALUES(4,4,14,1);
-INSERT INTO "user_favorites" VALUES(5,4,15,3);
+INSERT INTO "user_favorites" VALUES(4,2,10,1);
+INSERT INTO "user_favorites" VALUES(5,2,2,2);
+INSERT INTO "user_favorites" VALUES(6,2,9,3);
+INSERT INTO "user_favorites" VALUES(7,4,14,1);
+INSERT INTO "user_favorites" VALUES(8,4,15,3);
 CREATE TABLE users (
 	id INTEGER NOT NULL, 
 	username VARCHAR(32) NOT NULL, 

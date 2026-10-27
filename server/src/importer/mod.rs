@@ -2,14 +2,25 @@
 //! `rematch-legacy` (docs/phase1/legacy-mapping.md).
 //!
 //! [`run`] reads the whole legacy database into memory (read-only), then writes the target in
-//! **one** Postgres transaction, in foreign-key order: users → avatars → club → memberships →
-//! invites → works and editions → … A failure rolls everything back; a dry run rolls back at the
-//! end and writes no media bytes. Legacy ids are kept (each sequence is advanced with `setval`),
-//! except work ids: legacy books map onto works through `legacy_work_keys`.
+//! **one** Postgres transaction, in foreign-key order (legacy-mapping.md §0 "Insert order"):
+//! users → avatars → club → memberships → invites → works and editions → shelf → layouts →
+//! favourites → picks → milestones → posts → reactions → quotes → votes → nominations → ballots →
+//! events → search history. A failure rolls everything back; a dry run rolls back at the end and
+//! writes no media bytes. Legacy ids are kept (each sequence is advanced with `setval`), except
+//! work ids: legacy books map onto works through `legacy_work_keys`.
+//!
+//! [`rematch`] (`rematch-legacy`) re-resolves the legacy bare-facts editions by ISBN later.
 
 mod books;
 mod club;
+mod events;
+mod layout;
+mod personal;
+mod picks;
+mod posts;
+mod rematch;
 mod report;
+mod shelf;
 mod source;
 mod users;
 
@@ -23,12 +34,13 @@ use regex::Regex;
 use sqlx::{PgPool, Postgres, Transaction};
 
 pub use self::books::{BookTarget, MatchKind};
+pub use self::rematch::rematch;
 use self::report::ReportBuilder;
 pub use self::report::{EntityLine, IsbnLine, IsbnOutcome};
 pub use self::source::{LegacyDb, parse_timestamp, read_conn};
 use crate::catalog::shared::lookup::CatalogLookup;
 use crate::media::shared::MediaStore;
-use crate::text::{char_len, py_strip};
+use crate::text::{char_len, py_strip, truncate_chars};
 
 /// Flags of `import-legacy` (legacy-mapping.md §0). Flattened into the CLI by `main.rs`, so IMP
 /// adds flags here without touching it.
@@ -69,6 +81,9 @@ pub struct RematchArgs {
     /// Resolve and report, then roll back.
     #[arg(long)]
     pub dry_run: bool,
+    /// Wait before retrying a throttled lookup, instead of the host cooldown (tests set 0).
+    #[arg(long, hide = true)]
+    pub retry_wait_ms: Option<u64>,
 }
 
 /// What an import or rematch did, one line per entity. `main.rs` prints it with `Display`.
@@ -96,6 +111,9 @@ pub struct Report {
     pub lookup_wait: Duration,
     /// Where each legacy book went (legacy book id → work, edition, match).
     pub books: HashMap<i64, BookTarget>,
+    /// Rows skipped or changed one by one (dropped references, skipped pick notes, layouts
+    /// imported as the default, `quote_added` events without their quote, …).
+    pub notes: Vec<String>,
 }
 
 impl Report {
@@ -109,6 +127,10 @@ impl Report {
         self.normalised.get(column).copied().unwrap_or(0)
     }
 
+    fn from_rematch(b: ReportBuilder, dry_run: bool) -> Report {
+        Report::from_builder(b, dry_run, HashMap::new())
+    }
+
     fn from_builder(b: ReportBuilder, dry_run: bool, books: HashMap<i64, BookTarget>) -> Report {
         Report {
             lines: b.lines(),
@@ -120,6 +142,7 @@ impl Report {
             isbns: b.isbns,
             lookup_wait: b.lookup_wait,
             books,
+            notes: b.notes,
         }
     }
 }
@@ -171,6 +194,21 @@ pub(crate) struct Importer {
     user_ids: HashSet<i64>,
     /// Legacy book id → its work.
     books: HashMap<i64, BookTarget>,
+    /// Imported shelf entry ids per user (after merges).
+    entries: HashMap<i64, HashSet<i64>>,
+    /// Legacy shelf id → the entry it became (itself, or the winner it merged into).
+    entry_of: HashMap<i64, i64>,
+    /// Imported pick id → its work.
+    picks: HashMap<i64, i64>,
+    /// Imported milestone id → its pick.
+    milestones: HashMap<i64, i64>,
+    /// Ids of the imported `book_posts` rows (kept as `posts` ids).
+    kept_posts: HashSet<i64>,
+    /// Legacy `club_pick_posts` id → the `posts` row that stands for it (its mirror copy or the
+    /// new row), for event payloads.
+    pick_post_of: HashMap<i64, i64>,
+    /// The imported quotes, for `quote_added` events.
+    quotes: Vec<personal::QuoteFacts>,
     /// Storage prefixes written to the media store, removed again when the import fails.
     written_media: Vec<String>,
 }
@@ -217,6 +255,13 @@ pub async fn run(
         club_id: 0,
         user_ids: HashSet::new(),
         books: HashMap::new(),
+        entries: HashMap::new(),
+        entry_of: HashMap::new(),
+        picks: HashMap::new(),
+        milestones: HashMap::new(),
+        kept_posts: HashSet::new(),
+        pick_post_of: HashMap::new(),
+        quotes: Vec::new(),
         written_media: Vec::new(),
     };
     let outcome = imp.import_all().await;
@@ -250,8 +295,116 @@ impl Importer {
         self.import_club().await?;
         self.import_invites().await?;
         self.import_books().await?;
+        self.import_shelf().await?;
+        self.import_layouts().await?;
+        self.import_favorites().await?;
+        self.import_picks().await?;
+        self.import_milestones().await?;
+        // book_posts with their ids, setval, then the new pick notes with fresh ids.
+        let fates = self.import_posts().await?;
+        self.import_reactions(&fates).await?;
+        self.import_quotes().await?;
+        // Votes without winners, nominations, the winners, ballots.
+        self.import_votes().await?;
+        self.import_events().await?;
+        self.import_search_history().await?;
+        self.report.entity(
+            "push_subscriptions",
+            Some(self.legacy.push_subscriptions),
+            None,
+            "(Phase 4)",
+        );
+        self.advance_sequences().await?;
         Ok(())
     }
+
+    /// Advances the identity sequence of every table whose ids were kept and that has not had
+    /// its `setval` yet (users, invites and posts have), so new rows continue after the highest
+    /// imported id.
+    async fn advance_sequences(&mut self) -> Result<(), ImportError> {
+        sqlx::query!(
+            "SELECT
+                    setval(pg_get_serial_sequence('shelf_entries', 'id'), (SELECT max(id) FROM shelf_entries)) AS shelf_entries,
+                    setval(pg_get_serial_sequence('club_picks', 'id'), (SELECT max(id) FROM club_picks)) AS club_picks,
+                    setval(pg_get_serial_sequence('milestones', 'id'), (SELECT max(id) FROM milestones)) AS milestones,
+                    setval(pg_get_serial_sequence('quotes', 'id'), (SELECT max(id) FROM quotes)) AS quotes,
+                    setval(pg_get_serial_sequence('next_up_votes', 'id'), (SELECT max(id) FROM next_up_votes)) AS next_up_votes,
+                    setval(pg_get_serial_sequence('next_up_nominations', 'id'), (SELECT max(id) FROM next_up_nominations)) AS next_up_nominations,
+                    setval(pg_get_serial_sequence('events', 'id'), (SELECT max(id) FROM events)) AS events,
+                    setval(pg_get_serial_sequence('search_history', 'id'), (SELECT max(id) FROM search_history)) AS search_history"
+        )
+        .fetch_one(&mut *self.tx)
+        .await?;
+        Ok(())
+    }
+
+    /// `value` cut to `max` characters; a cut is counted as a repair of `column`.
+    fn fit(&mut self, column: &str, value: &str, max: usize) -> String {
+        if char_len(value) > max {
+            self.report.normalised(column);
+            truncate_chars(value, max).to_owned()
+        } else {
+            value.to_owned()
+        }
+    }
+
+    /// `value` when it lies in `range`, else NULL (counted as a repair of `column`).
+    fn in_range(
+        &mut self,
+        column: &str,
+        value: Option<i64>,
+        range: std::ops::RangeInclusive<i64>,
+    ) -> Option<i32> {
+        match value {
+            Some(v) if range.contains(&v) => i32::try_from(v).ok(),
+            Some(_) => {
+                self.report.normalised(column);
+                None
+            }
+            None => None,
+        }
+    }
+
+    /// Whether `user` is an imported user.
+    fn has_user(&self, user: i64) -> bool {
+        self.user_ids.contains(&user)
+    }
+
+    /// Notes one row that was not imported because a reference it needs is missing (the legacy
+    /// schema has foreign keys, but SQLite does not enforce them by default).
+    fn dangling(&mut self, table: &str, id: i64, what: &str) {
+        self.report
+            .notes
+            .push(format!("{table} {id}: {what}; not imported"));
+    }
+}
+
+/// `(1 a, 2 b)` from the non-zero counts with their labels, or `""` when every count is zero.
+pub(crate) fn detail(parts: &[(u64, &str)]) -> String {
+    let parts = counted(parts);
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!("({})", parts.join(", "))
+    }
+}
+
+/// `(head)`, or `(head; 1 a, 2 b)` with the non-zero counts.
+pub(crate) fn detail_after(head: &str, parts: &[(u64, &str)]) -> String {
+    let parts = counted(parts);
+    if parts.is_empty() {
+        format!("({head})")
+    } else {
+        format!("({head}; {})", parts.join(", "))
+    }
+}
+
+fn counted(parts: &[(u64, &str)]) -> Vec<String> {
+    parts
+        .iter()
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, label)| format!("{n} {label}"))
+        .collect()
 }
 
 /// Media written before a failure are removed again: nothing refers to them after the rollback.
@@ -316,14 +469,4 @@ fn check_users(legacy: &LegacyDb, owner: &str) -> Result<i64, ImportError> {
                 "--owner {owner:?} is not a user of the legacy database"
             ))
         })
-}
-
-/// Re-resolves `source='legacy'` editions by ISBN (legacy-mapping.md §3.3). Not implemented yet
-/// (IMP part 2).
-pub async fn rematch(
-    _db: PgPool,
-    _lookup: Arc<dyn CatalogLookup>,
-    _args: RematchArgs,
-) -> Result<Report, ImportError> {
-    Err(ImportError::Other(anyhow::anyhow!("not implemented")))
 }

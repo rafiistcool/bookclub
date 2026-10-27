@@ -302,8 +302,12 @@ def add_extras(path: Path) -> None:
         shelf(otto, isbn_invalid, "want_to_read", 7, rating=3, take="Nicht gelesen.")
         shelf(otto, untitled, "want_to_read", 9)
 
-        # --- favourites: demo also has both merge rows; lena has a gap in her positions.
+        # --- favourites: demo's third is the OL row; anna has both merge rows (the ISBN row
+        # first); lena has a gap in her positions.
         session.add(UserFavorite(user_id=demo.id, book_id=ol.id, position=3))
+        session.add(UserFavorite(user_id=anna.id, book_id=isbn_match.id, position=1))
+        session.add(UserFavorite(user_id=anna.id, book_id=b2.id, position=2))
+        session.add(UserFavorite(user_id=anna.id, book_id=ol.id, position=3))
         session.add(UserFavorite(user_id=lena.id, book_id=google.id, position=1))
         session.add(UserFavorite(user_id=lena.id, book_id=other.id, position=3))
 
@@ -318,7 +322,7 @@ def add_extras(path: Path) -> None:
             "rows": rows,
             "material": "walnut",
             "spines": {
-                str(demo_ol.id): {"color": "#A1B2C3", "width": 3},
+                str(demo_ol.id): {"color": "#A1B2C3", "width": 30},
                 str(demo_isbn.id): {"color": "#00ff00", "display": "cover"},
                 "99999": {"color": "#000000"},
             },
@@ -341,7 +345,9 @@ def add_extras(path: Path) -> None:
         note3 = ClubPickPost(pick_id=current_pick.id, author_id=demo.id,
                              body="Diese Kopie löscht der Autor im Tagebuch.",
                              created_at=at(days=-5))
-        for note in (note1, note2, note3):
+        # note3 gets a lower id than note2, so once its diary copy is deleted it lies below a
+        # mirrored note's id (legacy-mapping.md §9.2: skipped, not imported as new).
+        for note in (note1, note3, note2):
             session.add(note)
         session.flush()
         session.add(PostReaction(post_id=note1.id, user_id=demo.id, emoji="🔥",

@@ -42,6 +42,9 @@ type PrefsRow = (
     OffsetDateTime,
 );
 
+/// id, status, rating, take, dnf_reason, shelf_position.
+type ShelfRow = (i64, String, Option<i32>, String, String, Option<i32>);
+
 /// Every row count the importer writes, in one comparable value.
 async fn counts(app: &TestApp) -> Vec<i64> {
     let mut out = Vec::new();
@@ -78,8 +81,9 @@ fn program_merge(app: &TestApp) {
     );
 }
 
-/// #38 AC 1 (the entities so far): fresh.sql imports, and every count matches apart from the
-/// listed merges. The fresh shape has every `COLUMN_MIGRATIONS` column, and the reader takes it.
+/// #38 AC 1: fresh.sql imports, and every entity's target count equals its source count apart
+/// from the merges and skips the report lists. The fresh shape has every `COLUMN_MIGRATIONS`
+/// column, and the reader takes it.
 /// parity: test_migrations.py::test_fresh_database_matches_migration_list
 #[sqlx::test]
 async fn the_fresh_fixture_imports_with_matching_counts(db: PgPool) {
@@ -134,11 +138,74 @@ async fn the_fresh_fixture_imports_with_matching_counts(db: PgPool) {
             .await,
         17
     );
-    assert_eq!(report.merges.len(), 1, "{:?}", report.merges);
     assert!(
         report.merges[0].starts_with("book 10 (/works/ISBN9780000000019) → book 9"),
         "{:?}",
         report.merges
+    );
+
+    // The rest of the entities: (line, source, target, target table, its row count). Every
+    // difference is a listed merge or skip.
+    let rest: [(&str, u64, u64, &str, i64); 15] = [
+        ("shelf", 27, 26, "shelf_entries", 26),
+        ("physical_shelf_layouts", 2, 2, "physical_shelf_layouts", 2),
+        ("user_favorites", 8, 7, "user_favorites", 7),
+        ("club_picks", 2, 2, "club_picks", 2),
+        ("pick_milestones", 4, 4, "milestones", 4),
+        // book_posts and club_pick_posts both land in posts: 12 + 1.
+        ("book_posts", 12, 12, "posts WHERE id <= 13", 12),
+        ("club_pick_posts", 4, 1, "posts WHERE id > 13", 1),
+        // Both reaction tables land in post_reactions: 4 + 1.
+        (
+            "book_post_reactions",
+            4,
+            4,
+            "post_reactions WHERE post_id <= 13",
+            4,
+        ),
+        (
+            "post_reactions",
+            5,
+            1,
+            "post_reactions WHERE post_id > 13",
+            1,
+        ),
+        ("quotes", 3, 3, "quotes", 3),
+        ("next_up_votes", 2, 2, "next_up_votes", 2),
+        ("next_up_nominations", 6, 5, "next_up_nominations", 5),
+        ("next_up_ballots", 5, 5, "next_up_ballots", 5),
+        ("events", 48, 48, "events", 48),
+        ("search_history", 4, 4, "search_history", 4),
+    ];
+    for (name, source, target, table, rows) in rest {
+        let (s, t, detail) = line(name);
+        assert_eq!((s, t), (Some(source), Some(target)), "{name}: {detail}");
+        assert_eq!(
+            app.scalar_i64(&format!("SELECT count(*) FROM {table}"))
+                .await,
+            rows,
+            "{table}"
+        );
+    }
+    assert_eq!(
+        line("push_subscriptions"),
+        (Some(2), None, "(Phase 4)".to_owned())
+    );
+    // The merges: the book, then each collision it caused.
+    assert_eq!(
+        report.merges[1..],
+        [
+            "shelf 20 → shelf 19 (demo): books 10 and 9 are one work",
+            "user_favorites 6 → user_favorites 4: books 9 and 10 are one work",
+            "next_up_nominations 5 → next_up_nominations 4 (vote 2): books 10 and 9 are one work",
+        ]
+    );
+    // The skips: the mirror copies (2 of 4 pick notes, listed in the line) and the deleted copy.
+    let (_, _, detail) = line("club_pick_posts");
+    assert_eq!(
+        detail,
+        "(2 mirrored: their book_posts copy is canonical; 1 skipped (2): their diary copy was \
+         deleted; 1 new (4): imported as club posts with new ids above the kept ones)"
     );
     assert!(!report.dry_run);
     assert!(report.lines.iter().any(|l| l.starts_with("users ")));
@@ -229,7 +296,7 @@ async fn the_cli_exits_with_2_on_a_non_empty_target(db: PgPool) {
         String::from_utf8_lossy(&first.stderr)
     );
     let stdout = String::from_utf8_lossy(&first.stdout);
-    assert!(stdout.contains("users                 5 → 5"), "{stdout}");
+    assert!(stdout.contains("users                  5 → 5"), "{stdout}");
     let slug: String = sqlx::query_scalar("SELECT slug FROM clubs")
         .fetch_one(&app.db)
         .await
@@ -286,6 +353,23 @@ async fn a_legacy_user_logs_in_with_the_old_password(db: PgPool) {
     assert_eq!(me["clubs"][0]["slug"], SLUG);
     assert_eq!(me["clubs"][0]["role"], "member");
     assert_eq!(me["clubs"][0]["timezone"], "Europe/Berlin");
+
+    // The imported club works for them: its members, with what they are reading (the imported
+    // shelf entries).
+    let members = client.get(&format!("/api/clubs/{SLUG}/members")).await;
+    members.assert_status(200);
+    let members = members.json();
+    let items = members["items"].as_array().unwrap();
+    assert_eq!(items.len(), 5);
+    assert_eq!(
+        (&items[0]["username"], &items[0]["role"]),
+        (&json!("demo"), &json!("owner"))
+    );
+    let lena = items.iter().find(|m| m["username"] == "lena").unwrap();
+    assert_eq!(lena["you"], json!(true));
+    assert_eq!(lena["currently_reading_count"], json!(1));
+    let demo = &items[0];
+    assert_eq!(demo["currently_reading_count"], json!(2));
 }
 
 /// Users keep their ids, hashes, preferences and creation time; values outside the target's
@@ -552,10 +636,10 @@ async fn invites_keep_their_history_and_unused_ones_are_revoked(db: PgPool) {
         .assert_detail(400, "That invite code is not valid");
 }
 
-/// #38 AC 2 (accounts): migrated.sql (the ALTER TABLE shape, timestamps without fractions)
-/// imports with the column defaults: preferences paper/system/en and every notification on.
-/// The very old shape (LEGACY_SCHEMA before any boot, columns and tables missing) reads those
-/// columns as their DDL defaults.
+/// #38 AC 2: migrated.sql (the ALTER TABLE shape, timestamps without fractions) imports with
+/// the column defaults: preferences paper/system/en, every notification on, and the shelf's
+/// NULL take and dnf_reason as ''. The very old shape (LEGACY_SCHEMA before any boot, columns
+/// and tables missing) reads those columns as their DDL defaults.
 /// parity: test_migrations.py::test_legacy_database_is_upgraded_in_place
 /// parity: test_auth.py::test_preference_columns_backfill_pre_existing_users
 #[sqlx::test]
@@ -593,6 +677,49 @@ async fn migrated_and_very_old_databases_import_with_the_defaults(db: PgPool) {
             .await,
         2
     );
+    // The shelf columns ALTER TABLE added: NULL take and dnf_reason import as '', an old row
+    // has no rating and is not arranged.
+    let shelf: Vec<ShelfRow> = sqlx::query_as(
+        "SELECT id, status, rating, take, dnf_reason, shelf_position
+         FROM shelf_entries ORDER BY id",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    let row = |id: i64, status: &str, rating: Option<i32>| {
+        (
+            id,
+            status.to_owned(),
+            rating,
+            String::new(),
+            String::new(),
+            None,
+        )
+    };
+    assert_eq!(
+        shelf,
+        vec![
+            row(1, "finished", None),
+            row(2, "did_not_finish", None),
+            row(3, "finished", Some(4)),
+        ]
+    );
+    // The book's subjects ('[]' after the boot) and the note mirrored at the boot.
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM works WHERE subjects = '{}'")
+            .await,
+        2
+    );
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM posts WHERE club_id IS NOT NULL AND pick_id = 1")
+            .await,
+        1
+    );
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM next_up_votes WHERE closes_at IS NULL")
+            .await,
+        1
+    );
 }
 
 /// The very old shape: LEGACY_SCHEMA as written, never booted.
@@ -625,6 +752,23 @@ async fn a_database_from_before_every_column_migration_imports(db: PgPool) {
             "Madeline Miller".to_owned(),
             Some(2018),
             "openlibrary".to_owned()
+        )
+    );
+    // The shelf row predates take, dnf_reason, rating and shelf_position.
+    let shelf: (String, Option<i32>, String, String, Option<i32>) = sqlx::query_as(
+        "SELECT status, rating, take, dnf_reason, shelf_position FROM shelf_entries",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        shelf,
+        (
+            "finished".to_owned(),
+            None,
+            String::new(),
+            String::new(),
+            None
         )
     );
 }

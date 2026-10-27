@@ -28,7 +28,7 @@ static SPINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^#[0-9a-f]{6}$").u
 
 /// How long a throttled lookup waits before it retries, unless `--retry-wait-ms` says otherwise
 /// (`LookupError::Throttled` carries no Retry-After).
-const DEFAULT_RETRY_WAIT: Duration = Duration::from_secs(60);
+pub(crate) const DEFAULT_RETRY_WAIT: Duration = Duration::from_secs(60);
 
 /// The key classes of legacy-mapping.md §3.1, in processing order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -324,9 +324,11 @@ impl Importer {
 
             if let Some(first) = owner_of_work.get(&target.work_id).copied() {
                 merged += 1;
+                // No work id: sequences advance in a dry run, so it would differ from the real
+                // run's.
                 self.report.merges.push(format!(
-                    "book {} ({}) → book {first}: both are work {}",
-                    book.id, book.ol_work_key, target.work_id
+                    "book {} ({}) → book {first}: both resolve to one work",
+                    book.id, book.ol_work_key
                 ));
             } else {
                 owner_of_work.insert(target.work_id, book.id);

@@ -1,5 +1,6 @@
 //! Legacy books → works, editions, covers and `legacy_work_keys` (docs/phase1/legacy-mapping.md
-//! §3, §17 AC 6 (the catalog half), 9, 10 and 11), on tests/fixtures/legacy/fresh.sql.
+//! §3, §17 AC 6 (the catalog half), 9, 10, 11 and 15 (`rematch-legacy`)), on
+//! tests/fixtures/legacy/fresh.sql.
 
 mod common;
 #[path = "fixtures/legacy/harness.rs"]
@@ -9,7 +10,7 @@ use bookclub_server::catalog::shared::books::{BookRef, book_out};
 use bookclub_server::catalog::shared::ingest::Source;
 use bookclub_server::catalog::shared::isbn::parse_isbn;
 use bookclub_server::catalog::shared::work_ref::{WorkRef, resolve_local};
-use bookclub_server::importer::{IsbnOutcome, MatchKind, Report};
+use bookclub_server::importer::{self, IsbnOutcome, MatchKind, RematchArgs, Report};
 use common::*;
 use legacy::*;
 use serde_json::Value;
@@ -350,7 +351,12 @@ async fn an_isbn_row_resolving_to_an_imported_work_merges_into_it(db: PgPool) {
     let book = book_id(&legacy, &format!("/works/ISBN{ISBN_MATCH}"));
     assert_eq!(report.books[&book].work_id, ol_work);
     assert_eq!(report.books[&book].kind, MatchKind::IsbnMatched);
-    assert_eq!(report.merges.len(), 1);
+    let book_merges: Vec<&String> = report
+        .merges
+        .iter()
+        .filter(|m| m.starts_with("book "))
+        .collect();
+    assert_eq!(book_merges.len(), 1, "{:?}", report.merges);
     // The work keeps the Open Library year: BookOut shows 1871 where the legacy API showed 2003.
     assert_eq!(
         report.differences,
@@ -481,4 +487,134 @@ async fn book_out_keeps_the_legacy_year_and_pages(db: PgPool) {
     let w = work(&app, dnb.id).await;
     assert_eq!((w.first_publish_year, w.pages), (Some(2019), Some(250)));
     assert_eq!(w.field_sources["pages"], Value::String("legacy".into()));
+}
+
+async fn run_rematch(app: &TestApp, dry_run: bool) -> Report {
+    importer::rematch(
+        app.db.clone(),
+        app.state.lookup.clone(),
+        RematchArgs {
+            dry_run,
+            retry_wait_ms: Some(0),
+        },
+    )
+    .await
+    .unwrap_or_else(|e| panic!("rematch failed: {e}"))
+}
+
+/// The ISBN that the fixture's ISBN-10 key stands for.
+fn isbn10_as_13() -> String {
+    parse_isbn(ISBN10_KEY).unwrap().as_str().to_owned()
+}
+
+/// #38 AC 15: after an `--offline` import, programming the catalog with an ISBN and running
+/// `rematch-legacy` upgrades the bare-facts edition and its work (the source's provenance, the
+/// legacy-ranked title replaced); the shelf entry still points at the same work and edition,
+/// and the key's match becomes `isbn_matched`. A dry run changes nothing; a throttled lookup is
+/// retried; an unavailable source leaves its edition as it is.
+#[sqlx::test]
+async fn rematch_legacy_upgrades_bare_facts_editions(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let legacy = load("fresh.sql");
+    let mut args = legacy.args("demo");
+    args.offline = true;
+    let report = import_ok(&app, args).await;
+    let book = book_id(&legacy, &format!("/works/ISBN{ISBN_UNMATCHED}"));
+    let target = report.books[&book];
+    assert_eq!(target.kind, MatchKind::IsbnUnmatched);
+    let edition = target.edition_id.unwrap();
+    let entry: (i64, Option<i64>) =
+        sqlx::query_as("SELECT work_id, edition_id FROM shelf_entries WHERE id = 21")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(entry, (target.work_id, Some(edition)));
+    let state = |app: &TestApp| {
+        let db = app.db.clone();
+        async move {
+            sqlx::query_as::<_, (String, String, String, String)>(
+                "SELECT e.source, w.source, w.title, k.match
+                 FROM editions e JOIN works w ON w.id = e.work_id
+                 JOIN legacy_work_keys k ON k.edition_id = e.id
+                 WHERE e.id = $1",
+            )
+            .bind(edition)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+    let program = || {
+        app.catalog.on_isbn(
+            ISBN_UNMATCHED,
+            FakeHit::New {
+                title: "Ein erfundenes Buch: Roman".into(),
+                authors: "Erika Mustermann".into(),
+                ol_work_id: None,
+                source: Source::Dnb,
+            },
+        );
+    };
+    app.catalog
+        .fail_isbn(&isbn10_as_13(), FakeError::Unavailable, None);
+
+    program();
+    let dry = run_rematch(&app, true).await;
+    assert!(dry.dry_run);
+    assert_eq!(
+        state(&app).await,
+        (
+            "legacy".to_owned(),
+            "legacy".to_owned(),
+            "Ein erfundenes Buch".to_owned(),
+            "isbn_unmatched".to_owned()
+        )
+    );
+
+    // Throttled twice, then answered: waited out, not counted as a miss.
+    program();
+    app.catalog
+        .fail_isbn(ISBN_UNMATCHED, FakeError::Throttled, Some(2));
+    let real = run_rematch(&app, false).await;
+    assert_eq!(dry.lines, real.lines);
+    let remote = format!("isbn_remote:{ISBN_UNMATCHED}");
+    assert_eq!(
+        app.catalog.calls().iter().filter(|c| **c == remote).count(),
+        4,
+        "one in the dry run, three in the real one"
+    );
+    assert_eq!(
+        state(&app).await,
+        (
+            "dnb".to_owned(),
+            "dnb".to_owned(),
+            "Ein erfundenes Buch: Roman".to_owned(),
+            "isbn_matched".to_owned()
+        )
+    );
+    let after: (i64, Option<i64>) =
+        sqlx::query_as("SELECT work_id, edition_id FROM shelf_entries WHERE id = 21")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(after, entry);
+    // Three legacy editions with an ISBN: the matched one, the unmatched one (both unmatched
+    // offline) and the ISBN-10 key's.
+    let line = real.entity("legacy editions").unwrap();
+    assert_eq!(
+        (line.source, line.target, line.detail.as_str()),
+        (
+            Some(3),
+            Some(1),
+            "upgraded (1 unmatched, 1 with the source unavailable, 0 under another work)"
+        )
+    );
+    // The ISBN-10 key's edition is unchanged.
+    let isbn10 = book_id(&legacy, &format!("/works/ISBN{ISBN10_KEY}"));
+    let source: String = sqlx::query_scalar("SELECT source FROM editions WHERE id = $1")
+        .bind(report.books[&isbn10].edition_id.unwrap())
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(source, "legacy");
 }

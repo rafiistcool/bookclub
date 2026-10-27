@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE legacy_work_keys SET match = 'isbn_matched'\n                         WHERE edition_id = $1 AND match IN ('isbn_unmatched', 'isbn_error')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "97e07f2181a99d5036ebc3d105fcbb69fa4f1be1819039157b73798d088ed1a2"
+}
