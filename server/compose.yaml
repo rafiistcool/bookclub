@@ -4,6 +4,9 @@
 services:
   postgres:
     image: postgres:17
+    # Parallel test runs each create throwaway databases; the default 100
+    # connections run out quickly.
+    command: postgres -c max_connections=500
     environment:
       POSTGRES_USER: bookclub
       POSTGRES_PASSWORD: bookclub
