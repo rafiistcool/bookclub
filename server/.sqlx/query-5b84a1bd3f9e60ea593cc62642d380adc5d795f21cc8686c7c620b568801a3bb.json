@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT w.first_publish_year, COALESCE(e.pages, w.pages) AS pages\n               FROM works w LEFT JOIN editions e ON e.id = $2 AND e.work_id = w.id\n               WHERE w.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "first_publish_year",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "first_publish_year"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "pages",
+        "type_info": "Int4",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      null
+    ]
+  },
+  "hash": "5b84a1bd3f9e60ea593cc62642d380adc5d795f21cc8686c7c620b568801a3bb"
+}
