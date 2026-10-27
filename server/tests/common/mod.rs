@@ -7,6 +7,7 @@
 //! - [`TestClient`]: requests through the router with a cookie jar, an optional bearer token
 //!   and an optional client IP.
 //! - [`visibility`]: the template for `tests/<pkg>_visibility.rs`.
+//! - [`routes`]: every documented operation, for the route-wide guard tests (§17.7).
 //! - Low-level helpers for tests that need no database or their own configuration:
 //!   [`test_config`], [`test_state`], [`test_state_with`], [`unreachable_db`], [`send`], [`get`].
 #![allow(dead_code)]
@@ -14,6 +15,7 @@
 mod catalog;
 mod client;
 mod email;
+pub mod routes;
 pub mod visibility;
 
 use std::sync::Arc;
@@ -22,7 +24,6 @@ use axum::Router;
 use axum::body::{Body, Bytes, to_bytes};
 use axum::http::{HeaderMap, Request, StatusCode};
 use bookclub_server::auth::password::Passwords;
-use bookclub_server::auth::random;
 use bookclub_server::auth::session::{self, SessionKind};
 use bookclub_server::catalog::CatalogService;
 use bookclub_server::catalog::shared::ingest::{
@@ -217,36 +218,26 @@ impl TestApp {
         )
     }
 
-    /// A club owned by `owner`, with the slug `<slugified name>-<4 random characters>` and the
-    /// time zone UTC.
-    ///
-    /// Wave 1 step 3 inserts the club and the owner membership directly; step 5 routes it
-    /// through `POST /api/clubs` (same signature).
+    /// A club owned by `owner`, created through `POST /api/clubs`: the slug is
+    /// `<slugified name>-<4 random characters>` and the time zone is the owner's (UTC for the
+    /// fixture users). Panics unless the request succeeds, so `owner` must be verified and
+    /// below the 10-club limit.
     pub async fn club(&self, owner: &TestClient, name: &str) -> TestClub {
-        let slug = format!("{}-{}", slugify(name), random_suffix());
-        let mut tx = self.db.begin().await.unwrap();
-        let id: i64 = sqlx::query_scalar(
-            "INSERT INTO clubs (slug, name, created_by) VALUES ($1, $2, $3) RETURNING id",
-        )
-        .bind(&slug)
-        .bind(name)
-        .bind(owner.id())
-        .fetch_one(&mut *tx)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO club_memberships (club_id, user_id, role) VALUES ($1, $2, 'owner')",
-        )
-        .bind(id)
-        .bind(owner.id())
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-        tx.commit().await.unwrap();
+        let res = owner
+            .post("/api/clubs", serde_json::json!({ "name": name }))
+            .await;
+        res.assert_status(201);
+        let body = res.json();
+        let slug = body["slug"].as_str().expect("slug").to_owned();
+        let id: i64 = sqlx::query_scalar("SELECT id FROM clubs WHERE slug = $1")
+            .bind(&slug)
+            .fetch_one(&self.db)
+            .await
+            .unwrap();
         TestClub {
             id,
             slug,
-            name: name.to_owned(),
+            name: body["name"].as_str().expect("name").to_owned(),
         }
     }
 
@@ -418,34 +409,6 @@ fn work_record(source: Source, title: &str, authors: &str) -> WorkRecord {
             .collect(),
         ..WorkRecord::new(source, title)
     }
-}
-
-fn slugify(name: &str) -> String {
-    let mut slug = String::new();
-    for c in name.to_lowercase().chars() {
-        if c.is_ascii_alphanumeric() {
-            slug.push(c);
-        } else if !slug.ends_with('-') && !slug.is_empty() {
-            slug.push('-');
-        }
-    }
-    let slug: String = slug.trim_end_matches('-').chars().take(50).collect();
-    let slug = slug.trim_end_matches('-');
-    if slug.is_empty() {
-        "club".to_owned()
-    } else {
-        slug.to_owned()
-    }
-}
-
-fn random_suffix() -> String {
-    const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
-    let mut bytes = [0u8; 4];
-    random::fill(&mut bytes);
-    bytes
-        .iter()
-        .map(|b| ALPHABET[*b as usize % ALPHABET.len()] as char)
-        .collect()
 }
 
 /// A DEV_MODE configuration plus `extra` variables (later entries win).

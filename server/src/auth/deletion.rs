@@ -83,15 +83,17 @@ pub async fn delete_account(
 /// `verified_hash` is the hash the password was checked against: a password change or reset
 /// that committed since then wins (400 `Current password is wrong`).
 ///
-/// Locks are taken in the order of every membership write (§5.3): the clubs the user owns, then
-/// the account, then the user's posts. A join through the user's invite locks the club and then
-/// needs the inviter's row for its foreign key, so locking the account first could deadlock.
+/// Locks are taken in the order of every membership write (§5.3): the clubs the user belongs to,
+/// then the account, then the user's posts. The cascade below deletes the user's memberships and
+/// removal rows and clears `created_by` on their invites; a removal, a club delete or a join in
+/// one of those clubs holds the club and then needs those rows (or the account's row for a
+/// foreign key), so locking the account first could deadlock with it.
 pub async fn delete_user(
     conn: &mut PgConnection,
     user_id: i64,
     verified_hash: &str,
 ) -> ApiResult<Vec<String>> {
-    let owned = lock_owned_clubs(conn, user_id).await?;
+    let owned = lock_clubs(conn, user_id).await?;
     // Locking the account makes every later write that references it (a new post, reaction,
     // shelf entry) wait and then fail, instead of slipping in after the deletes below.
     let current = sqlx::query_scalar!(
@@ -124,19 +126,25 @@ pub async fn delete_user(
     Ok(prefixes)
 }
 
-/// Locks the rows of the clubs the user owns, in id order like every membership write, and
-/// returns their ids.
-async fn lock_owned_clubs(conn: &mut PgConnection, user_id: i64) -> sqlx::Result<Vec<i64>> {
-    sqlx::query_scalar!(
-        "SELECT c.id FROM clubs c
-         JOIN club_memberships m ON m.club_id = c.id
-         WHERE m.user_id = $1 AND m.role = 'owner'
-         ORDER BY c.id
-         FOR UPDATE OF c",
+/// Locks the rows of every club the user belongs to, in id order like every membership write,
+/// and returns the ids of the ones the user owns.
+async fn lock_clubs(conn: &mut PgConnection, user_id: i64) -> sqlx::Result<Vec<i64>> {
+    let rows = sqlx::query!(
+        r#"SELECT c.id, m.role = 'owner' AS "owned!"
+           FROM clubs c
+           JOIN club_memberships m ON m.club_id = c.id
+           WHERE m.user_id = $1
+           ORDER BY c.id
+           FOR UPDATE OF c"#,
         user_id
     )
     .fetch_all(conn)
-    .await
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter(|row| row.owned)
+        .map(|row| row.id)
+        .collect())
 }
 
 /// Deletes the clubs the user owns alone; 409 when one has other members. `owned` are already

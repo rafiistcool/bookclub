@@ -16,3 +16,7 @@ Scope: `test_auth.py`, `test_selfhost.py`, `test_backup.py`, `test_notes_and_mee
 - `test_selfhost.py::test_backup_copies_sqlite` -> replaced: the SQLite backup CLI is gone; the operator backs up Postgres (#51), and each member downloads their own data (`tests/auth_export.rs::a_member_downloads_a_zip_of_their_data`).
 - `test_backup.py::test_backup_requires_auth` -> replaced by the personal export, which needs a session too (`tests/auth_export.rs::the_export_needs_a_session`).
 - `test_backup.py::test_backup_returns_sqlite_for_member` -> replaced: a member gets a ZIP of their own data (`data.json` plus their uploaded pictures, conventions.md §5.7), not the club's SQLite file (`tests/auth_export.rs::a_member_downloads_a_zip_of_their_data`).
+
+## Wave 1: clubs (#40)
+
+Scope: `test_members.py` (work-plan.md, Wave 1 deliverable 5). Its one test is ported with a reasoned change, so it has no line of its own here: `tests/clubs_members.rs::members_list_includes_the_caller_and_previews_reading` carries the `/// parity:` line and keeps the reading preview, while the "hide self" half is reversed on purpose (the club roster lists the caller with `you: true`, endpoint-map §3).

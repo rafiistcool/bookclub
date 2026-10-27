@@ -1,0 +1,77 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT u.id, u.username, m.role AS \"role: Role\", m.joined_at,\n                  med.public_id AS \"avatar_public_id?\"\n           FROM club_memberships m\n           JOIN users u ON u.id = m.user_id\n           LEFT JOIN media med ON med.id = u.avatar_media_id AND med.removed_at IS NULL\n           WHERE m.club_id = $1 AND ($2::int8 IS NULL OR m.user_id = $2)\n           ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, u.username",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "username",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "username"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "role: Role",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "club_memberships",
+            "name": "role"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "joined_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "club_memberships",
+            "name": "joined_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "avatar_public_id?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "public_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "dff4faa87d6762def54f3a5b7a925c23218be050d61c3a3fcc85925a9173563b"
+}

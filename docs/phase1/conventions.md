@@ -98,7 +98,7 @@ pub fn app(state: AppState) -> axum::Router {
     let (api, _) = api_router().split_for_parts();
     let (admin, _) = admin_router().split_for_parts();
     // One guard for every admin route: a handler that forgets its InstanceAdmin argument is still guarded.
-    // Applied only when `admin.has_routes()`: axum panics on a route layer over an empty router.
+    // axum panics on a route layer over an empty router; admin::invites always has routes.
     let admin = admin.route_layer(axum::middleware::from_extractor_with_state::<InstanceAdmin, AppState>(state.clone()));
     /* api.merge(admin), the SPA/404/405 fallbacks (spa::fallback, spa::method_not_allowed) and the layers of §3,
        then .with_state(state) */
@@ -451,6 +451,13 @@ pub async fn club_refs(conn: &mut PgConnection, club_ids: &[i64]) -> sqlx::Resul
   
   The deferred constraint triggers `clubs_have_owner`/`club_memberships_keep_owner` are the backstop: a transaction that would leave an existing club without an owner fails at COMMIT. Tests that create clubs with raw SQL must insert the owner row in the same transaction.
 
+  **Wave 1 step 5 implementation** (`clubs::{manage, members, invites, redeem, out}`):
+  - `clubs::lock_club(conn, club_id) -> sqlx::Result<bool>` takes the club-row lock (false: the club is gone); `clubs::member_named(conn, club_id, username)` reads a member's id and role inside the transaction. Inside the lock, a caller who is no longer a member gets 404 `No such club`.
+  - Removal: the target is looked up first (404 `No member with that name` for an unknown name or a non-member); removing yourself is 400 `Use leave to leave the club`; when the in-statement guard matches no row (an admin removing an admin or the owner) the answer is 403 `Only the club owner can do that`. A removal upserts `club_removals` (`removed_at = now()`).
+  - Role change: `{"role": "owner"}` and a target who is the owner (the caller) are 400 `Use transfer to change the owner`; any other role than `admin`/`member` is 400 `Invalid value`.
+  - Transfer to yourself is a harmless no-op (demote, then promote the same row).
+  - `PATCH /api/clubs/{slug}` and `DELETE /api/clubs/{slug}` also put the role check into the statement (`AND EXISTS (… role IN ('owner','admin'))`, resp. `role = 'owner'`); the delete runs under the club lock. 0 rows → 404 `No such club` or the 403 that applies now (`clubs::manage::refusal`).
+
 ### 5.4 Passwords
 
 - **Hashing.** The `argon2` crate (0.6) uses `Argon2id`. Production parameters are the crate default (`m = 19456 KiB, t = 2, p = 1`, OWASP).
@@ -538,13 +545,17 @@ pub async fn club_refs(conn: &mut PgConnection, club_ids: &[i64]) -> sqlx::Resul
 - **Rate limits** (§10.1): `PUT /me/email` and resend share the per-account `email_send_user` bucket (3 per hour, 429 `Slow down a little. Try again later.`). Every mail to an address (verification link, notice, reset) also counts against `email_target` (6 per day per case-folded address across all accounts); over it, the mail is silently not sent and the response is unchanged.
 - **Sign-up gate:** `SIGNUP_MODE=invite` is the Phase 1/2 default (a closed beta until #55). Sign-up then requires a valid invite: a club invite (it also joins the club) or a sign-up invite minted by an instance admin (club_id NULL). With `SIGNUP_MODE=open` a code is optional, and a given code must still be valid.
 - **Sign-up order** (`POST /api/auth/register`): body validation (400, every message in field order: username, email, password, timezone, locale) → `signup_ip.check_and_hit(ip_key)` (429; every validated attempt counts) → username taken (409) → no code in invite mode (400 `Sign-up needs an invite code right now`; a code that normalises to nothing counts as none) → hash → one transaction: insert the user (a concurrent same-name sign-up is 409 through `users_username_key`), consume the invite (400 `That invite code is not valid`), join its club, issue the verification token **or**, when a verified account holds the address, nothing; create the session; delete the caller's previous cookie session → commit → send the link or the notice → 201 `UserOut` with `Set-Cookie`. Any failure rolls the account and the invite use back.
-- **Invite seam** (`clubs::invites`, W1): `normalize_code(raw)` (whitespace and `-` removed, uppercased), `consume(conn, code, user_id) -> Option<ConsumedInvite>` (the atomic consume of §13 plus the `club_invite_uses` row) and `join(conn, &invite, club_id, user_id) -> ApiResult<()>`. `ConsumedInvite { id, club_id: Option<i64>, created_by: Option<i64>, created_at }`. Sign-up calls `join` for a club invite; Wave 1 step 5 implements it (club-row lock, the removal check against `created_at`, the 20-member limit, the membership with `invited_by`, deleting the removal row, `member_joined`) and reuses `consume`/`join` for `POST /api/invites/{code}/accept`, which checks "already in this club" before consuming. Until step 5, `join` refuses every club invite with 400 `That invite code is not valid`.
+- **Invite seam** (`clubs::invites`, W1): `normalize_code(raw)` (whitespace and `-` removed, uppercased), `consume(conn, code, user_id) -> Option<ConsumedInvite>` (the atomic consume of §13 plus the `club_invite_uses` row) and `join(conn, &invite, club_id, user_id) -> ApiResult<()>`. `ConsumedInvite { id, club_id: Option<i64>, created_by: Option<i64>, created_at }`. Sign-up calls `join` for a club invite; `POST /api/invites/{code}/accept` reuses `consume`/`join`.
+  - `join`: the club-row lock; 400 `That invite code is not valid` when the user was removed from the club at or after the invite's `created_at` (`created_at <= removed_at`); 409 `This club is full` at 20 members, counted under the lock; the membership (`role = 'member'`, `invited_by` = the invite's `created_by`; a duplicate is 409 `You are already in this club`); deleting the removal row; `member_joined` (club-scoped, actor = the new member, payload `{}`).
+  - **Lock order of a join:** the club row, then the inviter's `users` row (`FOR KEY SHARE`), then the invite row. `consume` reads the invite's `club_id` and `created_by` without a lock, takes the first two locks, and only then runs the atomic `UPDATE`. The membership's `invited_by` foreign key needs the inviter's row, and an account deletion holds that row `FOR UPDATE` before its cascade clears the invite's `created_by`; a join that held the invite row first would deadlock with it. A deleted inviter leaves `invited_by` NULL.
+  - Accept order: the invite's club is read (unknown code, or a sign-up invite: 400 `That invite code is not valid`, nothing used) → the club-row lock → "already in this club" (409 `You are already in this club`, nothing used) → `consume` (400 when revoked, expired or used up) → `join` → `ClubOut` (200).
+  - `clubs::invites::insert_invite(conn, club_id, created_by, max_uses, expires_in_days)` mints an invite under a fresh 10-character Crockford code (`new_code`, retried on a collision); `admin::invites::mint_signup_invite` and the club route use it.
 - **Before verification,** a user can log in and use everything personal, join clubs by invite, and post. Creating a club requires a verified email (`VerifiedUser`). That limits abuse once sign-up is open.
 - **Imported users** have `email` NULL. `UserOut.needs_email_prompt = email IS NULL AND email_prompt_dismissed_at IS NULL`.
 
 ### 5.6 Account deletion (`DELETE /api/auth/me`)
 
-Body `{password}`. The password is checked with `auth::account::verify_current_password` (§5.5): 400 `Current password is wrong`, which counts as a login failure (429 `Too many attempts. Wait a few minutes.` after ten). Everything below then runs in one transaction (`auth::deletion::delete_user`). **Lock order:** the rows of the clubs the user owns (in id order), then the user row, then the user's posts (in id order). That is the order of every membership write (§5.3): a join through the user's invite locks the club and then needs the inviter's row for `invited_by`, so taking the user row first would deadlock with it. After locking the user row `FOR UPDATE`, the deletion answers 400 `Current password is wrong` when the hash changed since the check. The user-row lock makes every later write that references the user (a new post, reaction or shelf entry) wait and then fail, instead of slipping in after the deletes.
+Body `{password}`. The password is checked with `auth::account::verify_current_password` (§5.5): 400 `Current password is wrong`, which counts as a login failure (429 `Too many attempts. Wait a few minutes.` after ten). Everything below then runs in one transaction (`auth::deletion::delete_user`). **Lock order:** the rows of every club the user belongs to (in id order; the ones the user owns are step 1's), then the user row, then the user's posts (in id order). That is the order of every membership write (§5.3): a join through the user's invite locks the club and then needs the inviter's row for `invited_by`, and a removal or a club delete locks the club and then the user's membership and removal rows, which the deletion's cascade deletes; taking the user row first would deadlock with them. (Wave 1 step 5 widened the lock from the owned clubs to every club of the user, for the removal and the club delete.) After locking the user row `FOR UPDATE`, the deletion answers 400 `Current password is wrong` when the hash changed since the check. The user-row lock makes every later write that references the user (a new post, reaction or shelf entry) wait and then fail, instead of slipping in after the deletes.
 
 1. **Clubs the user owns.** If any of them has other members: 409 `Transfer or delete your clubs first`. Clubs where the user is the sole member are deleted. (Each owned club row is locked first, in id order, and the members are counted in a new statement after the locks, so a concurrent join cannot slip in. A transfer that makes the user an owner between the club locks and the count is caught at COMMIT, as below. A membership write that makes the user owner of another club meanwhile is caught by the deferred `clubs_have_owner` check at COMMIT, which is also answered 409 `Transfer or delete your clubs first`.)
 2. **Posts:**
@@ -1320,10 +1331,10 @@ pub fn round_half_even(x: f64, digits: usize) -> f64;  // via format!("{:.*}") �
 - **Data-access functions** take `conn: &mut PgConnection`. Handlers open a transaction (`state.db.begin()`) for any multi-statement write and pass `&mut *tx`. Background jobs and the importer do the same.
 - **Locks**, used exactly where the specs found races:
   - `SELECT … FROM users WHERE id = $1 FOR UPDATE`: shelf add/patch/delete/import, favourites, physical layout, and the 10-club creation count
-  - `SELECT … FROM clubs WHERE id = $1 FOR UPDATE`: **every membership write** (§5.3): join and invite accept (with the 20-member count), member removal, role change, leave, transfer, club delete, and the owned-club check of account deletion
+  - `SELECT … FROM clubs WHERE id = $1 FOR UPDATE`: **every membership write** (§5.3): join and invite accept (with the 20-member count), member removal, role change, leave, transfer, club delete, and account deletion (every club of the user, before the user row; §5.6)
   - `SELECT … FROM next_up_votes WHERE id = $1 FOR UPDATE`: nominate, cast, apply, auto-close
 - **Concurrency outcomes** come from atomic statements:
-  - invite consume: `UPDATE club_invites SET use_count = use_count + 1 WHERE code = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now()) AND (max_uses IS NULL OR use_count < max_uses) RETURNING …` (link invites have `max_uses` NULL)
+  - invite consume: `UPDATE club_invites SET use_count = use_count + 1 WHERE code = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now()) AND (max_uses IS NULL OR use_count < max_uses) RETURNING …` (link invites have `max_uses` NULL), after the club-row lock and the inviter's row lock (`FOR KEY SHARE`), in that order (§5.5 "Lock order of a join")
   - first cover upload: `UPDATE … SET cover_media_id = $1 WHERE id = $2 AND cover_media_id IS NULL RETURNING` (through `ingest::set_cover`)
   - reaction toggle: `DELETE … RETURNING`, then `INSERT … ON CONFLICT DO NOTHING`
   - ballot: `INSERT … ON CONFLICT … DO UPDATE … RETURNING (xmax = 0) AS inserted`
@@ -1432,8 +1443,8 @@ impl TestApp {
                                                                      // (session row created directly: no limits)
     pub async fn user_unverified(&self, username: &str) -> TestClient;
     pub async fn admin(&self, username: &str) -> TestClient;         // is_admin
-    pub async fn club(&self, owner: &TestClient, name: &str) -> TestClub;            // via POST /api/clubs (step 5;
-                                                                     // W1 step 3 inserts club + owner row directly)
+    pub async fn club(&self, owner: &TestClient, name: &str) -> TestClub;            // via POST /api/clubs: the owner must
+                                                                     // be verified and below the 10-club limit
     pub async fn join(&self, club: &TestClub, who: &TestClient, role: &str);       // direct insert ("admin"|"member")
     pub async fn work(&self, title: &str) -> TestWork;               // ingest::upsert_work (source user, no authors)
     pub async fn ol_work(&self, ol_id: &str, title: &str, authors: &str) -> TestWork;
@@ -1527,6 +1538,8 @@ pub struct Viewers {
 }
 ```
 
+**`tests/common/routes.rs`** lists the documented operations for the route-wide guards (§17.7): `operations() -> Vec<Operation>` (from `bookclub_server::openapi()`), `find(&Method, path)`, and `outcome(&TestResponse) -> (u16, Value)` (the body as JSON, `null` when it is not). `Operation { method, path, params: Vec<(name, is_integer)>, has_body, tag }` has `label()` (`"GET /api/clubs"`), `fill(|name, is_integer| value)`, `fill_dummy(slug)` (§17.7's dummy values) and `send(&client, path, &body)` (the body as JSON when the operation takes one).
+
 `audience()` (`[&co_member]`) and `strangers()` (`[&other_club, &stranger, &former]`) list the viewers; `assert_hidden_like_unknown(viewer, |name| path, "owner")` asserts that a stranger's answer is a 404 identical to the one for the unknown name `visibility::UNKNOWN`. Paths use the usernames (`?username=owner`), code uses the fields (`v.co_member`). `tests/harness.rs` tests the harness itself.
 
 ### 17.3 Faking outbound HTTP
@@ -1560,6 +1573,11 @@ They walk the OpenAPI document (`bookclub_server::openapi()`), fill path paramet
 - `tests/auth_required.rs`: an anonymous caller gets **401** on every operation except the public allow-list: `GET /api/health`, `GET /api/config`, `GET /api/openapi.json`, `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/auth/tokens`, `POST /api/auth/verify-email`, `POST /api/auth/password-reset`, `POST /api/auth/password-reset/confirm`, `GET /api/invites/{code}`, `GET /media/{public_id}/{variant}`.
 - `tests/admin_guard.rs`: a signed-in non-admin gets **404 `Not found`** on every `/api/admin/*` operation.
 - `tests/clubs_non_member.rs`: a signed-in non-member gets **404 `No such club`** on every `/api/clubs/{slug}/…` operation. It also seeds, in club A, a pick, a club post and a reply, and as a member of club B and as a clubless user calls every `/api/posts/{post_id}…` operation on them (404 `No entry with that id`), `POST /api/books/works/{work_id}/posts` with `parent_id` = the club post (400 `That entry is not on this book`) and `GET /api/diary?club=<A>` (404 `No such club`), and checks that `GET /api/books/works/{work_id}/posts`, `GET /api/diary` and `GET /api/activity` contain none of club A's post or event ids. Until POSTS and CLUB merge, those routes are absent from the document and the walker skips them.
+
+Details of the W1 implementation:
+- Each walker asserts that the W1 operations it guards are in the walk, so it can never pass vacuously. `auth_required.rs` also asserts that every allow-listed operation that exists answers an anonymous caller with something other than 401, and that a dead session cookie gets the same 401 as no cookie. `admin_guard.rs` walks as a club owner and as an unverified user and checks that nothing was written; a positive control shows an instance admin passing.
+- `clubs_non_member.rs` walks as a member of another club and as a clubless user, with club A's real slug and with an unknown slug, filling `{username}` with a real member of A, `{invite_id}` with a real invite of A and every other parameter with the dummies. Every request carries a body that would act if a guard were missing (`{"name", "timezone", "role", "username": <caller>, "kind": "link"}`; unknown keys are ignored), and a snapshot of club A must be unchanged afterwards.
+- For the `/api/posts/{post_id}…` operations the body is `{"body": "…", "emoji": "❤️"}`, so a handler that validates before it checks access (§4.2) still reaches the visibility check. The feed checks have positive controls: a member of club A sees A's post in the work thread and in `GET /api/diary` (`items[*].entry.id`) and A's events in `GET /api/activity` (`items[*].id`); the work thread's ids are `items[*].id` and `items[*].replies[*].id`. The seeded rows (a pick, a club post, a reply by another member, a `pick_set` and a `note_posted` event) are also checked against `bc_can_see_post` directly, so the test means something before POSTS and CLUB merge.
 
 ### 17.8 Required checks before merge (every package)
 

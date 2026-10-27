@@ -146,15 +146,12 @@ pub fn app(state: AppState) -> Router {
     let (api, _) = api_router().split_for_parts();
     let (admin, _) = admin_router().split_for_parts();
     // One guard for every admin route: a handler that forgets its InstanceAdmin argument is
-    // still guarded. (axum panics on a route layer over no routes, as before Wave 1 step 4.)
-    let admin = if admin.has_routes() {
-        admin.route_layer(middleware::from_extractor_with_state::<
-            InstanceAdmin,
-            AppState,
-        >(state.clone()))
-    } else {
-        admin
-    };
+    // still guarded. (`admin::invites` always has routes; axum panics on a route layer over an
+    // empty router.)
+    let admin = admin.route_layer(middleware::from_extractor_with_state::<
+        InstanceAdmin,
+        AppState,
+    >(state.clone()));
 
     // Layers run outermost-last: the last `.layer` call wraps all the others.
     let mut router = api

@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT c.slug AS \"slug?\", c.name AS \"name?\"\n           FROM club_invites i\n           LEFT JOIN clubs c ON c.id = i.club_id\n           WHERE i.code = $1 AND i.revoked_at IS NULL\n             AND (i.expires_at IS NULL OR i.expires_at > now())\n             AND (i.max_uses IS NULL OR i.use_count < i.max_uses)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "slug?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "clubs",
+            "name": "slug"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "clubs",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "3d2bd904a8a1660bb2f0a06eac555730c0eb4fd37b6423b986c0840fc36b733d"
+}

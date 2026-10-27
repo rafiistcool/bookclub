@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT club_id, created_by FROM club_invites WHERE code = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "club_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "club_invites",
+            "name": "club_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "created_by",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "club_invites",
+            "name": "created_by"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "78f343908d28c8e17eb05b6acb3bbc6d9d224d1d28d3fc1f085d165ea40e5828"
+}

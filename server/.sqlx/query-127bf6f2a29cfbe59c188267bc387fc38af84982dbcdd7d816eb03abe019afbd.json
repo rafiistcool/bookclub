@@ -1,0 +1,120 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT c.slug, c.name, c.timezone, c.created_at, m.role AS \"role: Role\",\n                  (SELECT count(*) FROM club_memberships x WHERE x.club_id = c.id) AS \"member_count!\",\n                  p.id AS \"pick_id?\", p.work_id AS \"pick_work_id?\", p.meeting_at AS \"meeting_at?\"\n           FROM club_memberships m\n           JOIN clubs c ON c.id = m.club_id\n           LEFT JOIN club_picks p ON p.club_id = c.id AND p.ended_at IS NULL\n           WHERE m.user_id = $1 AND ($2::int8 IS NULL OR c.id = $2)\n           ORDER BY m.joined_at DESC, c.id DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "slug",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "clubs",
+            "name": "slug"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "clubs",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "timezone",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "clubs",
+            "name": "timezone"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "clubs",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "role: Role",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "club_memberships",
+            "name": "role"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "member_count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "pick_id?",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "club_picks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "pick_work_id?",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "club_picks",
+            "name": "work_id"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "meeting_at?",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "club_picks",
+            "name": "meeting_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      null,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "127bf6f2a29cfbe59c188267bc387fc38af84982dbcdd7d816eb03abe019afbd"
+}

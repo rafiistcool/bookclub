@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO club_memberships (club_id, user_id, role, invited_by)\n         VALUES ($1, $2, 'member', $3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e9bff8df0a45f612a251074e4dc6057850e95953af2f8d268c1b25c03d0d8531"
+}

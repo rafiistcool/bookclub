@@ -46,6 +46,7 @@ Dev servers:
   - On the `agents` VM, also set `PUBLIC_URL` to the origin the browser uses. `PUBLIC_URL` is the origin the origin check allows and the email links use. In DEV_MODE it defaults to `http://localhost:5173`, so without it every cookie-authenticated write after login gets 403 `Cross-site request refused`.
   - Server opened directly (with `STATIC_DIR` set to a built SPA): `BIND_ADDR=0.0.0.0:8080 PUBLIC_URL=http://agents.lan:8080`, then open `http://agents.lan:8080`.
   - Behind Vite, which forwards the browser's `Origin` unchanged: `PUBLIC_URL=http://agents.lan:5173`.
+  - Sign-up needs an invite unless `SIGNUP_MODE=open`. For the first account, `DEV_MODE=true cargo run -- beta-invite` (the same environment as the server) prints a sign-up invite code and its join link (single-use, 30 days; `--uses N --days D` change that). `DEV_MODE=true cargo run -- make-admin <username>` makes an instance admin, who can mint more under `/api/admin/invites`.
 
 Vite on `:5173` proxies `/api` to `127.0.0.1:8000`. On the `agents` VM, add `-- --host` to the Vite command and open `http://agents.lan:5173`. The backend can stay on 127.0.0.1. First login on an empty DB uses invite `DEV-ONLY`, which needs `DEBUG=1`.
 

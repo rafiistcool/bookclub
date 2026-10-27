@@ -3,6 +3,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use bookclub_server::clubs::out::invite_out;
 use bookclub_server::config::Config;
 use bookclub_server::importer::{self, ImportError};
 use bookclub_server::{AppState, admin, app, jobs};
@@ -217,9 +218,19 @@ async fn make_admin(username: &str) -> Result<()> {
     }
 }
 
-/// TODO(Wave 1 step 5): mint the invite through `admin::invites` and print its join link.
-async fn beta_invite(_uses: Option<i32>, _days: Option<i32>) -> Result<()> {
-    anyhow::bail!("beta-invite is not implemented yet")
+/// Mints a closed-beta sign-up invite (no club) and prints its code and join link. Without
+/// flags it is single-use and expires in 30 days.
+async fn beta_invite(uses: Option<i32>, days: Option<i32>) -> Result<()> {
+    let config = Config::from_env()?;
+    let db = connect(&config).await?;
+    let mut conn = db.acquire().await?;
+    let id = admin::invites::mint_signup_invite(&mut conn, None, uses, days).await?;
+    let invite = invite_out(&mut conn, &config, None, id)
+        .await
+        .map_err(|error| anyhow::anyhow!("cannot read the new invite: {}", error.detail))?;
+    println!("{}", invite.code);
+    println!("{}", invite.url);
+    Ok(())
 }
 
 fn print_openapi() -> Result<()> {

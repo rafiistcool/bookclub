@@ -655,38 +655,97 @@ async fn registering_while_signed_in_switches_the_session(db: PgPool) {
     );
 }
 
-/// Wave 1 step 3 seam (`clubs::invites::join` is a stub): a club invite is refused and the
-/// whole sign-up rolls back. Step 5 implements the join and replaces this test with the
-/// club-invite sign-up tests (membership, `member_joined`, the 20-member limit).
+/// A club invite creates the account and the membership in one transaction: the new member is
+/// `invited_by` the invite's creator, the use is logged, and the club records `member_joined`.
 #[sqlx::test]
-async fn a_refused_club_join_rolls_the_sign_up_back(db: PgPool) {
+async fn a_club_invite_signs_up_and_joins_the_club(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let owner = app.user("owner").await;
+    let club = app.club(&owner, "Readers").await;
+    let invite = owner
+        .post(
+            &format!("/api/clubs/{}/invites", club.slug),
+            json!({"kind": "single_use"}),
+        )
+        .await;
+    invite.assert_status(201);
+    let code = invite.json()["code"].as_str().unwrap().to_owned();
+
+    let res = app
+        .anon()
+        .post("/api/auth/register", body("ada", &code.to_lowercase()))
+        .await;
+    res.assert_status(201);
+    assert_eq!(
+        res.json()["clubs"],
+        json!([{"slug": club.slug, "name": "Readers", "role": "member", "timezone": "UTC", "member_count": 2}])
+    );
+    let ada = res.json()["id"].as_i64().unwrap();
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM club_memberships
+             WHERE club_id = {} AND user_id = {ada} AND role = 'member' AND invited_by = {}",
+            club.id,
+            owner.id()
+        ))
+        .await,
+        1
+    );
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM events
+             WHERE club_id = {} AND actor_id = {ada} AND kind = 'member_joined' AND payload = '{{}}'",
+            club.id
+        ))
+        .await,
+        1
+    );
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM club_invite_uses u JOIN club_invites i ON i.id = u.invite_id
+             WHERE i.code = '{code}' AND i.use_count = 1 AND u.user_id = {ada}"
+        ))
+        .await,
+        1
+    );
+}
+
+/// A full club refuses a sign-up with its invite: 409, and the account, the session and the
+/// invite use are rolled back.
+#[sqlx::test]
+async fn a_full_club_rolls_the_sign_up_back(db: PgPool) {
     let app = TestApp::new(db).await;
     let owner = app.user("owner").await;
     let club = app.club(&owner, "Readers").await;
     app.exec(&format!(
-        "INSERT INTO club_invites (club_id, code, created_by, max_uses, expires_at)
-         VALUES ({}, 'CLUBCODE', {}, 1, now() + interval '30 days')",
+        "WITH extra AS (
+             INSERT INTO users (username, password_hash)
+             SELECT 'member' || n, 'x' FROM generate_series(1, 19) AS n
+             RETURNING id
+         )
+         INSERT INTO club_memberships (club_id, user_id, role) SELECT {}, id, 'member' FROM extra;
+         INSERT INTO club_invites (club_id, code, created_by, expires_at)
+         VALUES ({}, 'CLUBLINK', {}, now() + interval '7 days')",
+        club.id,
         club.id,
         owner.id()
     ))
     .await;
     app.anon()
-        .post("/api/auth/register", body("ada", "CLUBCODE"))
+        .post("/api/auth/register", body("ada", "CLUBLINK"))
         .await
-        .assert_detail(400, "That invite code is not valid");
-    assert_eq!(
-        app.scalar_i64("SELECT count(*) FROM users WHERE username = 'ada'")
-            .await,
-        0
-    );
-    assert_eq!(
-        app.scalar_i64("SELECT use_count::bigint FROM club_invites WHERE code = 'CLUBCODE'")
-            .await,
-        0
-    );
-    assert_eq!(
-        app.scalar_i64("SELECT count(*) FROM club_invite_uses")
-            .await,
-        0
-    );
+        .assert_detail(409, "This club is full");
+    for (sql, expected) in [
+        ("SELECT count(*) FROM users WHERE username = 'ada'", 0),
+        ("SELECT count(*) FROM sessions", 1),
+        ("SELECT count(*) FROM email_tokens", 0),
+        (
+            "SELECT use_count::bigint FROM club_invites WHERE code = 'CLUBLINK'",
+            0,
+        ),
+        ("SELECT count(*) FROM club_invite_uses", 0),
+        ("SELECT count(*) FROM events", 0),
+    ] {
+        assert_eq!(app.scalar_i64(sql).await, expected, "{sql}");
+    }
 }

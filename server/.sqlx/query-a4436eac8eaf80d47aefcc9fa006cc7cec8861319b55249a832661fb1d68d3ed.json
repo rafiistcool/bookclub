@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM club_memberships\n         WHERE club_id = $1 AND user_id = $2\n           AND CASE WHEN $3 THEN role <> 'owner' ELSE role = 'member' END",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a4436eac8eaf80d47aefcc9fa006cc7cec8861319b55249a832661fb1d68d3ed"
+}

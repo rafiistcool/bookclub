@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT club_id FROM club_invites WHERE code = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "club_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "club_invites",
+            "name": "club_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "50b1ebfcd7874f0fdf2d94310ba80b206e1c5b7540225148beb44d0eeddc2bf9"
+}

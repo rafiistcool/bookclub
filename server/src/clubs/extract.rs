@@ -130,31 +130,76 @@ impl FromRequestParts<AppState> for ClubOwner {
 
 /// The caller's membership of the club with this slug. 404 `No such club` for an unknown slug or
 /// a non-member. Also for `?club=<slug>` query parameters, which `RawPathParams` cannot read.
-/// Wave 1 step 4 implements it.
 pub async fn member_by_slug(
-    _conn: &mut PgConnection,
-    _user: &CurrentUser,
-    _slug: &str,
+    conn: &mut PgConnection,
+    user: &CurrentUser,
+    slug: &str,
 ) -> ApiResult<ClubMember> {
-    Err(AppError::not_found(msg::NO_SUCH_CLUB))
+    if slug.contains('\0') {
+        return Err(AppError::not_found(msg::NO_SUCH_CLUB));
+    }
+    let row = sqlx::query!(
+        r#"SELECT c.id, c.slug, c.name, c.timezone, m.role AS "role: Role"
+           FROM clubs c
+           JOIN club_memberships m ON m.club_id = c.id AND m.user_id = $2
+           WHERE c.slug = $1"#,
+        slug,
+        user.id
+    )
+    .fetch_optional(conn)
+    .await?
+    .ok_or_else(|| AppError::not_found(msg::NO_SUCH_CLUB))?;
+    Ok(ClubMember {
+        user: user.clone(),
+        club: ClubCtx {
+            id: row.id,
+            slug: row.slug,
+            name: row.name,
+            timezone: row.timezone,
+        },
+        role: row.role,
+    })
 }
 
 /// The user's role in a club, `None` for a non-member: for club rows reached by a global id.
-/// Wave 1 step 4 implements it.
 pub async fn role_in(
-    _conn: &mut PgConnection,
-    _user_id: i64,
-    _club_id: i64,
+    conn: &mut PgConnection,
+    user_id: i64,
+    club_id: i64,
 ) -> sqlx::Result<Option<Role>> {
-    Ok(None)
+    sqlx::query_scalar!(
+        r#"SELECT role AS "role: Role" FROM club_memberships WHERE club_id = $1 AND user_id = $2"#,
+        club_id,
+        user_id
+    )
+    .fetch_optional(conn)
+    .await
 }
 
-/// The `ClubRef` (slug, name) of each club id, for DTO annotation. Wave 1 step 4 implements it.
+/// The `ClubRef` (slug, name) of each existing club id, for DTO annotation. Callers pass ids of
+/// rows the viewer may already see; this loader checks nothing.
 pub async fn club_refs(
-    _conn: &mut PgConnection,
-    _club_ids: &[i64],
+    conn: &mut PgConnection,
+    club_ids: &[i64],
 ) -> sqlx::Result<HashMap<i64, ClubRef>> {
-    Ok(HashMap::new())
+    let rows = sqlx::query!(
+        "SELECT id, slug, name FROM clubs WHERE id = ANY($1)",
+        club_ids
+    )
+    .fetch_all(conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            (
+                row.id,
+                ClubRef {
+                    slug: row.slug,
+                    name: row.name,
+                },
+            )
+        })
+        .collect())
 }
 
 #[cfg(test)]
