@@ -6,21 +6,31 @@ Bookclub is a self-hosted, invite-only book club for 2–5 people. A FastAPI bac
 
 **In transition:** Bookclub is becoming a hosted multi-club service with a Rust server in `server/` and Postgres. `docs/plan.md` records the decisions, and Forgejo issues #36–#67 track the work. Until the cutover (#52), `backend/` is still what runs in production. Port its behaviour; don't extend it.
 
+**Phase 1 design:** `docs/phase1/` holds the binding design for `server/`: `conventions.md` (architecture, frozen interfaces, coding rules), `endpoint-map.md` (routes, owners, shared DTOs, error strings), `legacy-mapping.md` (importer), `work-plan.md` (waves, packages, file ownership) and `spec/` (behaviour of the Python app per area). The schema is `server/migrations/0001_init.sql`.
+
 ## Commands
 
 Setup:
 
 - Backend: `cd backend && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"`. Python 3.12+ is required. If the system Python has no `venv` module (as on the `agents` VM), create the venv with `mise exec python@3.12 -- python -m venv .venv`.
 - Frontend: `cd frontend && npm ci` (Node 20+, CI uses 22).
-- Server (Rust, stable toolchain): start Postgres with `docker compose -f server/compose.yaml up -d --wait` and `export DATABASE_URL=postgres://bookclub:bookclub@127.0.0.1:5432/bookclub`. The tests need it: `#[sqlx::test]` creates a throwaway database per test on that server.
+- Server (Rust, stable toolchain): start Postgres with `docker compose -f server/compose.yaml up -d --wait` and `export DATABASE_URL=postgres://bookclub:bookclub@127.0.0.1:5432/bookclub`. Install sqlx-cli once (`cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --features rustls,postgres`), then `cd server && cargo sqlx migrate run`: the `query!` macros check against the live schema at compile time. The tests need the server too: `#[sqlx::test]` creates a throwaway database per test on it.
+
+Server worktrees (Phase 1 Wave 2, `work-plan.md` ground rule 5):
+
+- `#[sqlx::test]` names its databases after the test path only, so two worktrees on one Postgres server drop each other's databases. Each worktree runs its own server: `docker run -d --name bookclub-pg-<pkg> -p 127.0.0.1:<port>:5432 -e POSTGRES_USER=bookclub -e POSTGRES_PASSWORD=bookclub -e POSTGRES_DB=bookclub postgres:17 -c max_connections=200 -c shared_buffers=64MB`, with `DATABASE_URL` on that port. Ports: CAT 5441, HAR 5442, MED 5443, SHELF 5444, POSTS 5445, CLUB 5446, IMP 5447, OAPI 5448, PAR 5449; the integrator, W1 and FE use the compose server on 5432. `docker rm -f bookclub-pg-<pkg>` after the merge.
+- Worktrees live next to the repo (`git worktree add ../bookclub-<pkg> -b phase1/<pkg> phase-1`), never under `/tmp`.
+- At most 3 worktrees build or test at once, each with `CARGO_BUILD_JOBS=2` (the VM has 6 CPUs and 7.8 GiB RAM, no swap).
 
 Checks (CI runs all of them). The Python backend and the frontend have no linter or formatter. The server uses rustfmt and clippy with warnings as errors:
 
 ```bash
 cd backend && .venv/bin/python -m pytest -q
 cd frontend && npm run typecheck && npm test && npm run build
-cd server && cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked
+cd server && cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked && cargo sqlx prepare --check -- --all-targets
 ```
+
+After adding or changing a `query!` macro, run `cargo sqlx prepare -- --all-targets` in `server/` and commit `server/.sqlx/`. With `SQLX_OFFLINE=true` (set in the Dockerfile) the server builds from that data without a database.
 
 Run a single test:
 
@@ -32,7 +42,7 @@ Dev servers:
 
 - Backend: `cd backend && .venv/bin/uvicorn app.main:app --reload --port 8000`
 - Frontend: `cd frontend && npm run dev`
-- Server: `cd server && cargo run`. It listens on `127.0.0.1:8080` (`BIND_ADDR` overrides) and serves `GET /api/health`. Image: `docker build -t bookclub-server server`.
+- Server: `cd server && DEV_MODE=true cargo run`. It applies migrations at startup and listens on `127.0.0.1:8080` (`BIND_ADDR` overrides; on the `agents` VM use `BIND_ADDR=0.0.0.0:8080` and open `http://agents.lan:8080`). Without `DEV_MODE` it needs `PUBLIC_URL`, `TRUSTED_PROXIES`, `CONTACT_EMAIL`, `SMTP_URL` and `EMAIL_FROM` (all variables: `conventions.md` §11). `cargo run -- openapi` prints the OpenAPI document without a database; `cargo run -- --help` lists the other commands. Image: `docker build -t bookclub-server server`.
 
 Vite on `:5173` proxies `/api` to `127.0.0.1:8000`. On the `agents` VM, add `-- --host` to the Vite command and open `http://agents.lan:5173`. The backend can stay on 127.0.0.1. First login on an empty DB uses invite `DEV-ONLY`, which needs `DEBUG=1`.
 
@@ -88,11 +98,11 @@ The editorial-redesign merge (PR #3) removed the service worker (`frontend/publi
 ## Cross-cutting rules enforced by tests
 
 - **UI copy:** every string goes into both `i18n/en.json` and `i18n/de.json`. `i18n/messages.test.ts` requires identical keys and `{placeholders}` in both. Web Push copy lives in `backend/app/i18n.py`.
-- **API errors:** the backend returns English `detail` strings, and `frontend/src/i18n/apiErrors.ts` maps exact strings to i18n keys. If you change a mapped backend message, update the mapping too. `backend/tests/test_api_error_copy.py` fails if a mapped string no longer appears in `backend/app`.
+- **API errors:** the backend returns English `detail` strings, and `frontend/src/i18n/apiErrors.ts` maps exact strings to i18n keys. If you change a mapped backend message, update the mapping too. `backend/tests/test_api_error_copy.py` fails if a mapped string no longer appears in `backend/app`, and `server/tests/api_error_copy.rs` if it no longer appears as a string literal in `server/src` (shared strings are `error::msg` constants).
 - **Backend test isolation:** each test that uses the `client` fixture (`tests/conftest.py`) gets a fresh app and a temp DB. Outbound HTTP is faked by monkeypatching `httpx.AsyncClient` on the module under test, and the fixture resets the module-level caches and rate limits. A new module-level cache needs a reset in that fixture.
 - **Dependencies:** the Docker image installs from `backend/requirements.txt`, while local setup and CI install from `pyproject.toml`. Add a new runtime dependency to both files. No test catches a dependency missing from `requirements.txt`: CI stays green, and the image only breaks when it is built on a release tag.
 
 ## CI and releases
 
-- `.forgejo/workflows/` runs on the self-hosted Forgejo runner and is the active CI. Its `server` job reaches the Postgres service by the hostname `postgres`. The GitHub copy uses `localhost` with a port mapping. `.github/workflows/` is disabled on GitHub; keep it roughly in sync but don't rely on it.
+- `.forgejo/workflows/` runs on the self-hosted Forgejo runner and is the active CI. Its `server` job reaches the Postgres service by the hostname `postgres`; it installs sqlx-cli, runs `cargo sqlx migrate run` before compiling, and checks `server/.sqlx/` with `cargo sqlx prepare --check`. The GitHub copy uses `localhost` with a port mapping. `.github/workflows/` is disabled on GitHub; keep it roughly in sync but don't rely on it.
 - To release, push a `vX.Y.Z` tag to Forgejo. The release workflow pushes an amd64 image to the `git.tillhome.de` registry. Older releases are still on GHCR, which no longer receives new versions.
