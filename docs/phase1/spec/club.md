@@ -9,7 +9,7 @@ Sources read in full:
 - frontend: `frontend/src/api/client.ts`, `types.ts`, `i18n/apiErrors.ts`, `shelf.ts`
 - Forgejo issues #40 and #45
 
-Behaviour marked **(probed)** was confirmed by running the Python app (FastAPI 0.162, Starlette 1.10, pydantic 2.14, SQLAlchemy 2.1, Python 3.12) against a scratch SQLite database. The probe scripts are in `scratchpad/probe/club/`.
+Behaviour marked **(probed)** was confirmed by running the Python app (FastAPI 0.162, Starlette 1.10, pydantic 2.14, SQLAlchemy 2.1, Python 3.12) against a scratch SQLite database. The probe scripts were throwaway session files and are not in the repo.
 
 Which endpoints the current SPA still calls (`api/client.ts`):
 - **Used:** `GET/PUT/DELETE /api/pick`, `GET /api/pick/history`, `GET /api/overlap`, `GET /api/vote`, `POST /api/vote/nominations`, `POST /api/vote/cast`, `POST /api/vote/apply`.

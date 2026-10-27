@@ -8,7 +8,7 @@
 - Frontend: `frontend/src/{api/client.ts,types.ts,diary.ts,i18n/apiErrors.ts,i18n/dates.ts}`.
 - Plan: `plan.md`, `phase1-issues.md`, and the bodies of Forgejo #37, #44, #45 and #46.
 
-Behaviour marked **(probed)** was confirmed by running the Python app against a scratch database, not only read from the source. The app ran on FastAPI 0.162, pydantic 2.14, SQLModel 0.0.48 and Starlette 1.10. The probe scripts are in `scratchpad/probe/diary/`.
+Behaviour marked **(probed)** was confirmed by running the Python app against a scratch database, not only read from the source. The app ran on FastAPI 0.162, pydantic 2.14, SQLModel 0.0.48 and Starlette 1.10. The probe scripts were throwaway session files and are not in the repo.
 
 **Frontend status (important for #48).** Only the diary and search history have a UI today.
 - The editorial-redesign merge (`273f7c0`, PR #3) removed every frontend call to `/api/quotes`, `/api/stats` and `/api/pick/{id}/milestones`.

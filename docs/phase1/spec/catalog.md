@@ -9,8 +9,8 @@ the validation handler in `backend/app/main.py`, and the tests `test_search.py`,
 `test_local_reads.py`. Frontend callers checked: `frontend/src/api/client.ts`, `constants.ts`,
 `components/BookCover.vue`, `pages/DiscoverPage.vue`, `pages/BookDetailPage.vue`, `i18n/apiErrors.ts`.
 
-Behaviour marked **(verified)** was confirmed by running the Python app with a faked `httpx` client
-(probe scripts in the scratchpad `probe/` directory), not only by reading code.
+Behaviour marked **(verified)** was confirmed by running the Python app with a faked `httpx` client,
+not only by reading code. The probe scripts were throwaway session files and are not in the repo.
 
 Google Books code paths (`googlebooks.py`, `fetch_google_catalog`, `_load_google_catalog`,
 `_import_google_details`, `_refresh_google_catalog`, the Google branch of `/isbn`) are **not** ported. They are

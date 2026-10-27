@@ -42,7 +42,10 @@ Dev servers:
 
 - Backend: `cd backend && .venv/bin/uvicorn app.main:app --reload --port 8000`
 - Frontend: `cd frontend && npm run dev`
-- Server: `cd server && DEV_MODE=true cargo run`. It applies migrations at startup and listens on `127.0.0.1:8080` (`BIND_ADDR` overrides; on the `agents` VM use `BIND_ADDR=0.0.0.0:8080` and open `http://agents.lan:8080`). Without `DEV_MODE` it needs `PUBLIC_URL`, `TRUSTED_PROXIES`, `CONTACT_EMAIL`, `SMTP_URL` and `EMAIL_FROM` (all variables: `conventions.md` §11). `cargo run -- openapi` prints the OpenAPI document without a database; `cargo run -- --help` lists the other commands. Image: `docker build -t bookclub-server server`.
+- Server: `cd server && DEV_MODE=true cargo run`. It applies migrations at startup and listens on `127.0.0.1:8080` (`BIND_ADDR` overrides). Without `DEV_MODE` it needs `PUBLIC_URL`, `TRUSTED_PROXIES`, `CONTACT_EMAIL`, `SMTP_URL` and `EMAIL_FROM` (all variables: `conventions.md` §11). `cargo run -- openapi` prints the OpenAPI document without a database; `cargo run -- --help` lists the other commands. Image: `docker build -t bookclub-server server`.
+  - On the `agents` VM, also set `PUBLIC_URL` to the origin the browser uses. `PUBLIC_URL` is the origin the origin check allows and the email links use. In DEV_MODE it defaults to `http://localhost:5173`, so without it every cookie-authenticated write after login gets 403 `Cross-site request refused`.
+  - Server opened directly (with `STATIC_DIR` set to a built SPA): `BIND_ADDR=0.0.0.0:8080 PUBLIC_URL=http://agents.lan:8080`, then open `http://agents.lan:8080`.
+  - Behind Vite, which forwards the browser's `Origin` unchanged: `PUBLIC_URL=http://agents.lan:5173`.
 
 Vite on `:5173` proxies `/api` to `127.0.0.1:8000`. On the `agents` VM, add `-- --host` to the Vite command and open `http://agents.lan:5173`. The backend can stay on 127.0.0.1. First login on an empty DB uses invite `DEV-ONLY`, which needs `DEBUG=1`.
 

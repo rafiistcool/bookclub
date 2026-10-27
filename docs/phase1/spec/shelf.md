@@ -9,7 +9,7 @@ Python sources:
 - Schemas in `backend/app/schemas.py`: `ShelfAddIn`, `ShelfPatchIn`, `ShelfItemOut`, `ShelfListOut`, `BookOut`, `UserOut`, `FavoriteOut`, `FavoritesIn`, `FavoritesOut`, `PhysicalSpine`, `PhysicalDecoration`, `PhysicalShelfLayout`, `SpineColorsOut`, `GoodreadsSkipOut`, `GoodreadsImportOut`
 - Helpers in `backend/app/serialize.py`, `covers.py`, `works.py`, `timezone.py`, `activity.py`
 
-Behaviour marked **(probed)** was confirmed by running the Python app on 2026-10-27, with scratch scripts under `scratchpad/probe/`.
+Behaviour marked **(probed)** was confirmed by running the Python app on 2026-10-27. The probe scripts were throwaway session files and are not in the repo.
 
 ---
 
