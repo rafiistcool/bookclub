@@ -252,3 +252,49 @@ async fn shutdown_signal() {
     }
     tracing::info!("shutting down");
 }
+
+#[cfg(test)]
+mod tests {
+    use clap::CommandFactory;
+
+    use super::*;
+
+    /// clap checks a subcommand's arguments only when that subcommand is parsed; this checks
+    /// all of them, including the flags IMP adds to the flattened importer arguments.
+    #[test]
+    fn the_cli_is_valid() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn import_legacy_reads_its_flags() {
+        let cli = Cli::try_parse_from([
+            "bookclub-server",
+            "import-legacy",
+            "old/bookclub.db",
+            "--owner",
+            "ada",
+            "--club-name",
+            "Thursday Readers",
+            "--timezone",
+            "Europe/Berlin",
+            "--dry-run",
+            "--allow-unmatched",
+        ])
+        .unwrap();
+        let Some(Command::ImportLegacy(args)) = cli.command else {
+            panic!("not import-legacy");
+        };
+        assert_eq!(args.source, std::path::PathBuf::from("old/bookclub.db"));
+        assert_eq!(args.owner, "ada");
+        assert_eq!(args.club_name, "Thursday Readers");
+        assert_eq!(args.timezone, "Europe/Berlin");
+        assert_eq!(args.club_slug, None);
+        assert!(args.dry_run && args.allow_unmatched && !args.offline);
+
+        let cli = Cli::try_parse_from(["bookclub-server", "rematch-legacy", "--dry-run"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::RematchLegacy(args)) if args.dry_run));
+        let cli = Cli::try_parse_from(["bookclub-server"]).unwrap();
+        assert!(cli.command.is_none());
+    }
+}

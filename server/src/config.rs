@@ -77,7 +77,7 @@ pub struct Config {
     pub static_dir: Option<PathBuf>,
     /// Root of the filesystem media store (`MEDIA_DIR`, default `./data/media`).
     pub media_dir: PathBuf,
-    /// `EMAIL_TRANSPORT`: `log` (default in DEV_MODE) or `smtp`.
+    /// `EMAIL_TRANSPORT`: `log` (DEV_MODE only, and its default) or `smtp`.
     pub email_transport: EmailTransport,
     /// `SMTP_URL`, required for the smtp transport.
     pub smtp_url: Option<String>,
@@ -167,7 +167,10 @@ impl Config {
         let email_transport = match get("EMAIL_TRANSPORT").as_deref() {
             None if dev_mode => EmailTransport::Log,
             None | Some("smtp") => EmailTransport::Smtp,
-            Some("log") => EmailTransport::Log,
+            Some("log") if dev_mode => EmailTransport::Log,
+            Some("log") => bail!(
+                "EMAIL_TRANSPORT=log needs DEV_MODE=true: it writes every mail, password reset links included, to the log"
+            ),
             Some(other) => bail!("EMAIL_TRANSPORT must be log or smtp, not {other:?}"),
         };
         let smtp_url = get("SMTP_URL");
@@ -459,6 +462,19 @@ mod tests {
             let error = Config::from_lookup(lookup_from(&pairs)).unwrap_err();
             assert!(error.to_string().contains(key), "{key}: {error}");
         }
+    }
+
+    #[test]
+    fn the_log_transport_needs_dev_mode() {
+        let error = with(PROD, &[("EMAIL_TRANSPORT", "log")]).unwrap_err();
+        assert!(error.to_string().contains("EMAIL_TRANSPORT"), "{error}");
+        let config = Config::from_lookup(lookup_from(&[
+            ("DATABASE_URL", "postgres://x"),
+            ("DEV_MODE", "true"),
+            ("EMAIL_TRANSPORT", "log"),
+        ]))
+        .unwrap();
+        assert_eq!(config.email_transport, EmailTransport::Log);
     }
 
     #[test]

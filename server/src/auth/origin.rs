@@ -8,7 +8,6 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
 use crate::AppState;
-use crate::auth::SESSION_COOKIE;
 use crate::config::Config;
 use crate::error::{AppError, msg};
 
@@ -20,10 +19,15 @@ pub async fn check(State(state): State<AppState>, request: Request, next: Next) 
     next.run(request).await
 }
 
-/// True for an unsafe-method request that authenticates by cookie (no bearer token) and carries
-/// an `Origin` other than `PUBLIC_URL`, a `CORS_ORIGINS` entry, or the Vite origin in DEV_MODE.
+/// True for an unsafe-method request that may authenticate by cookie (no bearer token, and any
+/// `Cookie` header) and carries an `Origin` other than `PUBLIC_URL`, a `CORS_ORIGINS` entry, or
+/// the Vite origin in DEV_MODE.
+///
+/// Any cookie counts, not only one this check would parse as `bookclub_session`: the check fails
+/// closed instead of depending on how the session extractor decodes cookie names
+/// (`bookclub%5Fsession` is the same cookie to a percent-decoding parser).
 pub fn refuses(config: &Config, method: &Method, headers: &HeaderMap) -> bool {
-    if method.is_safe() || has_bearer(headers) || !has_session_cookie(headers) {
+    if method.is_safe() || has_bearer(headers) || !headers.contains_key(COOKIE) {
         return false;
     }
     let Some(origin) = headers.get(ORIGIN) else {
@@ -46,15 +50,6 @@ fn has_bearer(headers: &HeaderMap) -> bool {
         .is_some_and(|scheme| scheme.eq_ignore_ascii_case("bearer "))
 }
 
-fn has_session_cookie(headers: &HeaderMap) -> bool {
-    headers
-        .get_all(COOKIE)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(';'))
-        .any(|pair| pair.trim().split('=').next() == Some(SESSION_COOKIE))
-}
-
 #[cfg(test)]
 mod tests {
     use axum::http::HeaderValue;
@@ -68,7 +63,8 @@ mod tests {
             ("PUBLIC_URL", "https://books.example.com"),
             ("TRUSTED_PROXIES", "none"),
             ("CONTACT_EMAIL", "ops@example.com"),
-            ("EMAIL_TRANSPORT", "log"),
+            ("SMTP_URL", "smtps://user:pass@smtp.example.eu:465"),
+            ("EMAIL_FROM", "Bookclub <noreply@example.com>"),
             ("CORS_ORIGINS", "capacitor://localhost"),
         ];
         Config::from_lookup(|key| {
@@ -113,7 +109,7 @@ mod tests {
         assert!(!refuses(&config, &Method::POST, &app));
         let no_origin = headers(&[COOKIE_ONLY]);
         assert!(!refuses(&config, &Method::POST, &no_origin));
-        let no_cookie = headers(&[("cookie", "theme=x"), ("origin", "https://evil.example")]);
+        let no_cookie = headers(&[("origin", "https://evil.example")]);
         assert!(!refuses(&config, &Method::POST, &no_cookie));
         let bearer = headers(&[
             COOKIE_ONLY,
@@ -121,6 +117,27 @@ mod tests {
             ("origin", "https://evil.example"),
         ]);
         assert!(!refuses(&config, &Method::POST, &bearer));
+    }
+
+    /// The check does not depend on how the session extractor parses cookie names.
+    #[test]
+    fn any_cookie_from_a_foreign_origin_is_refused() {
+        let config = config(false);
+        for cookie in [
+            "bookclub%5Fsession=planted",
+            " bookclub_session =planted",
+            "theme=x",
+        ] {
+            let mut evil = headers(&[("origin", "https://evil.example")]);
+            evil.append("cookie", HeaderValue::from_str(cookie).unwrap());
+            assert!(refuses(&config, &Method::POST, &evil), "{cookie}");
+        }
+        let mut undecodable = headers(&[("origin", "https://evil.example")]);
+        undecodable.append(
+            "cookie",
+            HeaderValue::from_bytes(b"bookclub_session=\xff").unwrap(),
+        );
+        assert!(refuses(&config, &Method::POST, &undecodable));
     }
 
     #[test]

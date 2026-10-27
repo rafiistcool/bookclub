@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 
+use axum::extract::rejection::RawPathParamsRejection;
 use axum::extract::{FromRequestParts, RawPathParams};
 use axum::http::request::Parts;
 use sqlx::PgConnection;
@@ -67,17 +68,27 @@ impl FromRequestParts<AppState> for ClubMember {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let user = CurrentUser::from_request_parts(parts, state).await?;
-        let params = RawPathParams::from_request_parts(parts, state)
-            .await
-            .map_err(|rejection| AppError::internal(rejection.body_text()))?;
-        let slug = params
-            .iter()
-            .find(|(key, _)| *key == "slug")
-            .map(|(_, value)| value.to_owned())
-            .ok_or_else(|| AppError::internal("club extractor on a route without {slug}"))?;
+        let slug = path_slug(parts).await?;
         let mut conn = state.db.acquire().await?;
         member_by_slug(&mut conn, &user, &slug).await
     }
+}
+
+/// The `{slug}` path parameter. When any parameter of the path is not valid UTF-8, axum reads
+/// none of them: such a path names no club the caller can see, so 404 `No such club`.
+async fn path_slug(parts: &mut Parts) -> ApiResult<String> {
+    let params = match RawPathParams::from_request_parts(parts, &()).await {
+        Ok(params) => params,
+        Err(RawPathParamsRejection::InvalidUtf8InPathParam(_)) => {
+            return Err(AppError::not_found(msg::NO_SUCH_CLUB));
+        }
+        Err(rejection) => return Err(AppError::internal(rejection.body_text())),
+    };
+    params
+        .iter()
+        .find(|(key, _)| *key == "slug")
+        .map(|(_, value)| value.to_owned())
+        .ok_or_else(|| AppError::internal("club extractor on a route without {slug}"))
 }
 
 impl FromRequestParts<AppState> for ClubAdmin {
@@ -143,11 +154,61 @@ pub async fn club_refs(
 
 #[cfg(test)]
 mod tests {
+    use axum::Router;
+    use axum::body::{Body, to_bytes};
+    use axum::extract::Request;
+    use axum::http::StatusCode;
+    use axum::routing::get;
+    use tower::ServiceExt;
+
     use super::*;
 
     #[test]
     fn roles_are_ordered() {
         assert!(Role::Member < Role::Admin && Role::Admin < Role::Owner);
         assert_eq!(Role::Owner.as_str(), "owner");
+    }
+
+    async fn slug_of(request: Request) -> ApiResult<String> {
+        let (mut parts, _) = request.into_parts();
+        path_slug(&mut parts).await
+    }
+
+    async fn call(path: &str) -> (StatusCode, String) {
+        let app = Router::new().route("/api/clubs/{slug}/picks/{pick_id}", get(slug_of));
+        let request = Request::get(path).body(Body::empty()).unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        (status, String::from_utf8(body.to_vec()).unwrap())
+    }
+
+    #[tokio::test]
+    async fn the_slug_is_read_percent_decoded() {
+        assert_eq!(
+            call("/api/clubs/thursday-readers/picks/1").await,
+            (StatusCode::OK, "thursday-readers".to_owned())
+        );
+        assert_eq!(
+            call("/api/clubs/a%20b/picks/1").await,
+            (StatusCode::OK, "a b".to_owned())
+        );
+    }
+
+    #[tokio::test]
+    async fn an_undecodable_path_parameter_is_no_such_club() {
+        for path in [
+            "/api/clubs/%ff/picks/1",
+            "/api/clubs/thursday-readers/picks/%ff",
+        ] {
+            assert_eq!(
+                call(path).await,
+                (
+                    StatusCode::NOT_FOUND,
+                    r#"{"detail":"No such club"}"#.to_owned()
+                ),
+                "{path}"
+            );
+        }
     }
 }

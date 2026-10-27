@@ -162,10 +162,6 @@ pub fn app(state: AppState) -> Router {
         .fallback(spa::fallback)
         .method_not_allowed_fallback(spa::method_not_allowed)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
-        .layer(SetResponseHeaderLayer::overriding(
-            REFERRER_POLICY,
-            HeaderValue::from_static("same-origin"),
-        ))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::origin::check,
@@ -192,6 +188,11 @@ pub fn app(state: AppState) -> Router {
                 })
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         )
+        // Outside the origin check, CORS and the panic handler, so their answers carry it too.
+        .layer(SetResponseHeaderLayer::overriding(
+            REFERRER_POLICY,
+            HeaderValue::from_static("same-origin"),
+        ))
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
         .with_state(state)

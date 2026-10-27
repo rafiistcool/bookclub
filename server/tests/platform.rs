@@ -70,6 +70,24 @@ async fn every_response_has_referrer_policy_and_a_request_id() {
     let res = send(app(no_db_state()), given).await;
     assert_eq!(res.header("x-request-id"), Some("abc-123"));
     assert_eq!(res.header("referrer-policy"), Some("same-origin"));
+
+    // Answers of the outer layers: the origin check and a CORS preflight.
+    let cross_site = Request::post("/api/health")
+        .header("cookie", "bookclub_session=abc")
+        .header("origin", "https://evil.example")
+        .body(Body::empty())
+        .unwrap();
+    let res = send(app(no_db_state()), cross_site).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
+    assert_eq!(res.header("referrer-policy"), Some("same-origin"));
+    assert!(res.header("x-request-id").is_some());
+
+    let res = send(app(no_db_state()), preflight("http://localhost:5173")).await;
+    assert_eq!(
+        res.header("access-control-allow-origin"),
+        Some("http://localhost:5173")
+    );
+    assert_eq!(res.header("referrer-policy"), Some("same-origin"));
 }
 
 #[tokio::test]
@@ -158,9 +176,19 @@ async fn spa_assets_are_immutable_and_misses_are_json() {
 #[tokio::test]
 async fn the_spa_never_hides_the_api() {
     let dir = spa_dir();
-    get(app(spa_state(&dir)), "/api/nope")
-        .await
-        .assert_detail(404, "Not found");
+    for path in ["/api/nope", "/api", "/api/"] {
+        get(app(spa_state(&dir)), path)
+            .await
+            .assert_detail(404, "Not found");
+    }
+    // An unknown API path is a 404 for every method, never the 405 other paths get.
+    let res = send(app(spa_state(&dir)), request(Method::POST, "/api/nope")).await;
+    res.assert_detail(404, "Not found");
+    // Only `/api` and `/api/…` are the API: `/apix` is an SPA route.
+    let res = get(app(spa_state(&dir)), "/apix").await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert!(res.text().contains("current.js"));
+    assert_eq!(res.header("cache-control"), Some("no-store"));
     get(app(spa_state(&dir)), "/media/abc/l")
         .await
         .assert_detail(404, "Not found");
@@ -235,7 +263,8 @@ async fn production_cors_only_allows_configured_origins() {
         ("PUBLIC_URL", "https://books.example.com"),
         ("TRUSTED_PROXIES", "none"),
         ("CONTACT_EMAIL", "ops@example.com"),
-        ("EMAIL_TRANSPORT", "log"),
+        ("SMTP_URL", "smtps://user:pass@smtp.example.eu:465"),
+        ("EMAIL_FROM", "Bookclub <noreply@example.com>"),
     ]);
     let state = test_state_with(unreachable_db(), production.clone());
     let res = send(app(state), preflight("http://localhost:5173")).await;

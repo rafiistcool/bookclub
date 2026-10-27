@@ -51,33 +51,23 @@ impl SlidingWindow {
         self.check(key).is_err()
     }
 
-    /// Like [`SlidingWindow::is_limited`], with the wait: for limits that only record failures
-    /// (login), which check before the attempt and hit after it fails.
+    /// Like [`SlidingWindow::is_limited`], with the wait. Records nothing, so it cannot guard
+    /// work that runs concurrently: every request that checks before the first `hit` lands passes.
+    /// Login and password change therefore use [`SlidingWindow::check_and_hit`] before verifying
+    /// and [`SlidingWindow::clear`] on success.
     pub fn check(&self, key: &str) -> Result<(), RetryAfter> {
-        let Some(entry) = self.hits.get(key) else {
-            return Ok(());
-        };
-        let mut hits = lock(&entry);
-        self.admit(&mut hits, Instant::now())
+        self.check_at(key, Instant::now())
     }
 
     /// Records one hit.
     pub fn hit(&self, key: &str) {
-        let entry = self.entry(key);
-        let mut hits = lock(&entry);
-        let now = Instant::now();
-        self.prune(&mut hits, now);
-        hits.push_back(now);
+        self.hit_at(key, Instant::now());
     }
 
-    /// Records a hit unless the key is already limited.
+    /// Records a hit unless the key is already limited; a refused attempt records nothing.
+    /// Atomic per key: of N concurrent calls on a fresh key, exactly `limit` pass.
     pub fn check_and_hit(&self, key: &str) -> Result<(), RetryAfter> {
-        let entry = self.entry(key);
-        let mut hits = lock(&entry);
-        let now = Instant::now();
-        self.admit(&mut hits, now)?;
-        hits.push_back(now);
-        Ok(())
+        self.check_and_hit_at(key, Instant::now())
     }
 
     /// Forgets every hit of `key` (a successful login clears its failures).
@@ -87,6 +77,29 @@ impl SlidingWindow {
 
     fn entry(&self, key: &str) -> Arc<Mutex<VecDeque<Instant>>> {
         self.hits.get_with_by_ref(key, Default::default)
+    }
+
+    fn check_at(&self, key: &str, now: Instant) -> Result<(), RetryAfter> {
+        let Some(entry) = self.hits.get(key) else {
+            return Ok(());
+        };
+        let mut hits = lock(&entry);
+        self.admit(&mut hits, now)
+    }
+
+    fn hit_at(&self, key: &str, now: Instant) {
+        let entry = self.entry(key);
+        let mut hits = lock(&entry);
+        self.prune(&mut hits, now);
+        hits.push_back(now);
+    }
+
+    fn check_and_hit_at(&self, key: &str, now: Instant) -> Result<(), RetryAfter> {
+        let entry = self.entry(key);
+        let mut hits = lock(&entry);
+        self.admit(&mut hits, now)?;
+        hits.push_back(now);
+        Ok(())
     }
 
     fn prune(&self, hits: &mut VecDeque<Instant>, now: Instant) {
@@ -190,6 +203,8 @@ pub fn unknown_identifier_key(normalised: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::sync::Barrier;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use axum::http::StatusCode;
 
@@ -211,13 +226,33 @@ mod tests {
 
     #[test]
     fn a_refused_attempt_is_not_recorded() {
-        let limit = SlidingWindow::new(1, Duration::from_millis(200));
+        // A long window: neither the window nor moka's idle expiry can hide a recorded refusal.
+        let limit = SlidingWindow::new(1, HOUR);
         assert!(limit.check_and_hit("k").is_ok());
         for _ in 0..5 {
             assert!(limit.check_and_hit("k").is_err());
         }
-        std::thread::sleep(Duration::from_millis(250));
-        assert!(limit.check_and_hit("k").is_ok());
+        assert_eq!(limit.hits.get("k").unwrap().lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn concurrent_attempts_cannot_pass_together() {
+        // 64 logins for one account at once: exactly the 10 the limit allows get to verify.
+        let limit = SlidingWindow::new(10, 10 * MINUTE);
+        let start = Barrier::new(64);
+        let admitted = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..64 {
+                scope.spawn(|| {
+                    start.wait();
+                    if limit.check_and_hit("u:1").is_ok() {
+                        admitted.fetch_add(1, Ordering::SeqCst);
+                    }
+                });
+            }
+        });
+        assert_eq!(admitted.load(Ordering::SeqCst), 10);
+        assert_eq!(limit.hits.get("u:1").unwrap().lock().unwrap().len(), 10);
     }
 
     #[test]
@@ -234,16 +269,21 @@ mod tests {
 
     #[test]
     fn the_window_slides() {
-        let limit = SlidingWindow::new(2, Duration::from_millis(300));
-        limit.hit("k");
-        std::thread::sleep(Duration::from_millis(200));
-        limit.hit("k");
-        assert!(limit.is_limited("k"));
-        std::thread::sleep(Duration::from_millis(150));
-        // The first hit left the window; the second has not.
-        assert!(!limit.is_limited("k"));
-        limit.hit("k");
-        assert!(limit.is_limited("k"));
+        let limit = SlidingWindow::new(2, Duration::from_secs(300));
+        let t0 = Instant::now();
+        let at = |seconds: u64| t0 + Duration::from_secs(seconds);
+        limit.hit_at("k", t0);
+        limit.hit_at("k", at(200));
+        // Full: the first hit leaves the window at 300 s.
+        assert_eq!(limit.check_at("k", at(200)), Err(RetryAfter(100)));
+        assert_eq!(limit.check_and_hit_at("k", at(299)), Err(RetryAfter(1)));
+        // At 350 s the first hit has left; the second (until 500 s) has not.
+        assert_eq!(limit.check_and_hit_at("k", at(350)), Ok(()));
+        assert_eq!(limit.check_at("k", at(350)), Err(RetryAfter(150)));
+        // Both remaining hits leave at 500 and 650 s.
+        assert_eq!(limit.check_at("k", at(500)), Ok(()));
+        assert_eq!(limit.check_and_hit_at("k", at(650)), Ok(()));
+        assert_eq!(limit.hits.get("k").unwrap().lock().unwrap().len(), 1);
     }
 
     #[test]

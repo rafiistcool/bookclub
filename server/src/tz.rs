@@ -339,6 +339,12 @@ mod tests {
             "2026-08-22T19:00 Z",
             "2026-08-22Z",
             "２０２６-08-22",
+            // Reasoned change (conventions §12): Python accepted ISO week dates and the basic
+            // format; the Rust server does not.
+            "2026-W34-6",
+            "2026-W34-6T19:00",
+            "20260822T1900",
+            "20260822",
         ] {
             assert_eq!(parse_meeting(Some(bad), &TimeZone::UTC), Err(()), "{bad:?}");
         }
@@ -409,6 +415,9 @@ mod tests {
         let east = today(&zone("Pacific/Kiritimati"));
         let west = today(&zone("Pacific/Pago_Pago"));
         assert!(east >= utc_today && west <= utc_today);
-        assert!((east - west).whole_days() <= 2);
+        // UTC+14 and UTC-11 are 25 hours apart, so their dates always differ by 1 or 2 days;
+        // a today() that ignored its zone would give the same date for both.
+        let apart = (east - west).whole_days();
+        assert!((1..=2).contains(&apart), "{apart}");
     }
 }

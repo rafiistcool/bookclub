@@ -96,3 +96,27 @@ Files: `0001_init.sql` (SQL), `conventions.md` (C), `endpoint-map.md` (E), `lega
 - Export table checked against `pg_constraint` on the applied schema: every FK column to `users(id)` is exported or exempted.
 - §18 dependencies diffed against the reviewer's resolving probe crate: identical apart from `rusqlite = "0.39.0"` vs `"0.39"` (same requirement).
 - Code fences balanced in all Markdown files.
+
+## Review round 2026-10-27: Wave 1 platform step (#36 #37 #47)
+
+18 findings on the implemented platform code; all were fixed (10 duplicates 1). Changes to frozen interfaces are recorded in conventions.md, so Wave 2 builds against them.
+
+1. **[minor] agents-VM dev recipe trips the origin check.** Fixed. CLAUDE.md: on the `agents` VM set `PUBLIC_URL` to the browser's origin (`http://agents.lan:8080` for the server, `:5173` behind Vite).
+2. **[minor] Specs name scratchpad probe directories.** Fixed. spec/club, diary, shelf and catalog say the probe scripts were throwaway session files, as spec/platform does.
+3. **[major] Outbound client follows any redirect and buffers unbounded bodies.** Fixed. C §10.3: the client follows no redirects; `get_bytes` follows at most 3 and checks each hop (configured upstream origin, or https without port or userinfo on an upstream domain or `archive.org`, matched with a leading dot); `RetryPolicy` gains `attempt_timeout` (15/15/60 s) and `max_body_bytes` (4 MiB, 1,500,000 for MEDIA, 32 MiB for JOB); `UpstreamError` gains `Redirect` and `TooLarge`. Wiremock tests for a refused redirect, a fourth redirect, an oversize body and a slow upstream; a unit test of the allow-list.
+4. **[major] Login failure limit is check-then-act.** Fixed. C §10.1 and the `check` doc comment: login and password change call `check_and_hit` before verifying and `clear` on success. Unit test: 64 concurrent `check_and_hit` calls admit exactly 10. W W1 step 4 adds the HTTP concurrency test.
+5. **[minor] Club extractors answer 500 for an undecodable path parameter.** Fixed. C §5.3: 404 `No such club`; test with `%ff` as the slug and as another parameter.
+6. **[minor] Unbounded upstream Retry-After.** Fixed. `HostThrottle::cool_down` caps every cooldown at 1 h (C §10.3); test with `Retry-After: 18446744073709551615`.
+7. **[minor] run_locked does not catch panics.** Fixed. C §16: the job runs under `catch_unwind`; a panic is logged, the connection closed, and the run counts as failed.
+8. **[minor] EMAIL_TRANSPORT=log accepted outside DEV_MODE.** Fixed. C §11: startup fails with a message naming `EMAIL_TRANSPORT`; the tests use an SMTP configuration for production.
+9. **[minor] Origin check parses the session cookie differently from the extractor.** Fixed by failing closed. C §5.8: any `Cookie` header on an unsafe request without a bearer token triggers the origin comparison; tests with `bookclub%5Fsession`, a padded name, an unrelated cookie and a non-UTF-8 header.
+10. **[minor] Documented agents-VM dev workflow trips the origin check.** Duplicate of 1; fixed there.
+11. **[major] Rate-limit tests pass vacuously or depend on sleeps.** Fixed. The refusal test reads the deque (one hit after five refusals, one-hour window); the sliding test drives synthetic instants through private `*_at` functions and checks every `RetryAfter`.
+12. **[major] run_locked and auth::cleanup untested.** Fixed. New `tests/jobs.rs`: cleanup keeps exactly the live session and the open token; run_locked skips while another session holds the lock, releases it after success, an `Err`, an aborted transaction and a panic; `spawn_all` cleans up at start and drains within 5 s of cancellation.
+13. **[minor] make_admin and user_summaries untested.** Fixed. New `tests/db_helpers.rs`.
+14. **[minor] tz tests vacuous; reasoned rejections unpinned.** Fixed. `today()` dates in UTC+14 and UTC−11 must differ by 1 or 2 days; week dates and the basic format are in `rejected_forms`.
+15. **[minor] SPA fallback edge paths untested.** Fixed. `the_spa_never_hides_the_api` covers `/api`, `/api/`, `POST /api/nope` (404, not 405) and `/apix` (the shell).
+16. **[minor] Referrer-Policy missing on outer-layer answers.** Fixed. C §3: the header layer sits directly inside the request-id layers; the test covers the cross-site 403 and a DEV_MODE preflight.
+17. **[minor] Outbound retry rules partly untested.** Fixed. Tests: a 500 is not retried; 502 and 504 are retried once; REQUEST and MEDIA ignore a 503 `Retry-After` and retry once after 300 ms; the JOB 503 cap (3 waits, capped at 5 min, then the one 5xx retry) through the pure `Retries::pause_after`; the host opens again after a cooldown. The cooldown test uses a 300 ms real cooldown instead of tokio's paused clock, which would need tokio's `test-util` feature in Cargo.toml.
+18. **[minor] No clap debug_assert test.** Fixed. `main.rs` tests run `Cli::command().debug_assert()` and parse full `import-legacy` and `rematch-legacy` argument vectors.
+

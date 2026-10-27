@@ -182,11 +182,11 @@ pub enum ImportError { TargetNotEmpty, Source(String), Upstream(String), Db(sqlx
 
 **Layers, outermost first:**
 1. tower-http `SetRequestId` / `PropagateRequestId` (`x-request-id`)
-2. `TraceLayer`
-3. `CatchPanicLayer`, answering 500 `{"detail":"Internal Server Error"}`
-4. CORS: only when `CORS_ORIGINS` is set (Phase 4 apps), or for the Vite origin in DEV_MODE
-5. the origin check (§5.8)
-6. `SetResponseHeader` `Referrer-Policy: same-origin` on every response (no URL of ours leaks to a third party)
+2. `SetResponseHeader` `Referrer-Policy: same-origin` on every response (no URL of ours leaks to a third party). It sits outside the layers below so their own answers (the panic 500, a CORS preflight, the origin check's 403) carry it too.
+3. `TraceLayer`
+4. `CatchPanicLayer`, answering 500 `{"detail":"Internal Server Error"}`
+5. CORS: only when `CORS_ORIGINS` is set (Phase 4 apps), or for the Vite origin in DEV_MODE
+6. the origin check (§5.8)
 7. `DefaultBodyLimit::max(1 MiB)`; upload routes override it per route (§4.6)
 
 There are no global timeouts; handlers bound their outbound calls instead (§10.3).
@@ -390,7 +390,7 @@ pub struct ClubOwner(pub ClubMember);        // role == Owner, else 403 ONLY_OWN
 ```
 
 - One query joins `sessions` and `users` for `CurrentUser`.
-- The club extractors read the `slug` path parameter through `axum::extract::RawPathParams` and call `member_by_slug`. They return 404 `No such club` for a missing club **and** for a non-member.
+- The club extractors read the `slug` path parameter through `axum::extract::RawPathParams` and call `member_by_slug`. They return 404 `No such club` for a missing club **and** for a non-member. A path with any parameter that is not valid UTF-8 after percent-decoding (`/api/clubs/%ff/…`, `/api/clubs/{slug}/picks/%ff`) is also 404 `No such club`: axum then reads none of the parameters, and such a path names nothing the caller can see.
 
 **Club helpers** (`clubs::extract`, W1, frozen; the extractors are built on them, so there is one implementation):
 
@@ -542,10 +542,10 @@ The response is a ZIP built in memory: personal data is small, and 50 MB is the 
 The cookie is `SameSite=Lax`, so browsers don't attach it to cross-site POST, PUT, PATCH or DELETE. JSON endpoints also require `Content-Type: application/json`, which a plain HTML form cannot send.
 
 On top of that, the **origin check layer** answers 403 `{"detail":"Cross-site request refused"}` to any unsafe-method request that:
-- authenticates by cookie, and
+- may authenticate by cookie: it has no bearer token and carries a `Cookie` header, whatever cookies it holds, and
 - carries an `Origin` header that is not `PUBLIC_URL`'s origin, not in `CORS_ORIGINS`, and not the Vite origin in DEV_MODE.
 
-Bearer-token requests skip the check. **The frontend sends nothing extra.** It is `auth::origin::check` (W1, implemented in step 1); the cookie name is `auth::SESSION_COOKIE`.
+Any cookie counts, not only a literal `bookclub_session`: the check fails closed instead of depending on how the session extractor parses cookie names (axum-extra's `CookieJar` percent-decodes them, so `bookclub%5Fsession` is the session cookie to it). Bearer-token requests skip the check. **The frontend sends nothing extra.** It is `auth::origin::check` (W1, implemented in step 1); the cookie name is `auth::SESSION_COOKIE`.
 
 ## 6. Visibility policy (#46)
 
@@ -893,7 +893,7 @@ Open Library cover rows are created by `ingest::ol_cover_media` with `storage_ke
   - Encode with `webp` (lossy, quality 82).
   - Metadata is dropped by construction: we never copy EXIF, ICC or XMP.
 - `/media/…` serving. **`removed_at` is checked first** on every path (serve, fetch, colour backfill): a removed row answers 410 and is never fetched again, whatever `storage_key` says. Every non-200 answer (404, 410, 429, 502) carries `Cache-Control: no-store`; only a 200 is `immutable`.
-- Fetching Open Library covers by cover id (through `outbound::get_bytes`). A request for a not-yet-fetched cover waits up to **10 s** for the `ol_covers` throttle (not the 2 s of other request paths), and concurrent requests for one media id are coalesced.
+- Fetching Open Library covers by cover id (through `outbound::get_bytes` with `RetryPolicy::MEDIA`, which checks every redirect and caps the body at 1.5 MB, §10.3). A request for a not-yet-fetched cover waits up to **10 s** for the `ol_covers` throttle (not the 2 s of other request paths), and concurrent requests for one media id are coalesced.
 - **Prefetch:** `MediaService::prefetch` (§3) feeds a bounded queue (500 ids, dropped when full) that one background task drains through the same throttle, fetching the covers of persisted search, trending and subject hits before the browser asks. Started by `jobs::spawn_all`; not in tests.
 - Dominant colour (the legacy median-cut algorithm, hand-written; `color_quant` and `imagequant` are not used).
 - Cover upload: a first cover goes through `ingest::set_cover(…, Source::User, only_if_empty = true)`; when that returns false (a cover exists, or a concurrent upload won), the upload becomes a `cover_replace` request instead. An upload whose original-bytes hash matches a removed row is refused (400 `This picture was removed`).
@@ -907,7 +907,7 @@ Open Library cover rows are created by `ingest::ol_cover_media` with `storage_ke
 #[derive(Clone, Debug)] pub struct Email { pub to: String, pub subject: String, pub text: String }
 #[async_trait::async_trait]
 pub trait EmailSender: Send + Sync { async fn send(&self, msg: Email) -> anyhow::Result<()>; }
-pub struct LogEmail;        // logs to and subject, plus the full body, at INFO: the dev transport (EMAIL_TRANSPORT=log)
+pub struct LogEmail;        // logs to and subject, plus the full body, at INFO: the dev transport (EMAIL_TRANSPORT=log, DEV_MODE only)
 pub struct SmtpEmail { … }  // lettre AsyncSmtpTransport<Tokio1Executor>, rustls, pooled; from SMTP_URL
 // tests: CapturingEmail (tests/common) keeps every message
 ```
@@ -931,9 +931,9 @@ impl RetryAfter {
 impl SlidingWindow {
     pub fn new(limit: u32, window: Duration) -> Self;
     pub fn is_limited(&self, key: &str) -> bool;   // >= limit hits within window (monotonic clock)
-    pub fn check(&self, key: &str) -> Result<(), RetryAfter>;   // is_limited with the wait, records nothing (login)
+    pub fn check(&self, key: &str) -> Result<(), RetryAfter>;   // is_limited with the wait, records nothing
     pub fn hit(&self, key: &str);                  // record one
-    pub fn check_and_hit(&self, key: &str) -> Result<(), RetryAfter>;
+    pub fn check_and_hit(&self, key: &str) -> Result<(), RetryAfter>;   // atomic per key; a refusal records nothing
     pub fn clear(&self, key: &str);
 }
 pub struct RateLimits { pub login_failures, pub login_ip, pub signup_ip, pub reset_ip, pub reset_account,
@@ -947,6 +947,7 @@ pub fn ip_key(ip: IpAddr) -> String;
 pub fn unknown_identifier_key(normalised: &str) -> String;
 ```
 
+- **Login and password change** call `login_failures.check_and_hit(key)` **before** verifying the password and `clear(key)` on success. `check` followed by `hit` after a failure is not enough: the verify awaits the password semaphore, so concurrent attempts would all pass `check` before the first `hit` lands, and thousands of guesses could reach one account. With `check_and_hit` the counting is unchanged (10 failures, then 429; a success clears), and of N concurrent attempts at most 10 are verified. A refused attempt records nothing, so the right password is refused while the key is blocked, as in Python.
 - **Bounded memory:** each limit has its own cache, `max_capacity` 100,000 keys, with `time_to_idle` = the window. Account keys (`u:<id>`, at most one per account) and hashed unknown-identifier keys are bounded by construction.
 - **Every test gets a fresh `RateLimits`**, because the harness builds a fresh `AppState`.
 
@@ -1002,12 +1003,14 @@ impl HostThrottle {
     /// Waits for a token for up to `max_wait`, else Err(Throttled).
     /// While a cooldown is active (after an upstream 429: Retry-After or 60 s), fails at once.
     pub async fn acquire(&self, max_wait: Duration) -> Result<(), Throttled>;
-    pub fn cool_down(&self, for_: Duration);
+    pub fn cool_down(&self, for_: Duration);       // capped at 1 h, so an absurd Retry-After cannot block a host until restart
 }
 pub struct RetryPolicy {
     pub max_wait: Duration,                       // throttle wait: 2 s on request paths, 10 s for /media, 60 s for jobs
     pub retry_5xx_once_after: Option<Duration>,   // Some(300 ms): one retry on 502/503/504
     pub honour_retry_after_on_503: bool,          // HAR: wait Retry-After (capped at 5 min) and retry, up to 3 times
+    pub attempt_timeout: Duration,                // one attempt: request, redirects and whole body; 15 s (REQUEST, MEDIA), 60 s (JOB)
+    pub max_body_bytes: usize,                    // a larger 2xx body is refused while streaming: 4 MiB, 1,500,000 (MEDIA), 32 MiB (JOB)
 }
 impl RetryPolicy { pub const REQUEST: RetryPolicy; pub const MEDIA: RetryPolicy; pub const JOB: RetryPolicy; }
 pub struct Upstream { pub status: StatusCode, pub headers: HeaderMap, pub body: bytes::Bytes }
@@ -1015,8 +1018,10 @@ pub struct Upstream { pub status: StatusCode, pub headers: HeaderMap, pub body: 
 pub enum UpstreamError {
     #[error("throttled")] Throttled,                // local throttle, cooldown, or upstream 429 (cooldown tripped)
     #[error("upstream status {0}")] Status(u16),    // any other non-2xx after retries (404 included)
-    #[error("transport: {0}")] Transport(String),   // connect, timeout, TLS
+    #[error("transport: {0}")] Transport(String),   // connect, timeout (incl. attempt_timeout), TLS, a broken body
     #[error("decode: {0}")] Decode(String),         // body is not the expected JSON/text
+    #[error("redirect refused: {0}")] Redirect(String),   // a redirect off the allow-list, or more than 3; never followed
+    #[error("body larger than {0} bytes")] TooLarge(usize), // the 2xx body passed max_body_bytes
 }
 impl UpstreamError {
     /// Throttled → 429 with `busy_msg`; Status(404) → 404 with `missing_msg` when Some; everything else → 502
@@ -1031,6 +1036,9 @@ pub async fn get_text(o: &Outbound, t: &HostThrottle, url: Url, policy: &RetryPo
 ```
 
 - `get_json` and `get_text` are wrappers around `get_bytes`, so every package shares one implementation of the politeness rules. Coalesced callers share one retry.
+- **Redirects** (the SSRF guard of docs/phase1/spec/shelf.md §6 risk 16): the client follows none itself (`redirect::Policy::none()`). `get_bytes` follows at most 3 (so up to 4 requests; an Open Library cover takes two, to `archive.org` and on to a storage node such as `ia802809.us.archive.org`) and checks each target before requesting it: no username or password; any URL on the origin of a configured `UpstreamUrls` base (which keeps wiremock bases working in tests); otherwise `https`, no explicit port, and a domain that is a configured upstream's or `archive.org`, or a subdomain of one matched with a leading dot (`archive.org.example.com` fails). IP addresses pass only as a configured origin. A refused or fourth redirect is `UpstreamError::Redirect`. The first URL is the caller's, built from `Outbound::urls`; redirect hops take no extra throttle slot.
+- **Bodies** are streamed and refused with `TooLarge` as soon as they pass `max_body_bytes`; each attempt (request, redirects, body) is bounded by `attempt_timeout`, so a slow-drip upstream cannot hold a call open. Non-2xx bodies are not read.
+- **Cover fetches** (`/media` and the prefetch worker) use `RetryPolicy::MEDIA`; the prefetch worker may lengthen `max_wait` with struct update syntax, but keeps the 1.5 MB cap. MED settles `Redirect`, `TooLarge` and `Status(404 | 410)` as "no cover" and keeps transport errors, timeouts and other statuses as "retry later" (docs/phase1/spec/shelf.md §6 risk 15).
 - **User-Agent:** `Bookclub/1.0 (+{PUBLIC_URL}; {CONTACT_EMAIL})` (plan #41: a UA with contact details).
 - **Error mapping** to HTTP status goes through `UpstreamError::to_app_error`: upstream 429 or throttled → 429; upstream 404 → the caller's "missing" string where a spec says so; everything else, including an undecodable body → 502 with the caller's string.
 
@@ -1042,14 +1050,14 @@ pub async fn get_text(o: &Outbound, t: &HostThrottle, url: Url, policy: &RetryPo
 | `BIND_ADDR` | `127.0.0.1:8080` | listen address (the Docker image sets `0.0.0.0:8080`) |
 | `PUBLIC_URL` | required unless `DEV_MODE` (then `http://localhost:5173`) | origin for email and invite links, the UA contact, the origin check and ICS; reduced to scheme://host[:port] |
 | `SERVICE_NAME` | `Bookclub` | `/api/config.name`, email copy |
-| `DEV_MODE` | `false` | `COOKIE_SECURE` defaults to false, `EMAIL_TRANSPORT` to `log`; the Vite origin is allowed for CORS and the origin check |
+| `DEV_MODE` | `false` | `COOKIE_SECURE` defaults to false, `EMAIL_TRANSPORT` to `log` (and allows it); the Vite origin is allowed for CORS and the origin check |
 | `COOKIE_SECURE` | `!DEV_MODE` | the `Secure` cookie attribute |
 | `SIGNUP_MODE` | `invite` | `invite` (closed beta) or `open` (#55) |
 | `TRUSTED_PROXIES` | required unless `DEV_MODE` (then empty) | comma-separated CIDRs whose `X-Forwarded-For` is trusted, or `none` (§10.2) |
 | `CORS_ORIGINS` | empty | extra allowed origins (Phase 4 Capacitor origins) |
 | `STATIC_DIR` | unset | built SPA (`frontend/dist`). When unset, no SPA routes are served |
 | `MEDIA_DIR` | `./data/media` | `FsMediaStore` root |
-| `EMAIL_TRANSPORT` | `log` if `DEV_MODE`, else `smtp` | |
+| `EMAIL_TRANSPORT` | `log` if `DEV_MODE`, else `smtp` | `log` is refused at startup without `DEV_MODE`: `LogEmail` writes every mail, reset links included, to the log (§19) |
 | `SMTP_URL` | – | e.g. `smtps://user:pass@smtp.provider.eu:465` |
 | `EMAIL_FROM` | – | `Bookclub <noreply@…>` |
 | `CONTACT_EMAIL` | required unless `DEV_MODE` | contact in the outbound User-Agent |
@@ -1192,7 +1200,7 @@ pub async fn record(conn: &mut PgConnection, ev: NewEvent) -> sqlx::Result<i64>;
   - `shelf::goodreads::resume` (once at startup: re-queues `queued`/`running` jobs)
   - the media prefetch worker (`MediaService`, §8)
 - Each periodic job:
-  - takes `pg_try_advisory_lock(<job id>)` for the run, which is safe if a second instance ever runs (`jobs::run_locked(db, lock_id, name, job)` does it, logs and never panics; the keys are `jobs::lock_ids`, e.g. `DNB_HARVEST` for HAR)
+  - takes `pg_try_advisory_lock(<job id>)` for the run, which is safe if a second instance ever runs (`jobs::run_locked(db, lock_id, name, job)` does it, logs and never panics: a panicking job is caught, logged at ERROR and counts as failed, and its connection is closed rather than returned to the pool, so the session-level lock dies with it; the keys are `jobs::lock_ids`, e.g. `DNB_HARVEST` for HAR)
   - logs start, end and duration
   - never panics (errors are logged)
 - Jobs are **not** started in tests. Tests call the job function directly.

@@ -1,10 +1,13 @@
 //! Background jobs (docs/phase1/conventions.md §16). Started by `serve`, never in tests: tests call
 //! the job functions directly.
 
+use std::any::Any;
+use std::panic::AssertUnwindSafe;
 use std::time::Duration;
 
+use futures::FutureExt;
 use futures::future::BoxFuture;
-use sqlx::{PgConnection, PgPool};
+use sqlx::{Connection, PgConnection, PgPool};
 use tokio::task::JoinSet;
 use tokio::time::{Instant, MissedTickBehavior};
 use tokio_util::sync::CancellationToken;
@@ -50,8 +53,8 @@ async fn auth_cleanup_loop(state: AppState, shutdown: CancellationToken) {
 }
 
 /// Runs `job` on one connection while holding the advisory lock `lock_id`; skips the run when
-/// another session holds it. Logs start, end and duration, and every error; never panics.
-/// Returns whether the job ran and succeeded.
+/// another session holds it. Logs start, end and duration, and every error; never panics: a
+/// panicking job is logged and counts as failed. Returns whether the job ran and succeeded.
 pub async fn run_locked<F>(db: &PgPool, lock_id: i64, name: &str, job: F) -> bool
 where
     F: for<'c> FnOnce(&'c mut PgConnection) -> BoxFuture<'c, anyhow::Result<()>>,
@@ -80,8 +83,22 @@ where
 
     tracing::info!(job = name, "job: started");
     let started = Instant::now();
-    let result = job(&mut conn).await;
+    let outcome = AssertUnwindSafe(job(&mut conn)).catch_unwind().await;
     let duration_ms = started.elapsed().as_millis() as u64;
+    let result = match outcome {
+        Ok(result) => result,
+        Err(panic) => {
+            tracing::error!(
+                job = name,
+                duration_ms,
+                panic = panic_message(panic.as_ref()),
+                "job: panicked"
+            );
+            // The connection may be in any state; closing it ends the session and its lock.
+            let _ = conn.detach().close().await;
+            return false;
+        }
+    };
     match &result {
         Ok(()) => tracing::info!(job = name, duration_ms, "job: finished"),
         Err(error) => tracing::error!(
@@ -97,9 +114,17 @@ where
             .fetch_one(&mut *conn)
             .await
     {
-        // The lock dies with the session; drop the connection instead of returning it to the pool.
+        // The lock dies with the session; close the connection instead of returning it to the pool.
         tracing::error!(job = name, %error, "job: cannot release the advisory lock");
-        drop(conn.detach());
+        let _ = conn.detach().close().await;
     }
     result.is_ok()
+}
+
+fn panic_message(panic: &(dyn Any + Send)) -> &str {
+    panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap_or("(no message)")
 }
