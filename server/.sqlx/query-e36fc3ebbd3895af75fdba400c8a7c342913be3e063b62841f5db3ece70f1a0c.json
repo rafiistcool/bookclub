@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE reports SET status = 'removed', resolved_by = $2, resolved_at = now()\n         WHERE media_id = $1 AND status = 'open'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e36fc3ebbd3895af75fdba400c8a7c342913be3e063b62841f5db3ece70f1a0c"
+}

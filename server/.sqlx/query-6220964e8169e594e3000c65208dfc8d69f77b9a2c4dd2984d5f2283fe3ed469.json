@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE media SET dominant_color = $2\n         WHERE id = $1 AND dominant_color IS NULL AND removed_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6220964e8169e594e3000c65208dfc8d69f77b9a2c4dd2984d5f2283fe3ed469"
+}

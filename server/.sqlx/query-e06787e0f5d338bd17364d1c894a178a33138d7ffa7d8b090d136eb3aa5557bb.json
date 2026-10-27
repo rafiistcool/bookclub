@@ -1,0 +1,59 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT storage_key, variants, dominant_color, removed_at IS NOT NULL AS \"removed!\"\n           FROM media WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "storage_key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "storage_key"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "variants",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "variants"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "dominant_color",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "dominant_color"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "removed!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      null
+    ]
+  },
+  "hash": "e06787e0f5d338bd17364d1c894a178a33138d7ffa7d8b090d136eb3aa5557bb"
+}
