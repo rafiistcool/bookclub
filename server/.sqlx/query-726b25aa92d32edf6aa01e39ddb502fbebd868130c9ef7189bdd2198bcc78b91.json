@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE milestones m SET position = r.rn - 1\n         FROM (SELECT id, (row_number() OVER (ORDER BY position, id))::int4 AS rn\n               FROM milestones WHERE pick_id = $1) r\n         WHERE m.id = r.id AND m.position <> r.rn - 1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "726b25aa92d32edf6aa01e39ddb502fbebd868130c9ef7189bdd2198bcc78b91"
+}
