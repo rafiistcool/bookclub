@@ -1,0 +1,363 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<record type="Bibliographic" xmlns="http://www.loc.gov/MARC21/slim">
+    <leader>00000nam a22000008c 4500</leader>
+    <controlfield tag="001">1209150832</controlfield>
+    <controlfield tag="003">DE-101</controlfield>
+    <controlfield tag="005">20261023130034.0</controlfield>
+    <controlfield tag="007">tu</controlfield>
+    <controlfield tag="008">200428s2040    gw ||||| |||| 00||||ger  </controlfield>
+    <datafield tag="015" ind1=" " ind2=" ">
+      <subfield code="a">20,N19</subfield>
+      <subfield code="2">dnb</subfield>
+    </datafield>
+    <datafield tag="016" ind1="7" ind2=" ">
+      <subfield code="2">DE-101</subfield>
+      <subfield code="a">1209150832</subfield>
+    </datafield>
+    <datafield tag="020" ind1=" " ind2=" ">
+      <subfield code="a">9783895614194</subfield>
+      <subfield code="c">Klappenbroschur : EUR 25.00 (DE), EUR 25.70 (AT)</subfield>
+      <subfield code="9">978-3-89561-419-4</subfield>
+    </datafield>
+    <datafield tag="020" ind1=" " ind2=" ">
+      <subfield code="a">389561419X</subfield>
+      <subfield code="9">3-89561-419-X</subfield>
+    </datafield>
+    <datafield tag="024" ind1="3" ind2=" ">
+      <subfield code="a">9783895614194</subfield>
+    </datafield>
+    <datafield tag="035" ind1=" " ind2=" ">
+      <subfield code="a">(DE-599)DNB1209150832</subfield>
+    </datafield>
+    <datafield tag="035" ind1=" " ind2=" ">
+      <subfield code="a">(OCoLC)1153539393</subfield>
+    </datafield>
+    <datafield tag="040" ind1=" " ind2=" ">
+      <subfield code="a">1245</subfield>
+      <subfield code="b">ger</subfield>
+      <subfield code="c">DE-101</subfield>
+      <subfield code="d">9999</subfield>
+    </datafield>
+    <datafield tag="041" ind1=" " ind2=" ">
+      <subfield code="a">ger</subfield>
+    </datafield>
+    <datafield tag="044" ind1=" " ind2=" ">
+      <subfield code="c">XA-DE-HE</subfield>
+    </datafield>
+    <datafield tag="082" ind1="7" ind2="4">
+      <subfield code="8">13\p</subfield>
+      <subfield code="a">900</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="2">23sdnb</subfield>
+    </datafield>
+    <datafield tag="100" ind1="1" ind2=" ">
+      <subfield code="8">1\p</subfield>
+      <subfield code="0">(DE-588)119505584</subfield>
+      <subfield code="0">https://d-nb.info/gnd/119505584</subfield>
+      <subfield code="0">(DE-101)119505584</subfield>
+      <subfield code="a">Vrba, Rudolf</subfield>
+      <subfield code="d">1924-2006</subfield>
+      <subfield code="e">Verfasser</subfield>
+      <subfield code="4">aut</subfield>
+      <subfield code="2">gnd</subfield>
+    </datafield>
+    <datafield tag="240" ind1="1" ind2="0">
+      <subfield code="a">I Cannot Forgive</subfield>
+    </datafield>
+    <datafield tag="245" ind1="1" ind2="0">
+      <subfield code="a">Ich kann nicht vergeben</subfield>
+      <subfield code="b">Meine Flucht aus Auschwitz</subfield>
+      <subfield code="c">Rudolf Vrba</subfield>
+    </datafield>
+    <datafield tag="250" ind1=" " ind2=" ">
+      <subfield code="a">1. Auflage</subfield>
+    </datafield>
+    <datafield tag="263" ind1=" " ind2=" ">
+      <subfield code="a">204001</subfield>
+    </datafield>
+    <datafield tag="264" ind1=" " ind2="1">
+      <subfield code="a">Frankfurt am Main</subfield>
+      <subfield code="b">Schöffling</subfield>
+      <subfield code="c">2040</subfield>
+    </datafield>
+    <datafield tag="300" ind1=" " ind2=" ">
+      <subfield code="a">496 Seiten</subfield>
+      <subfield code="c">21 cm</subfield>
+    </datafield>
+    <datafield tag="336" ind1=" " ind2=" ">
+      <subfield code="a">Text</subfield>
+      <subfield code="b">txt</subfield>
+      <subfield code="2">rdacontent</subfield>
+    </datafield>
+    <datafield tag="337" ind1=" " ind2=" ">
+      <subfield code="a">ohne Hilfsmittel zu benutzen</subfield>
+      <subfield code="b">n</subfield>
+      <subfield code="2">rdamedia</subfield>
+    </datafield>
+    <datafield tag="338" ind1=" " ind2=" ">
+      <subfield code="a">Band</subfield>
+      <subfield code="b">nc</subfield>
+      <subfield code="2">rdacarrier</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">(Produktform)Hardback</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">(Zielgruppe)Allgemein</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Auschwitz</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Flucht</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Shoah</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Holocaust</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Rettung</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Zeitzeuge</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">(VLB-WN)1941: Hardcover, Softcover / Sachbücher/Geschichte/Biographien, Autobiographien</subfield>
+    </datafield>
+    <datafield tag="700" ind1="1" ind2=" ">
+      <subfield code="8">2\p</subfield>
+      <subfield code="0">(DE-588)124448615</subfield>
+      <subfield code="0">https://d-nb.info/gnd/124448615</subfield>
+      <subfield code="0">(DE-101)124448615</subfield>
+      <subfield code="a">Klarsfeld, Beate</subfield>
+      <subfield code="d">1939-</subfield>
+      <subfield code="e">Verfasser eines Geleitworts</subfield>
+      <subfield code="4">aui</subfield>
+      <subfield code="2">gnd</subfield>
+    </datafield>
+    <datafield tag="700" ind1="1" ind2=" ">
+      <subfield code="8">3\p</subfield>
+      <subfield code="0">(DE-588)119505584</subfield>
+      <subfield code="0">https://d-nb.info/gnd/119505584</subfield>
+      <subfield code="0">(DE-101)119505584</subfield>
+      <subfield code="a">Vrba, Rudolf</subfield>
+      <subfield code="d">1924-2006</subfield>
+      <subfield code="e">Verfasser eines Geleitworts</subfield>
+      <subfield code="4">aui</subfield>
+      <subfield code="2">gnd</subfield>
+    </datafield>
+    <datafield tag="700" ind1="1" ind2=" ">
+      <subfield code="8">4\p</subfield>
+      <subfield code="0">(DE-588)1194960073</subfield>
+      <subfield code="0">https://d-nb.info/gnd/1194960073</subfield>
+      <subfield code="0">(DE-101)1194960073</subfield>
+      <subfield code="a">Knellessen, Dagi</subfield>
+      <subfield code="e">Herausgeber</subfield>
+      <subfield code="4">edt</subfield>
+      <subfield code="2">gnd</subfield>
+    </datafield>
+    <datafield tag="700" ind1="1" ind2=" ">
+      <subfield code="8">5\p</subfield>
+      <subfield code="0">(DE-588)1026228093</subfield>
+      <subfield code="0">https://d-nb.info/gnd/1026228093</subfield>
+      <subfield code="0">(DE-101)1026228093</subfield>
+      <subfield code="a">Renz, Werner</subfield>
+      <subfield code="d">1950-</subfield>
+      <subfield code="e">Herausgeber</subfield>
+      <subfield code="4">edt</subfield>
+      <subfield code="2">gnd</subfield>
+    </datafield>
+    <datafield tag="700" ind1="1" ind2=" ">
+      <subfield code="8">6\p</subfield>
+      <subfield code="0">(DE-588)133971783</subfield>
+      <subfield code="0">https://d-nb.info/gnd/133971783</subfield>
+      <subfield code="0">(DE-101)133971783</subfield>
+      <subfield code="a">Ruschmeier, Sigrid</subfield>
+      <subfield code="d">1945-</subfield>
+      <subfield code="e">Übersetzer</subfield>
+      <subfield code="4">trl</subfield>
+      <subfield code="2">gnd</subfield>
+    </datafield>
+    <datafield tag="700" ind1="1" ind2=" ">
+      <subfield code="8">7\p</subfield>
+      <subfield code="0">(DE-588)133972100</subfield>
+      <subfield code="0">https://d-nb.info/gnd/133972100</subfield>
+      <subfield code="0">(DE-101)133972100</subfield>
+      <subfield code="a">Walitzek, Brigitte</subfield>
+      <subfield code="d">1952-</subfield>
+      <subfield code="e">Übersetzer</subfield>
+      <subfield code="4">trl</subfield>
+      <subfield code="2">gnd</subfield>
+    </datafield>
+    <datafield tag="700" ind1="1" ind2=" ">
+      <subfield code="8">8\p</subfield>
+      <subfield code="0">(DE-588)1194960073</subfield>
+      <subfield code="0">https://d-nb.info/gnd/1194960073</subfield>
+      <subfield code="0">(DE-101)1194960073</subfield>
+      <subfield code="a">Knellessen, Dagi</subfield>
+      <subfield code="e">Verfasser eines Nachworts</subfield>
+      <subfield code="4">waw</subfield>
+      <subfield code="2">gnd</subfield>
+    </datafield>
+    <datafield tag="700" ind1="1" ind2=" ">
+      <subfield code="8">9\p</subfield>
+      <subfield code="0">(DE-588)1026228093</subfield>
+      <subfield code="0">https://d-nb.info/gnd/1026228093</subfield>
+      <subfield code="0">(DE-101)1026228093</subfield>
+      <subfield code="a">Renz, Werner</subfield>
+      <subfield code="d">1950-</subfield>
+      <subfield code="e">Verfasser eines Nachworts</subfield>
+      <subfield code="4">waw</subfield>
+      <subfield code="2">gnd</subfield>
+    </datafield>
+    <datafield tag="700" ind1="1" ind2=" ">
+      <subfield code="8">10\p</subfield>
+      <subfield code="0">(DE-588)1026228093</subfield>
+      <subfield code="0">https://d-nb.info/gnd/1026228093</subfield>
+      <subfield code="0">(DE-101)1026228093</subfield>
+      <subfield code="a">Renz, Werner</subfield>
+      <subfield code="d">1950-</subfield>
+      <subfield code="e">Mitwirkender</subfield>
+      <subfield code="4">ctb</subfield>
+      <subfield code="2">gnd</subfield>
+    </datafield>
+    <datafield tag="700" ind1="1" ind2=" ">
+      <subfield code="8">11\p</subfield>
+      <subfield code="0">(DE-588)1194960073</subfield>
+      <subfield code="0">https://d-nb.info/gnd/1194960073</subfield>
+      <subfield code="0">(DE-101)1194960073</subfield>
+      <subfield code="a">Knellessen, Dagi</subfield>
+      <subfield code="e">Mitwirkender</subfield>
+      <subfield code="4">ctb</subfield>
+      <subfield code="2">gnd</subfield>
+    </datafield>
+    <datafield tag="710" ind1="2" ind2=" ">
+      <subfield code="8">12\p</subfield>
+      <subfield code="0">(DE-588)5564290-1</subfield>
+      <subfield code="0">https://d-nb.info/gnd/5564290-1</subfield>
+      <subfield code="0">(DE-101)973857080</subfield>
+      <subfield code="a">Schöffling &amp; Co.</subfield>
+      <subfield code="e">Verlag</subfield>
+      <subfield code="4">pbl</subfield>
+      <subfield code="2">gnd</subfield>
+    </datafield>
+    <datafield tag="776" ind1="0" ind2="8">
+      <subfield code="i">Erscheint auch als</subfield>
+      <subfield code="n">Online-Ausgabe</subfield>
+      <subfield code="z">9783895618413</subfield>
+    </datafield>
+    <datafield tag="776" ind1="0" ind2="8">
+      <subfield code="i">Erscheint auch als</subfield>
+      <subfield code="n">Online-Ausgabe</subfield>
+      <subfield code="z">9783895619793</subfield>
+    </datafield>
+    <datafield tag="856" ind1="4" ind2="2">
+      <subfield code="m">X:MVB</subfield>
+      <subfield code="q">text/html</subfield>
+      <subfield code="u">https://services.dnb.de/plus/idn/1209150832/blurb/</subfield>
+      <subfield code="3">Inhaltstext</subfield>
+    </datafield>
+    <datafield tag="883" ind1=" " ind2=" ">
+      <subfield code="8">1\p</subfield>
+      <subfield code="a">cgwrk</subfield>
+      <subfield code="d">20210314</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#cgwrk</subfield>
+    </datafield>
+    <datafield tag="883" ind1=" " ind2=" ">
+      <subfield code="8">2\p</subfield>
+      <subfield code="a">cgwrk</subfield>
+      <subfield code="d">20210314</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#cgwrk</subfield>
+    </datafield>
+    <datafield tag="883" ind1=" " ind2=" ">
+      <subfield code="8">3\p</subfield>
+      <subfield code="a">cgwrk</subfield>
+      <subfield code="d">20220812</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#cgwrk</subfield>
+    </datafield>
+    <datafield tag="883" ind1=" " ind2=" ">
+      <subfield code="8">4\p</subfield>
+      <subfield code="a">cgwrk</subfield>
+      <subfield code="d">20210314</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#cgwrk</subfield>
+    </datafield>
+    <datafield tag="883" ind1=" " ind2=" ">
+      <subfield code="8">5\p</subfield>
+      <subfield code="a">cgwrk</subfield>
+      <subfield code="d">20210314</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#cgwrk</subfield>
+    </datafield>
+    <datafield tag="883" ind1=" " ind2=" ">
+      <subfield code="8">6\p</subfield>
+      <subfield code="a">cgwrk</subfield>
+      <subfield code="d">20210314</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#cgwrk</subfield>
+    </datafield>
+    <datafield tag="883" ind1=" " ind2=" ">
+      <subfield code="8">7\p</subfield>
+      <subfield code="a">cgwrk</subfield>
+      <subfield code="d">20210314</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#cgwrk</subfield>
+    </datafield>
+    <datafield tag="883" ind1="2" ind2=" ">
+      <subfield code="8">8\p</subfield>
+      <subfield code="a">dnb</subfield>
+      <subfield code="d">20260709</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#dnb</subfield>
+    </datafield>
+    <datafield tag="883" ind1="2" ind2=" ">
+      <subfield code="8">9\p</subfield>
+      <subfield code="a">dnb</subfield>
+      <subfield code="d">20260709</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#dnb</subfield>
+    </datafield>
+    <datafield tag="883" ind1=" " ind2=" ">
+      <subfield code="8">10\p</subfield>
+      <subfield code="a">cgwrk</subfield>
+      <subfield code="d">20230210</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#cgwrk</subfield>
+    </datafield>
+    <datafield tag="883" ind1=" " ind2=" ">
+      <subfield code="8">11\p</subfield>
+      <subfield code="a">cgwrk</subfield>
+      <subfield code="d">20230210</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#cgwrk</subfield>
+    </datafield>
+    <datafield tag="883" ind1="1" ind2=" ">
+      <subfield code="8">12\p</subfield>
+      <subfield code="a">adb</subfield>
+      <subfield code="d">20211004</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#adb</subfield>
+    </datafield>
+    <datafield tag="883" ind1="1" ind2=" ">
+      <subfield code="8">13\p</subfield>
+      <subfield code="a">vlb</subfield>
+      <subfield code="d">20200428</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#vlb</subfield>
+    </datafield>
+    <datafield tag="925" ind1="w" ind2=" ">
+      <subfield code="a">c</subfield>
+    </datafield>
+    <datafield tag="926" ind1="1" ind2=" ">
+      <subfield code="a">NHTZ1</subfield>
+      <subfield code="o">93</subfield>
+      <subfield code="q">Publisher</subfield>
+      <subfield code="v">1.6</subfield>
+      <subfield code="x">Holocaust</subfield>
+    </datafield>
+  </record>

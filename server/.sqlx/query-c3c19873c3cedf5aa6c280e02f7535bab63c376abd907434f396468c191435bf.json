@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO edition_contributors (edition_id, author_id, role, position)\n         SELECT $1, author_id, role, position\n         FROM unnest($2::int8[], $3::text[], $4::int4[]) AS t (author_id, role, position)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array",
+        "TextArray",
+        "Int4Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c3c19873c3cedf5aa6c280e02f7535bab63c376abd907434f396468c191435bf"
+}

@@ -3,6 +3,7 @@
 
 use sqlx::PgConnection;
 
+use super::books::follow_merges;
 use super::isbn::Isbn13;
 
 /// Resolves books to local works, fetching and persisting remote records when needed.
@@ -51,4 +52,25 @@ pub enum LookupError {
     Unavailable,
     #[error(transparent)]
     Db(#[from] sqlx::Error),
+}
+
+/// The local step every ISBN resolution starts with: the edition with this ISBN (a withdrawn one
+/// too, it still resolves) and its current work. `resolve_isbn` implementations, `FakeCatalog`
+/// and the importer's `--offline` mode share it.
+pub async fn local_isbn(conn: &mut PgConnection, isbn: &Isbn13) -> sqlx::Result<Option<Resolved>> {
+    let Some(edition) = sqlx::query!(
+        "SELECT id, work_id FROM editions WHERE isbn13 = $1",
+        isbn.as_str()
+    )
+    .fetch_optional(&mut *conn)
+    .await?
+    else {
+        return Ok(None);
+    };
+    Ok(follow_merges(conn, edition.work_id)
+        .await?
+        .map(|work_id| Resolved {
+            work_id,
+            edition_id: Some(edition.id),
+        }))
 }

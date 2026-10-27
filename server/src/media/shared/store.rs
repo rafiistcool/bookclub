@@ -1,7 +1,9 @@
 //! Where media bytes live (docs/phase1/conventions.md §8): the filesystem now, S3 later.
 
+use std::collections::BTreeMap;
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, bail};
 use bytes::Bytes;
@@ -29,18 +31,23 @@ impl FsMediaStore {
         Self { root: root.into() }
     }
 
-    /// The file for `key`. Keys are relative paths of plain components; anything else (`..`,
-    /// absolute paths, empty keys) is refused.
+    /// The file for `key`.
     fn path(&self, key: &str) -> anyhow::Result<PathBuf> {
-        let relative = Path::new(key);
-        let plain = relative
-            .components()
-            .all(|component| matches!(component, Component::Normal(_)));
-        if key.is_empty() || !plain {
-            bail!("invalid media key {key:?}");
-        }
-        Ok(self.root.join(relative))
+        check_key(key)?;
+        Ok(self.root.join(key))
     }
+}
+
+/// Keys are relative paths of plain components; anything else (`..`, absolute paths, empty
+/// keys) is refused by every store.
+fn check_key(key: &str) -> anyhow::Result<()> {
+    let plain = Path::new(key)
+        .components()
+        .all(|component| matches!(component, Component::Normal(_)));
+    if key.is_empty() || !plain {
+        bail!("invalid media key {key:?}");
+    }
+    Ok(())
 }
 
 #[async_trait::async_trait]
@@ -91,6 +98,59 @@ impl MediaStore for FsMediaStore {
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error).with_context(|| format!("cannot delete {}", path.display())),
         }
+    }
+}
+
+/// Objects in memory, for tests. Keys are checked like [`FsMediaStore`]'s.
+#[derive(Default)]
+pub struct MemMediaStore {
+    objects: Mutex<BTreeMap<String, (Bytes, String)>>,
+}
+
+impl MemMediaStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn objects(&self) -> MutexGuard<'_, BTreeMap<String, (Bytes, String)>> {
+        self.objects
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Every stored key, sorted.
+    pub fn keys(&self) -> Vec<String> {
+        self.objects().keys().cloned().collect()
+    }
+
+    /// The content type `key` was stored with.
+    pub fn content_type(&self, key: &str) -> Option<String> {
+        self.objects()
+            .get(key)
+            .map(|(_, content_type)| content_type.clone())
+    }
+}
+
+#[async_trait::async_trait]
+impl MediaStore for MemMediaStore {
+    async fn put(&self, key: &str, bytes: Bytes, content_type: &str) -> anyhow::Result<()> {
+        check_key(key)?;
+        self.objects()
+            .insert(key.to_owned(), (bytes, content_type.to_owned()));
+        Ok(())
+    }
+
+    async fn get(&self, key: &str) -> anyhow::Result<Option<Bytes>> {
+        check_key(key)?;
+        Ok(self.objects().get(key).map(|(bytes, _)| bytes.clone()))
+    }
+
+    async fn delete_prefix(&self, prefix: &str) -> anyhow::Result<()> {
+        check_key(prefix)?;
+        let below = format!("{prefix}/");
+        self.objects()
+            .retain(|key, _| key != prefix && !key.starts_with(&below));
+        Ok(())
     }
 }
 
@@ -146,6 +206,58 @@ mod tests {
         store.delete_prefix("covers/ab/abc").await.unwrap();
         assert_eq!(store.get("covers/ab/abc/s").await.unwrap(), None);
         store.delete_prefix("covers/ab/abc").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn fs_store_round_trips_binary_objects_under_nested_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsMediaStore::new(dir.path().join("does/not/exist/yet"));
+        let bytes: Vec<u8> = (0..=255).cycle().take(70_000).collect();
+        let key = "avatars/ab/abcdefghijklmnopqrstuvwxyz/a";
+        store
+            .put(key, Bytes::from(bytes.clone()), "image/jpeg")
+            .await
+            .unwrap();
+        assert_eq!(store.get(key).await.unwrap().unwrap(), bytes);
+        // A prefix that is one file deletes just that file.
+        store.delete_prefix(key).await.unwrap();
+        assert_eq!(store.get(key).await.unwrap(), None);
+        // Deleting a prefix that never existed is fine.
+        store.delete_prefix("covers/zz/nothing").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn mem_store_behaves_like_the_fs_store() {
+        let store = MemMediaStore::new();
+        store
+            .put("covers/ab/abc/l", Bytes::from_static(b"l"), "image/webp")
+            .await
+            .unwrap();
+        store
+            .put("covers/ab/abc/s", Bytes::from_static(b"s"), "image/webp")
+            .await
+            .unwrap();
+        store
+            .put(
+                "covers/ab/abcd/l",
+                Bytes::from_static(b"other"),
+                "image/webp",
+            )
+            .await
+            .unwrap();
+        assert_eq!(store.get("covers/ab/abc/l").await.unwrap().unwrap(), "l");
+        assert_eq!(
+            store.content_type("covers/ab/abc/s").as_deref(),
+            Some("image/webp")
+        );
+        store.delete_prefix("covers/ab/abc").await.unwrap();
+        assert_eq!(
+            store.keys(),
+            ["covers/ab/abcd/l"],
+            "a sibling prefix survives"
+        );
+        assert!(store.put("../x", Bytes::new(), "image/webp").await.is_err());
+        assert!(store.get("/etc/passwd").await.is_err());
     }
 
     #[tokio::test]

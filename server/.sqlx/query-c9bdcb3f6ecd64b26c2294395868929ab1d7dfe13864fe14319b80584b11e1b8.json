@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n               SELECT 1 FROM media WHERE sha256 = $1 AND removed_at IS NOT NULL\n           ) AS \"removed!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "removed!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "c9bdcb3f6ecd64b26c2294395868929ab1d7dfe13864fe14319b80584b11e1b8"
+}

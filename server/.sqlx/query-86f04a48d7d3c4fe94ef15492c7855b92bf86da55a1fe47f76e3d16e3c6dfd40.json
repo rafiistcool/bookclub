@@ -1,0 +1,47 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT cover_media_id, field_sources ->> 'cover_media_id' AS \"owner?\", source\n               FROM works WHERE id = $1 FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "cover_media_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "cover_media_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "owner?",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "source",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "source"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      null,
+      false
+    ]
+  },
+  "hash": "86f04a48d7d3c4fe94ef15492c7855b92bf86da55a1fe47f76e3d16e3c6dfd40"
+}

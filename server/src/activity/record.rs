@@ -1,5 +1,4 @@
-//! Writing activity events (docs/phase1/conventions.md §15). Frozen; the body comes in Wave 1
-//! step 2.
+//! Writing activity events (docs/phase1/conventions.md §15). Frozen.
 
 use serde_json::{Map, Value};
 use sqlx::PgConnection;
@@ -74,13 +73,39 @@ pub struct NewEvent {
     pub payload: Map<String, Value>,
 }
 
-/// Records `ev` in the caller's transaction and returns its id. Drops null payload values;
-/// asserts `club_id.is_none() == kind.is_personal()`. Wave 1 step 2 implements it.
-pub async fn record(_conn: &mut PgConnection, ev: NewEvent) -> sqlx::Result<i64> {
-    Err(sqlx::Error::Protocol(format!(
-        "activity::record is not implemented yet ({})",
-        ev.kind.as_str()
-    )))
+/// Records `ev` in the caller's transaction and returns its id. Drops null payload values (top
+/// level); panics unless `club_id.is_none() == kind.is_personal()` (a programming error; the
+/// `events_scope` CHECK enforces the same in the database).
+pub async fn record(conn: &mut PgConnection, ev: NewEvent) -> sqlx::Result<i64> {
+    assert_eq!(
+        ev.club_id.is_none(),
+        ev.kind.is_personal(),
+        "activity event {} needs club_id {}",
+        ev.kind.as_str(),
+        if ev.kind.is_personal() {
+            "None"
+        } else {
+            "Some"
+        }
+    );
+    let payload: Map<String, Value> = ev
+        .payload
+        .into_iter()
+        .filter(|(_, value)| !value.is_null())
+        .collect();
+    sqlx::query_scalar!(
+        "INSERT INTO events (club_id, actor_id, kind, work_id, pick_id, payload)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id",
+        ev.club_id,
+        ev.actor_id,
+        ev.kind.as_str(),
+        ev.work_id,
+        ev.pick_id,
+        Value::Object(payload)
+    )
+    .fetch_one(conn)
+    .await
 }
 
 #[cfg(test)]

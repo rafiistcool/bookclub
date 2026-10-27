@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE works SET title = $2, subtitle = $3, author_names = $4,\n                    first_publish_year = $5, description = $6, subjects = $7, pages = $8,\n                    ol_rating = $9, ol_rating_count = $10, source = $11, cover_media_id = $12,\n                    field_sources = $13,\n                    details_fetched_at = CASE WHEN $14 THEN now() ELSE details_fetched_at END,\n                    updated_at = now()\n             WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Int4",
+        "Text",
+        "TextArray",
+        "Int4",
+        "Float8",
+        "Int4",
+        "Text",
+        "Int8",
+        "Jsonb",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "13ea4a9a40ecd030085f96a518510e7c89c96b12f40855cc482bd0e28f26da5a"
+}

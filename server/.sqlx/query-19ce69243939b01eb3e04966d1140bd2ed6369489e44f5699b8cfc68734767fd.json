@@ -1,0 +1,172 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT e.id, e.work_id, e.isbn13, e.title, e.subtitle, e.publisher, e.language,\n                  e.format, e.pages, e.publication_year, e.planned_publication_date,\n                  e.source AS \"source: CatalogSource\", m.public_id AS \"cover?\"\n           FROM editions e\n           LEFT JOIN media m ON m.id = e.cover_media_id AND m.removed_at IS NULL\n           WHERE e.id = ANY($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "work_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "work_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "isbn13",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "isbn13"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "title",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "subtitle",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "subtitle"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "publisher",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "publisher"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "language",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "language"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "format",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "format"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "pages",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "pages"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "publication_year",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "publication_year"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "planned_publication_date",
+        "type_info": "Date",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "planned_publication_date"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "source: CatalogSource",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "source"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "cover?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "public_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "19ce69243939b01eb3e04966d1140bd2ed6369489e44f5699b8cfc68734767fd"
+}

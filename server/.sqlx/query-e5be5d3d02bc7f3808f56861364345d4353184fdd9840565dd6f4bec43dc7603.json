@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH RECURSIVE chain (id, merged_into_id, hops) AS (\n               SELECT id, merged_into_id, 0 FROM works WHERE id = $1\n               UNION ALL\n               SELECT w.id, w.merged_into_id, c.hops + 1\n               FROM works w JOIN chain c ON w.id = c.merged_into_id\n               WHERE c.hops < $2\n           )\n           SELECT id AS \"id!\" FROM chain WHERE merged_into_id IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "e5be5d3d02bc7f3808f56861364345d4353184fdd9840565dd6f4bec43dc7603"
+}

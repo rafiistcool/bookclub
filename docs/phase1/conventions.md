@@ -663,28 +663,42 @@ Every Wave 2 package adds `tests/<pkg>_visibility.rs`, following the template in
 
 ```rust
 // books.rs: the shared DTO loaders (DTOs in crate::dto, §20)
-#[derive(Clone, Copy, Hash, Eq, PartialEq)] pub struct BookRef { pub work_id: i64, pub edition_id: Option<i64> }
-/// With an edition: the edition's title (when it has its own), pages, cover and spine colour win.
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)] pub struct BookRef { pub work_id: i64, pub edition_id: Option<i64> }
+impl BookRef { pub fn work(work_id: i64) -> BookRef; }  // no edition context
+/// With an edition of that work: the edition's title (when it has its own), pages, cover and spine colour win; an
+/// edition of another work is ignored. Missing works are left out. A removed cover gives no URLs; spine '' → null.
 pub async fn book_outs(conn: &mut PgConnection, refs: &[BookRef]) -> sqlx::Result<HashMap<BookRef, BookOut>>;
 pub async fn book_out(conn: &mut PgConnection, r: BookRef) -> sqlx::Result<Option<BookOut>>;
+/// Missing ids are left out; contributors in record order; isbn10 derived.
 pub async fn edition_outs(conn: &mut PgConnection, ids: &[i64]) -> sqlx::Result<HashMap<i64, EditionOut>>;
+/// The work id after following works.merged_into_id; None when it does not exist.
+pub async fn follow_merges(conn: &mut PgConnection, work_id: i64) -> sqlx::Result<Option<i64>>;
 /// Follows works.merged_into_id. 404 NO_SUCH_BOOK when the work does not exist.
 pub async fn require_work(conn: &mut PgConnection, work_id: i64) -> ApiResult<i64>;
-/// 400 "That edition belongs to another book" unless the edition is of that work.
+/// 400 "That edition belongs to another book" unless the edition is of that work (a missing edition too).
 pub async fn require_edition_of(conn: &mut PgConnection, work_id: i64, edition_id: i64) -> ApiResult<()>;
 
 // work_ref.rs: `{work_id}` path parameter
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkRef { Id(i64), OpenLibrary(String /* OL…W */), Legacy(String /* legacy_work_keys.legacy_key */) }
-/// Canonicalises ISBN x→X; a GB key becomes "sha256:<hex of SHA-256 of "/works/GB…">" (case-sensitive).
+/// `^[0-9]+$` that fits i64 → Id; `^OL[0-9]+W$` → OpenLibrary; BC…/ISBN…/GB… (legacy regexes, catalog spec §2.1) →
+/// Legacy("/works/<canonical id>"), canonicalising ISBN x→X; a GB key becomes
+/// "sha256:<hex of SHA-256 of "/works/GB…">" (case-sensitive). Anything else (also legacy OTHER keys) → None.
 impl WorkRef { pub fn parse(raw: &str) -> Option<WorkRef>; }
+/// Follows merges, like require_work.
 pub async fn resolve_local(conn: &mut PgConnection, r: &WorkRef) -> sqlx::Result<Option<i64>>;
+pub fn canonical_work_id(work_id: &str) -> String;     // the legacy canonical_work_id
+/// The legacy_work_keys.legacy_key for a legacy work id ("/works/<canonical>", GB ids hashed). IMP stores keys
+/// through this, so they always match WorkRef::parse.
+pub fn legacy_key(work_id: &str) -> String;
 
 // isbn.rs
-pub struct Isbn13(String);
+pub struct Isbn13(pub(crate) String);                  // impl Display; as_str()
 pub fn parse_isbn(raw: &str) -> Option<Isbn13>;       // strips spaces/'-', uppercases, checks checksum, 10→978-13
 pub fn isbn10_of(isbn: &Isbn13) -> Option<String>;     // None for 979; EditionOut.isbn10 is always derived
 pub fn looks_like_isbn(q: &str) -> bool;               // shape only, for routing a search query
 pub fn is_german_group(isbn: &Isbn13) -> bool;         // 978-3: the DNB route of §7.4
+pub fn registration_group(isbn: &Isbn13) -> &str;      // prefix + group, e.g. "9783", "97888", "97910" (range table)
 ```
 
 ### 7.2 Ingest: the only writer of catalog fields, with field-level provenance
@@ -699,8 +713,9 @@ Every catalog field of `works`, `editions`, `authors`, `work_authors` and `editi
 
 ```rust
 pub enum Source { OpenLibrary, Dnb, User, Legacy, Admin }   // Admin: field provenance only, never a row source
-impl Source { pub fn rank(self) -> u8; }                     // Legacy 1, OpenLibrary/Dnb 2, User 3, Admin 4
-pub enum ContributorRole { Translator, Illustrator, Editor }
+impl Source { pub fn rank(self) -> u8; pub fn as_str(self) -> &'static str; pub fn parse(s: &str) -> Option<Source>; }
+                                                             // Legacy 1, OpenLibrary/Dnb 2, User 3, Admin 4
+pub enum ContributorRole { Translator, Illustrator, Editor } // as_str()
 pub struct AuthorRecord { pub name: String /* natural order */, pub sort_name: Option<String>,
     pub ol_author_id: Option<String>, pub gnd_id: Option<String> }
 pub struct WorkRecord { pub source: Source, pub ol_work_id: Option<String>, pub title: String,
@@ -713,7 +728,11 @@ pub struct EditionRecord { pub source: Source, pub isbn13: Option<Isbn13>, pub o
     pub language: Option<String>, pub format: Option<Format>, pub pages: Option<i32>,
     pub publication_year: Option<i32>, pub planned_publication_date: Patch<time::Date>,
     pub ol_cover_id: Option<i64>, pub contributors: Vec<(AuthorRecord, ContributorRole)>, pub created_by: Option<i64> }
-pub enum Format { Hardcover, Paperback, Ebook, Audiobook, Other }
+pub enum Format { Hardcover, Paperback, Ebook, Audiobook, Other }   // as_str(), parse()
+// Constructors with every other field None/empty, for struct update syntax:
+impl AuthorRecord { pub fn named(name: impl Into<String>) -> AuthorRecord; }
+impl WorkRecord { pub fn new(source: Source, title: impl Into<String>) -> WorkRecord; }   // author_names "" = derived from authors
+impl EditionRecord { pub fn new(source: Source) -> EditionRecord; }                      // planned date Patch::Missing
 pub enum Mode {
     /// Existing rows are returned untouched (search stubs, one batched statement).
     InsertOnly,
@@ -722,11 +741,12 @@ pub enum Mode {
     /// A complete record from an authoritative feed (DNB OAI and SRU): as Refresh, and None also clears a
     /// field whose provenance is this same source. planned_publication_date follows its Patch
     /// (Missing keeps, Null clears, Value sets): the MARC mapping never sends Null, so the date survives
-    /// a later record without 263.
+    /// a later record without 263. A record without a cover never clears one.
     Replace,
 }
 pub enum WorkGrouping {
-    /// Create a new work from the WorkRecord (no deduplication; the caller decided).
+    /// Create a new work from the WorkRecord (no deduplication; the caller decided). A record with an
+    /// ol_work_id still finds that work (upsert_work).
     NewWork,
     /// Attach to this existing work.
     Into(i64),
@@ -741,35 +761,56 @@ pub async fn upsert_work(conn: &mut PgConnection, rec: &WorkRecord, mode: Mode) 
 /// One batched INSERT … ON CONFLICT DO NOTHING for search pages; returns ids in input order.
 pub async fn upsert_work_stubs(conn: &mut PgConnection, recs: &[WorkRecord]) -> sqlx::Result<Vec<i64>>;
 /// Finds the edition by isbn13, then dnb_idn, then ol_edition_id.
-/// - Found: updates it per `mode` and the provenance rules (dnb_idn takes the newest record's IDN; a
-///   withdrawn edition is un-withdrawn). Then the parent work's title, subtitle, author_names and
-///   work_authors are updated from `work` under the same rules when they are `legacy`-ranked, or when
-///   they are `dnb`-ranked and this is the work's only edition (a provisional VLB title gets the final one).
+/// - Found: updates it per `mode` and the provenance rules (dnb_idn takes the newest record's IDN, moving it from
+///   another edition; a NULL isbn13/ol_edition_id is filled when free, an existing one is kept; a withdrawn
+///   edition is un-withdrawn). Then the parent work's title, subtitle, author_names and work_authors are updated
+///   from `work` under the same rules when they are `legacy`-ranked, or when they are `dnb`-ranked and this is the
+///   work's only edition (a provisional VLB title gets the final one). Precisely: the three fields merge normally
+///   (empty ones filled) when the work's source is `legacy` (bare facts being upgraded) or when the record is DNB,
+///   the title's provenance is `dnb` and the work has one edition; otherwise only `legacy`-ranked values are
+///   replaced. So an OL record never retitles a DNB work and a DNB record never retitles an OL work.
 /// - Not found: resolves the work by `grouping` (creating it from `work` when needed) and inserts the edition.
 /// In both cases NULL work fields are filled from the edition (§7.3). Returns (work_id, edition_id).
+/// InsertOnly returns a found edition untouched. A `legacy` edition becomes `dnb`/`openlibrary` like a work.
 pub async fn upsert_edition_with_work(conn: &mut PgConnection, work: &WorkRecord, ed: &EditionRecord,
     grouping: WorkGrouping, mode: Mode) -> sqlx::Result<(i64, i64)>;
 /// An edition of a known work (OL editions list, a user adding an edition). Same find-or-insert as above,
-/// but never touches the work's own fields except the NULL fill of §7.3.
+/// but never touches the work's own fields except the NULL fill of §7.3. A found edition of another work keeps
+/// its work: the returned work_id says so (CAT answers 409).
 pub async fn upsert_edition(conn: &mut PgConnection, work_id: i64, rec: &EditionRecord, mode: Mode)
     -> sqlx::Result<(i64, i64)>;
 /// DNB delivered status="deleted" for this IDN: sets editions.withdrawn_at when the edition exists. Never inserts.
 pub async fn withdraw_dnb_edition(conn: &mut PgConnection, dnb_idn: &str) -> sqlx::Result<()>;
 /// The media row for an Open Library cover id (insert-only). None when that row was removed by a takedown,
-/// so no caller can attach it again.
+/// so no caller can attach it again, and for ids <= 0.
 pub async fn ol_cover_media(conn: &mut PgConnection, ol_cover_id: i64) -> sqlx::Result<Option<i64>>;
 pub enum CoverTarget { Work(i64), Edition(i64) }
 /// Sets the cover under the provenance rules (`by` = the writer). With `only_if_empty` the UPDATE carries
 /// `AND cover_media_id IS NULL` (a first user upload; false = someone else was first). Refuses a removed
-/// media row. Returns whether the cover changed. Also fills a NULL work cover from an edition cover.
+/// media row (and a non-cover row). Returns whether the cover changed (false for a missing target or the same
+/// media id). Also fills a NULL work cover from an edition cover.
 pub async fn set_cover(conn: &mut PgConnection, target: CoverTarget, media_id: i64, by: Source,
     only_if_empty: bool) -> sqlx::Result<bool>;
 /// Takedown: clears every works/editions cover_media_id that points at the media row (and its provenance).
 pub async fn clear_media(conn: &mut PgConnection, media_id: i64) -> sqlx::Result<u64>;
-/// An approved edit request: writes the fields and marks them "admin". `fields` uses the edit-request keys.
+/// An approved edit request: writes the fields and marks them "admin". `fields` uses the edit-request keys:
+/// works title, subtitle, authors, year, description, subjects, pages; editions title, subtitle, publisher,
+/// language, format, pages, publication_year, planned_publication_date ("YYYY-MM-DD"). There is no `isbn` key
+/// (identity, not an editable field). Null clears a field (not a work title) and drops its provenance, so a
+/// source may fill it again. Changing `authors` drops the work_authors links. 404 NO_SUCH_BOOK for a missing
+/// target; 400 `Unknown field: <key>` / `Invalid value for <key>` (admin-only strings, not mapped by the app).
 pub async fn apply_admin_fields(conn: &mut PgConnection, target: CoverTarget, fields: &serde_json::Map<String, Value>)
     -> ApiResult<()>;
+// Pure rules, public for CAT and tests:
+pub fn clean_description(raw: &str) -> String;  pub fn clean_subjects(values: &[String]) -> Vec<String>;
+pub fn name_key(name: &str) -> String;  pub fn author_surname(name: &str, sort_name: Option<&str>) -> String;
+pub fn match_key(title: &str, surname: &str) -> String;  pub fn search_extra(work_title: &str, edition_titles: &[String]) -> String;
 ```
+
+**How ingest writes** (W1 implementation notes that callers rely on):
+- Each write loads the row `FOR UPDATE`, merges the record field by field, and writes it once. Records are sanitised first: values outside the schema's CHECKs are dropped (pages, years, ratings, cover ids <= 0, malformed OL ids, overlong identifiers) or truncated by characters (titles, names, publisher, description); text is stored as Unicode NFC.
+- **Concurrency:** writes of an edition take transaction-level advisory locks on its ISBN, IDN and OL edition id, and `DnbTitleAuthor` on the match key (the two-key lock space `(0x62630100, hash)`, separate from `jobs::lock_ids`). Inserts also use `ON CONFLICT DO NOTHING` and merge into the winner. Callers run a multi-statement ingest in one transaction (HAR per page, CAT per lookup), or the locks end with each statement.
+- `upsert_work_stubs` writes `author_names` only (author records come with the full record) and inserts records without an `ol_work_id` one by one.
 
 ### 7.3 Rules ingest maintains
 
@@ -777,11 +818,11 @@ pub async fn apply_admin_fields(conn: &mut PgConnection, target: CoverTarget, fi
 - **Covers from sources never replace a user's or an admin's cover.** A cover set by a first upload has provenance `user`; an approved `cover_replace` has `admin`. A Refresh only sets `cover_media_id` when it is NULL or has source rank (an Open Library cover may replace an older Open Library cover).
 - **NULL work fields are filled from editions.** After any edition write, a NULL `works.pages`, `first_publish_year` (from `publication_year`, else the year of `planned_publication_date`) and `cover_media_id` are filled from that edition, with the edition's provenance. So a work built from DNB or legacy facts, or a work whose only cover is a user photo of one edition, shows year, pages and cover outside an edition context too.
 - **Search sees edition titles.** `works.search_extra` is rebuilt from the work's edition titles that differ (by case fold) from the work title.
-- **`works.match_key`** = `casefold(collapse_ws(title))` + U+001F + `casefold(surname of the first author)`, where the surname is the part before the comma of an inverted name, else the last word. Rust computes it; Postgres `lower()` is not a case fold.
+- **`works.match_key`** = `casefold(collapse_ws(title))` + U+001F + `casefold(surname of the first author)`, where the surname is the part before the comma of an inverted name (`authors.sort_name`), else the last word of the name (up to its first comma). A work without author records uses the first name in `author_names`. Rust computes it; Postgres `lower()` is not a case fold. `search_extra` joins the distinct edition titles with " / " (at most 5000 characters).
 - **Authors without an external id** (no OL id, no GND id) are deduplicated by `authors.name_key` (`casefold(collapse_ws(name))`); rows with an id are deduplicated by the id.
 - **Never overwrite from client input.** Client requests reference works and editions by id; the only client-entered values are user-added works and editions (provenance `user`) and edit requests (provenance `admin` once approved).
-- **Description cleaning** is the union of the two legacy cleaners: trailer removal plus markdown flattening (docs/phase1/spec/catalog.md §5.7).
-- **Subject cleaning:** drop blanks and entries that contain `:` or `,` or exceed 40 characters, dedupe case-insensitively, keep at most 12. Machine tags `^[a-z_]+:\S` are dropped too.
+- **Description cleaning** is the union of the two legacy cleaners: trailer removal plus markdown flattening (docs/phase1/spec/catalog.md §5.7). It applies to Open Library and DNB records; text a reader, an admin or the legacy import entered is stored as given (trimmed, length-capped).
+- **Subject cleaning:** drop blanks and entries that contain `:` or `,` or exceed 40 characters, dedupe case-insensitively, keep at most 12. Machine tags `^[a-z_]+:\S` are dropped too. Same scope as description cleaning; other sources keep at most 50 non-blank subjects.
 - **Rounding** of rating means uses `text::round_half_even`.
 
 ### 7.4 Remote resolution (`lookup.rs`)
@@ -801,6 +842,9 @@ pub trait CatalogLookup: Send + Sync {
 }
 pub struct Resolved { pub work_id: i64, pub edition_id: Option<i64> }
 #[derive(Debug, thiserror::Error)] pub enum LookupError { #[error("throttled")] Throttled, #[error("unavailable")] Unavailable, #[error(transparent)] Db(#[from] sqlx::Error) }
+/// The local step every resolution starts with: the edition with this ISBN (a withdrawn one too) and its current
+/// work. CAT's resolve_isbn, FakeCatalog and IMP's --offline mode share it.
+pub async fn local_isbn(conn: &mut PgConnection, isbn: &Isbn13) -> sqlx::Result<Option<Resolved>>;
 ```
 
 **Remote route by registration group** (the plan: DNB for German books, Open Library for English ones; DNB SRU is a rate-limited fallback):
@@ -814,31 +858,49 @@ pub struct Resolved { pub work_id: i64, pub edition_id: Option<i64> }
 One mapping for both DNB channels: HAR's OAI-PMH harvest and CAT's SRU lookup. Each feeds it one MARC21-xml `<record>` element; envelopes (OAI headers, resumption tokens, SRU wrappers) stay in the packages.
 
 ```rust
+#[derive(Debug, Clone, PartialEq)]
 pub struct DnbRecord { pub idn: String, pub work: WorkRecord, pub editions: Vec<EditionRecord> }
-/// Err for a record without 001 or without a usable title.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum MarcError { #[error("malformed MARC21-xml: {0}")] Xml(String), #[error("the record has no 001 control field")] NoIdn,
+                     #[error("the record has no usable title")] NoTitle }
+/// Err for a record without 001 or without a usable title. The parser only collects the fields below, so 520
+/// and 856 never even reach memory; elements around the MARC record (an OAI header) are ignored.
 pub fn map_record(record_xml: &str) -> Result<DnbRecord, MarcError>;
 ```
 
 - **CC0 fields only:** 001 IDN; 020 ISBNs (with the $c binding); 245 $a/$b title and subtitle; 100/700 names with $4 relator (`aut` → authors, `trl` → translator, `ill` → illustrator, `edt` → editor) and $0 GND ids; 264/260 publisher and year; 041/008 language; 300 pages; 263 planned date (`YYYYMM` → first of the month); 653 `(Produktform)…`; 337/338. **Never** 520, 856 or any other VLB text or URL.
-- **Names** come in natural order: "Paulitz, Udo" → `name` "Udo Paulitz", `sort_name` "Paulitz, Udo". `author_names` joins the `aut` names in natural order with ", ".
+- **Text:** DNB's non-filing markers (U+0098 … U+009C around "Die", "The") are dropped, and the decomposed Unicode DNB delivers ("o" + U+0308) is composed to NFC; trailing ISBD separators (` /`, ` :`, ` ;`, ` =`, `,`) are trimmed.
+- **Title:** 245 `$a`, plus `$n` (". " + part number) and `$p` (". " + part name, ", " after a `$n`), so the volumes of a series ("Gesammelte Werke. Bd. 21.") never share a match key; `$b` is the subtitle.
+- **Names** come in natural order: "Paulitz, Udo" → `name` "Udo Paulitz", `sort_name` "Paulitz, Udo". `author_names` joins the `aut` names in natural order with ", ". A 100 without `$4` counts as `aut`; other relators (`aui`, `waw`, `ctb`, …) and a 700 without `$4` are not mapped; each person appears once per role. The GND id is the `$0` with prefix `(DE-588)`.
+- **ISBNs:** the ISBN-10 and ISBN-13 of one book (DNB lists both) are one edition. Only the first edition carries `dnb_idn` (`editions.dnb_idn` is unique), so a deleted header withdraws the first ISBN's edition.
+- **Imprint:** 264 with ind2 `1` first, then other 264s, then 260. An edition whose 020 `$q` names a 264 `$b` (co-publishers) gets that publisher, else the first. The year is the first four-digit number of `$c` ("September 2026", "[2026]"); 2099 and later are DNB placeholders and count as missing. Language: the first valid 041 `$a`, else 008/35-37. Pages: the number before "Seiten"/"S."/"pages"/"p." in 300 `$a`.
 - **Work facts** (for `upsert_edition_with_work`): title and subtitle from 245; authors from the `aut` names; `first_publish_year` = the edition's `publication_year`, else the year of the planned date; `pages` = the edition's pages.
 - **Several ISBNs in one record:** one edition per ISBN in the registration group of the first 020 ISBN (foreign co-publisher ISBNs are dropped), all under the same work.
-- **Format**, per edition: with one ISBN, 653 `(Produktform)` first (`Hardback` → hardcover; `Paperback / softback` → paperback; `Digital…`/`E-book` → ebook; `Audio…` → audiobook; anything else, e.g. `Calendar`, `Multiple-item retail product` → other), then the 020 $c binding, then 337/338. With several ISBNs, each edition's own 020 $c binding first (`Gb.`, `geb.`, `Gewebe`, `Hldr.`, `Pp.`, `Hperg.` → hardcover; `kart.`, `Broschur`, `brosch.`, `Pb.` → paperback), then a single 653 value, then 337/338 (`cr` → ebook; audio carriers such as `sd` → audiobook). Nothing usable → `other`.
+- **Format**, per edition: with one ISBN, 653 `(Produktform)` first (`Hardback` → hardcover; `Paperback / softback` → paperback; `Digital…`/`E-book` → ebook; `Audio…` → audiobook; anything else, e.g. `Calendar`, `Multiple-item retail product` → other), then the 020 $c binding, then 337/338. With several ISBNs, each edition's own 020 $c binding first (`Gb.`, `geb.`, `Gebunden`, `Gewebe`, `Hldr.`, `Pp.`, `Hperg.`, `Festeinband`, `Leinen`, `Ln.`, `Lw.`, `Hardcover` → hardcover; `kart.`, `KT`, `Broschur`, `brosch.`, `Broschiert`, `Klappenbroschur`, `Pb.`, `Paperback`, `Taschenbuch` → paperback; matched as words, case-insensitively, before the first `:`), then a single 653 value, then 337/338 (`cr` → ebook; audio carriers such as `sd` → audiobook; 337 `s` → audiobook, `c` → ebook). Nothing usable → `other`, so a DNB edition always has a format.
 - **Deleted records:** the OAI header `status="deleted"` is the caller's to detect; it calls `ingest::withdraw_dnb_edition` and never maps the metadata.
-- Tests (W1): `tests/fixtures/dnb_marc/` holds records copied from recorded reiheN pages: a single-ISBN hardback, a multi-ISBN record (kart./Gewebe/Hperg.), a translator with and without GND id, an inverted multi-author name list, a record with 263, a record with 520/856 (asserting neither is stored), and a deleted-header record.
+- **Deleted records still carry metadata** in DNB's OAI responses, so the caller must check the header before mapping.
+- Tests (W1): `tests/fixtures/dnb_marc/` holds single records copied from DNB responses recorded on 2026-10-27 (reiheN and reiheA OAI pages, one SRU search): a single-ISBN hardback with 263, an inverted multi-author name list, translators and editors with GND ids, a translator without one, a multi-ISBN co-publisher record, a record with 856 links plus a hand-added 520 (DNB's MARC carries blurbs only as 856 links; no recorded record had a 520), and a deleted-header record. No recorded record combined kart./Gewebe/Hperg. bindings, so `dnb_marc.rs` unit tests cover the binding vocabulary, foreign co-publisher groups and the carrier fallbacks with small inline records. `tests/dnb_marc.rs` maps and ingests every fixture and checks that no VLB text or URL is stored.
 
 ### 7.6 Merge rules (`merge_rules.rs`, W1, frozen; pure functions)
 
 The collision rules for two works becoming one, used by IMP while importing and by CAT's `merge_works` (live data):
 
 ```rust
+pub struct ShelfFacts { pub id: i64, pub status: ShelfStatus, pub updated_at: OffsetDateTime, pub rating: Option<i32>,
+    pub rating_visibility: Visibility, pub take: String, pub dnf_reason: String, pub progress: Option<i32>,
+    pub started_at: Option<OffsetDateTime>, pub finished_at: Option<OffsetDateTime>, pub edition_id: Option<i64> }
 pub fn shelf_status_rank(s: ShelfStatus) -> u8;   // finished 4 > did_not_finish 3 > currently_reading 2 > want_to_read 1
-/// Winner: higher status rank, then newer updated_at, then lower id.
+/// Winner: higher status rank, then newer updated_at, then lower id. `Greater` means `a` wins, so
+/// `entries.iter().max_by(|a, b| shelf_winner(a, b))` is the winner.
 pub fn shelf_winner(a: &ShelfFacts, b: &ShelfFacts) -> std::cmp::Ordering;
 /// Copies the loser's rating, take, dnf_reason, progress, started_at, finished_at, edition_id into the
-/// winner where the winner's value is NULL/'' and the loser's value is allowed for the winner's status.
+/// winner where the winner's value is NULL/'' and the loser's value is allowed for the winner's status
+/// (rating/take: finished; dnf_reason: did_not_finish; progress: currently_reading; started_at: any but
+/// want_to_read; finished_at: finished; edition_id: any). A copied rating or take from an `only_me` loser makes
+/// the winner `only_me`; a copied start is clamped to the finish.
 pub fn merge_shelf_fields(winner: &mut ShelfFacts, loser: &ShelfFacts);
-/// Replaces loser entry ids by the winner's in a layout (dropping the loser where the winner is already placed).
+/// Replaces loser entry ids by the winner's in a layout's rows and spine keys (dropping the loser where the
+/// winner is already placed or has a spine). Other shapes are left alone.
 pub fn remap_layout(layout: &mut serde_json::Value, loser_entry: i64, winner_entry: i64);
 ```
 
@@ -855,7 +917,8 @@ pub trait MediaStore: Send + Sync {
     async fn delete_prefix(&self, prefix: &str) -> anyhow::Result<()>;
 }
 pub struct FsMediaStore { root: PathBuf }   // writes to a temp file, then renames (atomic)
-pub struct MemMediaStore { … }             // tests
+pub struct MemMediaStore { … }             // tests: new(), keys() (sorted), content_type(key)
+// Both refuse keys that are not relative paths of plain components ("..", absolute, empty).
 
 // media/shared/urls.rs
 pub fn new_public_id() -> String;                               // 26 chars [a-z0-9] from auth::random
@@ -873,7 +936,8 @@ pub struct NewMedia<'a> { pub kind: &'a str, pub source: &'a str, pub content_ty
     pub uploaded_by: Option<i64>, pub created_at: Option<time::OffsetDateTime> /* None = now(); IMP passes avatar_updated_at */ }
 /// Inserts the media row for bytes the caller has already stored under object_key(kind, public_id, variant)
 /// for every variant. The caller generates public_id (new_public_id) first, because the keys contain it.
-/// Sets storage_key = storage_prefix(kind, public_id).
+/// Sets storage_key = storage_prefix(kind, public_id). Returns the row id. (`media::shared` re-exports
+/// FsMediaStore, MediaStore and MemMediaStore.)
 pub async fn register(conn: &mut PgConnection, public_id: &str, m: &NewMedia<'_>) -> sqlx::Result<i64>;
 /// True when a removed media row has this hash (uploads of a taken-down picture are refused).
 pub async fn is_removed_hash(conn: &mut PgConnection, sha256: &[u8; 32]) -> sqlx::Result<bool>;
@@ -1185,7 +1249,8 @@ pub enum EventKind { MemberJoined, PickSet, PickCleared, NotePosted, Reaction, N
 impl EventKind { pub fn is_personal(self) -> bool; }
 pub struct NewEvent { pub club_id: Option<i64>, pub actor_id: Option<i64>, pub kind: EventKind,
     pub work_id: Option<i64>, pub pick_id: Option<i64>, pub payload: serde_json::Map<String, Value> }
-/// Drops null payload values; asserts club_id.is_none() == kind.is_personal(); same transaction as the caller.
+/// Drops null payload values (top level); panics unless club_id.is_none() == kind.is_personal() (a programming
+/// error; the events_scope CHECK enforces the same); same transaction as the caller. Also `EventKind::as_str`.
 pub async fn record(conn: &mut PgConnection, ev: NewEvent) -> sqlx::Result<i64>;
 ```
 
@@ -1381,6 +1446,7 @@ tower = { version = "0.5.3", features = ["util"] }
 tower-http = { version = "0.7.1", features = ["fs", "set-header", "trace", "request-id", "cors", "catch-panic", "limit", "util"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+unicode-normalization = "0.1.26"                   # NFC for catalog text (DNB MARC is decomposed); already in the tree via caseless
 url = "2.5.8"
 utoipa = { version = "6.0.0", features = ["macros", "axum_extras", "time", "preserve_order"] }
 utoipa-axum = "0.3.0"
@@ -1397,6 +1463,7 @@ wiremock = "0.6.5"
 - `sqlx` gains `json` for `jsonb`.
 - `time` gains `serde-human-readable` (Wave 1): without it `time::Date` serialises as a `(year, ordinal)` tuple.
 - `tower` moves from dev-dependencies to dependencies.
+- `unicode-normalization` (Wave 1 step 2): DNB delivers decomposed umlauts; ingest and the MARC mapping store NFC. It was already locked as a dependency of `caseless`, so it adds no crate.
 - **Not used:**
   - `utoipa-scalar`: no docs UI is needed, and its optional `time < 0.3.52` pin would clash.
   - `governor`/`tower_governor`: the sliding-window counter is simpler and does the job.

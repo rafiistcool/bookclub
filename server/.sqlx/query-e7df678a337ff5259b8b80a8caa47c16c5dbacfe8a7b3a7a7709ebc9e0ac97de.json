@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE editions SET title = $2, subtitle = $3, publisher = $4, language = $5, format = $6,\n                pages = $7, publication_year = $8, planned_publication_date = $9,\n                field_sources = $10, updated_at = now()\n         WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Int4",
+        "Int4",
+        "Date",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e7df678a337ff5259b8b80a8caa47c16c5dbacfe8a7b3a7a7709ebc9e0ac97de"
+}

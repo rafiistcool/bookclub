@@ -1,0 +1,43 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO works (title, subtitle, author_names, first_publish_year, description,\n                            subjects, pages, ol_work_id, ol_rating, ol_rating_count, source,\n                            cover_media_id, created_by, details_fetched_at, field_sources,\n                            match_key)\n         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,\n                 CASE WHEN $14 THEN now() END, $15, $16)\n         ON CONFLICT (ol_work_id) WHERE ol_work_id IS NOT NULL DO NOTHING\n         RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Int4",
+        "Text",
+        "TextArray",
+        "Int4",
+        "Text",
+        "Float8",
+        "Int4",
+        "Text",
+        "Int8",
+        "Int8",
+        "Bool",
+        "Jsonb",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0a33c48cb462f1d6fe60ae77cefe085da071623b66e86d44975c7272a36744ea"
+}

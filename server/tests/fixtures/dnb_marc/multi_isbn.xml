@@ -1,0 +1,236 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<record xmlns="http://www.loc.gov/MARC21/slim" type="Bibliographic">
+    <leader>00000pam a2200000 c 4500</leader>
+    <controlfield tag="001">850639050</controlfield>
+    <controlfield tag="003">DE-101</controlfield>
+    <controlfield tag="005">20261002180908.0</controlfield>
+    <controlfield tag="007">tu</controlfield>
+    <controlfield tag="008">851122s1985    gw ||||| |||| 00||||ger  </controlfield>
+    <datafield tag="015" ind1=" " ind2=" ">
+      <subfield code="a">85,A50,0117</subfield>
+      <subfield code="z">85,N31,0028</subfield>
+      <subfield code="2">dnb</subfield>
+    </datafield>
+    <datafield tag="016" ind1="7" ind2=" ">
+      <subfield code="2">DE-101</subfield>
+      <subfield code="a">850639050</subfield>
+    </datafield>
+    <datafield tag="020" ind1=" " ind2=" ">
+      <subfield code="a">9783787306503</subfield>
+      <subfield code="q">Meiner</subfield>
+      <subfield code="c">kart. : DM 36.00</subfield>
+      <subfield code="9">978-3-7873-0650-3</subfield>
+    </datafield>
+    <datafield tag="020" ind1=" " ind2=" ">
+      <subfield code="a">3787306501</subfield>
+      <subfield code="q">Meiner</subfield>
+      <subfield code="c">kart. : DM 36.00</subfield>
+      <subfield code="9">3-7873-0650-1</subfield>
+    </datafield>
+    <datafield tag="020" ind1=" " ind2=" ">
+      <subfield code="a">9783857680540</subfield>
+      <subfield code="q">Kugler</subfield>
+      <subfield code="c">kart.</subfield>
+      <subfield code="9">978-3-85768-054-0</subfield>
+    </datafield>
+    <datafield tag="020" ind1=" " ind2=" ">
+      <subfield code="a">3857680547</subfield>
+      <subfield code="q">Kugler</subfield>
+      <subfield code="c">kart.</subfield>
+      <subfield code="9">3-85768-054-7</subfield>
+    </datafield>
+    <datafield tag="035" ind1=" " ind2=" ">
+      <subfield code="a">(DE-599)DNB850639050</subfield>
+    </datafield>
+    <datafield tag="035" ind1=" " ind2=" ">
+      <subfield code="a">(OCoLC)260140650</subfield>
+    </datafield>
+    <datafield tag="040" ind1=" " ind2=" ">
+      <subfield code="a">1200</subfield>
+      <subfield code="b">ger</subfield>
+      <subfield code="c">DE-101</subfield>
+      <subfield code="d">9999</subfield>
+    </datafield>
+    <datafield tag="041" ind1=" " ind2=" ">
+      <subfield code="a">ger</subfield>
+    </datafield>
+    <datafield tag="044" ind1=" " ind2=" ">
+      <subfield code="c">XA-DE</subfield>
+    </datafield>
+    <datafield tag="084" ind1=" " ind2=" ">
+      <subfield code="a">10</subfield>
+      <subfield code="a">12</subfield>
+      <subfield code="a">100</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="2">sdnb</subfield>
+    </datafield>
+    <datafield tag="100" ind1="1" ind2=" ">
+      <subfield code="0">(DE-588)118624148</subfield>
+      <subfield code="0">https://d-nb.info/gnd/118624148</subfield>
+      <subfield code="0">(DE-101)118624148</subfield>
+      <subfield code="a">Troxler, Ignaz Paul Vital</subfield>
+      <subfield code="d">1780-1866</subfield>
+      <subfield code="e">Verfasser</subfield>
+      <subfield code="4">aut</subfield>
+      <subfield code="2">gnd</subfield>
+    </datafield>
+    <datafield tag="245" ind1="1" ind2="0">
+      <subfield code="a">Naturlehre des menschlichen Erkennens oder Metaphysik</subfield>
+      <subfield code="c">Ignaz Paul Vital Troxler. Hrsg. von Hans Rudolf Schweizer</subfield>
+    </datafield>
+    <datafield tag="264" ind1=" " ind2="1">
+      <subfield code="a">Hamburg</subfield>
+      <subfield code="b">Meiner</subfield>
+      <subfield code="c">1985</subfield>
+    </datafield>
+    <datafield tag="264" ind1=" " ind2="1">
+      <subfield code="a">Oberwil bei Zug</subfield>
+      <subfield code="b">Kugler</subfield>
+      <subfield code="c">1985</subfield>
+    </datafield>
+    <datafield tag="300" ind1=" " ind2=" ">
+      <subfield code="a">XXI, 337 S.</subfield>
+      <subfield code="c">19 cm</subfield>
+    </datafield>
+    <datafield tag="336" ind1=" " ind2=" ">
+      <subfield code="a">Text</subfield>
+      <subfield code="b">txt</subfield>
+      <subfield code="2">rdacontent</subfield>
+    </datafield>
+    <datafield tag="337" ind1=" " ind2=" ">
+      <subfield code="a">ohne Hilfsmittel zu benutzen</subfield>
+      <subfield code="b">n</subfield>
+      <subfield code="2">rdamedia</subfield>
+    </datafield>
+    <datafield tag="338" ind1=" " ind2=" ">
+      <subfield code="a">Band</subfield>
+      <subfield code="b">nc</subfield>
+      <subfield code="2">rdacarrier</subfield>
+    </datafield>
+    <datafield tag="366" ind1=" " ind2=" ">
+      <subfield code="c">IP 20261002</subfield>
+      <subfield code="2">onixas</subfield>
+    </datafield>
+    <datafield tag="490" ind1="1" ind2=" ">
+      <subfield code="a">Philosophische Bibliothek</subfield>
+      <subfield code="v">Bd. 382</subfield>
+    </datafield>
+    <datafield tag="500" ind1=" " ind2=" ">
+      <subfield code="a">Bibliogr. u. Literaturverz. S. XIX - XXI</subfield>
+    </datafield>
+    <datafield tag="650" ind1=" " ind2="7">
+      <subfield code="a">Philosophische Anthropologie</subfield>
+      <subfield code="2">local</subfield>
+    </datafield>
+    <datafield tag="650" ind1=" " ind2="7">
+      <subfield code="a">Erkenntnis</subfield>
+      <subfield code="2">local</subfield>
+    </datafield>
+    <datafield tag="650" ind1=" " ind2="7">
+      <subfield code="a">Erkenntnistheorie</subfield>
+      <subfield code="2">local</subfield>
+    </datafield>
+    <datafield tag="650" ind1=" " ind2="7">
+      <subfield code="a">Anthropologie (Philosophie)</subfield>
+      <subfield code="2">local</subfield>
+    </datafield>
+    <datafield tag="650" ind1=" " ind2="7">
+      <subfield code="8">1\p</subfield>
+      <subfield code="0">(DE-588)4045798-9</subfield>
+      <subfield code="0">https://d-nb.info/gnd/4045798-9</subfield>
+      <subfield code="0">(DE-101)040457982</subfield>
+      <subfield code="a">Philosophische Anthropologie</subfield>
+      <subfield code="2">gnd</subfield>
+    </datafield>
+    <datafield tag="650" ind1=" " ind2="7">
+      <subfield code="8">2\p</subfield>
+      <subfield code="0">(DE-588)4015286-8</subfield>
+      <subfield code="0">https://d-nb.info/gnd/4015286-8</subfield>
+      <subfield code="0">(DE-101)040152863</subfield>
+      <subfield code="a">Erkenntnis</subfield>
+      <subfield code="2">gnd</subfield>
+    </datafield>
+    <datafield tag="650" ind1=" " ind2="7">
+      <subfield code="8">3\p</subfield>
+      <subfield code="0">(DE-588)4070914-0</subfield>
+      <subfield code="0">https://d-nb.info/gnd/4070914-0</subfield>
+      <subfield code="0">(DE-101)040709140</subfield>
+      <subfield code="a">Erkenntnistheorie</subfield>
+      <subfield code="2">gnd</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">(BISAC Subject Heading)PHI009000</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Schelling</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Naturphilosophie</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Seelenlehre</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Naturlehre</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Mysterium</subfield>
+    </datafield>
+    <datafield tag="776" ind1="0" ind2="8">
+      <subfield code="i">Erscheint auch als</subfield>
+      <subfield code="n">Online-Ausgabe</subfield>
+      <subfield code="t">Naturlehre des menschlichen Erkennens oder Metaphysik</subfield>
+      <subfield code="d">Hamburg : Felix Meiner Verlag, 2015</subfield>
+      <subfield code="h">Online-Ressourcen, 337 Seiten</subfield>
+      <subfield code="w">(DE-101)1134580665</subfield>
+    </datafield>
+    <datafield tag="830" ind1=" " ind2="0">
+      <subfield code="a">Philosophische Bibliothek &lt;Hamburg></subfield>
+      <subfield code="t">Philosophische Bibliothek</subfield>
+      <subfield code="v">Bd. 382</subfield>
+      <subfield code="w">(DE-101)012894796</subfield>
+      <subfield code="w">(DE-600)536403-6</subfield>
+      <subfield code="9">3382</subfield>
+      <subfield code="7">as</subfield>
+    </datafield>
+    <datafield tag="850" ind1=" " ind2=" ">
+      <subfield code="a">DE-101a</subfield>
+      <subfield code="a">DE-101b</subfield>
+    </datafield>
+    <datafield tag="856" ind1="4" ind2="2">
+      <subfield code="m">X:MVB</subfield>
+      <subfield code="q">text/html</subfield>
+      <subfield code="u">https://services.dnb.de/plus/idn/850639050/blurb/</subfield>
+      <subfield code="3">Inhaltstext</subfield>
+    </datafield>
+    <datafield tag="856" ind1="4" ind2="2">
+      <subfield code="m">B:DE-101</subfield>
+      <subfield code="q">application/pdf</subfield>
+      <subfield code="u">https://d-nb.info/850639050/04</subfield>
+      <subfield code="3">Inhaltsverzeichnis</subfield>
+    </datafield>
+    <datafield tag="883" ind1="1" ind2=" ">
+      <subfield code="8">1\p</subfield>
+      <subfield code="a">kasw</subfield>
+      <subfield code="c">1,000</subfield>
+      <subfield code="d">20230818</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#kasw</subfield>
+    </datafield>
+    <datafield tag="883" ind1="1" ind2=" ">
+      <subfield code="8">2\p</subfield>
+      <subfield code="a">kasw</subfield>
+      <subfield code="c">1,000</subfield>
+      <subfield code="d">20230818</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#kasw</subfield>
+    </datafield>
+    <datafield tag="883" ind1="1" ind2=" ">
+      <subfield code="8">3\p</subfield>
+      <subfield code="a">kasw</subfield>
+      <subfield code="c">1,000</subfield>
+      <subfield code="d">20230818</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#kasw</subfield>
+    </datafield>
+  </record>

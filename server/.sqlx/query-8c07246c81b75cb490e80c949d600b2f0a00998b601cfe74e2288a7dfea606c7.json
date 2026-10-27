@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO works (ol_work_id, title, subtitle, author_names, first_publish_year,\n                                pages, ol_rating, ol_rating_count, cover_media_id, source,\n                                field_sources, match_key, description, subjects, created_by,\n                                details_fetched_at)\n             SELECT t.ol_work_id, t.title, t.subtitle, t.author_names, t.first_publish_year,\n                    t.pages, t.ol_rating, t.ol_rating_count, t.cover_media_id, t.source,\n                    t.field_sources, t.match_key, t.description,\n                    ARRAY(SELECT jsonb_array_elements_text(t.subjects)), t.created_by,\n                    CASE WHEN t.full_details THEN now() END\n             FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::int4[],\n                         $6::int4[], $7::float8[], $8::int4[], $9::int8[], $10::text[],\n                         $11::jsonb[], $12::text[], $13::text[], $14::jsonb[], $15::int8[],\n                         $16::bool[])\n                  AS t (ol_work_id, title, subtitle, author_names, first_publish_year, pages,\n                        ol_rating, ol_rating_count, cover_media_id, source, field_sources,\n                        match_key, description, subjects, created_by, full_details)\n             ON CONFLICT (ol_work_id) WHERE ol_work_id IS NOT NULL DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "TextArray",
+        "TextArray",
+        "TextArray",
+        "Int4Array",
+        "Int4Array",
+        "Float8Array",
+        "Int4Array",
+        "Int8Array",
+        "TextArray",
+        "JsonbArray",
+        "TextArray",
+        "TextArray",
+        "JsonbArray",
+        "Int8Array",
+        "BoolArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8c07246c81b75cb490e80c949d600b2f0a00998b601cfe74e2288a7dfea606c7"
+}

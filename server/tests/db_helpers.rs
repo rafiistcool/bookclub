@@ -1,7 +1,14 @@
-//! Database helpers outside the request path: `admin::make_admin` (the CLI) and the frozen
-//! `dto` loaders (docs/phase1/conventions.md §20).
+//! Database helpers outside the request path: `admin::make_admin` (the CLI), the frozen `dto`
+//! loaders (docs/phase1/conventions.md §20), `media::shared::register`/`is_removed_hash` (§8)
+//! and `activity::record` (§15).
 
+use std::panic::AssertUnwindSafe;
+
+use bookclub_server::activity::{self, EventKind, NewEvent};
+use bookclub_server::media::shared::{self as media, NewMedia, urls};
 use bookclub_server::{admin, dto};
+use futures::FutureExt;
+use serde_json::{Map, Value, json};
 use sqlx::PgPool;
 
 async fn insert_user(db: &PgPool, username: &str) -> i64 {
@@ -70,4 +77,175 @@ async fn user_summaries_leave_out_removed_avatars(db: PgPool) {
     assert_eq!(summaries[&bob].username, "bob");
     assert_eq!(summaries[&bob].avatar_url, None);
     assert_eq!(summaries[&cy].avatar_url, None);
+}
+
+/// A club owned by `owner`, created with its owner membership in one statement.
+async fn insert_club(db: &PgPool, owner: i64, slug: &str) -> i64 {
+    sqlx::query_scalar(
+        "WITH club AS (INSERT INTO clubs (slug, name) VALUES ($2, 'Club') RETURNING id)
+         INSERT INTO club_memberships (club_id, user_id, role)
+         SELECT id, $1, 'owner' FROM club RETURNING club_id",
+    )
+    .bind(owner)
+    .bind(slug)
+    .fetch_one(db)
+    .await
+    .unwrap()
+}
+
+fn payload(value: Value) -> Map<String, Value> {
+    value.as_object().unwrap().clone()
+}
+
+#[sqlx::test]
+async fn activity_record_writes_both_scopes_and_drops_nulls(db: PgPool) {
+    let ada = insert_user(&db, "ada").await;
+    let club = insert_club(&db, ada, "readers-k3x9").await;
+    let mut conn = db.acquire().await.unwrap();
+
+    let joined = activity::record(
+        &mut conn,
+        NewEvent {
+            club_id: Some(club),
+            actor_id: Some(ada),
+            kind: EventKind::MemberJoined,
+            work_id: None,
+            pick_id: None,
+            payload: Map::new(),
+        },
+    )
+    .await
+    .unwrap();
+    let quote = activity::record(
+        &mut conn,
+        NewEvent {
+            club_id: None,
+            actor_id: Some(ada),
+            kind: EventKind::QuoteAdded,
+            work_id: None,
+            pick_id: None,
+            payload: payload(json!({"quote_id": 7, "page": null, "excerpt": "Hi"})),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(quote > joined);
+    let rows: Vec<(Option<i64>, String, Value)> =
+        sqlx::query_as("SELECT club_id, kind, payload FROM events ORDER BY id")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        [
+            (Some(club), "member_joined".to_owned(), json!({})),
+            (
+                None,
+                "quote_added".to_owned(),
+                json!({"quote_id": 7, "excerpt": "Hi"})
+            ),
+        ]
+    );
+}
+
+#[sqlx::test]
+async fn activity_record_asserts_the_scope_of_the_kind(db: PgPool) {
+    let ada = insert_user(&db, "ada").await;
+    let club = insert_club(&db, ada, "readers-k3x9").await;
+    let mut conn = db.acquire().await.unwrap();
+    for (club_id, kind) in [
+        (Some(club), EventKind::ShelfAdded),
+        (None, EventKind::PickSet),
+    ] {
+        let event = NewEvent {
+            club_id,
+            actor_id: Some(ada),
+            kind,
+            work_id: None,
+            pick_id: None,
+            payload: Map::new(),
+        };
+        let outcome = AssertUnwindSafe(activity::record(&mut conn, event))
+            .catch_unwind()
+            .await;
+        assert!(
+            outcome.is_err(),
+            "{kind:?} with club_id {club_id:?} must panic"
+        );
+    }
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM events")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[sqlx::test]
+async fn registered_media_point_at_their_storage_prefix(db: PgPool) {
+    let ada = insert_user(&db, "ada").await;
+    let mut conn = db.acquire().await.unwrap();
+    let public_id = urls::new_public_id();
+    let hash = [7u8; 32];
+    let created = time::macros::datetime!(2024-05-01 10:00 UTC);
+    let id = media::register(
+        &mut conn,
+        &public_id,
+        &NewMedia {
+            kind: "avatar",
+            source: "legacy",
+            content_type: "image/jpeg",
+            variants: &["a"],
+            width: 256,
+            height: 256,
+            byte_size: 1234,
+            sha256: hash,
+            dominant_color: None,
+            uploaded_by: Some(ada),
+            created_at: Some(created),
+        },
+    )
+    .await
+    .unwrap();
+    let row: (String, String, Vec<String>, Vec<u8>, time::OffsetDateTime) = sqlx::query_as(
+        "SELECT storage_key, content_type, variants, sha256, created_at FROM media WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(row.0, urls::storage_prefix("avatar", &public_id));
+    assert!(row.0.starts_with(&format!("avatars/{}/", &public_id[..2])));
+    assert_eq!(row.1, "image/jpeg");
+    assert_eq!(row.2, ["a"]);
+    assert_eq!(row.3, hash);
+    assert_eq!(row.4, created);
+
+    // A cover without created_at gets now(); its hash is not removed until a takedown.
+    let cover = media::register(
+        &mut conn,
+        &urls::new_public_id(),
+        &NewMedia {
+            kind: "cover",
+            source: "upload",
+            content_type: "image/webp",
+            variants: &["s", "l"],
+            width: 800,
+            height: 1200,
+            byte_size: 50_000,
+            sha256: [9u8; 32],
+            dominant_color: Some("#112233".into()),
+            uploaded_by: Some(ada),
+            created_at: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(!media::is_removed_hash(&mut conn, &[9u8; 32]).await.unwrap());
+    sqlx::query("UPDATE media SET removed_at = now() WHERE id = $1")
+        .bind(cover)
+        .execute(&db)
+        .await
+        .unwrap();
+    assert!(media::is_removed_hash(&mut conn, &[9u8; 32]).await.unwrap());
+    assert!(!media::is_removed_hash(&mut conn, &hash).await.unwrap());
 }
