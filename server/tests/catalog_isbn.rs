@@ -13,6 +13,7 @@ use bookclub_server::catalog::shared::lookup::{CatalogLookup, LookupError};
 use common::*;
 use serde_json::{Value, json};
 use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, ResponseTemplate};
 
@@ -512,6 +513,104 @@ async fn dnb_answers_are_cached(db: PgPool) {
         .resolve_isbn_remote(&mut conn, &other)
         .await;
     assert!(matches!(busy, Err(LookupError::Throttled)), "{busy:?}");
+}
+
+/// The 429 hint names the cooldown of the source whose answer was missing: Open Library's when
+/// its step was throttled (an English ISBN never asks the DNB, so the DNB's cooldown does not
+/// matter), the DNB's when it was throttled and Open Library answered with a miss. The same
+/// holds for an ISBN-shaped search and for the ISBN check of a user-added book.
+#[sqlx::test]
+async fn the_busy_hint_names_the_source_that_refused(db: PgPool) {
+    let app = TestApp::with_real_lookup(db).await;
+    mount_ol_isbn_search(&app, GERMAN, json!({"numFound": 0, "docs": []})).await;
+    let ada = app.user("ada").await;
+    app.state
+        .outbound
+        .dnb_sru
+        .cool_down(Duration::from_secs(600));
+
+    // The DNB is busy and Open Library does not know the book: the DNB decided.
+    let dnb = ada.get(&format!("/api/books/isbn/{GERMAN}")).await;
+    dnb.assert_detail(429, "The library is busy. Try again in 600 seconds.");
+    assert_eq!(dnb.header("retry-after"), Some("600"));
+
+    // Open Library is busy too: its step decided, for every group and every route.
+    app.state.outbound.ol_api.cool_down(Duration::from_secs(5));
+    for path in [
+        format!("/api/books/isbn/{ENGLISH}"),
+        format!("/api/books/isbn/{GERMAN}"),
+        format!("/api/books/search?q={ENGLISH}"),
+    ] {
+        let res = ada.get(&path).await;
+        res.assert_detail(429, "The library is busy. Try again in 5 seconds.");
+        assert_eq!(res.header("retry-after"), Some("5"), "{path}");
+    }
+    let custom = ada
+        .post(
+            "/api/books/custom",
+            json!({"title": "Circe", "isbn": ENGLISH}),
+        )
+        .await;
+    custom.assert_detail(429, "The library is busy. Try again in 5 seconds.");
+    assert!(requests_to(&app, "/sru/").await.is_empty());
+}
+
+/// The ISBN routes hold no pool connection while the sources are asked: with a pool of one
+/// connection, another request gets it while Open Library is still answering a lookup or the
+/// ISBN check of a user-added book.
+#[sqlx::test]
+async fn isbn_routes_hold_no_connection_while_asking_upstream(db: PgPool) {
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(db.connect_options().as_ref().clone())
+        .await
+        .unwrap();
+    let app = TestApp::with_real_lookup(pool.clone()).await;
+    for (isbn, body) in [
+        (ENGLISH, search_json()),
+        ("9780062060624", json!({"numFound": 0, "docs": []})),
+    ] {
+        Mock::given(method("GET"))
+            .and(path("/search.json"))
+            .and(query_param("q", format!("isbn:{isbn}")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(body)
+                    .set_delay(Duration::from_millis(1500)),
+            )
+            .mount(&app.upstream)
+            .await;
+    }
+    let ada = app.user("ada").await;
+    let probe = |calls: usize| {
+        let (app, pool) = (&app, &pool);
+        async move {
+            for _ in 0..250 {
+                if requests_to(app, "search.json").await.len() == calls {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            let conn = tokio::time::timeout(Duration::from_millis(500), pool.acquire()).await;
+            assert!(
+                conn.is_ok(),
+                "the pool's only connection is held by the lookup"
+            );
+        }
+    };
+    let lookup = format!("/api/books/isbn/{ENGLISH}");
+    let (res, ()) = tokio::join!(ada.get(&lookup), probe(1));
+    res.assert_status(200);
+    let (res, ()) = tokio::join!(
+        ada.post(
+            "/api/books/custom",
+            json!({"title": "The Song of Achilles", "isbn": "9780062060624"}),
+        ),
+        probe(2)
+    );
+    res.assert_status(201);
+    drop(app);
+    pool.close().await;
 }
 
 /// A German ISBN-10 becomes its 978-3 ISBN-13, which the DNB route takes.

@@ -4,6 +4,9 @@
 
 mod common;
 
+use std::time::Duration;
+
+use bookclub_server::catalog::merge_works;
 use bookclub_server::catalog::shared::ingest::Source;
 use common::*;
 use serde_json::{Value, json};
@@ -18,6 +21,26 @@ async fn mount_empty_search(app: &TestApp) {
     Mock::given(method("GET"))
         .and(path("/search.json"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"numFound": 0, "docs": []})))
+        .mount(&app.upstream)
+        .await;
+}
+
+/// Open Library's search answers Circe for `q` (like the Python fake did for any text query),
+/// ahead of the generic mocks.
+async fn mount_circe_search(app: &TestApp, q: &str) {
+    Mock::given(method("GET"))
+        .and(path("/search.json"))
+        .and(query_param("q", q))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "numFound": 1,
+            "docs": [{
+                "key": "/works/OL1W",
+                "title": "Circe",
+                "author_name": ["Madeline Miller"],
+                "first_publish_year": 2018
+            }]
+        })))
+        .with_priority(1)
         .mount(&app.upstream)
         .await;
 }
@@ -46,11 +69,13 @@ async fn zine(client: &TestClient) -> Value {
 
 /// parity: test_search.py::test_local_catalog_is_searched_without_open_library_for_custom_books
 /// Adapted: a user-added work has a numeric id and no `ol_work_key` (the legacy `/works/BC…`
-/// key is gone; old BC links resolve through `legacy_work_keys`).
+/// key is gone; old BC links resolve through `legacy_work_keys`). Open Library answers the
+/// search with Circe, as the Python fake did, and the catalog's own book comes first.
 #[sqlx::test]
 async fn local_catalog_is_searched_without_open_library_for_custom_books(db: PgPool) {
     let app = TestApp::with_real_lookup(db).await;
     mount_empty_search(&app).await;
+    mount_circe_search(&app, "zine").await;
     let ada = app.user("ada").await;
     let body = zine(&ada).await;
     assert_eq!(body["custom"], true);
@@ -71,6 +96,8 @@ async fn local_catalog_is_searched_without_open_library_for_custom_books(db: PgP
     let search = ada.get("/api/books/search?q=zine").await.json();
     assert_eq!(search["items"][0]["id"], id);
     assert_eq!(search["items"][0]["custom"], true);
+    assert_eq!(search["items"][1]["ol_work_key"], "/works/OL1W");
+    assert_eq!(search["items"].as_array().unwrap().len(), 2);
 
     let refresh = ada
         .post(&format!("/api/books/works/{id}/refresh"), json!({}))
@@ -167,10 +194,12 @@ async fn custom_book_fields_and_provenance(db: PgPool) {
     let bare = zine(&ada).await;
     assert_eq!(bare["editions_count"], 0);
 
-    // Everyone finds it at once.
+    // Everyone finds it at once, ahead of Open Library's hits.
+    mount_circe_search(&app, "lovelace").await;
     let grace = app.user("grace").await;
     let found = grace.get("/api/books/search?q=lovelace").await.json();
     assert_eq!(found["items"][0]["id"], id);
+    assert_eq!(found["items"][1]["ol_work_key"], "/works/OL1W");
 
     for (body, detail) in [
         (
@@ -539,6 +568,126 @@ async fn adding_an_edition_follows_the_isbn_rule(db: PgPool) {
     ada.post("/api/books/works/OL5W/editions", json!({"publisher": "X"}))
         .await
         .assert_detail(404, "No such book.");
+    // Writes never import an unknown Open Library work: nobody was asked.
+    ada.post(
+        "/api/books/works/OL5W/edit-requests",
+        json!({"fields": {"subtitle": "Roman"}}),
+    )
+    .await
+    .assert_detail(404, "No such book.");
+    ada.post(
+        "/api/books/works/OL5W/merge-requests",
+        json!({"into_work_id": work.id}),
+    )
+    .await
+    .assert_detail(404, "No such book.");
+    app.admin("root")
+        .await
+        .post(
+            "/api/admin/works/OL5W/merge",
+            json!({"into_work_id": work.id}),
+        )
+        .await
+        .assert_detail(404, "No such book.");
+    assert!(app.upstream_requests().await.is_empty());
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM editions WHERE work_id = {}",
+            work.id
+        ))
+        .await,
+        0
+    );
+}
+
+/// An edition added while an admin merges its work away lands on the surviving work (ingest
+/// follows the merge); that is no ISBN conflict. The merge commits while the ISBN check waits
+/// for Open Library.
+#[sqlx::test]
+async fn an_edition_added_during_a_merge_lands_on_the_survivor(db: PgPool) {
+    let app = TestApp::with_real_lookup(db).await;
+    Mock::given(method("GET"))
+        .and(path("/search.json"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"numFound": 0, "docs": []}))
+                .set_delay(Duration::from_millis(1500)),
+        )
+        .mount(&app.upstream)
+        .await;
+    let ada = app.user("ada").await;
+    let work = app.work("My Zine").await;
+    let survivor = app.work("My Zine (kept)").await;
+    let merge = async {
+        for _ in 0..250 {
+            if !app.upstream_requests().await.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let mut conn = app.db.acquire().await.unwrap();
+        merge_works(&mut conn, work.id, survivor.id).await.unwrap();
+    };
+    let path = format!("/api/books/works/{}/editions", work.id);
+    let (res, ()) = tokio::join!(
+        ada.post(
+            &path,
+            json!({"isbn": "9780316556347", "publisher": "Little, Brown"}),
+        ),
+        merge
+    );
+    res.assert_status(201);
+    assert_eq!(res.json()["work_id"], survivor.id);
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM editions WHERE work_id = {} AND isbn13 = '9780316556347'",
+            survivor.id
+        ))
+        .await,
+        1
+    );
+}
+
+/// Waits until a session of this test's database waits for a row lock that the test holds.
+async fn until_a_lock_wait(db: &PgPool) {
+    for _ in 0..500 {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity
+             WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .fetch_one(db)
+        .await
+        .unwrap();
+        if waiting > 0 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("nothing waited for a lock");
+}
+
+/// A merge that is already moving the loser's editions cannot see an edition added at the same
+/// moment. The edition's insert waits for the merge on the work's row, sees it merged away and
+/// starts over on the surviving work, so no edition stays behind on the merged-away work.
+#[sqlx::test]
+async fn an_edition_added_while_a_merge_runs_is_not_left_behind(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let work = app.work("My Zine").await;
+    let survivor = app.work("My Zine (kept)").await;
+    let mut merge = app.db.begin().await.unwrap();
+    merge_works(&mut merge, work.id, survivor.id).await.unwrap();
+    let finish_merge = async {
+        until_a_lock_wait(&app.db).await;
+        merge.commit().await.unwrap();
+    };
+    let path = format!("/api/books/works/{}/editions", work.id);
+    let (res, ()) = tokio::join!(
+        ada.post(&path, json!({"publisher": "Zine Press"})),
+        finish_merge
+    );
+    res.assert_status(201);
+    assert_eq!(res.json()["work_id"], survivor.id);
     assert_eq!(
         app.scalar_i64(&format!(
             "SELECT count(*) FROM editions WHERE work_id = {}",

@@ -1,11 +1,11 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT removed_at IS NULL AS \"usable!\" FROM media WHERE id = $1",
+  "query": "SELECT merged_into_id IS NULL AS \"current!\" FROM works WHERE id = $1\n               FOR NO KEY UPDATE",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "usable!",
+        "name": "current!",
         "type_info": "Bool",
         "origin": "Expression"
       }
@@ -19,5 +19,5 @@
       null
     ]
   },
-  "hash": "79e1b16869172c45e9e7f599767e3446d80e909acf846670544a260d34a963b0"
+  "hash": "d24d4b9416beecead8028079f7bd780cabca8330cecab8c2767f8feabea96bc2"
 }

@@ -468,6 +468,28 @@ async fn book_detail_propagates_not_found(db: PgPool) {
     );
 }
 
+/// Decision 11 and deviation 19: an Open Library 422 on a work import or a refresh is 502
+/// `Could not load the library right now. Try again.` (not the search hint `Need at least 3
+/// characters…`), and nothing is stored.
+#[sqlx::test]
+async fn an_open_library_422_on_a_work_is_a_502(db: PgPool) {
+    let (app, fake, ada) = setup(db).await;
+    let known = app.ol_work("OL1W", "Circe", "Madeline Miller").await;
+    fake.status_for("/works/", 422);
+    ada.get("/api/books/works/OL5W")
+        .await
+        .assert_detail(502, "Could not load the library right now. Try again.");
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM works WHERE ol_work_id = 'OL5W'")
+            .await,
+        0
+    );
+    ada.post(&format!("/api/books/works/{}/refresh", known.id), json!({}))
+        .await
+        .assert_detail(502, "Could not load the library right now. Try again.");
+    assert!(calls(&app, "/works/").await >= 2);
+}
+
 /// parity: test_search.py::test_detail_survives_author_lookup_failure
 #[sqlx::test]
 async fn detail_survives_author_lookup_failure(db: PgPool) {

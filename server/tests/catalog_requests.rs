@@ -4,6 +4,10 @@
 
 mod common;
 
+use std::time::Duration;
+
+use bookclub_server::catalog::merge_works;
+use bookclub_server::catalog::shared::ingest;
 use common::*;
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -533,4 +537,148 @@ async fn requests_share_a_daily_limit(db: PgPool) {
         .await;
     limited.assert_detail(429, "Slow down a little. Try again later.");
     assert_eq!(request_count(&app).await, 50);
+}
+
+/// Waits until a session of this test's database waits for a row lock that the test holds.
+async fn until_a_lock_wait(db: &PgPool) {
+    for _ in 0..500 {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity
+             WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .fetch_one(db)
+        .await
+        .unwrap();
+        if waiting > 0 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("nothing waited for a lock");
+}
+
+/// A takedown that runs while a `cover_replace` is approved: the approval locks the picture
+/// before any catalog row, waits for the takedown, sees the removal and answers 400 `This
+/// picture was removed`; the request stays open and no cover is set.
+#[sqlx::test]
+async fn a_takedown_during_a_cover_approval_keeps_the_request_open(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let root = app.admin("root").await;
+    let work = app.work("Der Hobbit").await;
+    let photo = upload_media(&app, &ada).await;
+    let id = cover_request(&app, &ada, work.id, None, photo).await;
+
+    // MED's takedown, half done: the picture is marked removed, not yet cleared.
+    let mut takedown = app.db.begin().await.unwrap();
+    sqlx::query("UPDATE media SET removed_at = now() WHERE id = $1")
+        .bind(photo)
+        .execute(&mut *takedown)
+        .await
+        .unwrap();
+    let finish_takedown = async {
+        until_a_lock_wait(&app.db).await;
+        ingest::clear_media(&mut takedown, photo).await.unwrap();
+        takedown.commit().await.unwrap();
+    };
+    let path = format!("/api/admin/edit-requests/{id}/approve");
+    let (res, ()) = tokio::join!(root.post(&path, json!({})), finish_takedown);
+    res.assert_detail(400, "This picture was removed");
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM catalog_edit_requests WHERE id = $1")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(status, "open");
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM works WHERE id = {} AND cover_media_id IS NULL",
+            work.id
+        ))
+        .await,
+        1
+    );
+}
+
+/// A `cover_replace` whose picture is not a cover (set_cover refuses it) is 400 too, and the
+/// request stays open; approving a picture the book already shows is fine.
+#[sqlx::test]
+async fn a_cover_approval_that_sets_nothing_is_a_400(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let root = app.admin("root").await;
+    let work = app.work("Der Hobbit").await;
+    let avatar = upload_media(&app, &ada).await;
+    app.exec(&format!(
+        "UPDATE media SET kind = 'avatar' WHERE id = {avatar}"
+    ))
+    .await;
+    let id = cover_request(&app, &ada, work.id, None, avatar).await;
+    root.post(&format!("/api/admin/edit-requests/{id}/approve"), json!({}))
+        .await
+        .assert_detail(400, "This picture was removed");
+    let open: i64 = app
+        .scalar_i64(&format!(
+            "SELECT count(*) FROM catalog_edit_requests WHERE id = {id} AND status = 'open'"
+        ))
+        .await;
+    assert_eq!(open, 1);
+
+    let photo = upload_media(&app, &ada).await;
+    app.exec(&format!(
+        "UPDATE works SET cover_media_id = {photo} WHERE id = {}",
+        work.id
+    ))
+    .await;
+    let same = cover_request(&app, &ada, work.id, None, photo).await;
+    root.post(
+        &format!("/api/admin/edit-requests/{same}/approve"),
+        json!({}),
+    )
+    .await
+    .assert_status(200);
+}
+
+/// Two admins merge at once. The direct merge checks its pair without a lock; when the other
+/// merge commits first, `merge_works` finds a work merged away under its lock, and the answer is
+/// the 4xx the pair has become, not a 500: B into A after A into B is 400 `A book cannot be
+/// merged into itself`, A into C after A into B is 404 `No such book.`.
+#[sqlx::test]
+async fn a_merge_that_lost_a_race_is_a_4xx(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let root = app.admin("root").await;
+    for (round, (into_b_first, expected)) in [
+        (true, (400, "A book cannot be merged into itself")),
+        (false, (404, "No such book.")),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let a = app.work(&format!("Circe (bare {round})")).await.id;
+        let b = app.work(&format!("Circe {round}")).await.id;
+        let c = app.work(&format!("Circe (other {round})")).await.id;
+        // The other admin's merge of A into B holds both works.
+        let mut first = app.db.begin().await.unwrap();
+        merge_works(&mut first, a, b).await.unwrap();
+        let finish_first = async {
+            until_a_lock_wait(&app.db).await;
+            first.commit().await.unwrap();
+        };
+        let (loser, into) = if into_b_first { (b, a) } else { (a, c) };
+        let path = format!("/api/admin/works/{loser}/merge");
+        let (res, ()) = tokio::join!(
+            root.post(&path, json!({"into_work_id": into})),
+            finish_first
+        );
+        res.assert_detail(expected.0, expected.1);
+        assert_eq!(
+            app.scalar_i64(&format!(
+                "SELECT count(*) FROM works WHERE merged_into_id IS NOT NULL AND id IN ({a}, {b}, {c})"
+            ))
+            .await,
+            1,
+            "only the first merge happened"
+        );
+    }
 }

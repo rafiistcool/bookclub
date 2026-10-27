@@ -65,6 +65,8 @@ fn subject_works() -> Value {
 struct FakeState {
     /// Path marker → status (with `Retry-After` when set).
     status_for: Vec<(String, u16)>,
+    /// `search.json` whose `q` starts with the prefix → status.
+    status_for_q: Vec<(String, u16)>,
     retry_after: Option<String>,
     /// Path markers answered 404.
     missing: Vec<String>,
@@ -93,6 +95,13 @@ impl FakeOpenLibrary {
         let mut state = self.state.lock().unwrap();
         state.status_for.retain(|(m, _)| m != marker);
         state.status_for.push((marker.to_owned(), status));
+    }
+
+    /// `search.json` requests whose `q` starts with `prefix` answer `status`.
+    fn status_for_q(&self, prefix: &str, status: u16) {
+        let mut state = self.state.lock().unwrap();
+        state.status_for_q.retain(|(p, _)| p != prefix);
+        state.status_for_q.push((prefix.to_owned(), status));
     }
 
     fn clear_status(&self) {
@@ -161,6 +170,14 @@ impl Respond for FakeOpenLibrary {
             .find(|(k, _)| k == "q")
             .map(|(_, v)| v.into_owned())
             .unwrap_or_default();
+        if path.contains("search.json")
+            && let Some((_, status)) = state
+                .status_for_q
+                .iter()
+                .find(|(prefix, _)| q.starts_with(prefix.as_str()))
+        {
+            return ResponseTemplate::new(*status);
+        }
         let body = if path.contains("search.json") {
             if q == "zzzzempty" || q.starts_with("zzzzempty ") || q.ends_with(":zzzzempty") {
                 json!({"numFound": 0, "docs": []})
@@ -681,20 +698,28 @@ async fn local_catalog_hits_survive_open_library_outage(db: PgPool) {
 async fn local_hits_first_without_duplicates_and_capped(db: PgPool) {
     let (app, _fake, ada) = setup(db).await;
     let notes = app.work("Circe Reading Notes").await;
-    let circe = app.ol_work("OL1W", "Circe", "Madeline Miller").await;
-    let body = search(&ada, "circe").await.json();
-    let ids: Vec<i64> = body["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|hit| hit["id"].as_i64().unwrap())
-        .collect();
-    assert_eq!(ids.len(), 2, "{body}");
-    assert!(ids.contains(&notes.id) && ids.contains(&circe.id));
+    let hit_ids = |body: &Value| -> Vec<i64> {
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|hit| hit["id"].as_i64().unwrap())
+            .collect()
+    };
+    // Open Library answers Circe for "notes", which is no local hit for that query: the local
+    // hit comes first, and a page of one holds only it.
+    let body = search(&ada, "notes").await.json();
+    let circe = work_id_of(&app, "OL1W").await;
+    assert_eq!(hit_ids(&body), [notes.id, circe], "{body}");
     assert_eq!(body["has_more"], true);
+    let capped = ada.get("/api/books/search?q=notes&limit=1").await.json();
+    assert_eq!(hit_ids(&capped), [notes.id]);
 
-    let capped = ada.get("/api/books/search?q=circe&limit=1").await.json();
-    assert_eq!(capped["items"].as_array().unwrap().len(), 1);
+    // Now Circe is stored: it is a local hit too, and its remote hit is the same work.
+    let body = search(&ada, "circe").await.json();
+    let ids = hit_ids(&body);
+    assert_eq!(ids.len(), 2, "{body}");
+    assert!(ids.contains(&notes.id) && ids.contains(&circe));
 
     // A merged-away work never appears; its survivor does.
     let survivor = app.work("Circe (survivor)").await;
@@ -908,6 +933,56 @@ async fn subject_errors_stay_visible(db: PgPool) {
             assert!(res.detail().contains("busy"));
         }
         assert_eq!(params_for(&app, "/subjects/").await.len(), 1);
+    }
+}
+
+/// Decision 11 and deviation 4: after an empty primary query, a failing `title:` or `author:`
+/// fallback is ignored when another fallback has hits; when none has hits, the first fallback
+/// error surfaces (429 or 502), so an outage is not shown as "nothing found".
+/// parity: test_google_books.py::test_subject_fallback_keeps_provider_errors_visible
+/// (ADAPT, the "primary empty, then the fallback fails" cells, for the search fallbacks.)
+#[sqlx::test]
+async fn fallback_errors_surface_only_without_hits(db: PgPool) {
+    // `obscurexyz`: the primary query is empty, both fallbacks find Circe. `zzzzempty`: every
+    // query is empty.
+    type Case<'a> = (&'a str, &'a [(&'a str, u16)], u16);
+    let cases: [Case; 3] = [
+        ("obscurexyz", &[("title:", 500)], 200),
+        ("obscurexyz", &[("title:", 500), ("author:", 500)], 502),
+        ("zzzzempty", &[("title:", 429)], 429),
+    ];
+    for (round, (q, failing, expected)) in cases.into_iter().enumerate() {
+        let app = TestApp::with_real_lookup(db.clone()).await;
+        let fake = FakeOpenLibrary::mount(&app).await;
+        let ada = app.user(&format!("ada{round}")).await;
+        for (prefix, status) in failing {
+            fake.status_for_q(prefix, *status);
+        }
+        let res = search(&ada, q).await;
+        res.assert_status(expected);
+        match expected {
+            200 => assert_eq!(titles(&res.json()), ["Circe"]),
+            502 => assert_eq!(
+                res.detail(),
+                "Could not search the library right now. Try again."
+            ),
+            _ => assert!(
+                res.detail().starts_with("The library is busy."),
+                "{}",
+                res.detail()
+            ),
+        }
+        let sent: Vec<String> = params_for(&app, "search.json")
+            .await
+            .into_iter()
+            .map(|params| params["q"].clone())
+            .collect();
+        assert_eq!(sent[0], q);
+        if expected != 429 {
+            // A 429 cools Open Library down, which may stop the other fallback before it is
+            // sent; a 500 is not retried.
+            assert_eq!(sent.len(), 3, "{sent:?}");
+        }
     }
 }
 

@@ -18,12 +18,12 @@ use utoipa::IntoParams;
 
 use super::cache::Fetch;
 use super::hits::{HitRef, dedupe, persist_docs, prefetch_covers, search_hits};
+use super::isbn_lookup::resolve_isbn;
 use super::openlibrary::{OlDoc, Sort};
 use super::shared::isbn::{looks_like_isbn, parse_isbn};
-use super::shared::lookup::LookupError;
 use super::{
     BROWSE_UNAVAILABLE, INVALID_SORT, INVALID_SUBJECT, NO_SUCH_SUBJECT, QUERY_TOO_SHORT,
-    SEARCH_TOO_LONG, SEARCH_UNAVAILABLE, browse_error, busy,
+    SEARCH_TOO_LONG, SEARCH_UNAVAILABLE, browse_error,
 };
 use crate::AppState;
 use crate::auth::extract::CurrentUser;
@@ -342,18 +342,10 @@ async fn isbn_search(
     if page > 1 {
         return Ok(empty_page(page));
     }
-    let mut conn = state.db.acquire().await?;
-    let resolved = match state.lookup.resolve_isbn(&mut conn, &isbn).await {
-        Ok(resolved) => resolved,
-        Err(LookupError::Throttled) => {
-            return Err(busy(&[&state.outbound.ol_api, &state.outbound.dnb_sru]));
-        }
-        Err(LookupError::Unavailable) => return Err(AppError::bad_gateway(SEARCH_UNAVAILABLE)),
-        Err(LookupError::Db(error)) => return Err(error.into()),
-    };
-    let Some(resolved) = resolved else {
+    let Some(resolved) = resolve_isbn(state, &isbn, false, SEARCH_UNAVAILABLE).await? else {
         return Ok(empty_page(page));
     };
+    let mut conn = state.db.acquire().await?;
     prefetch_covers(&mut conn, &state.media_service, &[resolved.work_id]).await?;
     let refs = [HitRef {
         work_id: resolved.work_id,

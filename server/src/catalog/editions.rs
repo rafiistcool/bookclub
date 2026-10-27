@@ -152,13 +152,16 @@ pub async fn add_edition(
     ApiPath(raw): ApiPath<String>,
     ApiJson(body): ApiJson<NewEditionIn>,
 ) -> ApiResult<(StatusCode, Json<EditionOut>)> {
-    let mut conn = state.db.acquire().await?;
-    let work_id = require_local_work(&mut conn, &raw).await?;
+    let work_id = {
+        let mut conn = state.db.acquire().await?;
+        require_local_work(&mut conn, &raw).await?
+    };
     hit_contribution_limit(&state, user.id)?;
     let isbn = body.isbn.as_deref().and_then(parse_isbn);
     if let Some(isbn) = &isbn {
-        claim_isbn(&state, &mut conn, isbn).await?;
+        claim_isbn(&state, isbn).await?;
     }
+    let mut conn = state.db.acquire().await?;
     let edition = EditionRecord {
         isbn13: isbn,
         title: body.title,
@@ -174,7 +177,7 @@ pub async fn add_edition(
         ..EditionRecord::new(Source::User)
     };
     let mut tx = conn.begin().await?;
-    let edition_id = insert_user_edition(&mut tx, work_id, &edition).await?;
+    let (_, edition_id) = insert_user_edition(&mut tx, work_id, &edition).await?;
     tx.commit().await?;
     let out = edition_outs(&mut conn, &[edition_id])
         .await?

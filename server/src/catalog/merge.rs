@@ -4,9 +4,12 @@
 //! admin merge.
 //!
 //! One transaction (a savepoint inside the caller's):
-//! 1. Both works are locked (`FOR NO KEY UPDATE`, which does not block the foreign-key checks of
-//!    concurrent shelf writes), then every user with a shelf entry or a favourite on the loser
-//!    (`FOR UPDATE`, in id order, like SHELF's writes).
+//! 1. The covers of both works are locked `FOR SHARE` before any catalog row (conventions §7.2),
+//!    so a takedown of one of them waits for the merge or runs first, never deadlocks with it.
+//!    Then both works are locked (`FOR NO KEY UPDATE`, which does not block the foreign-key
+//!    checks of concurrent shelf writes), then every user with a shelf entry or a favourite on
+//!    the loser (`FOR UPDATE`, in id order, like SHELF's writes). When the loser got another
+//!    cover between the two locks, the merge starts over (twice at most).
 //! 2. Shelf entries: a user with both works keeps the entry `shelf_winner` picks, with the
 //!    other's fields merged in (`merge_shelf_fields`); the other entry goes and their physical
 //!    layout is remapped. Positions are renumbered per (user, status).
@@ -69,21 +72,61 @@ pub async fn merge_works(
             "a work cannot be merged into itself".into(),
         ));
     }
-    let mut tx = conn.begin().await?;
-    let report = merge_in(&mut tx, loser, winner).await?;
-    tx.commit().await?;
-    Ok(report)
+    let mut attempt = 0;
+    loop {
+        let mut tx = conn.begin().await?;
+        let last_try = attempt == COVER_RETRIES;
+        match merge_in(&mut tx, loser, winner, last_try).await? {
+            Some(report) => {
+                tx.commit().await?;
+                return Ok(report);
+            }
+            None => {
+                tracing::info!(
+                    loser,
+                    winner,
+                    "the loser's cover changed while locking; retrying"
+                );
+                tx.rollback().await?;
+                attempt += 1;
+            }
+        }
+    }
 }
 
-async fn merge_in(conn: &mut PgConnection, loser: i64, winner: i64) -> sqlx::Result<MergeReport> {
+/// How often [`merge_works`] starts over when the loser got another cover between the cover
+/// lock and the works lock.
+const COVER_RETRIES: u32 = 2;
+
+/// One attempt. `None`: the loser's cover changed after the covers were locked, and this is not
+/// the last try (the caller rolls back, which releases every lock, and starts over). On the last
+/// try such a cover stays with the loser.
+async fn merge_in(
+    conn: &mut PgConnection,
+    loser: i64,
+    winner: i64,
+    last_try: bool,
+) -> sqlx::Result<Option<MergeReport>> {
     let mut report = MergeReport {
         loser,
         winner,
         ..MergeReport::default()
     };
     let pair = [loser.min(winner), loser.max(winner)];
-    let locked = sqlx::query_scalar!(
-        "SELECT id FROM works WHERE id = ANY($1) AND merged_into_id IS NULL
+    // Conventions §7.2: the media rows a write attaches are locked FOR SHARE before any catalog
+    // row. MED's takedown updates the media row and then, in clear_media, the works that point
+    // at it; locking the works first would deadlock with it.
+    let covers = sqlx::query_scalar!(
+        "SELECT id FROM media
+         WHERE id IN (SELECT cover_media_id FROM works WHERE id = ANY($1))
+           AND removed_at IS NULL
+         ORDER BY id FOR SHARE",
+        &pair[..]
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let locked = sqlx::query!(
+        "SELECT id, cover_media_id FROM works WHERE id = ANY($1) AND merged_into_id IS NULL
          ORDER BY id FOR NO KEY UPDATE",
         &pair[..]
     )
@@ -91,6 +134,13 @@ async fn merge_in(conn: &mut PgConnection, loser: i64, winner: i64) -> sqlx::Res
     .await?;
     if locked.len() != 2 {
         return Err(sqlx::Error::RowNotFound);
+    }
+    let loser_cover = locked
+        .iter()
+        .find(|row| row.id == loser)
+        .and_then(|row| row.cover_media_id);
+    if loser_cover.is_some_and(|id| !covers.contains(&id)) && !last_try {
+        return Ok(None);
     }
     sqlx::query_scalar!(
         "SELECT id FROM users
@@ -105,7 +155,7 @@ async fn merge_in(conn: &mut PgConnection, loser: i64, winner: i64) -> sqlx::Res
     merge_shelves(conn, loser, winner, &mut report).await?;
     merge_favourites(conn, loser, winner, &mut report).await?;
     merge_nominations(conn, loser, winner, &mut report).await?;
-    merge_fields(conn, loser, winner, &mut report).await?;
+    merge_fields(conn, loser, winner, &covers, &mut report).await?;
     move_references(conn, loser, winner, &mut report).await?;
     settle_requests(conn, loser, winner, &mut report).await?;
     sqlx::query!(
@@ -117,7 +167,7 @@ async fn merge_in(conn: &mut PgConnection, loser: i64, winner: i64) -> sqlx::Res
     .await?;
     refresh_derived(conn, winner).await?;
     tracing::info!(?report, "merged two works");
-    Ok(report)
+    Ok(Some(report))
 }
 
 fn visibility_str(visibility: Visibility) -> &'static str {
@@ -444,11 +494,13 @@ async fn load_fields(conn: &mut PgConnection, id: i64) -> sqlx::Result<WorkField
 /// Takes a loser field, with its provenance, where the winner's is empty, legacy-ranked below
 /// it, or below an admin-approved loser value (a reader's value never replaces a source's on a
 /// merge: the admin picked the winner's record); moves `ol_work_id` when the winner has none;
-/// upgrades a legacy winner to the loser's source.
+/// upgrades a legacy winner to the loser's source. The loser's cover moves only when it is
+/// among `covers`, the usable media rows `merge_in` locked before the works.
 async fn merge_fields(
     conn: &mut PgConnection,
     loser: i64,
     winner: i64,
+    covers: &[i64],
     report: &mut MergeReport,
 ) -> sqlx::Result<()> {
     let l = load_fields(conn, loser).await?;
@@ -517,14 +569,9 @@ async fn merge_fields(
         w.cover_media_id.is_none(),
         l.cover_media_id.is_none(),
     ) {
-        // Locked like ingest locks the covers it attaches, so a takedown waits for this merge.
-        let usable = sqlx::query_scalar!(
-            "SELECT id FROM media WHERE id = $1 AND removed_at IS NULL FOR SHARE",
-            l.cover_media_id
-        )
-        .fetch_optional(&mut *conn)
-        .await?;
-        if usable.is_some() {
+        // Locked FOR SHARE before the works (merge_in), so a takedown of it waits for this
+        // merge; a removed picture was never locked and stays behind.
+        if l.cover_media_id.is_some_and(|id| covers.contains(&id)) {
             w.cover_media_id = l.cover_media_id;
             take(&mut sources, "cover_media_id");
         }

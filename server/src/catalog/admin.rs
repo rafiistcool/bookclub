@@ -203,6 +203,41 @@ async fn merge_pair(conn: &mut PgConnection, loser: i64, winner: i64) -> ApiResu
     Ok((loser, winner))
 }
 
+/// Merges a pair that [`merge_pair`] resolved without a lock. A concurrent merge may have
+/// merged either work in the meantime: `merge_works` sees that under its lock and answers
+/// `RowNotFound` (its savepoint is rolled back). The pair is then resolved again for the
+/// answer it has become: 400 when both are one work now (A into B against B into A), else 404
+/// `No such book.` (the work to merge away is gone).
+async fn merge_resolved(conn: &mut PgConnection, loser: i64, winner: i64) -> ApiResult<()> {
+    match merge_works(conn, loser, winner).await {
+        Ok(_) => Ok(()),
+        Err(sqlx::Error::RowNotFound) => {
+            merge_pair(conn, loser, winner).await?;
+            Err(AppError::not_found(msg::NO_SUCH_BOOK))
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// The current cover of `target`; `None` when the target does not exist.
+async fn cover_of(
+    conn: &mut PgConnection,
+    target: CoverTarget,
+) -> sqlx::Result<Option<Option<i64>>> {
+    match target {
+        CoverTarget::Work(id) => {
+            sqlx::query_scalar!("SELECT cover_media_id FROM works WHERE id = $1", id)
+                .fetch_optional(&mut *conn)
+                .await
+        }
+        CoverTarget::Edition(id) => {
+            sqlx::query_scalar!("SELECT cover_media_id FROM editions WHERE id = $1", id)
+                .fetch_optional(&mut *conn)
+                .await
+        }
+    }
+}
+
 /// Applies an open request (locked by the caller's transaction).
 async fn apply_request(conn: &mut PgConnection, request: &OpenRequest) -> ApiResult<()> {
     let OpenRequest {
@@ -229,13 +264,15 @@ async fn apply_request(conn: &mut PgConnection, request: &OpenRequest) -> ApiRes
         }
         "cover_replace" => {
             let media_id = media_id.ok_or_else(|| AppError::not_found(msg::NOT_FOUND))?;
+            // Locked FOR SHARE before any catalog row (conventions §7.2): a takedown that is
+            // under way finishes first and this check sees it; a later one waits for us.
             let usable = sqlx::query_scalar!(
-                r#"SELECT removed_at IS NULL AS "usable!" FROM media WHERE id = $1"#,
+                "SELECT id FROM media WHERE id = $1 AND removed_at IS NULL FOR SHARE",
                 media_id
             )
             .fetch_optional(&mut *conn)
             .await?
-            .unwrap_or(false);
+            .is_some();
             if !usable {
                 return Err(AppError::bad_request(PICTURE_REMOVED));
             }
@@ -248,8 +285,16 @@ async fn apply_request(conn: &mut PgConnection, request: &OpenRequest) -> ApiRes
                 ),
                 (None, None) => return Err(AppError::not_found(msg::NO_SUCH_BOOK)),
             };
-            set_cover(conn, target, media_id, Source::Admin, false).await?;
-            Ok(())
+            if set_cover(conn, target, media_id, Source::Admin, false).await? {
+                return Ok(());
+            }
+            // Not set: the target already shows this picture (fine), the target is gone, or
+            // set_cover refused the media row (not a usable cover). The request stays open.
+            match cover_of(conn, target).await? {
+                Some(Some(current)) if current == media_id => Ok(()),
+                Some(_) => Err(AppError::bad_request(PICTURE_REMOVED)),
+                None => Err(AppError::not_found(msg::NO_SUCH_BOOK)),
+            }
         }
         "work_merge" => {
             let into = fields
@@ -258,8 +303,7 @@ async fn apply_request(conn: &mut PgConnection, request: &OpenRequest) -> ApiRes
                 .ok_or_else(|| AppError::not_found(msg::NO_SUCH_BOOK))?;
             let loser = work_id.ok_or_else(|| AppError::not_found(msg::NO_SUCH_BOOK))?;
             let (loser, winner) = merge_pair(conn, loser, into).await?;
-            merge_works(conn, loser, winner).await?;
-            Ok(())
+            merge_resolved(conn, loser, winner).await
         }
         other => Err(AppError::internal(format!("unknown request kind {other}"))),
     }
@@ -401,7 +445,7 @@ pub async fn merge_work(
     let loser = require_local_work(&mut conn, &raw).await?;
     let mut tx = conn.begin().await?;
     let (loser, winner) = merge_pair(&mut tx, loser, body.into_work_id).await?;
-    merge_works(&mut tx, loser, winner).await?;
+    merge_resolved(&mut tx, loser, winner).await?;
     tx.commit().await?;
     Ok(Json(book_detail(&mut conn, admin.id, winner).await?))
 }

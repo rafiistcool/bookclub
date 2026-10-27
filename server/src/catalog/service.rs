@@ -46,10 +46,11 @@ impl CatalogService {
         self.sru.clear();
     }
 
-    /// The remote route by registration group, without persisting anything: what a source
-    /// knows about `isbn`. `Ok(None)` only when every source asked answered "unknown".
-    async fn remote_isbn(&self, isbn: &Isbn13) -> Result<Option<RemoteHit>, LookupError> {
-        let mut no_answer: Option<LookupError> = None;
+    /// The remote route by registration group, without persisting anything and without a
+    /// database connection: what a source knows about `isbn`. `Ok(None)` only when every source
+    /// asked answered "unknown". [`persist`] stores a hit.
+    pub(crate) async fn remote_isbn(&self, isbn: &Isbn13) -> Result<Option<RemoteHit>, NoAnswer> {
+        let mut no_answer: Option<NoAnswer> = None;
         if is_german_group(isbn) {
             match self.dnb_record(isbn).await {
                 Ok(Some(record)) => {
@@ -63,21 +64,60 @@ impl CatalogService {
                 }
                 Ok(None) => {}
                 // DNB throttled, cooling down or failing: fall through to Open Library.
-                Err(error) => no_answer = Some(lookup_error(&error)),
+                Err(error) => no_answer = Some(NoAnswer::from_fetch(&error, Busy::DnbSru)),
             }
         }
         match self.ol_isbn_search(isbn).await {
             Ok(Some(doc)) => Ok(Some(RemoteHit::OpenLibrary(doc))),
+            // Open Library does not know it: the DNB's failure (if any) decided.
             Ok(None) => match no_answer {
                 Some(error) => Err(error),
                 None => Ok(None),
             },
-            Err(error) => Err(match (lookup_error(&error), no_answer) {
-                (LookupError::Throttled, None | Some(LookupError::Throttled)) => {
-                    LookupError::Throttled
-                }
-                _ => LookupError::Unavailable,
-            }),
+            Err(error) => Err(
+                match (NoAnswer::from_fetch(&error, Busy::OpenLibrary), no_answer) {
+                    (throttled @ NoAnswer::Throttled(_), None | Some(NoAnswer::Throttled(_))) => {
+                        throttled
+                    }
+                    _ => NoAnswer::Unavailable,
+                },
+            ),
+        }
+    }
+}
+
+/// The upstream whose throttle refused, for the 429 hint (`catalog::busy`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Busy {
+    OpenLibrary,
+    DnbSru,
+}
+
+/// Why the remote route of an ISBN gave no definite answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NoAnswer {
+    /// The step that decided was throttled or cooling down: Open Library's, or the DNB's when
+    /// Open Library then answered with a miss. 429, with that throttle's cooldown as the hint.
+    Throttled(Busy),
+    /// An upstream failed (502).
+    Unavailable,
+}
+
+impl NoAnswer {
+    /// Throttled stays throttled (429); anything else is "unavailable" (502).
+    fn from_fetch(error: &Fetch, upstream: Busy) -> NoAnswer {
+        match error {
+            Fetch::Throttled => NoAnswer::Throttled(upstream),
+            _ => NoAnswer::Unavailable,
+        }
+    }
+}
+
+impl From<NoAnswer> for LookupError {
+    fn from(error: NoAnswer) -> LookupError {
+        match error {
+            NoAnswer::Throttled(_) => LookupError::Throttled,
+            NoAnswer::Unavailable => LookupError::Unavailable,
         }
     }
 }
@@ -92,7 +132,7 @@ fn lookup_error(error: &Fetch) -> LookupError {
 
 /// The outcome of the Open Library cover check after a DNB hit.
 #[derive(Debug, Clone, Copy)]
-enum CoverCheck {
+pub(crate) enum CoverCheck {
     /// Open Library answered: its cover id, or none.
     Done(Option<i64>),
     /// No answer; the first detail view checks again.
@@ -100,14 +140,14 @@ enum CoverCheck {
 }
 
 /// What one source returned for an ISBN.
-enum RemoteHit {
+pub(crate) enum RemoteHit {
     Dnb(DnbRecord, CoverCheck),
     OpenLibrary(OlDoc),
 }
 
 /// Persists a remote hit in one transaction (a savepoint inside the caller's), retried once
 /// when Postgres aborts it to break a deadlock (conventions §7.2 "Deadlocks").
-async fn persist(
+pub(crate) async fn persist(
     conn: &mut PgConnection,
     isbn: &Isbn13,
     hit: &RemoteHit,
@@ -234,7 +274,7 @@ impl CatalogLookup for CatalogService {
         conn: &mut PgConnection,
         isbn: &Isbn13,
     ) -> Result<Option<Resolved>, LookupError> {
-        match self.remote_isbn(isbn).await? {
+        match self.remote_isbn(isbn).await.map_err(LookupError::from)? {
             Some(hit) => persist(conn, isbn, &hit).await,
             None => Ok(None),
         }

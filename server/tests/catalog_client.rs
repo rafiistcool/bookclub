@@ -359,7 +359,7 @@ async fn resolve_text_is_local_first(db: PgPool) {
         .1;
     assert_eq!(limit, "5");
 
-    // Same title, other authors: not the local work.
+    // Nothing anywhere: no match.
     assert_eq!(
         catalog
             .resolve_text(&mut conn, "Nothing", "Nobody")
@@ -367,6 +367,30 @@ async fn resolve_text_is_local_first(db: PgPool) {
             .unwrap(),
         None
     );
+    // Same title, other authors: not the local work; Open Library is asked instead.
+    Mock::given(path("/search.json"))
+        .and(query_param("q", "Die Brücke Someone Else"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"numFound": 0, "docs": []})))
+        .mount(&app.upstream)
+        .await;
+    assert_eq!(
+        catalog
+            .resolve_text(&mut conn, "Die Brücke", "Someone Else")
+            .await
+            .unwrap(),
+        None
+    );
+    let asked = app
+        .upstream_requests()
+        .await
+        .iter()
+        .filter(|r| {
+            r.url
+                .query_pairs()
+                .any(|(k, v)| k == "q" && v == "Die Brücke Someone Else")
+        })
+        .count();
+    assert_eq!(asked, 1);
     assert_eq!(
         catalog.resolve_text(&mut conn, "  ", "x").await.unwrap(),
         None

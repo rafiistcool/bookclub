@@ -15,10 +15,12 @@ use sqlx::{Connection, PgConnection};
 use utoipa::ToSchema;
 
 use super::detail::{BookDetailOut, book_detail};
+use super::isbn_lookup::resolve_isbn;
+use super::shared::books::follow_merges;
 use super::shared::ingest::{self, EditionRecord, Mode, Source, WorkRecord};
 use super::shared::isbn::{Isbn13, parse_isbn};
-use super::shared::lookup::{LookupError, local_isbn};
-use super::{INVALID_ISBN, ISBN_IN_CATALOG, ISBN_UNAVAILABLE, TITLE_REQUIRED, busy};
+use super::shared::lookup::local_isbn;
+use super::{INVALID_ISBN, ISBN_IN_CATALOG, ISBN_UNAVAILABLE, TITLE_REQUIRED};
 use crate::AppState;
 use crate::auth::extract::CurrentUser;
 use crate::error::{ApiResult, AppError, ErrorBody, msg};
@@ -115,24 +117,20 @@ pub(crate) fn isbn_conflict(work_id: i64, edition_id: Option<i64>) -> AppError {
 }
 
 /// The rule for an ISBN a reader enters: it must be unknown to the catalog and to every source.
-/// A local edition, or a remote hit (which `resolve_isbn_remote` persists), is 409 with its ids;
-/// a lookup without a definite answer is 429 or 502, never a pass.
-pub(crate) async fn claim_isbn(
-    state: &AppState,
-    conn: &mut PgConnection,
-    isbn: &Isbn13,
-) -> ApiResult<()> {
-    if let Some(found) = local_isbn(conn, isbn).await? {
+/// A local edition, or a remote hit (which the remote route persists), is 409 with its ids; a
+/// lookup without a definite answer is 429 or 502, never a pass. Holds no pool connection while
+/// the sources are asked ([`resolve_isbn`]).
+pub(crate) async fn claim_isbn(state: &AppState, isbn: &Isbn13) -> ApiResult<()> {
+    let local = {
+        let mut conn = state.db.acquire().await?;
+        local_isbn(&mut conn, isbn).await?
+    };
+    if let Some(found) = local {
         return Err(isbn_conflict(found.work_id, found.edition_id));
     }
-    match state.lookup.resolve_isbn_remote(conn, isbn).await {
-        Ok(Some(found)) => Err(isbn_conflict(found.work_id, found.edition_id)),
-        Ok(None) => Ok(()),
-        Err(LookupError::Throttled) => {
-            Err(busy(&[&state.outbound.ol_api, &state.outbound.dnb_sru]))
-        }
-        Err(LookupError::Unavailable) => Err(AppError::bad_gateway(ISBN_UNAVAILABLE)),
-        Err(LookupError::Db(error)) => Err(error.into()),
+    match resolve_isbn(state, isbn, true, ISBN_UNAVAILABLE).await? {
+        Some(found) => Err(isbn_conflict(found.work_id, found.edition_id)),
+        None => Ok(()),
     }
 }
 
@@ -145,19 +143,54 @@ pub(crate) fn hit_contribution_limit(state: &AppState, user_id: i64) -> ApiResul
         .map_err(|wait| wait.into_error(msg::SLOW_DOWN))
 }
 
-/// Inserts a user edition of `work_id` inside the caller's transaction. When the ISBN turned up
-/// under another work meanwhile (a concurrent lookup), the caller rolls back: 409.
+/// How often [`insert_user_edition`] starts over when the work it wrote to was merged away
+/// meanwhile.
+const MERGED_RETRIES: usize = 2;
+
+/// Inserts a user edition of `work_id` inside the caller's transaction (in a savepoint) and
+/// returns the work it landed on and its id.
+///
+/// - **A merge in flight:** the work the edition landed on is locked `FOR NO KEY UPDATE`
+///   afterwards, like a merge locks it. A merge that started earlier cannot see the new edition
+///   when it moves the loser's editions; the lock waits for it, sees the work merged away, and
+///   the insert starts over on the surviving work (ingest follows the merge). A merge that
+///   starts later waits for this transaction and then moves the edition itself.
+/// - **An ISBN conflict:** when the ISBN turned up under another work meanwhile (a concurrent
+///   lookup), the answer is 409 and the caller rolls back. A work merged away since the caller
+///   resolved it is no conflict.
 pub(crate) async fn insert_user_edition(
     conn: &mut PgConnection,
     work_id: i64,
     edition: &EditionRecord,
-) -> ApiResult<i64> {
-    let (found_work, edition_id) =
-        ingest::upsert_edition(conn, work_id, edition, Mode::Refresh).await?;
-    if found_work != work_id {
-        return Err(isbn_conflict(found_work, Some(edition_id)));
+) -> ApiResult<(i64, i64)> {
+    for _ in 0..=MERGED_RETRIES {
+        let mut tx = conn.begin().await?;
+        let (found_work, edition_id) =
+            ingest::upsert_edition(&mut tx, work_id, edition, Mode::Refresh).await?;
+        let current = sqlx::query_scalar!(
+            r#"SELECT merged_into_id IS NULL AS "current!" FROM works WHERE id = $1
+               FOR NO KEY UPDATE"#,
+            found_work
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        if !current {
+            tx.rollback().await?;
+            continue;
+        }
+        // Without an ISBN (a user edition's only identifier) the edition is always new.
+        if found_work != work_id
+            && edition.isbn13.is_some()
+            && follow_merges(&mut tx, work_id).await? != Some(found_work)
+        {
+            return Err(isbn_conflict(found_work, Some(edition_id)));
+        }
+        tx.commit().await?;
+        return Ok((found_work, edition_id));
     }
-    Ok(edition_id)
+    Err(AppError::internal(format!(
+        "work {work_id} was merged away during every attempt to add an edition"
+    )))
 }
 
 /// Adds a book that no source knows. Never calls Open Library, except to check an ISBN: with an
@@ -186,10 +219,10 @@ pub async fn create_custom_book(
 ) -> ApiResult<(StatusCode, Json<BookDetailOut>)> {
     hit_contribution_limit(&state, user.id)?;
     let isbn = body.isbn.as_deref().and_then(parse_isbn);
-    let mut conn = state.db.acquire().await?;
     if let Some(isbn) = &isbn {
-        claim_isbn(&state, &mut conn, isbn).await?;
+        claim_isbn(&state, isbn).await?;
     }
+    let mut conn = state.db.acquire().await?;
     let work = WorkRecord {
         author_names: body.authors,
         first_publish_year: body.year.and_then(|year| i32::try_from(year).ok()),

@@ -2,20 +2,85 @@
 //! editions first, then by registration group: 978-3 → DNB SRU → Open Library, every other
 //! group → Open Library only (conventions §7.4).
 
+use std::sync::Arc;
+
 use axum::Json;
 use axum::extract::State;
 use serde::Serialize;
 use utoipa::ToSchema;
 
 use super::hits::{prefetch_covers, shelf_entries};
+use super::service::{Busy, NoAnswer, persist};
 use super::shared::books::{BookRef, book_out};
-use super::shared::isbn::parse_isbn;
-use super::shared::lookup::{LookupError, local_isbn};
+use super::shared::isbn::{Isbn13, parse_isbn};
+use super::shared::lookup::{LookupError, Resolved, local_isbn};
 use super::{INVALID_ISBN, ISBN_NOT_FOUND, ISBN_UNAVAILABLE, busy};
 use crate::AppState;
 use crate::auth::extract::CurrentUser;
 use crate::error::{ApiResult, AppError, ErrorBody};
 use crate::extract::ApiPath;
+
+/// Resolves `isbn` for CAT's routes: the local edition (unless `remote_only`), then the remote
+/// route of conventions §7.4. No definite answer is 429 `busy` (with the cooldown of the source
+/// whose throttle refused) or 502 `unavailable`.
+///
+/// When `state.lookup` is CAT's own service (production, and `TestApp::with_real_lookup`), it
+/// runs in three phases, so no pool connection is held while the DNB and Open Library are asked
+/// (each step can take a throttle wait and two 15 s attempts): the local step on a short-lived
+/// connection, the remote route without one, then the hit is stored on a new connection. Any
+/// other `CatalogLookup` (`FakeCatalog` in tests) is called through the trait.
+pub(crate) async fn resolve_isbn(
+    state: &AppState,
+    isbn: &Isbn13,
+    remote_only: bool,
+    unavailable: &'static str,
+) -> ApiResult<Option<Resolved>> {
+    let own = std::ptr::addr_eq(Arc::as_ptr(&state.lookup), Arc::as_ptr(&state.catalog));
+    if !own {
+        let mut conn = state.db.acquire().await?;
+        let result = if remote_only {
+            state.lookup.resolve_isbn_remote(&mut conn, isbn).await
+        } else {
+            state.lookup.resolve_isbn(&mut conn, isbn).await
+        };
+        return result.map_err(|error| match error {
+            // The trait does not say which source refused; Open Library is the one every
+            // route asks.
+            LookupError::Throttled => {
+                no_answer(state, NoAnswer::Throttled(Busy::OpenLibrary), unavailable)
+            }
+            LookupError::Unavailable => no_answer(state, NoAnswer::Unavailable, unavailable),
+            LookupError::Db(error) => error.into(),
+        });
+    }
+    if !remote_only {
+        let mut conn = state.db.acquire().await?;
+        if let Some(found) = local_isbn(&mut conn, isbn).await? {
+            return Ok(Some(found));
+        }
+    }
+    let hit = match state.catalog.remote_isbn(isbn).await {
+        Ok(Some(hit)) => hit,
+        Ok(None) => return Ok(None),
+        Err(error) => return Err(no_answer(state, error, unavailable)),
+    };
+    let mut conn = state.db.acquire().await?;
+    persist(&mut conn, isbn, &hit)
+        .await
+        .map_err(|error| match error {
+            LookupError::Db(error) => error.into(),
+            other => AppError::internal(format!("storing an ISBN hit failed: {other}")),
+        })
+}
+
+/// 429 with the hint of the throttle that refused, or 502 `unavailable`.
+fn no_answer(state: &AppState, error: NoAnswer, unavailable: &'static str) -> AppError {
+    match error {
+        NoAnswer::Throttled(Busy::OpenLibrary) => busy(&[&state.outbound.ol_api]),
+        NoAnswer::Throttled(Busy::DnbSru) => busy(&[&state.outbound.dnb_sru]),
+        NoAnswer::Unavailable => AppError::bad_gateway(unavailable),
+    }
+}
 
 /// The edition an ISBN resolved to, with its work.
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -66,16 +131,10 @@ pub async fn lookup_isbn(
     ApiPath(raw): ApiPath<String>,
 ) -> ApiResult<Json<IsbnHitOut>> {
     let isbn = parse_isbn(&raw).ok_or_else(|| AppError::bad_request(INVALID_ISBN))?;
+    let resolved = resolve_isbn(&state, &isbn, false, ISBN_UNAVAILABLE)
+        .await?
+        .ok_or_else(|| AppError::not_found(ISBN_NOT_FOUND))?;
     let mut conn = state.db.acquire().await?;
-    let resolved = match state.lookup.resolve_isbn(&mut conn, &isbn).await {
-        Ok(Some(resolved)) => resolved,
-        Ok(None) => return Err(AppError::not_found(ISBN_NOT_FOUND)),
-        Err(LookupError::Throttled) => {
-            return Err(busy(&[&state.outbound.ol_api, &state.outbound.dnb_sru]));
-        }
-        Err(LookupError::Unavailable) => return Err(AppError::bad_gateway(ISBN_UNAVAILABLE)),
-        Err(LookupError::Db(error)) => return Err(error.into()),
-    };
     // CAT's lookups always name the edition; another `CatalogLookup` may only name the work.
     let edition_id = match resolved.edition_id {
         Some(id) => id,

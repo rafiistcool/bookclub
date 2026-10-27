@@ -4,8 +4,10 @@
 
 mod common;
 
+use std::time::Duration;
+
 use bookclub_server::catalog::shared::ingest::{
-    self, AuthorRecord, EditionRecord, Mode, Source, WorkGrouping, WorkRecord,
+    self, AuthorRecord, CoverTarget, EditionRecord, Mode, Source, WorkGrouping, WorkRecord,
 };
 use bookclub_server::catalog::shared::isbn::parse_isbn;
 use bookclub_server::catalog::{MergeReport, merge_works};
@@ -617,4 +619,120 @@ async fn merge_works_refuses_bad_pairs(db: PgPool) {
             .await
             .unwrap();
     assert_eq!(redirect, Some(c));
+}
+
+/// Waits until a session of this test's database waits for a row lock that the test holds.
+async fn until_a_lock_wait(db: &PgPool) {
+    for _ in 0..500 {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity
+             WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .fetch_one(db)
+        .await
+        .unwrap();
+        if waiting > 0 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("nothing waited for a lock");
+}
+
+/// The media row of an Open Library cover id.
+async fn cover_media(app: &TestApp, ol_cover_id: i64) -> i64 {
+    let mut conn = app.db.acquire().await.unwrap();
+    ingest::ol_cover_media(&mut conn, ol_cover_id)
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+async fn cover_of(app: &TestApp, work: i64) -> Option<i64> {
+    sqlx::query_scalar("SELECT cover_media_id FROM works WHERE id = $1")
+        .bind(work)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+/// Conventions §7.2 (covers and takedowns): a takedown updates the media row, then clears the
+/// works that show it. A merge whose loser shows that picture locks it before the works, so it
+/// waits for the takedown instead of deadlocking with it, and the winner does not get the
+/// removed picture.
+#[sqlx::test]
+async fn a_takedown_during_a_merge_waits_instead_of_deadlocking(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let loser = app.work("Circe (bare)").await.id;
+    let winner = app.work("Circe").await.id;
+    let picture = cover_media(&app, 4242).await;
+    app.exec(&format!(
+        "UPDATE works SET cover_media_id = {picture} WHERE id = {loser}"
+    ))
+    .await;
+
+    // MED's takedown, half done: the picture is marked removed, the works still show it.
+    let mut takedown = app.db.begin().await.unwrap();
+    sqlx::query("UPDATE media SET removed_at = now() WHERE id = $1")
+        .bind(picture)
+        .execute(&mut *takedown)
+        .await
+        .unwrap();
+    let mut conn = app.db.acquire().await.unwrap();
+    let finish_takedown = async {
+        until_a_lock_wait(&app.db).await;
+        ingest::clear_media(&mut takedown, picture).await.unwrap();
+        takedown.commit().await.unwrap();
+    };
+    let (merged, ()) = tokio::join!(merge_works(&mut conn, loser, winner), finish_takedown);
+    let report = merged.unwrap();
+    assert_eq!(report.winner, winner);
+    assert_eq!(cover_of(&app, winner).await, None);
+    assert_eq!(cover_of(&app, loser).await, None);
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM works WHERE id = {loser} AND merged_into_id = {winner}"
+        ))
+        .await,
+        1
+    );
+}
+
+/// A picture set on the loser while the merge waits for the works was not locked with the
+/// covers: the merge starts over and then takes it like any other loser cover.
+#[sqlx::test]
+async fn a_cover_set_while_the_merge_waits_is_taken_on_the_next_try(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let loser = app.work("Circe (bare)").await.id;
+    let winner = app.work("Circe").await.id;
+    let picture = cover_media(&app, 4343).await;
+
+    // A first upload on the loser, not yet committed: it holds the loser's row.
+    let mut upload = app.db.begin().await.unwrap();
+    assert!(
+        ingest::set_cover(
+            &mut upload,
+            CoverTarget::Work(loser),
+            picture,
+            Source::User,
+            true
+        )
+        .await
+        .unwrap()
+    );
+    let mut conn = app.db.acquire().await.unwrap();
+    let finish_upload = async {
+        until_a_lock_wait(&app.db).await;
+        upload.commit().await.unwrap();
+    };
+    let (merged, ()) = tokio::join!(merge_works(&mut conn, loser, winner), finish_upload);
+    merged.unwrap();
+    assert_eq!(cover_of(&app, winner).await, Some(picture));
+    let owner: Option<String> =
+        sqlx::query_scalar("SELECT field_sources ->> 'cover_media_id' FROM works WHERE id = $1")
+            .bind(winner)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(owner.as_deref(), Some("user"));
 }

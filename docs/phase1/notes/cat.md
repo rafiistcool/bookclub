@@ -21,8 +21,8 @@ Owner: CAT. These notes record what the catalog package built, where it deviates
 - `catalog/search.rs`: `GET /api/books/search`, `/trending`, `/subjects/{subject}`.
 - `catalog/isbn_lookup.rs`: `GET /api/books/isbn/{isbn}` (`IsbnHitOut`).
 - Tests:
-  - `catalog_search.rs` (31)
-  - `catalog_isbn.rs` (14)
+  - `catalog_search.rs` (31, 32 after the review)
+  - `catalog_isbn.rs` (14, 16 after the review)
   - `catalog_client.rs` (6)
   - `catalog_no_google.rs` (2)
   - unit tests in `catalog::{cache, openlibrary, dnb_sru, hits, search}` (17)
@@ -47,13 +47,23 @@ Owner: CAT. These notes record what the catalog package built, where it deviates
 - `catalog/merge.rs`: `catalog::merge_works(conn, loser, winner) -> sqlx::Result<MergeReport>` (conventions §7.6), described under deviation 26.
 - `catalog/service.rs`: `attach_checked_cover`, the bookkeeping of the cover check, shared by the SRU lookup and the first detail view.
 - Tests:
-  - `catalog_detail.rs` (31)
-  - `catalog_custom.rs` (9)
-  - `catalog_requests.rs` (8)
-  - `catalog_merge.rs` (3)
+  - `catalog_detail.rs` (31, 32 after the review)
+  - `catalog_custom.rs` (9, 11 after the review)
+  - `catalog_requests.rs` (8, 11 after the review)
+  - `catalog_merge.rs` (3, 5 after the review)
   - `catalog_provenance.rs` (3)
   - `catalog_visibility.rs` (2)
 - No new fixtures; the Part 1 recordings are reused.
+
+**Review fixes (done).** The review of both parts found lock-order, race and test gaps. The fixes are under deviations 5, 21, 22, 25, 26 and 27, and their tests are:
+- `catalog_merge.rs`: `a_takedown_during_a_merge_waits_instead_of_deadlocking` and `a_cover_set_while_the_merge_waits_is_taken_on_the_next_try`.
+- `catalog_requests.rs`: `a_takedown_during_a_cover_approval_keeps_the_request_open`, `a_cover_approval_that_sets_nothing_is_a_400` and `a_merge_that_lost_a_race_is_a_4xx`.
+- `catalog_custom.rs`: `an_edition_added_during_a_merge_lands_on_the_survivor` and `an_edition_added_while_a_merge_runs_is_not_left_behind`. Also, the custom-book search ports now check that the local book comes before an Open Library hit, and writes that name an unknown `OL…W` are checked to send no upstream request.
+- `catalog_isbn.rs`: `the_busy_hint_names_the_source_that_refused` and `isbn_routes_hold_no_connection_while_asking_upstream`.
+- `catalog_search.rs`: `fallback_errors_surface_only_without_hits`. `local_hits_first_without_duplicates_and_capped` now asserts the exact order.
+- `catalog_detail.rs`: `an_open_library_422_on_a_work_is_a_502`.
+- `catalog_client.rs`: `resolve_text` with the same title and other authors.
+- `catalog_deadlock.rs` (5, new): the deadlock retry of the ISBN ingest (once, and the second deadlock failing), of search hits, of a work import and of `resolve_text`. A trigger raises SQLSTATE 40P01.
 
 ## Deviations and decisions
 
@@ -64,6 +74,7 @@ Owner: CAT. These notes record what the catalog package built, where it deviates
    - A failing fallback no longer fails a search when another fallback has hits (work-plan catalog decision 11).
    - When no fallback has hits, the first fallback error surfaces, so an outage is not shown as "nothing found".
 5. **The 429 hint.** While an upstream cooldown runs, the answer is `The library is busy. Try again in {n} seconds.` with `Retry-After: n`. That includes the 60 s default cooldown after a 429 without `Retry-After`, where Python said `The library is busy. Wait a few seconds and try again.` The plain `Wait a few seconds` string remains for a full local throttle (2 s wait, decision 13).
+   - **ISBN routes** (the lookup, an ISBN-shaped search, the ISBN check of a user-added book or edition): the hint is the cooldown of the source whose answer was missing. That is Open Library's when its step was throttled; an English ISBN never asks the DNB, so the DNB's cooldown does not count. It is the DNB's when the DNB was throttled and Open Library then answered with a miss. Before the review, the longer of the two cooldowns was used, so a 600 s DNB cooldown could show on an English ISBN.
 6. **Hits come from stored rows.** Every hit is persisted first, then built from `works` through `books::book_outs`, so a stored work's fields win over the search doc. Stubs are insert-only (`upsert_work_stubs`), so a work stored without a cover does not take the cover of a later search doc; the first detail view or a refresh fills it.
 7. **ISBN-shaped search queries:**
    - They go through `state.lookup.resolve_isbn`, ignore the subject, and return at most one hit on page 1 and an empty page after that.
@@ -114,6 +125,7 @@ Owner: CAT. These notes record what the catalog package built, where it deviates
     - **Rate limit:** it counts after validation, so invalid bodies do not count, and before the ISBN lookup, so a 409 counts.
     - **409 body:** it includes `work_id` and `edition_id`.
     - **A concurrent claim:** when the ISBN appears under another work between the check and the insert, the transaction is rolled back and the answer is 409.
+    - **No pool connection during the ISBN check** (deviation 27).
 22. **Editions:**
     - **List:** local only (no Open Library editions fetch), oldest first.
     - **Add:**
@@ -122,6 +134,9 @@ Owner: CAT. These notes record what the catalog package built, where it deviates
       - `publication_year` must be 1 to 3000.
       - A title equal to the work's is not stored (ingest).
     - **Unknown ids:** an unknown edition is 404 `No such book.`, and writes never import an unknown `OL…W`.
+    - **A merge at the same time:**
+      - Its work merged away after the handler resolved it: the edition lands on the surviving work (ingest follows the merge) with 201, not a 409.
+      - A merge already moving the loser's editions cannot see the new one. `insert_user_edition` therefore locks the work the edition landed on `FOR NO KEY UPDATE` after the insert, like a merge does. If that work turns out to be merged away, the insert starts over in its savepoint (twice at most) on the survivor. A merge that starts later waits for the insert and moves the edition itself. This is the rule asked of SHELF, POSTS and CLUB under "For SHELF, POSTS and CLUB", applied after the write: the lock comes after ingest's advisory and edition locks, in the same order ingest uses.
 23. **Edit requests are checked by a dry run of their approval.** `apply_admin_fields` runs in a transaction that is rolled back.
     - The user-facing 400s are therefore `Unknown field: <key>` and `Invalid value for <key>`, plus `Field required` for an empty `fields`.
     - Notes are trimmed and cut at 2000 characters.
@@ -138,8 +153,15 @@ Owner: CAT. These notes record what the catalog package built, where it deviates
     - **Approving:**
       - A `cover_replace` sets the edition's cover when the request names an edition, else the work's.
       - The request is marked approved before it is applied, in the same transaction, so a merge does not reject its own request.
+      - **A `cover_replace`** locks its picture `FOR SHARE` before any catalog row (conventions §7.2). A takedown under way finishes first, and the approval then answers 400 `This picture was removed`. A later takedown waits for the approval. When `set_cover` sets nothing, the answer depends on why. If the target already shows the picture, it is 200. If `set_cover` refused the media row (not a cover), it is 400 `This picture was removed`. If the target is gone, it is 404 `No such book.`. In every error case the request stays open.
 26. **`merge_works`:**
-    - **Locks:** the two works `FOR NO KEY UPDATE`, which does not block the foreign-key checks of concurrent shelf writes, then the users with a shelf entry or favourite on the loser, then the affected votes, all `FOR UPDATE` and in id order.
+    - **Locks, in this order:**
+      1. The usable cover media rows of both works, `FOR SHARE`, in id order. Conventions §7.2 requires this before any catalog row. MED's takedown updates the media row and then, in `clear_media`, the works that show it, so locking the works first could deadlock (40P01) with a takedown of the loser's cover.
+      2. The two works, `FOR NO KEY UPDATE`, which does not block the foreign-key checks of concurrent shelf writes.
+      3. The users with a shelf entry or favourite on the loser, `FOR UPDATE`, in id order.
+      4. The affected votes, `FOR UPDATE`, in id order.
+    - **A cover that changed between steps 1 and 2:** if the loser shows a picture that step 1 did not lock (an upload committed while the merge waited for the works), the merge rolls back its savepoint, which releases every lock, and starts over. It does this twice at most; on the last try, such a cover stays with the loser. The loser's cover moves to the winner only when step 1 locked it, so a removed picture never moves.
+    - **Races between admins:** the handlers check the pair without a lock. When a concurrent merge commits first, `merge_works` finds a work merged away under its lock (`RowNotFound`), and the handler resolves the pair again. B into A after A into B is then 400 `A book cannot be merged into itself`; A into C after A into B is 404 `No such book.`. Neither is a 500. An approval cannot meet `RowNotFound`: every merge that could change its pair also updates the request row the approval holds, so the two serialise there.
     - **Fields:** the winner's record stays the authority.
       - Its empty fields are filled from the loser.
       - Its `legacy`-ranked values give way to better-ranked loser values.
@@ -154,7 +176,16 @@ Owner: CAT. These notes record what the catalog package built, where it deviates
       - Merge requests into the loser now name the winner.
       - Other open requests on the loser, and merge requests that became self-merges, are rejected with `decision_note` `Merged into book {winner}`.
     - **Atomicity:** it runs as a savepoint and returns `RowNotFound` or `Protocol` for an invalid pair. The handlers answer 404 or 400 before calling it.
-    - **No deadlock retry:** a deadlock with a concurrent multi-record ingest (HAR's page) is possible but rare.
+    - **No deadlock retry:** a deadlock with a concurrent multi-record ingest (HAR's page) is possible but rare. So is a deadlock between an approval and a direct admin merge of the same works at the same moment. The approval holds its request row and then waits for the works, while the merge holds the works and then wants to update that request row. Postgres aborts one of them (500, nothing changed), and the admin repeats it. Retrying would need the handlers to keep the `sqlx::Error` behind an `AppError`, which `apply_admin_fields` (W1, frozen) does not.
+
+### Review
+
+27. **The ISBN routes hold no pool connection while the sources are asked.** Each upstream step can take the 2 s throttle wait and two 15 s attempts. `catalog::isbn_lookup::resolve_isbn` (crate-private) runs the lookup, an ISBN-shaped search and the ISBN check of user-added books and editions in three phases:
+    1. `local_isbn` on a short-lived connection.
+    2. `CatalogService::remote_isbn` with no connection.
+    3. `service::persist` on a new connection.
+
+    It does so only when `state.lookup` is CAT's own service: production, and `TestApp::with_real_lookup` (the same `Arc`, compared by address). Any other `CatalogLookup` (`FakeCatalog`) is called through the trait as before. The trait methods are unchanged for SHELF and IMP, which pass their own connection.
 
 ## Strings
 
@@ -220,11 +251,34 @@ Part 2 returns the endpoint-map §11.3 strings `This book was added by a reader,
 - `test_google_books.py::test_discovered_book_opens_during_existing_google_cooldown` (the `/work/ISBN…` case) → `/work/{id}` is dropped (endpoint-map §4); the `/works/` case is ported.
 - `test_google_books.py::test_discovered_book_refresh_still_fetches_fresh_metadata` ("exactly 1 call") → a refresh fetches the work JSON and its search doc. The test asserts that the work JSON is fetched again despite the cache.
 - `test_google_books.py::test_refresh_updates_google_isbn_book` (the Google and shelf-stub parts) → Google Books removed (#41), and shelving needs an existing work. The "refresh fills a bare record" part is ported.
+- `test_google_books.py::test_shelf_add_persists_google_cover_url` (DROP/INVERT) → client cover URLs are no longer accepted (#43). Covers are fetched server-side and served as `/media/…`, and Google covers are dropped with Google Books (#41). The inverse rule ("a client-sent cover URL is never stored") is `test_shelf_rejects_non_google_cover_url` and `test_pick_does_not_persist_ol_cdn_cover_url`, handed to SHELF and CLUB below.
 
 ## Left for other packages, or PAR
 
-- **SHELF, CLUB and POSTS:** `test_google_books.py` tests 27, 41, 44, 45, 46, 47 and 50.
-- **The non-catalog half of `test_local_reads.py`** (shelf, pick, history, overlap, members, vote, suggestions, diary, activity, stats, quotes and book posts read locally) belongs to the packages that own those reads.
+CAT's work plan lists these tests, but their behaviour belongs to routes CAT does not own: shelf add, the Goodreads import, the pick and book posts. They have no `/// parity:` port in CAT, and no other package's parity list names them yet. **The integrator should add each line to the named package's parity list, or to PAR's** (PAR's end-to-end tests already cover `test_local_reads.py` in full and the Goodreads import against `with_real_lookup`).
+
+**`test_google_books.py`, one line per test:**
+- `test_google_books.py::test_known_google_book_skips_upstream` (27, KEEP) → split.
+  - SHELF: shelf add, then the detail shows `on_shelf` with zero upstream calls.
+  - CLUB: `PUT /api/clubs/{slug}/pick` for that work.
+  - POSTS: `GET /api/books/works/{work_id}/posts`.
+  - The catalog half, a legacy ISBN key resolving locally with zero calls, is CAT's port of test 39 (`known_book_reads_never_touch_open_library` and the legacy-key half of `test_isbn_x_and_X_are_the_same_row` in `catalog_detail.rs`).
+- `test_google_books.py::test_goodreads_import_prefers_google` (44, ADAPT) → SHELF (the Goodreads job through `state.lookup`, with `FakeCatalog`) and PAR (the same CSV against `with_real_lookup` and wiremock: local, then DNB for 978-3, then Open Library).
+- `test_google_books.py::test_pick_does_not_persist_ol_cdn_cover_url` (45, KEEP, generalised) → CLUB: the pick body names a work id. A `cover_url` or `cover_id` in it is never stored (ignored, or 400 under strict JSON).
+- `test_google_books.py::test_shelf_rejects_non_google_cover_url` (46, KEEP, security) → SHELF: a client-sent `cover_url` such as `https://attacker.example/pixel.gif?u=1` never becomes a stored or served cover.
+- `test_google_books.py::test_shelf_isbn_x_and_X_are_the_same_row` (47, KEEP) → SHELF: adding the edition of `080442957X` and then `080442957x` is 409 `Already on your shelf`. CAT's lookup half (`x` and `X` are one edition) is ported in `catalog_isbn.rs`.
+- `test_google_books.py::test_goodreads_import_while_cooling_down` (50, ADAPT) → SHELF: per work-plan google decision 9, a row whose lookup is throttled is skipped with `catalog_unavailable`, and the job continues (no 429 for the whole import).
+- `test_google_books.py::test_shelf_add_persists_google_cover_url` (41, DROP/INVERT): reasoned away above.
+
+**`test_local_reads.py`, the non-catalog half** → PAR (end to end, `test_local_reads.py` in full against the real `CatalogService`), plus each owning package for its own reads:
+- `test_local_reads.py::test_known_book_reads_never_touch_open_library`:
+  - SHELF: shelf, stats, quotes.
+  - CLUB: pick, pick history, overlap, members, vote, vote suggestions, activity.
+  - POSTS: diary and `GET /api/books/works/{work_id}/posts`.
+  - CAT ported the detail by id and by `OL…W`, the editions and the ISBN lookup.
+- `test_local_reads.py::test_shelving_persists_search_metadata_for_later_local_reads` → SHELF: the shelf add's `BookOut`. CAT ported the "search persists, later reads stay local" half.
+
+**For PAR:** copy every line of "Python tests reasoned away (one line each)" above into `docs/phase1/parity-notes.md`, which CAT may not edit, together with the reasoned changes noted in the "ported" sections (`test_cancelled_fetch_unblocks_coalesced_waiters`, `test_cancelled_work_details_unblocks_coalesced_waiters`, `test_work_details_rejects_bad_ids_and_upstream_failure`).
 
 ## For FE and PAR
 
@@ -255,7 +309,13 @@ Part 2 returns the endpoint-map §11.3 strings `This book was added by a reader,
   - The approved cover gets provenance `admin`. It goes on the edition when the request names one, else on the work.
 - **For SHELF, POSTS and CLUB:**
   - `merge_works` re-points shelf entries, favourites, layouts, quotes, posts, events, picks and nominations, and resolves their collisions (deviation 26).
-  - It locks the affected users `FOR UPDATE` after the two works, so SHELF's user-first writes do not deadlock with it.
+  - It locks the cover media rows, then the two works `FOR NO KEY UPDATE`, then the affected users `FOR UPDATE`, then the affected votes.
+  - **Writes that store a `work_id` during a merge.** The merge finds the users, votes and rows it moves by selecting the loser's existing rows. A row inserted concurrently, uncommitted while the merge runs, is not seen and stays on the merged-away loser. Examples: a shelf add or favourite for the loser by a user who has only the winner, a nomination of the loser in a vote that already nominated the winner, a post or a quote. Its foreign-key check (`FOR KEY SHARE`) does not conflict with the merge's `FOR NO KEY UPDATE`, so nothing waits. **Rule:**
+    - A write that stores a `work_id` re-checks the work under a lock that conflicts with the merge: `SELECT id FROM works WHERE id = $1 AND merged_into_id IS NULL FOR SHARE`. It waits for a merge in flight and is re-evaluated after it commits: no row means "merged away", so follow `merged_into_id` (`books::require_work`) and lock again.
+    - It takes this lock **before** its user or vote lock, matching the merge's order (works → users → votes), so no deadlock appears.
+    - A merge that starts later waits for the write and then moves its row.
+    - CAT applies the same rule to its own edition adds (deviation 22). There the lock comes after the insert, because ingest's advisory and edition locks come first.
+  - Packages that skip the rule must accept and document the race: the row stays on the merged-away work, which still resolves to the winner for reads that follow merges.
 
 ## For the integrator
 
@@ -265,4 +325,5 @@ Part 2 returns the endpoint-map §11.3 strings `This book was added by a reader,
   - The admin routes carry tag `admin` and operation ids `catalog_admin_*`.
   - The `/api/books/*` routes carry tag `catalog`.
   - New schema names: `BookDetailOut`, `BookReader`, `CustomBookIn`, `NewEditionIn`, `EditionList`, `EditRequestIn`, `MergeRequestIn`, `EditRequestCreated`, `EditRequestOut`, `EditRequestList`, `EditRequestRejectIn` and `WorkMergeIn`.
-- **`.sqlx/`:** Part 2 adds query files and replaces one Part 1 file, the cover-check `UPDATE`, which moved into `attach_checked_cover`.
+- **`.sqlx/`:** Part 2 adds query files and replaces one Part 1 file, the cover-check `UPDATE`, which moved into `attach_checked_cover`. The review fixes add and replace a few more (merge locks, the `cover_replace` check, the edition-add work lock).
+- **Parity lists:** please add the handoff lines under "Left for other packages, or PAR" to the SHELF, CLUB, POSTS and PAR parity lists. CAT may not edit `work-plan.md` or `parity-notes.md`.
