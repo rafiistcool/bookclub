@@ -162,6 +162,12 @@ impl fmt::Display for Report {
     }
 }
 
+/// The refusal of a target that already has invites (sign-up invites minted with `beta-invite`
+/// before the import): their ids and codes could collide with the legacy invites, which keep
+/// theirs. Exits with 1, like every error but `TargetNotEmpty`.
+pub const TARGET_HAS_INVITES: &str = "target database already has invites (minted with \
+     beta-invite?); import into an empty database and mint invites after import-legacy";
+
 /// Why an import failed. `TargetNotEmpty` exits with code 2, everything else with 1.
 #[derive(Debug, thiserror::Error)]
 pub enum ImportError {
@@ -231,8 +237,9 @@ pub async fn run(
     let owner_id = check_users(&legacy, &args.owner)?;
 
     let mut tx = db.begin().await?;
-    // No account may appear while the import runs (a sign-up on a live server).
-    sqlx::query!("LOCK TABLE users IN EXCLUSIVE MODE")
+    // No account or invite may appear while the import runs (a sign-up or `beta-invite` on a
+    // live server).
+    sqlx::query!("LOCK TABLE users, club_invites IN EXCLUSIVE MODE")
         .execute(&mut *tx)
         .await?;
     let has_users = sqlx::query_scalar!(r#"SELECT EXISTS (SELECT 1 FROM users) AS "any!""#)
@@ -240,6 +247,15 @@ pub async fn run(
         .await?;
     if has_users {
         return Err(ImportError::TargetNotEmpty);
+    }
+    // Invites keep their legacy ids (and codes), so any invite already there would collide with
+    // one. Without users the only possible ones are `beta-invite` sign-up invites.
+    let has_invites =
+        sqlx::query_scalar!(r#"SELECT EXISTS (SELECT 1 FROM club_invites) AS "any!""#)
+            .fetch_one(&mut *tx)
+            .await?;
+    if has_invites {
+        return Err(ImportError::Other(anyhow::Error::msg(TARGET_HAS_INVITES)));
     }
 
     let dry_run = args.dry_run;

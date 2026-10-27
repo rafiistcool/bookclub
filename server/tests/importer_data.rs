@@ -91,6 +91,13 @@ fn legacy_time(legacy: &Legacy, sql: &str) -> OffsetDateTime {
 async fn shelf_entries_keep_their_ids_and_follow_their_status(db: PgPool) {
     let app = TestApp::new(db).await;
     let legacy = load("fresh.sql");
+    // Over-long values the legacy columns allowed: cut by characters, not refused (§0).
+    legacy.exec(&format!(
+        "UPDATE shelf SET take = '{}' WHERE id = 25;
+         UPDATE shelf SET dnf_reason = '{}' WHERE id = 7;",
+        "ä".repeat(150),
+        "ß".repeat(250)
+    ));
     let report = merged_import(&app, &legacy).await;
     let all = entries(&app).await;
     assert_eq!(all.len(), 26);
@@ -126,6 +133,8 @@ async fn shelf_entries_keep_their_ids_and_follow_their_status(db: PgPool) {
     );
     let e = entry(&all, 22);
     assert_eq!((e.rating, e.take.as_str()), (Some(5), "Wunderbar."));
+    assert_eq!(entry(&all, 25).take, "ä".repeat(140));
+    assert_eq!(entry(&all, 7).dnf_reason, "ß".repeat(200));
 
     // Editions: only ISBN keys identify one.
     let lena = book_id(&legacy, &format!("/works/ISBN{ISBN_UNMATCHED}"));
@@ -156,9 +165,12 @@ async fn shelf_entries_keep_their_ids_and_follow_their_status(db: PgPool) {
         .collect();
     assert_eq!(otto, vec![(26, 0), (27, 1)]);
 
-    assert!(report.normalised("shelf.progress") >= 8);
+    // Seven finished entries at 100 and entry 24 at 150.
+    assert_eq!(report.normalised("shelf.progress"), 8);
     assert_eq!(report.normalised("shelf.rating"), 1);
-    assert_eq!(report.normalised("shelf.take"), 1);
+    // Entry 26's take on want_to_read (dropped) and entry 25's cut one.
+    assert_eq!(report.normalised("shelf.take"), 2);
+    assert_eq!(report.normalised("shelf.dnf_reason"), 1);
     assert_eq!(
         app.scalar_i64("SELECT nextval(pg_get_serial_sequence('shelf_entries', 'id'))")
             .await,

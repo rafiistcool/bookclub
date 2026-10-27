@@ -8,13 +8,16 @@ mod legacy;
 
 use bookclub_server::catalog::shared::books::{BookRef, book_out};
 use bookclub_server::catalog::shared::ingest::Source;
-use bookclub_server::catalog::shared::isbn::parse_isbn;
+use bookclub_server::catalog::shared::isbn::{Isbn13, parse_isbn};
+use bookclub_server::catalog::shared::lookup::{CatalogLookup, LookupError, Resolved};
 use bookclub_server::catalog::shared::work_ref::{WorkRef, resolve_local};
 use bookclub_server::importer::{self, IsbnOutcome, MatchKind, RematchArgs, Report};
 use common::*;
 use legacy::*;
 use serde_json::Value;
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 use time::OffsetDateTime;
 use time::macros::datetime;
 
@@ -357,6 +360,13 @@ async fn an_isbn_row_resolving_to_an_imported_work_merges_into_it(db: PgPool) {
         .filter(|m| m.starts_with("book "))
         .collect();
     assert_eq!(book_merges.len(), 1, "{:?}", report.merges);
+    // The merged row still counts as matched: every row counts in its class.
+    let books = report.entity("books").unwrap();
+    assert!(
+        books.detail.contains("isbn matched 1,") && books.detail.ends_with("; 1 merged)"),
+        "{}",
+        books.detail
+    );
     // The work keeps the Open Library year: BookOut shows 1871 where the legacy API showed 2003.
     assert_eq!(
         report.differences,
@@ -399,7 +409,67 @@ async fn keys_that_canonicalise_to_one_merge(db: PgPool) {
         .await,
         1
     );
-    assert_eq!(report.entity("books").unwrap().source, Some(18));
+    // The twin counts in its first's class, so the classes add up to the 18 source rows.
+    let books = report.entity("books").unwrap();
+    assert_eq!(
+        (books.source, books.target, books.detail.as_str()),
+        (
+            Some(18),
+            Some(17),
+            "works (openlibrary 1, user 10, isbn matched 0, isbn unmatched 4, isbn error 0, \
+             isbn invalid 1, google volume 1, other 1; 1 merged)"
+        )
+    );
+}
+
+/// The ISBN-10 and ISBN-13 keys of one book map onto one work and one edition, with one lookup:
+/// the report counts both rows in their class and the edition once.
+#[sqlx::test]
+async fn the_isbn_10_and_13_keys_of_one_book_share_one_edition(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let legacy = load("fresh.sql");
+    // 316148410X is the ISBN-10 of ISBN_UNMATCHED (978-3-16-148410-0).
+    legacy.exec(
+        "INSERT INTO books (id, ol_work_key, title, authors, description, subjects)
+         VALUES (41, '/works/ISBN316148410X', 'Ein erfundenes Buch', 'Erika Mustermann', '',
+                 '[]');",
+    );
+    let report = import_ok(&app, legacy.args("demo")).await;
+    let first = book_id(&legacy, &format!("/works/ISBN{ISBN_UNMATCHED}"));
+    assert_eq!(report.books[&41], report.books[&first]);
+    assert!(report.books[&41].edition_id.is_some());
+    let remote = format!("isbn:{ISBN_UNMATCHED}");
+    assert_eq!(
+        app.catalog.calls().iter().filter(|c| **c == remote).count(),
+        1
+    );
+    assert!(
+        report.isbns.iter().any(|line| line.legacy_book_id == 41
+            && line.outcome
+                == IsbnOutcome::SameAs {
+                    legacy_book_id: first
+                }),
+        "{:?}",
+        report.isbns
+    );
+    let books = report.entity("books").unwrap();
+    assert_eq!(
+        (books.source, books.target, books.detail.as_str()),
+        (
+            Some(18),
+            Some(17),
+            "works (openlibrary 1, user 10, isbn matched 0, isbn unmatched 4, isbn error 0, \
+             isbn invalid 1, google volume 1, other 1; 1 merged)"
+        )
+    );
+    // Books 10, 11 (with 41) and 12 each identified one edition.
+    let editions = report.entity("editions").unwrap();
+    assert_eq!(editions.target, Some(3));
+    assert_eq!(
+        app.scalar_i64("SELECT count(DISTINCT edition_id) FROM legacy_work_keys")
+            .await,
+        3
+    );
 }
 
 /// #38 AC 11 (catalog half): for every key class, a legacy book's year and pages as the legacy
@@ -606,7 +676,8 @@ async fn rematch_legacy_upgrades_bare_facts_editions(db: PgPool) {
         (
             Some(3),
             Some(1),
-            "upgraded (1 unmatched, 1 with the source unavailable, 0 under another work)"
+            "upgraded (1 unmatched, 1 with the source unavailable, 0 under another work, \
+             0 with a database error)"
         )
     );
     // The ISBN-10 key's edition is unchanged.
@@ -617,4 +688,240 @@ async fn rematch_legacy_upgrades_bare_facts_editions(db: PgPool) {
         .await
         .unwrap();
     assert_eq!(source, "legacy");
+}
+
+/// A database error a [`Scripted`] lookup raises inside the transaction it is handed.
+#[derive(Debug, Clone, Copy)]
+enum Fault {
+    /// SQLSTATE 40P01, raised before the lookup runs (the transaction aborts).
+    Deadlock,
+    /// Another database error, raised after the lookup persisted its hit.
+    Fail,
+}
+
+/// One `resolve_isbn_remote` call a [`Scripted`] lookup saw.
+#[derive(Debug, Clone)]
+struct Seen {
+    isbn: String,
+    /// `now()`: when the transaction the call ran in started.
+    tx_started: OffsetDateTime,
+    /// `clock_timestamp()` when the call returned.
+    returned: OffsetDateTime,
+    /// The ISBNs whose edition another connection already saw upgraded (committed).
+    committed: HashSet<String>,
+}
+
+/// The FakeCatalog with database faults raised per ISBN, recording what each call saw.
+struct Scripted {
+    inner: Arc<FakeCatalog>,
+    db: PgPool,
+    faults: Mutex<HashMap<String, Vec<Fault>>>,
+    seen: Mutex<Vec<Seen>>,
+}
+
+impl Scripted {
+    fn new(app: &TestApp) -> Self {
+        Self {
+            inner: app.catalog.clone(),
+            db: app.db.clone(),
+            faults: Mutex::default(),
+            seen: Mutex::default(),
+        }
+    }
+
+    /// The next calls for `isbn13` raise `faults`, one each.
+    fn fail(&self, isbn13: &str, faults: &[Fault]) {
+        self.faults
+            .lock()
+            .unwrap()
+            .insert(isbn13.to_owned(), faults.to_vec());
+    }
+
+    fn seen(&self) -> Vec<Seen> {
+        self.seen.lock().unwrap().clone()
+    }
+
+    fn next_fault(&self, isbn13: &str) -> Option<Fault> {
+        let mut faults = self.faults.lock().unwrap();
+        let list = faults.get_mut(isbn13)?;
+        (!list.is_empty()).then(|| list.remove(0))
+    }
+
+    async fn raise(conn: &mut PgConnection, code: &str) -> LookupError {
+        let sql = format!(
+            "DO $$ BEGIN RAISE EXCEPTION 'scripted fault' USING ERRCODE = '{code}'; END $$"
+        );
+        LookupError::Db(
+            sqlx::query(sqlx::AssertSqlSafe(sql))
+                .execute(conn)
+                .await
+                .unwrap_err(),
+        )
+    }
+}
+
+#[async_trait::async_trait]
+impl CatalogLookup for Scripted {
+    async fn resolve_isbn(
+        &self,
+        conn: &mut PgConnection,
+        isbn: &Isbn13,
+    ) -> Result<Option<Resolved>, LookupError> {
+        self.inner.resolve_isbn(conn, isbn).await
+    }
+
+    async fn resolve_isbn_remote(
+        &self,
+        conn: &mut PgConnection,
+        isbn: &Isbn13,
+    ) -> Result<Option<Resolved>, LookupError> {
+        let tx_started: OffsetDateTime = sqlx::query_scalar("SELECT now()")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        let committed: Vec<String> = sqlx::query_scalar(
+            "SELECT isbn13 FROM editions WHERE isbn13 IS NOT NULL AND source <> 'legacy'",
+        )
+        .fetch_all(&self.db)
+        .await
+        .unwrap();
+        let fault = self.next_fault(isbn.as_str());
+        let result = match fault {
+            Some(Fault::Deadlock) => Err(Self::raise(conn, "40P01").await),
+            _ => self.inner.resolve_isbn_remote(conn, isbn).await,
+        };
+        let result = match (fault, result) {
+            (Some(Fault::Fail), Ok(_)) => Err(Self::raise(conn, "P0001").await),
+            (_, result) => result,
+        };
+        // An aborted transaction refuses every statement: read the clock on the pool.
+        let returned: OffsetDateTime = sqlx::query_scalar("SELECT clock_timestamp()")
+            .fetch_one(&self.db)
+            .await
+            .unwrap();
+        self.seen.lock().unwrap().push(Seen {
+            isbn: isbn.as_str().to_owned(),
+            tx_started,
+            returned,
+            committed: committed.into_iter().collect(),
+        });
+        result
+    }
+
+    async fn resolve_text(
+        &self,
+        conn: &mut PgConnection,
+        title: &str,
+        authors: &str,
+    ) -> Result<Option<Resolved>, LookupError> {
+        self.inner.resolve_text(conn, title, authors).await
+    }
+}
+
+/// `rematch-legacy` runs on the live server, so each edition gets its own transaction: an
+/// upgrade is committed before the next lookup starts, a throttled lookup is waited out with
+/// its transaction closed, a deadlock is retried in a new transaction, and another database
+/// error rolls back only its own edition, which is reported while the others are upgraded.
+#[sqlx::test]
+async fn rematch_legacy_commits_each_edition_on_its_own(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let legacy = load("fresh.sql");
+    let mut args = legacy.args("demo");
+    args.offline = true;
+    let report = import_ok(&app, args).await;
+    let isbn10 = isbn10_as_13();
+    for (isbn, title) in [
+        (ISBN_MATCH, "Middlemarch: Roman"),
+        (ISBN_UNMATCHED, "Ein erfundenes Buch: Roman"),
+        (isbn10.as_str(), "Zehnstellig: Roman"),
+    ] {
+        app.catalog.on_isbn(
+            isbn,
+            FakeHit::New {
+                title: title.into(),
+                authors: "Erika Mustermann".into(),
+                ol_work_id: None,
+                source: Source::Dnb,
+            },
+        );
+    }
+    app.catalog
+        .fail_isbn(ISBN_MATCH, FakeError::Throttled, Some(1));
+    let lookup = Arc::new(Scripted::new(&app));
+    lookup.fail(ISBN_UNMATCHED, &[Fault::Deadlock]);
+    lookup.fail(&isbn10, &[Fault::Fail]);
+
+    let real = importer::rematch(
+        app.db.clone(),
+        lookup.clone(),
+        RematchArgs {
+            dry_run: false,
+            retry_wait_ms: Some(0),
+        },
+    )
+    .await
+    .unwrap_or_else(|e| panic!("rematch failed: {e}"));
+
+    let line = real.entity("legacy editions").unwrap();
+    assert_eq!(
+        (line.source, line.target, line.detail.as_str()),
+        (
+            Some(3),
+            Some(2),
+            "upgraded (0 unmatched, 0 with the source unavailable, 0 under another work, \
+             1 with a database error)"
+        )
+    );
+    let source_of = |book: i64| {
+        let db = app.db.clone();
+        let edition = report.books[&book].edition_id.unwrap();
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT source FROM editions WHERE id = $1")
+                .bind(edition)
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        }
+    };
+    let book = |key: &str| book_id(&legacy, &format!("/works/ISBN{key}"));
+    assert_eq!(source_of(book(ISBN_MATCH)).await, "dnb");
+    assert_eq!(source_of(book(ISBN_UNMATCHED)).await, "dnb");
+    // The failed edition's own upgrade was rolled back; it is listed for a retry.
+    assert_eq!(source_of(book(ISBN10_KEY)).await, "legacy");
+    assert!(
+        real.notes
+            .iter()
+            .any(|n| n.starts_with(&format!("isbn {isbn10} ")) && n.contains("error: database")),
+        "{:?}",
+        real.notes
+    );
+
+    let seen = lookup.seen();
+    let calls: Vec<&str> = seen.iter().map(|s| s.isbn.as_str()).collect();
+    assert_eq!(
+        calls,
+        [
+            ISBN_MATCH,
+            ISBN_MATCH,
+            ISBN_UNMATCHED,
+            ISBN_UNMATCHED,
+            isbn10.as_str()
+        ]
+    );
+    // The retries after the throttle and after the deadlock ran in transactions that started
+    // after the failed call returned.
+    for retry in [1, 3] {
+        assert!(
+            seen[retry].tx_started > seen[retry - 1].returned,
+            "{:?}",
+            seen
+        );
+    }
+    // Each upgrade was committed before the next edition's lookup.
+    assert!(seen[2].committed.contains(ISBN_MATCH), "{:?}", seen[2]);
+    assert!(
+        seen[4].committed.contains(ISBN_MATCH) && seen[4].committed.contains(ISBN_UNMATCHED),
+        "{:?}",
+        seen[4]
+    );
 }

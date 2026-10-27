@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (SELECT 1 FROM club_invites) AS \"any!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "any!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "cb023ae43ac58cb3c219f6e4e162f73b9d542a34f28377889448226d60616431"
+}

@@ -10,7 +10,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use bookclub_server::catalog::shared::ingest::Source;
-use bookclub_server::importer::{ImportError, IsbnOutcome};
+use bookclub_server::importer::{self, ImportError, IsbnOutcome};
 use common::*;
 use legacy::*;
 use serde_json::json;
@@ -67,6 +67,9 @@ async fn counts(app: &TestApp) -> Vec<i64> {
     out
 }
 
+/// An upstream URL nothing listens on (the discard port), for the binary's catalog clients.
+const UNREACHABLE: &str = "http://127.0.0.1:9";
+
 /// The Open Library work the merge fixture's ISBN row resolves to: book 9 (`OL45883W`) and the
 /// ISBN key `9780000000019` become one work.
 fn program_merge(app: &TestApp) {
@@ -119,14 +122,25 @@ async fn the_fresh_fixture_imports_with_matching_counts(db: PgPool) {
             "(3 used, 2 unused imported as revoked)".to_owned()
         )
     );
-    // 17 books: 10 user (BC), 1 OL, the ISBN row merged into the OL work, 2 unmatched ISBNs (one
-    // an ISBN-10 key), 1 invalid ISBN, 1 Google volume, 1 other.
+    // 17 books: 10 user (BC), 1 OL, the matched ISBN row merged into the OL work, 2 unmatched
+    // ISBNs (one an ISBN-10 key), 1 invalid ISBN, 1 Google volume, 1 other. Every row counts in
+    // its class, the merged one too, so the classes add up to the source count.
     let (source, target, detail) = line("books");
     assert_eq!((source, target), (Some(17), Some(16)), "{detail}");
     assert_eq!(
         detail,
-        "works (openlibrary 1, user 10, isbn matched 0, isbn unmatched 2, isbn error 0, \
+        "works (openlibrary 1, user 10, isbn matched 1, isbn unmatched 2, isbn error 0, \
          isbn invalid 1, google volume 1, other 1; 1 merged)"
+    );
+    // The editions the ISBN keys identified: the matched one (the lookup's) and the two
+    // unmatched bare-facts ones.
+    assert_eq!(
+        line("editions"),
+        (
+            None,
+            Some(3),
+            "(the editions ISBN keys identified)".to_owned()
+        )
     );
     assert_eq!(
         app.scalar_i64("SELECT count(DISTINCT work_id) FROM legacy_work_keys")
@@ -209,6 +223,55 @@ async fn the_fresh_fixture_imports_with_matching_counts(db: PgPool) {
     );
     assert!(!report.dry_run);
     assert!(report.lines.iter().any(|l| l.starts_with("users ")));
+
+    // Every kept-id table's sequence continues after its highest id (legacy-mapping.md §0), so
+    // the first row created after the cutover cannot collide with an imported one.
+    for table in [
+        "users",
+        "club_invites",
+        "shelf_entries",
+        "posts",
+        "quotes",
+        "club_picks",
+        "milestones",
+        "next_up_votes",
+        "next_up_nominations",
+        "events",
+        "search_history",
+    ] {
+        let step = app
+            .scalar_i64(&format!(
+                "SELECT nextval(pg_get_serial_sequence('{table}', 'id'))
+                        - (SELECT max(id) FROM {table})"
+            ))
+            .await;
+        assert_eq!(step, 1, "{table}");
+    }
+}
+
+/// The sequences no other test reads: invites, picks, votes and nominations continue after the
+/// fixture's highest ids (nomination 5 is merged away; 6 is the highest kept one).
+#[sqlx::test]
+async fn the_sequences_of_invites_picks_votes_and_nominations_are_advanced(db: PgPool) {
+    let app = TestApp::new(db).await;
+    program_merge(&app);
+    let legacy = load("fresh.sql");
+    import_ok(&app, legacy.args("demo")).await;
+    for (table, next) in [
+        ("club_invites", 6),
+        ("club_picks", 3),
+        ("next_up_votes", 3),
+        ("next_up_nominations", 7),
+    ] {
+        assert_eq!(
+            app.scalar_i64(&format!(
+                "SELECT nextval(pg_get_serial_sequence('{table}', 'id'))"
+            ))
+            .await,
+            next,
+            "{table}"
+        );
+    }
 }
 
 /// #38 AC 4: a dry run prints the same report as the real run and leaves the target empty, with
@@ -261,6 +324,29 @@ async fn a_second_run_is_refused_and_writes_nothing(db: PgPool) {
     assert_eq!(app.media.keys(), media_before);
 }
 
+/// A sign-up invite minted with `beta-invite` before the import makes the target non-empty for
+/// invites: the importer refuses before its first write and before any lookup, instead of
+/// failing on a duplicate invite id after every lookup ran.
+#[sqlx::test]
+async fn a_target_with_a_beta_invite_is_refused_before_any_lookup(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let mut conn = app.db.acquire().await.unwrap();
+    bookclub_server::admin::invites::mint_signup_invite(&mut conn, None, None, None)
+        .await
+        .unwrap();
+    drop(conn);
+    let legacy = load("fresh.sql");
+
+    let error = import(&app, legacy.args("demo")).await.unwrap_err();
+    assert!(matches!(error, ImportError::Other(_)), "{error}");
+    assert_eq!(error.to_string(), importer::TARGET_HAS_INVITES);
+    assert!(app.catalog.calls().is_empty(), "{:?}", app.catalog.calls());
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM users").await, 0);
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM club_invites").await, 1);
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM clubs").await, 0);
+    assert!(app.media.keys().is_empty());
+}
+
 /// #38 AC 5 through the binary: `import-legacy` exits with 2 on a non-empty target, after an
 /// offline run (no lookups, so no network) that succeeded with 0.
 #[sqlx::test]
@@ -285,6 +371,12 @@ async fn the_cli_exits_with_2_on_a_non_empty_target(db: PgPool) {
             .env("DEV_MODE", "true")
             .env("MEDIA_DIR", media_dir.path())
             .env("RUST_LOG", "warn")
+            // Nothing listens there: if --offline ever made a lookup, it would fail fast and
+            // locally instead of reaching the real services.
+            .env("OPENLIBRARY_URL", UNREACHABLE)
+            .env("OPENLIBRARY_COVERS_URL", UNREACHABLE)
+            .env("DNB_SRU_URL", UNREACHABLE)
+            .env("DNB_OAI_URL", UNREACHABLE)
             .output()
             .unwrap()
     };
@@ -638,12 +730,10 @@ async fn invites_keep_their_history_and_unused_ones_are_revoked(db: PgPool) {
 
 /// #38 AC 2: migrated.sql (the ALTER TABLE shape, timestamps without fractions) imports with
 /// the column defaults: preferences paper/system/en, every notification on, and the shelf's
-/// NULL take and dnf_reason as ''. The very old shape (LEGACY_SCHEMA before any boot, columns
-/// and tables missing) reads those columns as their DDL defaults.
+/// NULL take and dnf_reason as ''.
 /// parity: test_migrations.py::test_legacy_database_is_upgraded_in_place
-/// parity: test_auth.py::test_preference_columns_backfill_pre_existing_users
 #[sqlx::test]
-async fn migrated_and_very_old_databases_import_with_the_defaults(db: PgPool) {
+async fn migrated_databases_import_with_the_defaults(db: PgPool) {
     let app = TestApp::new(db).await;
     let legacy = load("migrated.sql");
     let report = import_ok(&app, legacy.args("ada")).await;
@@ -722,7 +812,11 @@ async fn migrated_and_very_old_databases_import_with_the_defaults(db: PgPool) {
     );
 }
 
-/// The very old shape: LEGACY_SCHEMA as written, never booted.
+/// The very old shape: LEGACY_SCHEMA as written, never booted, so the users table has none of
+/// the preference columns. The reader takes their DDL defaults: paper/system/en and every
+/// notification on, as Python's backfill gave the users that existed before the columns.
+/// parity: test_migrations.py::test_legacy_database_is_upgraded_in_place
+/// parity: test_auth.py::test_preference_columns_backfill_pre_existing_users
 #[sqlx::test]
 async fn a_database_from_before_every_column_migration_imports(db: PgPool) {
     let app = TestApp::new(db).await;
@@ -939,6 +1033,15 @@ async fn bad_input_is_refused_before_anything_is_written(db: PgPool) {
     let error = import(&app, bad.args("demo")).await.unwrap_err();
     assert!(
         error.to_string().contains("users id 3: \"Max Power\""),
+        "{error}"
+    );
+
+    let bad = load("fresh.sql");
+    bad.exec("UPDATE shelf SET status = 'reading' WHERE id = 3;");
+    let error = import(&app, bad.args("demo")).await.unwrap_err();
+    assert!(matches!(error, ImportError::Source(_)), "{error}");
+    assert!(
+        error.to_string().contains("shelf id 3, column status"),
         "{error}"
     );
 

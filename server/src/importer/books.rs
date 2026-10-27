@@ -4,7 +4,7 @@
 //! later row whose match resolves to a work an earlier row created merges into it. Catalog fields
 //! are written through `catalog::shared::ingest` only.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 use std::time::Duration;
 
@@ -236,9 +236,12 @@ impl Importer {
         let mut by_key: HashMap<String, i64> = HashMap::new();
         let mut by_isbn: HashMap<String, i64> = HashMap::new();
         let mut owner_of_work: HashMap<i64, i64> = HashMap::new();
+        // Every row counts under the class of its target, merged or not, so the class counts add
+        // up to the source count (legacy-mapping.md §0 "Report").
         let mut kinds: HashMap<MatchKind, u64> = HashMap::new();
         let mut cover_ids: Vec<i64> = Vec::new();
-        let mut editions = 0u64;
+        // Distinct: the ISBN-10 and ISBN-13 keys of one book identify one edition.
+        let mut editions: HashSet<i64> = HashSet::new();
         let mut merged = 0u64;
 
         for (class, id, book) in &books {
@@ -250,6 +253,7 @@ impl Importer {
             if let Some(first) = by_key.get(&key).copied() {
                 let target = self.books[&first];
                 self.books.insert(book.id, target);
+                *kinds.entry(target.kind).or_default() += 1;
                 merged += 1;
                 self.report.merges.push(format!(
                     "book {} ({}) → book {first}: the same key {key}",
@@ -332,11 +336,9 @@ impl Importer {
                 ));
             } else {
                 owner_of_work.insert(target.work_id, book.id);
-                *kinds.entry(target.kind).or_default() += 1;
             }
-            if target.edition_id.is_some() {
-                editions += 1;
-            }
+            *kinds.entry(target.kind).or_default() += 1;
+            editions.extend(target.edition_id);
             if !id.is_empty() {
                 // ON CONFLICT: a key a previous import of the catalog already recorded.
                 sqlx::query!(
@@ -384,7 +386,7 @@ impl Importer {
         self.report.entity(
             "editions",
             None,
-            Some(editions),
+            Some(editions.len() as u64),
             "(the editions ISBN keys identified)",
         );
         let attached = sqlx::query_scalar!(

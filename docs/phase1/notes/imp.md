@@ -20,7 +20,11 @@ legacy-mapping.md is implemented in full, in two commits:
 Every acceptance test of legacy-mapping.md §17 has a test (AC 3 is
 `importer_run.rs::a_legacy_user_logs_in_with_the_old_password`, which now also reads the
 imported club's members over HTTP). The dry run and the real run on a copy of the production
-database stay a manual step with Rafael (#38 may stay open until then).
+database stay a manual step with Rafael (#38 may stay open until then): no copy is on the build
+machine, and it is never committed. The runbook is under "Manual step" below; its commands were
+rehearsed through the binary on `fresh.sql` (dry run and real run identical apart from the
+`DRY RUN` header, `rematch-legacy --dry-run`, the second run refused with exit 2, a `beta-invite`
+before the import refused with exit 1).
 
 Module map (`server/src/importer/`): `mod.rs` (frame, insert order, sequences), `source.rs`
 (the reader), `users.rs`, `club.rs`, `books.rs`, `shelf.rs` (§4–§6), `layout.rs` (the layout
@@ -47,8 +51,17 @@ reader), `picks.rs` (§7, §8, §11), `posts.rs` (§9), `personal.rs` (§10, §1
 - **`clubs.created_at`** is the earliest legacy `users.created_at` (the design does not say): the
   club is as old as its first member, and every membership's `joined_at` is that member's
   `created_at`.
-- **The users table is locked** (`LOCK TABLE users IN EXCLUSIVE MODE`) at the start of the
-  transaction, before the emptiness check, so a sign-up on a running server cannot slip in.
+- **The users and invites tables are locked** (`LOCK TABLE users, club_invites IN EXCLUSIVE
+  MODE`) at the start of the transaction, before the emptiness checks, so a sign-up or a
+  `beta-invite` on a running server cannot slip in.
+- **A target with invites is refused too.** Invites keep their legacy ids and codes, and a
+  `beta-invite` sign-up invite needs no user, so `users` being empty is not enough: an invite
+  minted before the import would take id 1 and make the import fail on `club_invites_pkey` after
+  every lookup ran. `run` checks `club_invites` right after `users`, before the first write and
+  the first lookup, and fails with `ImportError::Other` (exit 1, not 2: the frozen
+  `TargetNotEmpty` message names users) and `importer::TARGET_HAS_INVITES`: "target database
+  already has invites (minted with beta-invite?); import into an empty database and mint invites
+  after import-legacy". **Mint beta invites only after `import-legacy`.**
 - **Matched ISBN rows** go through `ingest::upsert_edition(matched work, EditionRecord { source:
   Legacy, isbn13, pages, publication_year, ol_cover_id })` with `Mode::Refresh`: it finds the
   edition with that ISBN (the one the lookup persisted) and fills only its empty fields, then the
@@ -61,6 +74,12 @@ reader), `picks.rs` (§7, §8, §11), `posts.rs` (§9), `personal.rs` (§10, §1
   The spine colour is written to that Open Library media row's `dominant_color` only while it is
   NULL; a colour that is not `#rrggbb` (after lowercasing) or `''` becomes NULL and is counted as
   `books.spine_color`.
+- **The books line counts every row in its class.** Each source row counts under the match of
+  the work it maps to, a merged row too (an ISBN row that resolved to an OL row's work is `isbn
+  matched`; an x/X twin or the second key of an ISBN-10/ISBN-13 pair counts in its first row's
+  class), so the classes add up to the source count, as in the §0 example; `N merged` is the
+  separate figure for rows that landed on an earlier row's work. The `editions` line counts
+  distinct editions (the two keys of one ISBN identify one).
 - **Collisions:** an x/X pair of ISBN keys canonicalises to one `legacy_key` (the table's primary
   key), so only the first row gets a `legacy_work_keys` row; the second maps onto the same work and
   is listed as a merge. The ISBN-10 and ISBN-13 keys of one book are two keys: both get rows with
@@ -159,13 +178,25 @@ reader), `picks.rs` (§7, §8, §11), `posts.rs` (§9), `personal.rs` (§10, §1
   wide. Merge lines name legacy ids only: part 1's `both are work <id>` became `both resolve to one
   work`, because work ids differ between a dry run and the real run. `Report` gained `notes`
   (the per-row list the rendered report prints under `notes:`).
-- **`rematch-legacy`** runs in one transaction (`--dry-run` rolls it back) and gained the hidden
-  `--retry-wait-ms` of `import-legacy`. A throttled lookup is waited out; an unavailable source
-  does not abort (it is a retry tool: the edition stays as it is and is reported). A hit that
-  leaves the edition `legacy` (the lookup knew the ISBN under another existing work without
-  touching this edition) is reported as "under another work" for a merge through the queue.
-  `legacy_work_keys.match` becomes `isbn_matched` only on `isbn_unmatched`/`isbn_error` rows of
-  an upgraded edition. The report has one `legacy editions` line and one note per ISBN.
+- **`rematch-legacy` commits per edition.** It runs on the live server, so each legacy edition
+  gets its own short transaction (lookup, ingest's upgrade, the `legacy_work_keys` update, then
+  commit, or rollback under `--dry-run`): ingest's advisory and row locks are never held across
+  another edition's lookup, and a member's lookup of an ISBN already processed does not wait for
+  the whole run. A throttled lookup rolls its transaction back before the wait (`--retry-wait-ms`,
+  hidden, as for `import-legacy`) and retries in a new one; an unavailable source does not abort
+  (it is a retry tool: the edition stays as it is and is reported). A deadlock (40P01,
+  `error::is_deadlock`) retries the edition's transaction up to twice (conventions.md §7.2); any
+  other database error rolls back that edition only, is reported (`error: database: …`) and the
+  run continues. Only a failure to reach the database at all (pool or I/O errors) aborts; the
+  editions already upgraded stay upgraded, and a rerun continues with the rest (they are no
+  longer `legacy`). A hit that leaves the edition `legacy` (the lookup knew the ISBN under another
+  existing work without touching this edition) is reported as "under another work" for a merge
+  through the queue. `legacy_work_keys.match` becomes `isbn_matched` only on
+  `isbn_unmatched`/`isbn_error` rows of an upgraded edition. The report has one `legacy editions`
+  line (`N → M upgraded (… unmatched, … with the source unavailable, … under another work, … with
+  a database error)`) and one note per ISBN. Because a dry run rolls back each edition, two legacy
+  ISBNs whose hits land on one new work can report differently in the dry run and the real run
+  (rare; the real run's report is the record).
 - **Fixture changes** (`generate.py`, regenerated; two runs give the same bytes):
   - The pick note whose diary copy the author deletes is now created before the note with the
     milestone. Its id (2) lies below a mirrored id (3), as §9.2 assumes; before, it was the
@@ -175,6 +206,48 @@ reader), `picks.rs` (§7, §8, §11), `posts.rs` (§9), `personal.rs` (§10, §1
   - anna has both merge rows (and one more book) as favourites, so the favourites merge is in the
     merge fixture.
 
+## Manual step: the dry run and the real run on a copy of the production database (with Rafael)
+
+#38 AC: the importer runs once on a copy of the production `bookclub.db` before the cutover (#52).
+The copy is never committed and never leaves Rafael's machines.
+
+1. **Take the copy** with the legacy app's online backup (SELFHOST.md §4): `docker compose exec
+   bookclub python -m app.backup /data/bookclub-backup.db`, then copy
+   `./data/bookclub-backup.db` to the machine that runs the import. Read the legacy settings
+   from its `.env`: `BOOKCLUB_NAME` (→ `--club-name`) and `BOOKCLUB_TZ` (→ `--timezone`), and
+   pick the owner's username (→ `--owner`).
+2. **An empty target.** A new Postgres database; `import-legacy` applies the migrations itself.
+   Set `DATABASE_URL`, `MEDIA_DIR` and the rest of the `serve` configuration. Do **not** run
+   `beta-invite` (or let anyone sign up) before the import: users or invites in the target make
+   it refuse (exit 2 for users, exit 1 for invites, nothing written).
+3. **Dry run**, with network lookups (only then are the ISBN outcomes real), and a fixed slug so
+   the two reports compare line by line:
+
+   ```
+   bookclub-server import-legacy bookclub-backup.db --owner <username> \
+       --club-name "<BOOKCLUB_NAME>" --timezone <BOOKCLUB_TZ> --club-slug <slug> \
+       --dry-run > dry.txt
+   ```
+
+   Exit 1 with "a source is unavailable" means DNB or Open Library could not answer: retry later,
+   or add `--allow-unmatched` (those rows become bare facts, counted as `isbn error`, and
+   `rematch-legacy` retries them later). `--offline` skips every lookup (all ISBN rows bare facts
+   unless the target's catalog already knows the ISBN).
+4. **Read `dry.txt` together:** every entity line (source → target; the differences must be the
+   listed merges and skips), `normalised` (repaired values per column), `merges`, `differences`
+   (matched ISBN rows whose year or pages changed against what the legacy app showed), `isbn
+   keys` (each ISBN with matched/unmatched/error) and `notes` (dangling rows, layouts imported as
+   the default, skipped pick notes). Anything unexpected: stop, fix, rerun the dry run.
+5. **Real run**: the same command without `--dry-run`, into `real.txt`. Then
+   `diff <(tail -n +2 dry.txt) real.txt`: only the `lookup wait` line, or an ISBN whose upstream
+   record changed in between, may differ.
+6. **After the import:** `bookclub-server make-admin <username>`; then `beta-invite` if needed;
+   if `isbn unmatched` or `isbn error` is not 0, `bookclub-server rematch-legacy --dry-run`, then
+   `rematch-legacy` (safe on the live server: it commits per edition). Spot-check in the browser:
+   a legacy user signs in with the old password and gets the email prompt, the club, shelves,
+   layouts, pick notes and the activity feed are there, old `/works/…` links resolve.
+7. Attach the (non-personal) report counts to #38 and close it.
+
 ## New detail strings
 
 None. The importer is a CLI; it adds no HTTP endpoint and no `error::msg` string.
@@ -182,8 +255,13 @@ None. The importer is a CLI; it adds no HTTP endpoint and no `error::msg` string
 ## Python tests
 
 - `test_migrations.py::test_legacy_database_is_upgraded_in_place` -> ported on the migrated-shape
-  fixture (`tests/importer_run.rs::migrated_and_very_old_databases_import_with_the_defaults`).
-- `test_auth.py::test_preference_columns_backfill_pre_existing_users` -> ported on the same test.
+  fixture (`tests/importer_run.rs::migrated_databases_import_with_the_defaults`) and the
+  never-booted `LEGACY_SCHEMA` (`a_database_from_before_every_column_migration_imports`).
+- `test_auth.py::test_preference_columns_backfill_pre_existing_users` -> ported on the shape it
+  builds, a users table without the preference columns
+  (`tests/importer_run.rs::a_database_from_before_every_column_migration_imports`: the reader's
+  defaults paper/system/en and every notification on). migrated.sql already holds the backfilled
+  values, so the migrated-shape test does not exercise the defaults.
 - `test_migrations.py::test_fresh_database_matches_migration_list` -> replaced: there is no
   hand-rolled column list any more (sqlx migrations, `cargo sqlx prepare --check`); the importer
   reads a fresh-shape database with every `COLUMN_MIGRATIONS` column
