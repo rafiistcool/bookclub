@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE user_favorites AS f SET position = r.rank\n         FROM (SELECT work_id, row_number() OVER (ORDER BY position, work_id)::int4 AS rank\n               FROM user_favorites WHERE user_id = $1) AS r\n         WHERE f.user_id = $1 AND f.work_id = r.work_id AND f.position <> r.rank",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d3da1aeba1b08961b2cbfeac9b49b97a44a8c14cd6466560cbb67e85d95e88ff"
+}

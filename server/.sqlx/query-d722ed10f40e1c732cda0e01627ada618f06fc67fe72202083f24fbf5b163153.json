@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT processed FROM import_jobs WHERE id = $1 AND status = 'running' FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "processed",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "import_jobs",
+            "name": "processed"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d722ed10f40e1c732cda0e01627ada618f06fc67fe72202083f24fbf5b163153"
+}

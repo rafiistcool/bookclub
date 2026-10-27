@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT cover_media_id FROM works WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "cover_media_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "cover_media_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "9472c69ceedc5b37278d22cb09d898197881ac90305fde5606abd3bcbf932df9"
+}

@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT count(*) AS \"count!\", sum(s.rating)::bigint AS total\n           FROM bc_visible_shelf($1) AS s\n           WHERE s.work_id = $2 AND s.status = 'finished' AND s.rating IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "total",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "177a7be61332d3bf88ed6c3494e671fc3725ec09f4f5f97dd30429ecf7efed12"
+}

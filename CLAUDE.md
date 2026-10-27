@@ -20,7 +20,8 @@ Server worktrees (Phase 1 Wave 2, `work-plan.md` ground rule 5):
 
 - `#[sqlx::test]` names its databases after the test path only, so two worktrees on one Postgres server drop each other's databases. Each worktree runs its own server: `docker run -d --name bookclub-pg-<pkg> -p 127.0.0.1:<port>:5432 -e POSTGRES_USER=bookclub -e POSTGRES_PASSWORD=bookclub -e POSTGRES_DB=bookclub postgres:17 -c max_connections=200 -c shared_buffers=64MB`, with `DATABASE_URL` on that port. Ports: CAT 5441, HAR 5442, MED 5443, SHELF 5444, POSTS 5445, CLUB 5446, IMP 5447, OAPI 5448, PAR 5449; the integrator, W1 and FE use the compose server on 5432. `docker rm -f bookclub-pg-<pkg>` after the merge.
 - Worktrees live next to the repo (`git worktree add ../bookclub-<pkg> -b phase1/<pkg> phase-1`), never under `/tmp`.
-- At most 3 worktrees build or test at once, each with `CARGO_BUILD_JOBS=2` (the VM has 6 CPUs and 7.8 GiB RAM, no swap).
+- Up to 5 worktrees build or test at once (the VM has 12 CPUs, 17.6 GiB RAM and 4 GiB swap). Each worktree root, and the main checkout, has an untracked `.cargo/config.toml` (git-excluded via `.git/info/exclude`) with `jobs = 3`, debug info off and that worktree's `DATABASE_URL`. With full debug info, 47 test binaries at ~125 MB each filled the disk. sqlx-cli ignores that file, so export `DATABASE_URL` for `cargo sqlx`.
+- `server/.cargo/config.toml` (committed) caps test threads at 4: every `#[sqlx::test]` pool draws from one 20-connection pool per test binary, and more concurrent race tests time out waiting for each other's connections.
 
 Checks (CI runs all of them). The Python backend and the frontend have no linter or formatter. The server uses rustfmt and clippy with warnings as errors:
 

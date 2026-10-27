@@ -1,0 +1,184 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT title, subtitle, author_names, first_publish_year, description, subjects, pages,\n                  ol_rating, ol_rating_count, cover_media_id, source, ol_work_id,\n                  details_fetched_at,\n                  field_sources AS \"field_sources: Json<Map<String, Value>>\"\n           FROM works WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "title",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "subtitle",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "subtitle"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "author_names",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "author_names"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "first_publish_year",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "first_publish_year"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "description",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "description"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "subjects",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "subjects"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "pages",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "pages"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "ol_rating",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "ol_rating"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "ol_rating_count",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "ol_rating_count"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "cover_media_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "cover_media_id"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "source",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "source"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "ol_work_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "ol_work_id"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "details_fetched_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "details_fetched_at"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "field_sources: Json<Map<String, Value>>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "field_sources"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "f653d1de241a65b73a7e46a3a1ab206165796702b91e7258418ac79153a15d8c"
+}

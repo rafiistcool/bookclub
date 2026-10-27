@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE quotes SET work_id = $2 WHERE work_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8dfa2329e15cb1fd2d574f3db59e6c3e3b0cd7b00e70675e833ec3d2042ac452"
+}

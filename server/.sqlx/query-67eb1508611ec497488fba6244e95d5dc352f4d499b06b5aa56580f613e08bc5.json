@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT w.id\n               FROM works w\n               WHERE w.merged_into_id IS NULL\n                 AND lower(bc_unaccent(w.title)) = lower(bc_unaccent($1))\n                 AND w.search_vector @@ plainto_tsquery('simple'::regconfig, bc_unaccent($2))\n               ORDER BY ts_rank(w.search_vector,\n                                plainto_tsquery('simple'::regconfig, bc_unaccent($2))) DESC,\n                        w.id\n               LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "67eb1508611ec497488fba6244e95d5dc352f4d499b06b5aa56580f613e08bc5"
+}

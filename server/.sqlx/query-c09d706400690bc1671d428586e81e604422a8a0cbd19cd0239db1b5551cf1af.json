@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM search_history WHERE id IN (\n             SELECT id FROM search_history WHERE user_id = $1\n             ORDER BY last_used_at DESC, id DESC OFFSET $2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c09d706400690bc1671d428586e81e604422a8a0cbd19cd0239db1b5551cf1af"
+}

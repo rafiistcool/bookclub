@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE shelf_entries AS s SET position = v.position\n         FROM unnest($1::int8[], $2::int4[]) AS v (id, position)\n         WHERE s.id = v.id AND s.position <> v.position",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int4Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "75f86c99a727e46549cc306fb7668d386a3761c7d5fc1af2212e055c641a9466"
+}

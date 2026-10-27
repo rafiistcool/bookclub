@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE catalog_edit_requests SET work_id = $2\n         WHERE work_id = $1 AND status = 'open' AND edition_id IS NOT NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "48496cb07ec6a1e04a07547892bf31382eb3950f0c56300e99409dba34c0cd6a"
+}
