@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE club_picks SET work_id = $2 WHERE work_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1e401c36e27dd37f07c38a55b5b7148b48b1a68b788125b904c4bc5803dbc64c"
+}

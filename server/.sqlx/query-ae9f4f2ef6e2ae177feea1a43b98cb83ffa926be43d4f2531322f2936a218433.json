@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE editions SET work_id = $2, updated_at = now() WHERE work_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ae9f4f2ef6e2ae177feea1a43b98cb83ffa926be43d4f2531322f2936a218433"
+}

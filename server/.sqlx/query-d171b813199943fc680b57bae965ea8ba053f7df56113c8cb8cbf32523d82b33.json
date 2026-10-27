@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, isbn13 AS \"isbn13!\" FROM editions\n               WHERE work_id = $1 AND isbn13 IS NOT NULL ORDER BY id LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "isbn13!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "isbn13"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "d171b813199943fc680b57bae965ea8ba053f7df56113c8cb8cbf32523d82b33"
+}

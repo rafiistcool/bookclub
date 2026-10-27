@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT m.id\n           FROM works w\n           JOIN media m ON m.id = w.cover_media_id\n           WHERE w.id = ANY($1) AND m.source = 'openlibrary' AND m.storage_key IS NULL\n             AND m.removed_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5a5072384aef5b66d61bff71698dbd2cc2c823bde23b0f5d120b12832bdc1ee3"
+}

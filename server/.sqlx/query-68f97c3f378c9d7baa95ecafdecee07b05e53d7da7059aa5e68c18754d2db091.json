@@ -1,0 +1,172 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.id, r.kind, r.status, r.work_id, r.edition_id, r.payload, r.note,\n                  r.created_by, r.created_at, r.decided_by, r.decided_at, r.decision_note,\n                  m.public_id AS \"cover?\"\n           FROM catalog_edit_requests r\n           LEFT JOIN media m ON m.id = r.media_id AND m.removed_at IS NULL\n           WHERE r.id = ANY($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "catalog_edit_requests",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "catalog_edit_requests",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "catalog_edit_requests",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "work_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "catalog_edit_requests",
+            "name": "work_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "edition_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "catalog_edit_requests",
+            "name": "edition_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "payload",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "catalog_edit_requests",
+            "name": "payload"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "note",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "catalog_edit_requests",
+            "name": "note"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "created_by",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "catalog_edit_requests",
+            "name": "created_by"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "catalog_edit_requests",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "decided_by",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "catalog_edit_requests",
+            "name": "decided_by"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "decided_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "catalog_edit_requests",
+            "name": "decided_at"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "decision_note",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "catalog_edit_requests",
+            "name": "decision_note"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "cover?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "public_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "68f97c3f378c9d7baa95ecafdecee07b05e53d7da7059aa5e68c18754d2db091"
+}

@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT w.id\n           FROM works w\n           WHERE w.merged_into_id IS NULL\n             AND (w.search_vector @@ plainto_tsquery('simple'::regconfig, bc_unaccent($1))\n                  OR bc_search_text(w.title, w.author_names, w.search_extra)\n                     LIKE '%' || replace(replace(replace(lower(bc_unaccent($1)),\n                                  '\\', '\\\\'), '%', '\\%'), '_', '\\_') || '%')\n           ORDER BY CASE WHEN $2 THEN lower(w.title) END,\n                    ts_rank(w.search_vector, plainto_tsquery('simple'::regconfig, bc_unaccent($1)))\n                    + similarity(bc_search_text(w.title, w.author_names, w.search_extra),\n                                 lower(bc_unaccent($1))) DESC,\n                    w.id\n           LIMIT $3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Bool",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b470b284d3437820cfda258ded8d26a24f4f2407271a03b0e53aa01a192deff3"
+}
