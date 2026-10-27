@@ -331,9 +331,12 @@ async fn get_prunes_entries_removed_outside_the_shelf_endpoint(db: PgPool) {
     assert_eq!(stored(&app, &ada).await.unwrap()["rows"][0][1], id);
 }
 
-/// The 35 invalid layouts of the legacy parametrised test. `{rows: [[9999]]}`, the spine
-/// `9999` and the 5000-digit spine stand for entries that are not the caller's.
-fn invalid_layouts() -> Vec<Value> {
+/// The 35 invalid layouts of the legacy parametrised test. Where the legacy cases wrote `1`
+/// for the caller's entry, they use `id`, the caller's real entry, so each 400 comes from the
+/// rule the case breaks and not from the ownership check. `{rows: [[9999]]}`, the spine `9999`
+/// and the 5000-digit spine stand for entries that are not the caller's.
+fn invalid_layouts(id: i64) -> Vec<Value> {
+    let key = id.to_string();
     let decoration = json!({"kind": "plant", "color": "#123456"});
     let long_id = format!("decor:{}", "a".repeat(65));
     let mut many = Map::new();
@@ -344,7 +347,7 @@ fn invalid_layouts() -> Vec<Value> {
     vec![
         json!({"rows": []}),
         json!({"rows": vec![json!([]); 13]}),
-        json!({"rows": [[1], [1]]}),
+        json!({"rows": [[id], [id]]}),
         json!({"rows": [(1..=2001).collect::<Vec<i64>>()]}),
         json!({"rows": [(1..=1001).collect::<Vec<i64>>(), (1002..=2001).collect::<Vec<i64>>()]}),
         json!({"rows": [[0]]}),
@@ -353,11 +356,11 @@ fn invalid_layouts() -> Vec<Value> {
         json!({"rows": [[1.5]]}),
         json!({"rows": [[9999]]}),
         json!({"material": "pine"}),
-        json!({"spines": {"1": {"color": "red", "width": 30}}}),
-        json!({"spines": {"1": {"color": "#abcd", "width": 30}}}),
-        json!({"spines": {"1": {"color": "#123456", "width": 25}}}),
-        json!({"spines": {"1": {"color": "#123456", "width": 65}}}),
-        json!({"spines": {"1": {"color": "#123456", "width": 30.5}}}),
+        json!({"spines": {key.clone(): {"color": "red", "width": 30}}}),
+        json!({"spines": {key.clone(): {"color": "#abcd", "width": 30}}}),
+        json!({"spines": {key.clone(): {"color": "#123456", "width": 25}}}),
+        json!({"spines": {key.clone(): {"color": "#123456", "width": 65}}}),
+        json!({"spines": {key: {"color": "#123456", "width": 30.5}}}),
         json!({"spines": {"01": {"color": "#123456", "width": 30}}}),
         json!({"spines": {"foo": {"color": "#123456", "width": 30}}}),
         json!({"spines": {"9999": {"color": "#123456", "width": 30}}}),
@@ -387,10 +390,17 @@ async fn invalid_layout_does_not_replace_previous_layout(db: PgPool) {
     let app = TestApp::new(db).await;
     let ada = app.user("ada").await;
     let first = add(&app, &ada, 1, json!({})).await;
+    // The control for the spine cases: the caller's spine with valid values is accepted.
+    ada.put(
+        PATH,
+        json!({"spines": {first["id"].to_string(): {"color": "#123456", "width": 30}}}),
+    )
+    .await
+    .assert_status(200);
     let saved =
         json!({"rows": [[first["id"]]], "material": "walnut", "spines": {}, "decorations": {}});
     ada.put(PATH, saved.clone()).await.assert_status(200);
-    let cases = invalid_layouts();
+    let cases = invalid_layouts(first["id"].as_i64().unwrap());
     assert_eq!(cases.len(), 35);
     for (n, invalid) in cases.into_iter().enumerate() {
         let rejected = ada.put(PATH, invalid).await;
@@ -513,10 +523,36 @@ async fn a_broken_stored_layout_reads_as_the_default(db: PgPool) {
             .unwrap();
         assert_eq!(layout(&ada).await, out(default_layout()), "{broken}");
     }
-    // Deleting an entry still cleans such a layout.
-    ada.delete(&format!("/api/shelf/{}", first["id"]))
+    // Deleting an entry still cleans such a layout: the entry leaves the rows and the spines,
+    // the rest stays as stored.
+    let id = first["id"].as_i64().unwrap();
+    let broken = json!({
+        "rows": [[id, "decor:orphan"], [id]],
+        "spines": {id.to_string(): {"width": 30}, "9999": {"width": 40}},
+        "material": "pine"
+    });
+    app.exec(&format!(
+        "DELETE FROM physical_shelf_layouts WHERE user_id = {}",
+        ada.id()
+    ))
+    .await;
+    sqlx::query("INSERT INTO physical_shelf_layouts (user_id, layout) VALUES ($1, $2)")
+        .bind(ada.id())
+        .bind(&broken)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    ada.delete(&format!("/api/shelf/{id}"))
         .await
         .assert_status(204);
+    assert_eq!(
+        stored(&app, &ada).await,
+        Some(json!({
+            "rows": [["decor:orphan"], []],
+            "spines": {"9999": {"width": 40}},
+            "material": "pine"
+        }))
+    );
 }
 
 /// parity: test_physical_shelf.py::test_decorations_can_be_saved_without_books_and_removed

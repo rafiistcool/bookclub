@@ -6,8 +6,13 @@
 //! up one after the other through `state.lookup` and shelves the hits. Each row is committed
 //! together with the job's progress, under the user's lock, so a restarted server resumes at
 //! `processed` ([`resume`]) and never shelves a row twice. The import records no events.
+//!
+//! All jobs share [`LOOKUP_SLOTS`]: at most two row lookups (and so two pool connections held
+//! through remote calls) run at once. A throttled row waits and is tried again before it is
+//! skipped ([`lookup_row`]).
 
 use std::panic::AssertUnwindSafe;
+use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::extract::multipart::MultipartError;
@@ -18,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgConnection;
 use sqlx::types::Json as SqlJson;
 use time::{Date, Month, OffsetDateTime};
+use tokio::sync::Semaphore;
 use utoipa::ToSchema;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -32,7 +38,8 @@ use crate::catalog::shared::lookup::{CatalogLookup, LookupError};
 use crate::dto::{ShelfStatus, Visibility};
 use crate::error::{ApiResult, AppError, ErrorBody, is_unique_violation};
 use crate::extract::{ApiMultipart, ApiPath, FIELD_REQUIRED};
-use crate::text::py_strip;
+use crate::outbound::RetryPolicy;
+use crate::text::{py_strip, truncate_chars};
 use crate::tz;
 
 /// The largest file the import reads.
@@ -43,6 +50,24 @@ pub const MAX_IMPORT_ROWS: usize = 400;
 pub const SKIP_LIST_LIMIT: usize = 25;
 /// The route's body limit (conventions §4.6): the file plus the multipart framing.
 const IMPORT_BODY_LIMIT: usize = 2 * 1024 * 1024;
+/// The longest `Title` and `Author` a row keeps (the search box's limit), so the lookup's
+/// full-text step never gets an unbounded string from the file.
+pub const MAX_LOOKUP_CHARS: usize = 300;
+
+/// Row lookups that may run at once, across all import jobs. Each holds a pool connection
+/// through its remote calls, and Open Library's 3 requests per second are shared anyway, so more
+/// would only take connections from the API.
+static LOOKUP_SLOTS: Semaphore = Semaphore::const_new(2);
+/// The longest a throttled row waits in total before it is skipped as `catalog_unavailable`:
+/// the throttle wait of background jobs (conventions §10.3, `RetryPolicy::JOB`).
+const THROTTLE_BUDGET: Duration = RetryPolicy::JOB.max_wait;
+/// The pause before a throttled row is tried again while Open Library has no cooldown running
+/// (the throttle's queue was full) ...
+const QUEUE_PAUSE: Duration = Duration::from_millis(250);
+/// ... and how often a row is tried again that way.
+const QUEUE_RETRIES: u32 = 2;
+/// Added to a running cooldown before the row is tried again.
+const COOLDOWN_MARGIN: Duration = Duration::from_millis(100);
 
 pub const FILE_TOO_LARGE: &str = "That file is too large. Keep the export under 1.5 MB.";
 pub const NOT_UTF8: &str = "The file must be a UTF-8 Goodreads CSV export";
@@ -185,8 +210,10 @@ pub struct GoodreadsUpload {
 /// One parsed row to look up, as stored in `import_jobs.rows`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GoodreadsRow {
+    /// At most [`MAX_LOOKUP_CHARS`] characters.
     pub title: String,
-    /// The `Author` column only (Additional Authors are ignored).
+    /// The `Author` column only (Additional Authors are ignored), at most [`MAX_LOOKUP_CHARS`]
+    /// characters.
     pub authors: String,
     /// `ISBN13`, else `ISBN`, when it is a valid ISBN (normalised to 13 digits).
     pub isbn13: Option<String>,
@@ -304,8 +331,13 @@ fn cell(record: &csv::StringRecord, column: Option<usize>) -> &str {
         .unwrap_or_default()
 }
 
+/// A `Title` or `Author` cell cut to [`MAX_LOOKUP_CHARS`] characters.
+fn lookup_text(value: &str) -> &str {
+    py_strip(truncate_chars(value, MAX_LOOKUP_CHARS))
+}
+
 fn parse_row(columns: &Columns, record: &csv::StringRecord) -> Result<GoodreadsRow, ImportSkipOut> {
-    let title = cell(record, columns.title);
+    let title = lookup_text(cell(record, columns.title));
     if title.is_empty() {
         return Err(ImportSkipOut::new("Untitled", ImportSkipCode::NoTitle));
     }
@@ -321,7 +353,7 @@ fn parse_row(columns: &Columns, record: &csv::StringRecord) -> Result<GoodreadsR
     let finished = status == ShelfStatus::Finished;
     Ok(GoodreadsRow {
         title: title.to_owned(),
-        authors: cell(record, columns.author).to_owned(),
+        authors: lookup_text(cell(record, columns.author)).to_owned(),
         isbn13: parse_isbn(&isbn).map(|isbn| isbn.as_str().to_owned()),
         status,
         rating: finished
@@ -400,8 +432,17 @@ pub async fn start_import(
 ) -> ApiResult<(StatusCode, Json<ImportJobOut>)> {
     let raw = read_upload(upload).await?;
     let parsed = parse_goodreads_csv(&raw).map_err(AppError::bad_request)?;
-    let job = create_job(&state, user.id, &parsed).await?;
-    tokio::spawn(run(state, job.id));
+    // The job row and its task start together in a task of their own. A client that goes away
+    // drops this handler at an await; were the INSERT awaited here, the row could commit with
+    // no task to run it, and the user's imports would answer 409 until the next restart.
+    let user_id = user.id;
+    let job = tokio::spawn(async move {
+        let job = create_job(&state, user_id, &parsed).await?;
+        tokio::spawn(run(state, job.id));
+        Ok::<_, AppError>(job)
+    })
+    .await
+    .map_err(AppError::internal)??;
     Ok((StatusCode::ACCEPTED, Json(job)))
 }
 
@@ -614,10 +655,7 @@ async fn process(state: &AppState, job_id: i64) -> sqlx::Result<()> {
     let zone = tz::zone_or_utc(&job.timezone);
     let start = usize::try_from(job.processed).unwrap_or(usize::MAX);
     for (index, row) in job.rows.0.iter().enumerate().skip(start) {
-        let found = {
-            let mut conn = state.db.acquire().await?;
-            find(state.lookup.as_ref(), &mut conn, row).await?
-        };
+        let found = lookup_row(state, row).await?;
         let mut tx = state.db.begin().await?;
         if !import_row(&mut tx, job_id, job.user_id, index, row, found, &zone).await? {
             // The job is gone (the account was deleted) or another task took it over.
@@ -635,44 +673,89 @@ async fn process(state: &AppState, job_id: i64) -> sqlx::Result<()> {
     Ok(())
 }
 
+/// Looks a row up, holding one of the [`LOOKUP_SLOTS`] and a pool connection only while its
+/// lookups run. A throttled row is tried again: after Open Library's cooldown when one is running
+/// and the wait fits into [`THROTTLE_BUDGET`], else up to [`QUEUE_RETRIES`] times after
+/// [`QUEUE_PAUSE`]. When that runs out, the row is skipped as `catalog_unavailable`.
+async fn lookup_row(state: &AppState, row: &GoodreadsRow) -> sqlx::Result<Found> {
+    let started = Instant::now();
+    let mut queue_retries = 0;
+    loop {
+        let found = {
+            // The semaphore is never closed; without a slot the lookup would still be correct.
+            let _slot = LOOKUP_SLOTS.acquire().await.ok();
+            let mut conn = state.db.acquire().await?;
+            find(state.lookup.as_ref(), &mut conn, row).await?
+        };
+        if let Some(found) = found {
+            return Ok(found);
+        }
+        let pause = match state.outbound.ol_api.cooldown_remaining() {
+            Some(left) => left + COOLDOWN_MARGIN,
+            None if queue_retries < QUEUE_RETRIES => {
+                queue_retries += 1;
+                QUEUE_PAUSE
+            }
+            None => break,
+        };
+        if started.elapsed() + pause > THROTTLE_BUDGET {
+            break;
+        }
+        tokio::time::sleep(pause).await;
+    }
+    Ok(Found::Skip(ImportSkipCode::CatalogUnavailable))
+}
+
 /// `lookup_work`: the ISBN first (local editions, then the remote route), then title and
-/// author; the first hit wins. Only an ISBN hit names the edition. `catalog_unavailable` when a
-/// lookup was throttled or unavailable and nothing hit; `no_match` when every lookup answered.
+/// author; the first hit wins. Only an ISBN hit names the edition. `None` when a lookup was
+/// throttled and nothing hit (worth another try); `catalog_unavailable` when a lookup was
+/// unavailable and nothing hit; `no_match` when every lookup answered.
 async fn find(
     lookup: &dyn CatalogLookup,
     conn: &mut PgConnection,
     row: &GoodreadsRow,
-) -> sqlx::Result<Found> {
-    let mut unsure = false;
+) -> sqlx::Result<Option<Found>> {
+    let (mut throttled, mut unavailable) = (false, false);
+    let mut note = |error: LookupError| match error {
+        LookupError::Throttled => {
+            throttled = true;
+            Ok(())
+        }
+        LookupError::Unavailable => {
+            unavailable = true;
+            Ok(())
+        }
+        LookupError::Db(error) => Err(error),
+    };
     if let Some(isbn) = row.isbn13.as_deref().and_then(parse_isbn) {
         match lookup.resolve_isbn(conn, &isbn).await {
             Ok(Some(hit)) => {
-                return Ok(Found::Work {
+                return Ok(Some(Found::Work {
                     work_id: hit.work_id,
                     edition_id: hit.edition_id,
-                });
+                }));
             }
             Ok(None) => {}
-            Err(LookupError::Throttled | LookupError::Unavailable) => unsure = true,
-            Err(LookupError::Db(error)) => return Err(error),
+            Err(error) => note(error)?,
         }
     }
     match lookup.resolve_text(conn, &row.title, &row.authors).await {
         Ok(Some(hit)) => {
-            return Ok(Found::Work {
+            return Ok(Some(Found::Work {
                 work_id: hit.work_id,
                 edition_id: None,
-            });
+            }));
         }
         Ok(None) => {}
-        Err(LookupError::Throttled | LookupError::Unavailable) => unsure = true,
-        Err(LookupError::Db(error)) => return Err(error),
+        Err(error) => note(error)?,
     }
-    Ok(Found::Skip(if unsure {
-        ImportSkipCode::CatalogUnavailable
+    Ok(if throttled {
+        None
+    } else if unavailable {
+        Some(Found::Skip(ImportSkipCode::CatalogUnavailable))
     } else {
-        ImportSkipCode::NoMatch
-    }))
+        Some(Found::Skip(ImportSkipCode::NoMatch))
+    })
 }
 
 /// Shelves row `index` (or records its skip) and advances the job, in the caller's
@@ -833,6 +916,26 @@ mod tests {
         assert_eq!(parsed.rows.len(), 2);
         assert_eq!(parsed.rows[0].authors, "");
         assert_eq!(parsed.rows[1].authors, "Austen");
+    }
+
+    #[test]
+    fn long_titles_and_authors_are_cut_for_the_lookup() {
+        // Two bytes per character: 600 KB in one cell, twice in the file.
+        let title = "é".repeat(300_000);
+        // 299 letters, a space, then more: the cut ends on the space, which is trimmed.
+        let author = format!("{} Austen", "a".repeat(MAX_LOOKUP_CHARS - 1));
+        let parsed = parse(&format!(
+            "Title,Author,Exclusive Shelf\n{title},{author},to-read\n{title},,dnf\n"
+        ));
+        assert_eq!(parsed.rows[0].title, "é".repeat(MAX_LOOKUP_CHARS));
+        assert_eq!(parsed.rows[0].authors, "a".repeat(MAX_LOOKUP_CHARS - 1));
+        assert_eq!(
+            parsed.skips,
+            vec![ImportSkipOut::new(
+                "é".repeat(MAX_LOOKUP_CHARS),
+                ImportSkipCode::UnknownShelf
+            )]
+        );
     }
 
     #[test]

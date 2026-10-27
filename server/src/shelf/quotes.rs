@@ -9,7 +9,7 @@
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use serde_json::json;
 use sqlx::PgConnection;
 use time::OffsetDateTime;
@@ -71,8 +71,8 @@ pub struct QuoteListOut {
 #[into_params(parameter_in = Query)]
 pub struct QuoteQuery {
     /// Only quotes of this work (a merged work id finds the work it was merged into). An
-    /// unknown work gives an empty list.
-    #[serde(default)]
+    /// unknown work gives an empty list. Empty means no filter.
+    #[serde(default, deserialize_with = "optional_work_id")]
     pub work: Option<i64>,
     /// Only this user's quotes. An unknown name, or a user outside the caller's audience, gives
     /// an empty list. Empty means no filter.
@@ -85,6 +85,17 @@ pub struct QuoteQuery {
 
 fn default_limit() -> i64 {
     100
+}
+
+/// `?work=`: an empty value is no filter, like an absent one (the legacy `if work:`); any
+/// other value must be an integer (400 `Input should be a valid integer, unable to parse
+/// string as an integer`).
+fn optional_work_id<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<i64>, D::Error> {
+    let text = String::deserialize(deserializer)?;
+    if text.is_empty() {
+        return Ok(None);
+    }
+    text.parse().map(Some).map_err(de::Error::custom)
 }
 
 impl Validate for QuoteQuery {

@@ -226,20 +226,29 @@ async fn invalid_finish_date_does_not_modify_entry(db: PgPool) {
 }
 
 /// "Today" is the owner's: the last allowed date is today in their zone, the next day is in the
-/// future.
+/// future. The zone is picked so that the owner's date differs from the UTC date right now
+/// (UTC+14 from 11:00 UTC on, UTC-12 before), at least an hour away from the owner's midnight,
+/// so a check against UTC's today fails one of the two assertions.
 #[sqlx::test]
 async fn today_is_the_owners_today(db: PgPool) {
     let app = TestApp::new(db).await;
     let ada = app.user("ada").await;
-    set_zone(&app, &ada, "Pacific/Kiritimati").await;
+    let now = OffsetDateTime::now_utc();
+    let name = if now.hour() >= 11 {
+        "Pacific/Kiritimati"
+    } else {
+        "Etc/GMT+12"
+    };
+    let zone = tz::zone_or_utc(name);
+    set_zone(&app, &ada, name).await;
     let item = add(&ada, &circe(&app).await, "finished", json!({})).await;
-    let today = tz::today(&tz::zone_or_utc("Pacific/Kiritimati"));
+    let today = tz::today(&zone);
     let tomorrow = today.next_day().unwrap();
+    assert_ne!(today, now.date(), "{name} shares the UTC date");
+    // Kiritimati: the owner's today is UTC's tomorrow, still allowed.
     let saved = patch(&ada, &item["id"], json!({"finished_on": today.to_string()})).await;
-    assert_eq!(
-        at(&saved["finished_at"]),
-        tz::noon_local_utc(today, &tz::zone_or_utc("Pacific/Kiritimati"))
-    );
+    assert_eq!(at(&saved["finished_at"]), tz::noon_local_utc(today, &zone));
+    // UTC-12: the owner's tomorrow is UTC's today, already in the future.
     ada.patch(
         &format!("/api/shelf/{}", item["id"]),
         json!({"finished_on": tomorrow.to_string()}),

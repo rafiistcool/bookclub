@@ -315,12 +315,21 @@ async fn list_filters_limit_and_labels(db: PgPool) {
     );
     // Empty filters are ignored; an unknown name gives an empty list.
     assert_eq!(list(&ada, "?username=").await.len(), 3);
+    assert_eq!(list(&ada, "?work=").await.len(), 3);
+    assert_eq!(
+        bodies(list(&ada, "?work=&username=grace").await),
+        vec!["Spice"]
+    );
     assert_eq!(list(&ada, "?username=nobody").await, Vec::<Value>::new());
     for (query, detail) in [
         ("?limit=0", "Input should be greater than or equal to 1"),
         ("?limit=501", "Input should be less than or equal to 500"),
         (
             "?work=OL1W",
+            "Input should be a valid integer, unable to parse string as an integer",
+        ),
+        (
+            "?work=99999999999999999999",
             "Input should be a valid integer, unable to parse string as an integer",
         ),
     ] {

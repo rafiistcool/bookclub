@@ -4,7 +4,13 @@
 
 mod common;
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
+
 use bookclub_server::catalog::shared::ingest::Source;
+use bookclub_server::catalog::shared::isbn::Isbn13;
+use bookclub_server::catalog::shared::lookup::{CatalogLookup, LookupError, Resolved};
 use bookclub_server::dto::ShelfStatus;
 use bookclub_server::shelf::goodreads::{
     self, GoodreadsRow, ImportSkipCode, ImportSkipOut, MAX_IMPORT_BYTES, clean_isbn,
@@ -12,7 +18,7 @@ use bookclub_server::shelf::goodreads::{
 };
 use common::*;
 use serde_json::{Value, json};
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 
 /// `backend/tests/fixtures/goodreads.csv`, copied byte for byte.
 const FIXTURE: &[u8] = include_bytes!("fixtures/goodreads/goodreads.csv");
@@ -303,6 +309,25 @@ async fn import_rejects_oversized_file(db: PgPool) {
         .assert_detail(400, "That file is too large. Keep the export under 1.5 MB.");
 }
 
+/// A file between the global 1 MiB body limit and 1.5 MB is accepted: the route raises its
+/// own limit to 2 MiB (conventions §4.6).
+#[sqlx::test]
+async fn import_accepts_a_file_over_the_global_body_limit(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let mut raw = b"Title,Exclusive Shelf,Notes\nDune,to-read,\n".to_vec();
+    let padding = "x".repeat(100_000);
+    for n in 0..14 {
+        raw.extend_from_slice(format!("Book {n},dnf,{padding}\n").as_bytes());
+    }
+    assert!(raw.len() > 1024 * 1024 + 300_000 && raw.len() < MAX_IMPORT_BYTES);
+    let res = upload(&ada, &raw).await;
+    res.assert_status(202);
+    assert_eq!(res.json()["total"], 1);
+    assert_eq!(res.json()["skipped"], 14);
+    app.settle().await;
+}
+
 #[sqlx::test]
 async fn bad_uploads_are_400(db: PgPool) {
     let app = TestApp::new(db).await;
@@ -399,10 +424,20 @@ async fn throttled_lookups_skip_with_catalog_unavailable(db: PgPool) {
         Value::Null
     );
 
-    // Everything throttled: every row is skipped, none fails the job.
+    // Everything throttled, no cooldown running (the throttle's queue was full): each row is
+    // tried three times, then skipped; none fails the job.
     let grace = app.user("grace").await;
     app.catalog.fail_all(FakeError::Throttled);
+    let before = app.catalog.calls().len();
     let job = import(&app, &grace, FIXTURE).await;
+    let calls = app.catalog.calls()[before..].to_vec();
+    let achilles = "text:The Song of Achilles|Madeline Miller".to_owned();
+    assert_eq!(
+        calls.iter().filter(|call| **call == achilles).count(),
+        3,
+        "{calls:?}"
+    );
+    assert_eq!(calls.len(), 3 * 5, "{calls:?}");
     assert_eq!(job["status"], "done");
     assert_eq!(job["imported"], 0);
     assert_eq!(job["skipped"], 5);
@@ -421,6 +456,133 @@ async fn throttled_lookups_skip_with_catalog_unavailable(db: PgPool) {
             "catalog_unavailable",
             "catalog_unavailable"
         ]
+    );
+}
+
+/// A row throttled during Open Library's cooldown waits for its end and is tried again.
+#[sqlx::test]
+async fn throttled_rows_wait_for_the_cooldown(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    app.catalog.on_isbn(CIRCE_ISBN, circe_hit());
+    app.catalog
+        .fail_isbn(CIRCE_ISBN, FakeError::Throttled, Some(1));
+    let started = Instant::now();
+    app.state
+        .outbound
+        .ol_api
+        .cool_down(Duration::from_millis(700));
+    let job = import(
+        &app,
+        &ada,
+        &csv(&["Circe,Madeline Miller,=\"9780316556347\",,,to-read"]),
+    )
+    .await;
+    // The short queue pause alone would have retried after 250 ms.
+    assert!(started.elapsed() >= Duration::from_millis(700));
+    assert_eq!(job["imported"], 1, "{job}");
+    assert_eq!(job["skips"], json!([]));
+    let isbn = format!("isbn:{CIRCE_ISBN}");
+    let calls = app.catalog.calls();
+    assert_eq!(
+        calls.iter().filter(|call| **call == isbn).count(),
+        2,
+        "{calls:?}"
+    );
+    assert_eq!(
+        by_title(&items(&ada).await, "Circe")["edition"]["isbn13"],
+        CIRCE_ISBN
+    );
+}
+
+/// A cooldown longer than a row's 60 s budget is not waited for: the rows are skipped at once.
+#[sqlx::test]
+async fn a_long_cooldown_skips_at_once(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    app.catalog.fail_all(FakeError::Throttled);
+    app.state
+        .outbound
+        .ol_api
+        .cool_down(Duration::from_secs(3600));
+    let started = Instant::now();
+    let job = import(&app, &ada, FIXTURE).await;
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert_eq!(job["status"], "done");
+    assert_eq!(job["imported"], 0);
+    assert_eq!(job["skips"][2]["code"], "catalog_unavailable");
+    // One try per row: two ISBNs and three titles.
+    assert_eq!(app.catalog.calls().len(), 5, "{:?}", app.catalog.calls());
+}
+
+/// A lookup that takes a while and records how many calls run at once.
+#[derive(Default)]
+struct SlowLookup {
+    running: AtomicUsize,
+    most: AtomicUsize,
+    calls: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl CatalogLookup for SlowLookup {
+    async fn resolve_isbn(
+        &self,
+        _conn: &mut PgConnection,
+        _isbn: &Isbn13,
+    ) -> Result<Option<Resolved>, LookupError> {
+        Ok(None)
+    }
+
+    async fn resolve_isbn_remote(
+        &self,
+        _conn: &mut PgConnection,
+        _isbn: &Isbn13,
+    ) -> Result<Option<Resolved>, LookupError> {
+        Ok(None)
+    }
+
+    async fn resolve_text(
+        &self,
+        _conn: &mut PgConnection,
+        _title: &str,
+        _authors: &str,
+    ) -> Result<Option<Resolved>, LookupError> {
+        let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
+        self.most.fetch_max(now, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        self.running.fetch_sub(1, Ordering::SeqCst);
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(None)
+    }
+}
+
+/// The jobs of many users share two lookup slots, so they never hold more than two pool
+/// connections through remote calls.
+#[sqlx::test]
+async fn jobs_share_two_lookup_slots(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let rows = parse_goodreads_csv(&csv(&["Dune,,,,,to-read", "Emma,,,,,to-read"])).unwrap();
+    let rows = serde_json::to_string(&rows.rows).unwrap();
+    for name in ["ada", "grace", "alan", "edsger", "barbara"] {
+        let user = app.user(name).await;
+        app.exec(&format!(
+            "INSERT INTO import_jobs (user_id, rows, total) VALUES ({}, '{rows}', 2)",
+            user.id()
+        ))
+        .await;
+    }
+    let lookup = Arc::new(SlowLookup::default());
+    let mut state = app.state.clone();
+    state.lookup = lookup.clone();
+    goodreads::resume(state).await;
+    app.settle().await;
+    assert_eq!(lookup.calls.load(Ordering::SeqCst), 10);
+    let most = lookup.most.load(Ordering::SeqCst);
+    assert!((1..=2).contains(&most), "{most} lookups ran at once");
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM import_jobs WHERE status = 'done' AND processed = 2")
+            .await,
+        5
     );
 }
 
@@ -617,8 +779,45 @@ async fn resume_continues_at_processed(db: PgPool) {
     );
 }
 
+/// Two runs of one job (a resume racing a fresh spawn) handle each row once: a run that finds
+/// `processed` past its row stops.
+#[sqlx::test]
+async fn two_runs_of_one_job_handle_each_row_once(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    program_fixture(&app);
+    let parsed = parse_goodreads_csv(FIXTURE).unwrap();
+    let rows = serde_json::to_string(&parsed.rows).unwrap();
+    let skips = serde_json::to_string(&parsed.skips).unwrap();
+    app.exec(&format!(
+        "INSERT INTO import_jobs (id, user_id, rows, total, skipped, skips)
+         VALUES (20, {}, '{rows}', 3, 2, '{skips}')",
+        ada.id()
+    ))
+    .await;
+    goodreads::resume(app.state.clone()).await;
+    goodreads::resume(app.state.clone()).await;
+    app.settle().await;
+
+    let job = ada.get("/api/shelf/import/20").await.json();
+    assert_eq!(job["status"], "done");
+    assert_eq!(job["total"], 3);
+    assert_eq!(job["processed"], 3);
+    assert_eq!(job["imported"], 2);
+    assert_eq!(job["skipped"], 3);
+    assert_eq!(
+        job["skips"],
+        json!([
+            skip("Custom Shelf Book", "unknown_shelf", "Unknown shelf"),
+            skip("Untitled", "no_title", "No title"),
+            skip("Unmatched Novel", "no_match", "No match"),
+        ])
+    );
+    assert_eq!(items(&ada).await.len(), 2);
+}
+
 /// A job that cannot go on (here: rows this version cannot read) is marked failed with the
-/// documented error, and no longer blocks a new import.
+/// documented error, its rows are dropped, and it no longer blocks a new import.
 #[sqlx::test]
 async fn a_job_that_breaks_is_marked_failed(db: PgPool) {
     let app = TestApp::new(db).await;
@@ -633,8 +832,72 @@ async fn a_job_that_breaks_is_marked_failed(db: PgPool) {
     let job = ada.get("/api/shelf/import/5").await.json();
     assert_eq!(job["status"], "failed");
     assert_eq!(job["error"], "The import stopped unexpectedly. Try again.");
+    assert_eq!(
+        app.scalar_i64(
+            "SELECT count(*) FROM import_jobs
+             WHERE id = 5 AND jsonb_array_length(rows) = 0 AND finished_at IS NOT NULL"
+        )
+        .await,
+        1
+    );
     upload(&ada, FIXTURE).await.assert_status(202);
     app.settle().await;
+}
+
+/// A database error in the middle of a job fails it there: the rows committed before stay on
+/// the shelf, the failed row is rolled back, and the parsed rows are dropped.
+#[sqlx::test]
+async fn a_job_failing_midway_keeps_the_rows_before(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let mut ids = Vec::new();
+    for title in ["A", "B", "C"] {
+        let work = app.work(title).await;
+        app.catalog.on_text(
+            title,
+            "",
+            FakeHit::Existing {
+                work_id: work.id,
+                edition_id: None,
+            },
+        );
+        ids.push(work.id);
+    }
+    app.exec(&format!(
+        "CREATE FUNCTION refuse_b() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+             IF NEW.work_id = {} THEN RAISE EXCEPTION 'no B'; END IF;
+             RETURN NEW;
+         END $$;
+         CREATE TRIGGER refuse_b BEFORE INSERT ON shelf_entries
+             FOR EACH ROW EXECUTE FUNCTION refuse_b();",
+        ids[1]
+    ))
+    .await;
+    let job = import(
+        &app,
+        &ada,
+        &csv(&["A,,,,,to-read", "B,,,,,to-read", "C,,,,,to-read"]),
+    )
+    .await;
+    assert_eq!(job["status"], "failed");
+    assert_eq!(job["error"], "The import stopped unexpectedly. Try again.");
+    assert_eq!(job["processed"], 1);
+    assert_eq!(job["imported"], 1);
+    assert_eq!(job["skipped"], 0);
+    let shelf = items(&ada).await;
+    assert_eq!(shelf.len(), 1);
+    assert_eq!(shelf[0]["book"]["id"], ids[0]);
+    assert_eq!(
+        app.scalar_i64(
+            "SELECT count(*) FROM import_jobs
+             WHERE jsonb_array_length(rows) = 0 AND finished_at IS NOT NULL"
+        )
+        .await,
+        1
+    );
+    // C was never looked up.
+    assert!(!app.catalog.calls().contains(&"text:C|".to_owned()));
 }
 
 /// A lookup that resolves to a merged-away work shelves the work it was merged into.
@@ -660,6 +923,63 @@ async fn merged_works_resolve_to_their_target(db: PgPool) {
     let job = import(&app, &ada, &csv(&["Circe,,,,,to-read"])).await;
     assert_eq!(job["imported"], 1);
     assert_eq!(items(&ada).await[0]["book"]["id"], target.id);
+}
+
+/// Whether a query on `import_jobs` waits for a lock right now.
+async fn import_insert_waits(app: &TestApp) -> bool {
+    app.scalar_i64(
+        "SELECT count(*) FROM pg_stat_activity
+         WHERE datname = current_database() AND wait_event_type = 'Lock'
+           AND query LIKE '%INSERT INTO import_jobs%'",
+    )
+    .await
+        > 0
+}
+
+/// An upload whose client goes away while the job row is written still runs its job: the row
+/// and its task start together, so no job is left `queued` without a task (which would answer
+/// every later upload with 409 until a restart).
+#[sqlx::test]
+async fn a_cancelled_upload_never_strands_its_job(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    program_fixture(&app);
+    // Hold ada's row, so the job's INSERT waits in its foreign key check.
+    let mut blocker = app.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+        .bind(ada.id())
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+    {
+        let request = upload(&ada, FIXTURE);
+        tokio::pin!(request);
+        let mut polls = 0;
+        while !import_insert_waits(&app).await {
+            tokio::select! {
+                res = &mut request => panic!("the upload answered: {}", res.text()),
+                () = tokio::time::sleep(Duration::from_millis(10)) => {}
+            }
+            polls += 1;
+            assert!(polls < 500, "the job's INSERT never waited for the lock");
+        }
+        // The client goes away: the request (and the handler) is dropped here.
+    }
+    blocker.rollback().await.unwrap();
+    // The INSERT commits once the lock is free.
+    for _ in 0..500 {
+        if app.scalar_i64("SELECT count(*) FROM import_jobs").await > 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    app.settle().await;
+    let status: String = sqlx::query_scalar("SELECT status FROM import_jobs")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(status, "done");
+    assert_eq!(items(&ada).await.len(), 2);
 }
 
 /// Two uploads at once: one job, one 409 (the `import_jobs_one_active` index decides).
