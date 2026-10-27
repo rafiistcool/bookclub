@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE shelf_entries AS s SET shelf_position = v.rank\n         FROM unnest($1::int8[], $2::int4[]) AS v (id, rank)\n         WHERE s.id = v.id AND s.shelf_position IS DISTINCT FROM v.rank",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int4Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cfa4ff900bde411c2149b2d05d41e9ec73cc8b4b1ea9242511e7584e228740be"
+}

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO search_history (user_id, query, normalized_query, last_used_at)\n         VALUES ($1, $2, $3, now())\n         ON CONFLICT ON CONSTRAINT search_history_user_query_key\n         DO UPDATE SET query = EXCLUDED.query, last_used_at = EXCLUDED.last_used_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a5bdb233abcc1b78d926dab8e2253e2eeb73cb9cfb485c213b9dc4b3892485b3"
+}

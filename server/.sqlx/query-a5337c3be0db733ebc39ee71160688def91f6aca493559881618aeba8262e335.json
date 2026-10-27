@@ -1,0 +1,33 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE quotes\n         SET body = coalesce($3, body),\n             page = CASE WHEN $4 THEN $5 ELSE page END,\n             visibility = coalesce($6, visibility),\n             updated_at = now()\n         WHERE id = $1 AND user_id = $2\n         RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "quotes",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Bool",
+        "Int4",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a5337c3be0db733ebc39ee71160688def91f6aca493559881618aeba8262e335"
+}

@@ -1,0 +1,92 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT q.id AS \"id!\", q.user_id AS \"user_id!\", u.username, q.work_id AS \"work_id!\",\n                  q.edition_id, q.body AS \"body!\", q.page,\n                  q.visibility AS \"visibility!: Visibility\", q.created_at AS \"created_at!\",\n                  q.is_self AS \"is_self!\"\n           FROM bc_visible_quotes($1) AS q\n           JOIN users u ON u.id = q.user_id\n           WHERE q.id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "username",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "username"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "work_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "edition_id",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "body!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "page",
+        "type_info": "Int4",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "visibility!: Visibility",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "is_self!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      false,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "4f76e7952580322fd488ef926bec778f42ebb92450d5d9e4144e3b6b1a3e65d8"
+}

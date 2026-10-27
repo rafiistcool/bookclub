@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE import_jobs\n         SET processed = processed + 1,\n             imported = imported + $2,\n             skipped = skipped + $3,\n             skips = CASE WHEN $4::jsonb IS NULL OR jsonb_array_length(skips) >= $5 THEN skips\n                          ELSE skips || jsonb_build_array($4::jsonb) END\n         WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int4",
+        "Int4",
+        "Jsonb",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "68ecbb235a02866bcdf2c61696ca0a44c971a9c58056e7b613a464646ff85d8d"
+}

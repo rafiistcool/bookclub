@@ -1,0 +1,197 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, user_id, work_id, edition_id, status AS \"status: ShelfStatus\", position,\n                  shelf_position, rating, rating_visibility AS \"rating_visibility: Visibility\",\n                  take, dnf_reason, progress, updated_at, started_at, finished_at\n           FROM shelf_entries\n           WHERE id = $1 AND user_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "shelf_entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "shelf_entries",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "work_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "shelf_entries",
+            "name": "work_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "edition_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "shelf_entries",
+            "name": "edition_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "status: ShelfStatus",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "shelf_entries",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "position",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "shelf_entries",
+            "name": "position"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "shelf_position",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "shelf_entries",
+            "name": "shelf_position"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "rating",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "shelf_entries",
+            "name": "rating"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "rating_visibility: Visibility",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "shelf_entries",
+            "name": "rating_visibility"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "take",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "shelf_entries",
+            "name": "take"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "dnf_reason",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "shelf_entries",
+            "name": "dnf_reason"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "progress",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "shelf_entries",
+            "name": "progress"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "shelf_entries",
+            "name": "updated_at"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "started_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "shelf_entries",
+            "name": "started_at"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "finished_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "shelf_entries",
+            "name": "finished_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "b6fb07dc7bc54682e47ce339dc9e10a2e4d4aed02a4f6bc9c085181088459e53"
+}
