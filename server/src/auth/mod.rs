@@ -111,7 +111,7 @@ pub async fn user_out(conn: &mut PgConnection, user_id: i64) -> ApiResult<UserOu
                   (SELECT t.email FROM email_tokens t
                    WHERE t.user_id = u.id AND t.purpose = 'verify_email'
                      AND t.used_at IS NULL AND t.expires_at > now()
-                   ORDER BY t.created_at DESC, t.id DESC LIMIT 1) AS open_verification,
+                   ORDER BY t.id DESC LIMIT 1) AS open_verification,
                   (u.email IS NULL AND u.email_prompt_dismissed_at IS NULL) AS "needs_email_prompt!",
                   u.theme, u.color_mode, u.locale, u.timezone, u.is_admin,
                   m.public_id AS "avatar_public_id?"

@@ -3,14 +3,20 @@
 mod common;
 
 use std::net::IpAddr;
+use std::time::Duration;
 
 use bookclub_server::media::shared::{MediaStore, NewMedia, register, urls};
 use bytes::Bytes;
 use common::*;
 use serde_json::json;
 use sqlx::PgPool;
+use tokio::sync::OwnedSemaphorePermit;
+use tokio::time::timeout;
 
 const TRANSFER_CLUBS_FIRST: &str = "Transfer or delete your clubs first";
+
+/// How long a test waits for a step that must not wait for the other transaction.
+const WAIT: Duration = Duration::from_secs(5);
 
 fn ip(n: u16) -> IpAddr {
     format!("2001:db8:{n:x}::1").parse().unwrap()
@@ -22,9 +28,9 @@ async fn delete_me(client: &TestClient, password: &str) -> TestResponse {
         .await
 }
 
-/// Stores the bytes of an uploaded picture and registers its media row. Returns the row id and
-/// its storage prefix.
-async fn upload(app: &TestApp, uploader: i64, kind: &str, seed: u8) -> (i64, String) {
+/// Stores the bytes of an uploaded picture and registers its media row (`uploaded_by` =
+/// `uploader`). Returns the row id and its storage prefix.
+async fn upload(app: &TestApp, uploader: Option<i64>, kind: &str, seed: u8) -> (i64, String) {
     let public_id = urls::new_public_id();
     let variants: &[&str] = if kind == "avatar" {
         &["a"]
@@ -55,7 +61,7 @@ async fn upload(app: &TestApp, uploader: i64, kind: &str, seed: u8) -> (i64, Str
             byte_size: 16,
             sha256: [seed; 32],
             dominant_color: None,
-            uploaded_by: Some(uploader),
+            uploaded_by: uploader,
             created_at: None,
         },
     )
@@ -114,6 +120,44 @@ async fn count(app: &TestApp, sql: &str) -> i64 {
     app.scalar_i64(sql).await
 }
 
+/// Takes every permit of the password semaphore: until the guard drops, no password is hashed
+/// or verified, and requests that need one wait.
+async fn hold_passwords(app: &TestApp) -> OwnedSemaphorePermit {
+    let permits = app.state.passwords.permits.clone();
+    let all = u32::try_from(permits.available_permits()).unwrap();
+    permits.acquire_many_owned(all).await.unwrap()
+}
+
+/// Waits until a statement of this test's database waits for a lock held by another
+/// transaction.
+async fn wait_for_a_lock(app: &TestApp, who: &str) {
+    for attempt in 0.. {
+        let waiting = count(
+            app,
+            "SELECT count(*) FROM pg_stat_activity
+             WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .await;
+        if waiting > 0 {
+            return;
+        }
+        assert!(attempt < 500, "{who} never waited for the lock");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// Makes a new picture `user`'s avatar (`uploaded_by` = `uploader`). Returns the row id and its
+/// storage prefix.
+async fn avatar_of(app: &TestApp, user: &TestClient, uploader: Option<i64>) -> (i64, String) {
+    let (avatar, prefix) = upload(app, uploader, "avatar", 5).await;
+    app.exec(&format!(
+        "UPDATE users SET avatar_media_id = {avatar} WHERE id = {}",
+        user.id()
+    ))
+    .await;
+    (avatar, prefix)
+}
+
 #[sqlx::test]
 async fn deletion_removes_personal_data_and_every_avatar(db: PgPool) {
     let app = TestApp::new(db).await;
@@ -170,20 +214,20 @@ async fn deletion_removes_personal_data_and_every_avatar(db: PgPool) {
     // cover. Bob has an avatar of his own.
     let mut avatars = Vec::new();
     for seed in 1..=3 {
-        avatars.push(upload(&app, id, "avatar", seed).await);
+        avatars.push(upload(&app, Some(id), "avatar", seed).await);
     }
     app.exec(&format!(
         "UPDATE users SET avatar_media_id = {} WHERE id = {id}",
         avatars[2].0
     ))
     .await;
-    let (cover, cover_prefix) = upload(&app, id, "cover", 9).await;
+    let (cover, cover_prefix) = upload(&app, Some(id), "cover", 9).await;
     app.exec(&format!(
         "UPDATE works SET cover_media_id = {cover} WHERE id = {}",
         work.id
     ))
     .await;
-    let (bobs_avatar, bobs_prefix) = upload(&app, bob.id(), "avatar", 7).await;
+    let (bobs_avatar, bobs_prefix) = upload(&app, Some(bob.id()), "avatar", 7).await;
     app.exec(&format!(
         "UPDATE users SET avatar_media_id = {bobs_avatar} WHERE id = {}",
         bob.id()
@@ -635,14 +679,23 @@ async fn a_bearer_token_can_delete_the_account(db: PgPool) {
         .unwrap()
         .to_owned();
     let phone = app.anon().with_bearer(&token);
-    delete_me(&phone, PASSWORD).await.assert_status(204);
+    let res = delete_me(&phone, PASSWORD).await;
+    res.assert_status(204);
+    // The clearing cookie goes to every caller (§5.6).
+    let cookies = res.set_cookies();
+    assert_eq!(cookies.len(), 1, "{cookies:?}");
+    assert!(
+        cookies[0].starts_with("bookclub_session=;") && cookies[0].contains("Max-Age=0"),
+        "{}",
+        cookies[0]
+    );
     phone.get("/api/auth/me").await.assert_status(401);
     assert_eq!(count(&app, "SELECT count(*) FROM users").await, 0);
 }
 
 /// A transfer that makes the user owner of a club while the deletion runs is caught by the
 /// deferred `clubs_have_owner` check at COMMIT, and answered like any owned club: 409, and
-/// nothing is deleted.
+/// nothing is deleted. The avatar bytes go only after COMMIT, so they stay too.
 #[sqlx::test]
 async fn becoming_an_owner_during_the_deletion_is_409(db: PgPool) {
     let app = TestApp::new(db).await;
@@ -650,6 +703,7 @@ async fn becoming_an_owner_during_the_deletion_is_409(db: PgPool) {
     let ada = app.user("ada").await;
     let readers = app.club(&bob, "Readers").await;
     app.join(&readers, &ada, "admin").await;
+    let (avatar, prefix) = avatar_of(&app, &ada, Some(ada.id())).await;
 
     // Bob hands the club to Ada in a transaction that is still open.
     let mut transfer = app.db.begin().await.unwrap();
@@ -665,19 +719,7 @@ async fn becoming_an_owner_during_the_deletion_is_409(db: PgPool) {
     let client = ada.clone();
     let deleting = tokio::spawn(async move { delete_me(&client, PASSWORD).await });
     // The deletion did not see the transfer and now waits for Ada's membership row.
-    for attempt in 0.. {
-        let waiting = count(
-            &app,
-            "SELECT count(*) FROM pg_stat_activity
-             WHERE datname = current_database() AND wait_event_type = 'Lock'",
-        )
-        .await;
-        if waiting > 0 {
-            break;
-        }
-        assert!(attempt < 500, "the deletion never waited for the transfer");
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
+    wait_for_a_lock(&app, "the deletion").await;
     transfer.commit().await.unwrap();
 
     deleting
@@ -698,4 +740,210 @@ async fn becoming_an_owner_during_the_deletion_is_409(db: PgPool) {
         .await,
         1
     );
+    assert_eq!(
+        count(
+            &app,
+            &format!("SELECT count(*) FROM media WHERE id = {avatar}")
+        )
+        .await,
+        1
+    );
+    assert_eq!(stored_under(&app, &prefix), 1);
+}
+
+/// A join that commits while the deletion waits for the club row is counted: 409, and nothing
+/// is deleted. The join locks the club and then needs the inviter's row for `invited_by`; the
+/// deletion locks in the same order (§5.3, §5.6), so the two cannot deadlock.
+#[sqlx::test]
+async fn a_join_during_the_deletion_is_409(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let solo = app.club(&ada, "Solo").await;
+
+    // Bob accepts Ada's invite: the club row first, like every membership write.
+    let mut join = app.db.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM clubs WHERE id = $1 FOR UPDATE")
+        .bind(solo.id)
+        .execute(&mut *join)
+        .await
+        .unwrap();
+    let client = ada.clone();
+    let deleting = tokio::spawn(async move { delete_me(&client, PASSWORD).await });
+    wait_for_a_lock(&app, "the deletion").await;
+    // The membership's foreign key needs Ada's row, which the deletion does not hold yet.
+    timeout(
+        WAIT,
+        sqlx::query(
+            "INSERT INTO club_memberships (club_id, user_id, role, invited_by)
+             VALUES ($1, $2, 'member', $3)",
+        )
+        .bind(solo.id)
+        .bind(bob.id())
+        .bind(ada.id())
+        .execute(&mut *join),
+    )
+    .await
+    .expect("the join waited for the deletion")
+    .unwrap();
+    join.commit().await.unwrap();
+
+    deleting
+        .await
+        .unwrap()
+        .assert_detail(409, TRANSFER_CLUBS_FIRST);
+    ada.get("/api/auth/me").await.assert_status(200);
+    assert_eq!(
+        count(
+            &app,
+            &format!(
+                "SELECT count(*) FROM club_memberships WHERE club_id = {}",
+                solo.id
+            )
+        )
+        .await,
+        2
+    );
+}
+
+/// A reply written while the deletion runs keeps its parent. The deletion locks the user's
+/// posts before it decides which to delete, so a reply in flight commits first and its parent
+/// becomes a tombstone.
+#[sqlx::test]
+async fn a_reply_written_during_the_deletion_keeps_its_parent(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let work = app.work("Circe").await;
+    let diary = post(&app, work.id, ada.id(), None, None, "ada's diary").await;
+
+    // Bob's reply is written, so its foreign key holds the parent, but not committed.
+    let mut reply = app.db.begin().await.unwrap();
+    let reply_id: i64 = sqlx::query_scalar(
+        "INSERT INTO posts (work_id, author_id, parent_id, body)
+         VALUES ($1, $2, $3, 'bob replies') RETURNING id",
+    )
+    .bind(work.id)
+    .bind(bob.id())
+    .bind(diary)
+    .fetch_one(&mut *reply)
+    .await
+    .unwrap();
+    let client = ada.clone();
+    let deleting = tokio::spawn(async move { delete_me(&client, PASSWORD).await });
+    wait_for_a_lock(&app, "the deletion").await;
+    reply.commit().await.unwrap();
+
+    deleting.await.unwrap().assert_status(204);
+    let parent: (Option<i64>, String, bool) =
+        sqlx::query_as("SELECT author_id, body, deleted_at IS NOT NULL FROM posts WHERE id = $1")
+            .bind(diary)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(parent, (None, String::new(), true));
+    assert_eq!(
+        count(
+            &app,
+            &format!(
+                "SELECT count(*) FROM posts
+                 WHERE id = {reply_id} AND parent_id = {diary} AND author_id = {}",
+                bob.id()
+            )
+        )
+        .await,
+        1
+    );
+}
+
+/// A deletion verified against a hash that a password reset replaced meanwhile deletes nothing
+/// (§5.4): the reset wins.
+#[sqlx::test]
+async fn a_deletion_racing_a_reset_deletes_nothing(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let (avatar, prefix) = avatar_of(&app, &ada, Some(ada.id())).await;
+    let reset = app.state.passwords.hash("resetpassword1").await.unwrap();
+    let key = format!("u:{}", ada.id());
+    // Nine earlier failures: the deletion's own hit blocks the key, which shows that it has
+    // read the old hash.
+    for _ in 0..9 {
+        app.state.limits.login_failures.hit(&key);
+    }
+    let held = hold_passwords(&app).await;
+    let deleting = tokio::spawn({
+        let ada = ada.clone();
+        async move { delete_me(&ada, PASSWORD).await }
+    });
+    timeout(WAIT, async {
+        while !app.state.limits.login_failures.is_limited(&key) {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    })
+    .await
+    .expect("the deletion never reached the password check");
+    app.exec(&format!(
+        "UPDATE users SET password_hash = '{reset}' WHERE id = {}",
+        ada.id()
+    ))
+    .await;
+    drop(held);
+
+    let res = deleting.await.unwrap();
+    res.assert_detail(400, "Current password is wrong");
+    assert!(res.set_cookies().is_empty());
+    ada.get("/api/auth/me").await.assert_status(200);
+    assert_eq!(
+        count(
+            &app,
+            &format!("SELECT count(*) FROM sessions WHERE user_id = {}", ada.id())
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        count(
+            &app,
+            &format!("SELECT count(*) FROM media WHERE id = {avatar}")
+        )
+        .await,
+        1
+    );
+    assert_eq!(stored_under(&app, &prefix), 1);
+}
+
+/// The current avatar goes with the account even when no uploader is recorded on it; another
+/// user's avatar without an uploader stays.
+#[sqlx::test]
+async fn the_current_avatar_goes_even_without_an_uploader(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let (avatar, prefix) = avatar_of(&app, &ada, None).await;
+    let (bobs_avatar, bobs_prefix) = upload(&app, None, "avatar", 6).await;
+    app.exec(&format!(
+        "UPDATE users SET avatar_media_id = {bobs_avatar} WHERE id = {}",
+        bob.id()
+    ))
+    .await;
+
+    delete_me(&ada, PASSWORD).await.assert_status(204);
+    assert_eq!(
+        count(
+            &app,
+            &format!("SELECT count(*) FROM media WHERE id = {avatar}")
+        )
+        .await,
+        0
+    );
+    assert_eq!(stored_under(&app, &prefix), 0);
+    assert_eq!(
+        count(
+            &app,
+            &format!("SELECT count(*) FROM media WHERE id = {bobs_avatar}")
+        )
+        .await,
+        1
+    );
+    assert_eq!(stored_under(&app, &bobs_prefix), 1);
 }

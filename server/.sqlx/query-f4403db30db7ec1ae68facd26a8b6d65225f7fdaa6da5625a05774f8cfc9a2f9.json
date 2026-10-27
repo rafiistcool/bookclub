@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT u.id, u.username, u.email, u.email_verified_at IS NOT NULL AS \"email_verified!\",\n                  (SELECT t.email FROM email_tokens t\n                   WHERE t.user_id = u.id AND t.purpose = 'verify_email'\n                     AND t.used_at IS NULL AND t.expires_at > now()\n                   ORDER BY t.created_at DESC, t.id DESC LIMIT 1) AS open_verification,\n                  (u.email IS NULL AND u.email_prompt_dismissed_at IS NULL) AS \"needs_email_prompt!\",\n                  u.theme, u.color_mode, u.locale, u.timezone, u.is_admin,\n                  m.public_id AS \"avatar_public_id?\"\n           FROM users u\n           LEFT JOIN media m ON m.id = u.avatar_media_id AND m.removed_at IS NULL\n           WHERE u.id = $1",
+  "query": "SELECT u.id, u.username, u.email, u.email_verified_at IS NOT NULL AS \"email_verified!\",\n                  (SELECT t.email FROM email_tokens t\n                   WHERE t.user_id = u.id AND t.purpose = 'verify_email'\n                     AND t.used_at IS NULL AND t.expires_at > now()\n                   ORDER BY t.id DESC LIMIT 1) AS open_verification,\n                  (u.email IS NULL AND u.email_prompt_dismissed_at IS NULL) AS \"needs_email_prompt!\",\n                  u.theme, u.color_mode, u.locale, u.timezone, u.is_admin,\n                  m.public_id AS \"avatar_public_id?\"\n           FROM users u\n           LEFT JOIN media m ON m.id = u.avatar_media_id AND m.removed_at IS NULL\n           WHERE u.id = $1",
   "describe": {
     "columns": [
       {
@@ -141,5 +141,5 @@
       true
     ]
   },
-  "hash": "e502dbb8de116394f5a40187fa35f7e328f1610104685c1f94af7f0e4181daf2"
+  "hash": "f4403db30db7ec1ae68facd26a8b6d65225f7fdaa6da5625a05774f8cfc9a2f9"
 }

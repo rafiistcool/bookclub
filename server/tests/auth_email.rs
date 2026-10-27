@@ -3,13 +3,23 @@
 
 mod common;
 
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use bookclub_server::email::{Email, EmailSender};
+use bookclub_server::ratelimit::RateLimits;
 use common::*;
 use serde_json::{Value, json};
 use sqlx::PgPool;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::time::timeout;
 
 const LINK_EXPIRED: &str = "That link has expired or was already used";
 const INVALID_EMAIL: &str = "Enter a valid email address";
 const SLOW_DOWN: &str = "Slow down a little. Try again later.";
+
+/// How long a test waits for an answer that must not wait for anything.
+const WAIT: Duration = Duration::from_secs(5);
 
 async fn verify(app: &TestApp, token: &str) -> TestResponse {
     app.anon()
@@ -17,10 +27,14 @@ async fn verify(app: &TestApp, token: &str) -> TestResponse {
         .await
 }
 
-async fn resend(client: &TestClient) -> TestResponse {
-    client
+/// `POST /api/auth/verify-email/resend`, then waits for the mail, which goes out after the
+/// answer.
+async fn resend(app: &TestApp, client: &TestClient) -> TestResponse {
+    let res = client
         .post("/api/auth/verify-email/resend", json!({}))
-        .await
+        .await;
+    app.settle().await;
+    res
 }
 
 async fn change_email(client: &TestClient, email: &str) -> TestResponse {
@@ -51,6 +65,47 @@ async fn open_tokens(app: &TestApp, user_id: i64) -> Vec<String> {
     .unwrap()
 }
 
+/// Takes every permit of the password semaphore: until the guard drops, no password is hashed
+/// or verified, and requests that need one wait.
+async fn hold_passwords(app: &TestApp) -> OwnedSemaphorePermit {
+    let permits = app.state.passwords.permits.clone();
+    let all = u32::try_from(permits.available_permits()).unwrap();
+    permits.acquire_many_owned(all).await.unwrap()
+}
+
+/// A mail transport that keeps every message waiting until [`GatedEmail::open`], then records
+/// its recipient.
+struct GatedEmail {
+    gate: Semaphore,
+    sent: Mutex<Vec<String>>,
+}
+
+impl GatedEmail {
+    fn closed() -> Self {
+        GatedEmail {
+            gate: Semaphore::new(0),
+            sent: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn open(&self) {
+        self.gate.add_permits(1000);
+    }
+
+    fn recipients(&self) -> Vec<String> {
+        self.sent.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl EmailSender for GatedEmail {
+    async fn send(&self, msg: Email) -> anyhow::Result<()> {
+        let _permit = self.gate.acquire().await?;
+        self.sent.lock().unwrap().push(msg.to);
+        Ok(())
+    }
+}
+
 /// An account imported from the legacy instance: no address at all.
 async fn imported(app: &TestApp, username: &str) -> TestClient {
     let client = app.user_unverified(username).await;
@@ -66,7 +121,7 @@ async fn imported(app: &TestApp, username: &str) -> TestClient {
 async fn a_link_verifies_the_address_once(db: PgPool) {
     let app = TestApp::new(db).await;
     let ada = app.user_unverified("ada").await;
-    resend(&ada).await.assert_status(204);
+    resend(&app, &ada).await.assert_status(204);
     let mails = app.email.sent_to("ada@example.test");
     assert_eq!(mails.len(), 1);
     assert_eq!(mails[0].subject, "Confirm your email address for Bookclub");
@@ -114,7 +169,7 @@ async fn malformed_unknown_expired_and_reset_tokens_are_refused(db: PgPool) {
         .await
         .assert_detail(400, "Field required");
 
-    resend(&ada).await.assert_status(204);
+    resend(&app, &ada).await.assert_status(204);
     let token = app.last_link_token("ada@example.test");
     app.exec("UPDATE email_tokens SET expires_at = now() - interval '1 second'")
         .await;
@@ -136,9 +191,9 @@ async fn malformed_unknown_expired_and_reset_tokens_are_refused(db: PgPool) {
 async fn a_new_link_kills_the_old_one(db: PgPool) {
     let app = TestApp::new(db).await;
     let ada = app.user_unverified("ada").await;
-    resend(&ada).await.assert_status(204);
+    resend(&app, &ada).await.assert_status(204);
     let first = app.last_link_token("ada@example.test");
-    resend(&ada).await.assert_status(204);
+    resend(&app, &ada).await.assert_status(204);
     let second = app.last_link_token("ada@example.test");
     assert_ne!(first, second);
     assert_eq!(
@@ -154,7 +209,7 @@ async fn a_new_link_kills_the_old_one(db: PgPool) {
 async fn changing_the_address_kills_the_old_link(db: PgPool) {
     let app = TestApp::new(db).await;
     let ada = app.user_unverified("ada").await;
-    resend(&ada).await.assert_status(204);
+    resend(&app, &ada).await.assert_status(204);
     let old = app.last_link_token("ada@example.test");
     change_email(&ada, " new@example.test ")
         .await
@@ -178,9 +233,9 @@ async fn changing_the_address_kills_the_old_link(db: PgPool) {
 async fn only_the_newest_link_for_the_pending_address_verifies(db: PgPool) {
     let app = TestApp::new(db).await;
     let ada = app.user_unverified("ada").await;
-    resend(&ada).await.assert_status(204);
+    resend(&app, &ada).await.assert_status(204);
     let first = app.last_link_token("ada@example.test");
-    resend(&ada).await.assert_status(204);
+    resend(&app, &ada).await.assert_status(204);
     let second = app.last_link_token("ada@example.test");
     // Reopen the voided link: it is still not the newest.
     app.exec("UPDATE email_tokens SET used_at = NULL").await;
@@ -194,6 +249,35 @@ async fn only_the_newest_link_for_the_pending_address_verifies(db: PgPool) {
     .await;
     verify(&app, &second).await.assert_detail(400, LINK_EXPIRED);
     assert_eq!(me(&ada).await["email_verified"], false);
+}
+
+/// The newest link is the one issued last. `created_at` is the start of the issuing
+/// transaction, so a request that began first but waited for the account lock issues the later
+/// link with the earlier time; that link is still the newest, for verify and `pending_email`.
+#[sqlx::test]
+async fn the_link_issued_last_is_the_newest_whatever_its_time(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    change_email(&ada, "first@example.test")
+        .await
+        .assert_status(204);
+    change_email(&ada, "second@example.test")
+        .await
+        .assert_status(204);
+    // The voided first link carries the later time, and is open again.
+    app.exec(
+        "UPDATE email_tokens SET created_at = now() + interval '1 minute', used_at = NULL
+         WHERE email = 'first@example.test'",
+    )
+    .await;
+    assert_eq!(me(&ada).await["pending_email"], "second@example.test");
+    verify(&app, &app.last_link_token("first@example.test"))
+        .await
+        .assert_detail(400, LINK_EXPIRED);
+    verify(&app, &app.last_link_token("second@example.test"))
+        .await
+        .assert_status(204);
+    assert_eq!(me(&ada).await["email"], "second@example.test");
 }
 
 /// A verified address stays until the new one is verified; the old address gets a notice.
@@ -422,12 +506,12 @@ async fn invalid_addresses_are_refused_before_the_password(db: PgPool) {
 async fn email_change_and_resend_share_a_limit(db: PgPool) {
     let app = TestApp::new(db).await;
     let ada = app.user_unverified("ada").await;
-    resend(&ada).await.assert_status(204);
+    resend(&app, &ada).await.assert_status(204);
     change_email(&ada, "two@example.test")
         .await
         .assert_status(204);
-    resend(&ada).await.assert_status(204);
-    let limited = resend(&ada).await;
+    resend(&app, &ada).await.assert_status(204);
+    let limited = resend(&app, &ada).await;
     limited.assert_detail(429, SLOW_DOWN);
     assert!(limited.header("retry-after").is_some());
     change_email(&ada, "three@example.test")
@@ -437,7 +521,7 @@ async fn email_change_and_resend_share_a_limit(db: PgPool) {
     assert_eq!(app.sent_emails().len(), 3);
     // Another account has its own bucket.
     let bob = app.user_unverified("bob").await;
-    resend(&bob).await.assert_status(204);
+    resend(&app, &bob).await.assert_status(204);
 }
 
 /// Mail to one address counts against 6 a day across accounts; over it nothing is sent and the
@@ -471,7 +555,7 @@ async fn an_imported_user_adds_an_address(db: PgPool) {
     let account = me(&ada).await;
     assert_eq!(account["email"], Value::Null);
     assert_eq!(account["needs_email_prompt"], true);
-    resend(&ada)
+    resend(&app, &ada)
         .await
         .assert_detail(400, "Add an email address first");
 
@@ -542,7 +626,7 @@ async fn resend_on_a_verified_account_renews_only_a_pending_change(db: PgPool) {
     let ada = app.user("ada").await;
     // Nothing to verify: nothing is sent and nothing counts against the limit.
     for _ in 0..4 {
-        resend(&ada).await.assert_status(204);
+        resend(&app, &ada).await.assert_status(204);
     }
     assert!(app.sent_emails().is_empty());
 
@@ -550,7 +634,7 @@ async fn resend_on_a_verified_account_renews_only_a_pending_change(db: PgPool) {
         .await
         .assert_status(204);
     let first = app.last_link_token("new@example.test");
-    resend(&ada).await.assert_status(204);
+    resend(&app, &ada).await.assert_status(204);
     let second = app.last_link_token("new@example.test");
     assert_ne!(first, second);
     assert_eq!(app.email.sent_to("new@example.test").len(), 2);
@@ -571,7 +655,114 @@ async fn resend_to_a_taken_address_sends_nothing(db: PgPool) {
         ada.id()
     ))
     .await;
-    resend(&ada).await.assert_status(204);
+    resend(&app, &ada).await.assert_status(204);
+    assert!(app.sent_emails().is_empty());
+}
+
+/// Resend answers before its mail goes out (§5.5): only a free address gets a link, so the time
+/// a send takes would tell whether a verified account holds the address. A free and a held
+/// address both answer while the transport holds every mail.
+#[sqlx::test]
+async fn resend_answers_before_the_mail_goes_out(db: PgPool) {
+    let app = TestApp::new(db).await;
+    app.user("grace").await;
+    app.user_unverified("ada").await;
+    let eve = app.user_unverified("eve").await;
+    app.exec(&format!(
+        "UPDATE users SET email = 'grace@example.test' WHERE id = {}",
+        eve.id()
+    ))
+    .await;
+    // The same app with a transport that holds every mail until the test opens it, and its
+    // own limits, whose reference count shows when the background mail is done.
+    let email = Arc::new(GatedEmail::closed());
+    let limits = Arc::new(RateLimits::new());
+    let mut state = app.state.clone();
+    state.email = email.clone();
+    state.limits = limits.clone();
+    let router = bookclub_server::app(state);
+    let idle = Arc::strong_count(&limits);
+
+    for name in ["ada", "eve"] {
+        let client = TestClient::for_router(router.clone());
+        client
+            .post(
+                "/api/auth/login",
+                json!({"username": name, "password": PASSWORD}),
+            )
+            .await
+            .assert_status(204);
+        timeout(
+            WAIT,
+            client.post("/api/auth/verify-email/resend", json!({})),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("the answer to {name} waited for the mail"))
+        .assert_status(204);
+    }
+    assert!(email.recipients().is_empty());
+    email.open();
+    timeout(WAIT, async {
+        while Arc::strong_count(&limits) > idle {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the mail was never sent");
+    assert_eq!(email.recipients(), ["ada@example.test"]);
+}
+
+/// An email change verified against a hash that a password reset replaced meanwhile changes
+/// nothing (§5.4): the reset wins.
+#[sqlx::test]
+async fn an_email_change_racing_a_reset_changes_nothing(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    app.exec(&format!(
+        "INSERT INTO email_tokens (user_id, purpose, email, token_hash, expires_at)
+         VALUES ({}, 'reset_password', 'ada@example.test', sha256('r'), now() + interval '1 hour')",
+        ada.id()
+    ))
+    .await;
+    let reset = app.state.passwords.hash("resetpassword1").await.unwrap();
+    let key = format!("u:{}", ada.id());
+    // Nine earlier failures: the change's own hit blocks the key, which shows that it has read
+    // the old hash.
+    for _ in 0..9 {
+        app.state.limits.login_failures.hit(&key);
+    }
+    let held = hold_passwords(&app).await;
+    let changing = tokio::spawn({
+        let ada = ada.clone();
+        async move { change_email(&ada, "new@example.test").await }
+    });
+    timeout(WAIT, async {
+        while !app.state.limits.login_failures.is_limited(&key) {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    })
+    .await
+    .expect("the change never reached the password check");
+    app.exec(&format!(
+        "UPDATE users SET password_hash = '{reset}' WHERE id = {}",
+        ada.id()
+    ))
+    .await;
+    drop(held);
+
+    changing
+        .await
+        .unwrap()
+        .assert_detail(400, "Current password is wrong");
+    let account = me(&ada).await;
+    assert_eq!(account["email"], "ada@example.test");
+    assert_eq!(account["pending_email"], Value::Null);
+    assert_eq!(
+        open_tokens(&app, ada.id()).await,
+        ["reset_password:ada@example.test"],
+        "no new link, and the open reset link stays open"
+    );
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM email_tokens").await, 1);
     assert!(app.sent_emails().is_empty());
 }
 

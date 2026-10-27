@@ -3,15 +3,21 @@
 mod common;
 
 use std::net::IpAddr;
+use std::time::Duration;
 
 use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine};
 use common::*;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
+use tokio::sync::OwnedSemaphorePermit;
+use tokio::time::timeout;
 
 const LINK_EXPIRED: &str = "That link has expired or was already used";
 const NEW_PASSWORD: &str = "a new password";
+
+/// How long a test waits for an answer that must not wait for anything.
+const WAIT: Duration = Duration::from_secs(5);
 
 fn ip(n: u16) -> IpAddr {
     format!("2001:db8:{n:x}::1").parse().unwrap()
@@ -39,6 +45,14 @@ async fn confirm(app: &TestApp, token: &str, password: &str) -> TestResponse {
             json!({"token": token, "new_password": password}),
         )
         .await
+}
+
+/// Takes every permit of the password semaphore: until the guard drops, no password is hashed
+/// or verified, and requests that need one wait.
+async fn hold_passwords(app: &TestApp) -> OwnedSemaphorePermit {
+    let permits = app.state.passwords.permits.clone();
+    let all = u32::try_from(permits.available_permits()).unwrap();
+    permits.acquire_many_owned(all).await.unwrap()
 }
 
 async fn login(app: &TestApp, username: &str, password: &str) -> u16 {
@@ -141,6 +155,35 @@ async fn only_a_verified_address_gets_a_link(db: PgPool) {
         .post("/api/auth/password-reset", json!({}))
         .await
         .assert_detail(400, "Field required");
+}
+
+/// The answer comes before the lookup and the mail (§5.5): while the background work waits for
+/// a lock on the account, the request has already answered.
+#[sqlx::test]
+async fn the_answer_does_not_wait_for_the_lookup_or_the_mail(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    // Issuing the token needs the account row for its foreign key.
+    let mut lock = app.db.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM users WHERE id = $1 FOR UPDATE")
+        .bind(ada.id())
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    timeout(
+        WAIT,
+        app.anon().post(
+            "/api/auth/password-reset",
+            json!({"email": "ada@example.test"}),
+        ),
+    )
+    .await
+    .expect("the answer waited for the background work")
+    .assert_status(204);
+    assert!(app.sent_emails().is_empty());
+    lock.commit().await.unwrap();
+    app.settle().await;
+    assert_eq!(app.email.sent_to("ada@example.test").len(), 1);
 }
 
 /// Five requests per IP address an hour (429); three links per account an hour, silently.
@@ -274,6 +317,7 @@ async fn confirm_checks_the_password_and_the_link(db: PgPool) {
     bob.post("/api/auth/verify-email/resend", json!({}))
         .await
         .assert_status(204);
+    app.settle().await;
     let verification = app.last_link_token("bob@example.test");
     confirm(&app, &verification, NEW_PASSWORD)
         .await
@@ -288,6 +332,22 @@ async fn confirm_checks_the_password_and_the_link(db: PgPool) {
     confirm(&app, &link, NEW_PASSWORD)
         .await
         .assert_detail(400, LINK_EXPIRED);
+    assert_eq!(login(&app, "ada", PASSWORD).await, 204);
+}
+
+/// The token is checked before the new password is hashed (§5.5): a made-up token is refused
+/// while no password can be hashed at all.
+#[sqlx::test]
+async fn a_made_up_token_costs_no_hashing(db: PgPool) {
+    let app = TestApp::new(db).await;
+    app.user("ada").await;
+    let held = hold_passwords(&app).await;
+    let unknown = BASE64_URL_SAFE_NO_PAD.encode([7u8; 32]);
+    timeout(WAIT, confirm(&app, &unknown, NEW_PASSWORD))
+        .await
+        .expect("the made-up token waited for the password hasher")
+        .assert_detail(400, LINK_EXPIRED);
+    drop(held);
     assert_eq!(login(&app, "ada", PASSWORD).await, 204);
 }
 

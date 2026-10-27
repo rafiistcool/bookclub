@@ -3,6 +3,12 @@
 //!
 //! Every flow here locks the `users` row before it touches the user's `email_tokens` rows, so
 //! two flows of one account cannot deadlock.
+//!
+//! The newest verification link of an account is the one with the highest `id`. Every flow that
+//! issues one holds the `users` row lock (sign-up creates the row in the same transaction), and
+//! identity values are taken at insert time, so ids follow the order in which links are issued.
+//! `created_at` does not: it is the start of the issuing transaction, which can be older than a
+//! link another transaction issued and committed while this one waited for the lock.
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -79,7 +85,7 @@ async fn lock_account(conn: &mut PgConnection, user_id: i64) -> sqlx::Result<Opt
                   (SELECT t.email FROM email_tokens t
                    WHERE t.user_id = u.id AND t.purpose = 'verify_email'
                      AND t.used_at IS NULL AND t.expires_at > now()
-                   ORDER BY t.created_at DESC, t.id DESC LIMIT 1) AS open_change
+                   ORDER BY t.id DESC LIMIT 1) AS open_change
            FROM users u
            WHERE u.id = $1
            FOR UPDATE"#,
@@ -130,7 +136,7 @@ pub async fn verify_email(
              AND NOT EXISTS (
                  SELECT 1 FROM email_tokens n
                  WHERE n.user_id = t.user_id AND n.purpose = 'verify_email'
-                   AND (n.created_at, n.id) > (t.created_at, t.id))"#,
+                   AND n.id > t.id)"#,
         hash
     )
     .fetch_optional(&mut *tx)
@@ -171,8 +177,9 @@ pub async fn verify_email(
 ///
 /// Shares the per-account limit with `PUT /api/auth/me/email` (3 an hour). A verified account
 /// with no email change waiting has nothing to verify: 204, nothing is sent and nothing counts.
-/// When a verified account holds the pending address, the new link is not sent either, so the
-/// answer never says whether an address is in use.
+/// When a verified account holds the pending address, the new link is not sent. The answer does
+/// not wait for the mail, which goes out in a background task: only a free address gets one, so
+/// the time a send takes would tell whether an address is in use.
 #[utoipa::path(
     post,
     path = "/api/auth/verify-email/resend",
@@ -212,12 +219,12 @@ pub async fn resend_verification(
     tx.commit().await?;
     if !held {
         let link = mail::verify_link(&state.config, &token);
-        let site = mail::site(&state.config);
-        mail::deliver(
-            &state,
-            templates::verify_email(site, account.recipient(&pending), &link),
-        )
-        .await;
+        let email = templates::verify_email(
+            mail::site(&state.config),
+            account.recipient(&pending),
+            &link,
+        );
+        tokio::spawn(async move { mail::deliver(&state, email).await });
     }
     Ok(StatusCode::NO_CONTENT)
 }

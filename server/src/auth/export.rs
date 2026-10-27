@@ -1,31 +1,43 @@
 //! `GET /api/auth/me/export`: the DSGVO export of the signed-in user's data (endpoint-map §2,
 //! docs/phase1/conventions.md §5.7).
 //!
-//! A ZIP built in memory with `data.json`, one key per foreign-key column that references
-//! `users(id)`, and `media/`, the bytes of every picture the user uploaded. The rows are read in
-//! one repeatable-read transaction, so the sections agree with each other. Most rows are the
-//! table row as Postgres renders it (`to_jsonb`) minus the reference to the user, plus the
-//! names that make it readable (work titles, club names).
+//! A ZIP with `data.json`, one key per foreign-key column that references `users(id)`, and
+//! `media/`, the bytes of every picture the user uploaded. The rows are read in one
+//! repeatable-read transaction, so the sections agree with each other. Most rows are the table
+//! row as Postgres renders it (`to_jsonb`) minus the reference to the user, plus the names that
+//! make it readable (work titles, club names).
+//!
+//! The ZIP is streamed: the pictures are read one at a time and each is sent as soon as it is
+//! written, then `data.json` and the central directory follow. An export therefore holds at most
+//! one picture and `data.json` in memory, however many pictures the user uploaded.
 
-use std::io::{Cursor, Write};
+use std::io::{self, Write};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use axum::body::Body;
 use axum::extract::State;
 use axum::http::header::{CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_TYPE};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
+use futures::stream;
 use serde_json::{Map, Value, json};
 use sqlx::PgConnection;
 use time::format_description::well_known::Rfc3339;
 use time::macros::format_description;
 use time::{OffsetDateTime, UtcOffset};
-use zip::write::SimpleFileOptions;
+use tokio::sync::mpsc;
+use zip::write::{SimpleFileOptions, StreamWriter};
 use zip::{CompressionMethod, ZipWriter};
 
 use super::account::account_key;
 use super::extract::CurrentUser;
 use crate::AppState;
 use crate::error::{ApiResult, AppError, ErrorBody, msg};
+use crate::media::shared::MediaStore;
 use crate::tz;
+
+/// A piece of the response body; an error aborts the download.
+type Chunk = io::Result<Bytes>;
 
 /// Downloads everything the service stores about the signed-in user. Five exports an hour.
 #[utoipa::path(
@@ -62,14 +74,6 @@ pub async fn export_me(user: CurrentUser, State(state): State<AppState>) -> ApiR
     let media = uploaded_media(&mut tx, user.id).await?;
     tx.commit().await?;
 
-    let (media_rows, files) = media_files(&state, media).await?;
-    data.insert("uploaded_media".into(), media_rows);
-    let mut data = Value::Object(data);
-    utc_timestamps(&mut data);
-    let zip = tokio::task::spawn_blocking(move || write_zip(&data, &files))
-        .await
-        .map_err(AppError::internal)??;
-
     let today = tz::today(&tz::zone_or_utc(&user.timezone))
         .format(format_description!("[year][month][day]"))
         .map_err(AppError::internal)?;
@@ -77,13 +81,20 @@ pub async fn export_me(user: CurrentUser, State(state): State<AppState>) -> ApiR
         "attachment; filename=\"bookclub-export-{}-{today}.zip\"",
         user.username
     );
+    // One chunk in flight: the producer waits for the client instead of reading ahead.
+    let (sender, receiver) = mpsc::channel::<Chunk>(1);
+    tokio::spawn(stream_zip(state.media.clone(), data, media, sender));
+    let body = Body::from_stream(stream::unfold(receiver, |mut receiver| async move {
+        let chunk = receiver.recv().await?;
+        Some((chunk, receiver))
+    }));
     Ok((
         [
             (CONTENT_TYPE, "application/zip".to_owned()),
             (CONTENT_DISPOSITION, disposition),
             (CACHE_CONTROL, "no-store".to_owned()),
         ],
-        zip,
+        body,
     )
         .into_response())
 }
@@ -101,7 +112,7 @@ async fn account_sections(
                          (SELECT t.email FROM email_tokens t
                           WHERE t.user_id = u.id AND t.purpose = 'verify_email'
                             AND t.used_at IS NULL AND t.expires_at > now()
-                          ORDER BY t.created_at DESC, t.id DESC LIMIT 1)) AS "profile!"
+                          ORDER BY t.id DESC LIMIT 1)) AS "profile!"
            FROM users u WHERE u.id = $1"#,
         user_id
     )
@@ -447,6 +458,24 @@ struct MediaRow {
     removed_at: Option<OffsetDateTime>,
 }
 
+impl MediaRow {
+    /// The `uploaded_media` entry, with the paths of its files in the ZIP.
+    fn to_json(&self, files: Vec<String>) -> Value {
+        json!({
+            "public_id": self.public_id,
+            "kind": self.kind,
+            "source": self.source,
+            "content_type": self.content_type,
+            "width": self.width,
+            "height": self.height,
+            "byte_size": self.byte_size,
+            "created_at": rfc3339_utc(self.created_at),
+            "removed_at": self.removed_at.and_then(rfc3339_utc),
+            "files": files,
+        })
+    }
+}
+
 async fn uploaded_media(conn: &mut PgConnection, user_id: i64) -> sqlx::Result<Vec<MediaRow>> {
     sqlx::query_as!(
         MediaRow,
@@ -461,14 +490,34 @@ async fn uploaded_media(conn: &mut PgConnection, user_id: i64) -> sqlx::Result<V
     .await
 }
 
-/// The `uploaded_media` rows and the files of `media/`: every stored variant of every picture
-/// that was not taken down, as `media/<public_id>/<variant>.<webp|jpg>`.
-async fn media_files(
-    state: &AppState,
+/// Sends the ZIP through `sender`. The answer has started, so a failure can only abort the
+/// download; the archive then lacks its central directory, and no reader takes it for whole.
+async fn stream_zip(
+    media: Arc<dyn MediaStore>,
+    data: Map<String, Value>,
     rows: Vec<MediaRow>,
-) -> ApiResult<(Value, Vec<(String, Bytes)>)> {
+    sender: mpsc::Sender<Chunk>,
+) {
+    if let Err(error) = write_zip(media.as_ref(), data, rows, &sender).await {
+        tracing::warn!(error = %format!("{error:#}"), "the export failed");
+        // Nothing to do when the client is gone already.
+        let _ = sender
+            .send(Err(io::Error::other("the export failed")))
+            .await;
+    }
+}
+
+/// `media/`: every stored variant of every picture that was not taken down, as
+/// `media/<public_id>/<variant>.<webp|jpg>`, each sent once it is written; then `data.json`
+/// with the `uploaded_media` rows. Stops quietly when the client goes away.
+async fn write_zip(
+    media: &dyn MediaStore,
+    mut data: Map<String, Value>,
+    rows: Vec<MediaRow>,
+    sender: &mpsc::Sender<Chunk>,
+) -> anyhow::Result<()> {
+    let mut zip = ExportZip::new();
     let mut items = Vec::with_capacity(rows.len());
-    let mut files = Vec::new();
     for row in rows {
         let mut paths = Vec::new();
         if let (None, Some(prefix)) = (row.removed_at, &row.storage_key) {
@@ -478,30 +527,27 @@ async fn media_files(
             };
             for variant in &row.variants {
                 let key = format!("{prefix}/{variant}");
-                match state.media.get(&key).await? {
-                    Some(bytes) => {
-                        let path = format!("media/{}/{variant}.{extension}", row.public_id);
-                        paths.push(path.clone());
-                        files.push((path, bytes));
-                    }
-                    None => tracing::warn!(key, "an uploaded picture has no stored bytes"),
+                let Some(bytes) = media.get(&key).await? else {
+                    tracing::warn!(key, "an uploaded picture has no stored bytes");
+                    continue;
+                };
+                let path = format!("media/{}/{variant}.{extension}", row.public_id);
+                let chunk = zip.add_media(&path, &bytes)?;
+                if sender.send(Ok(chunk)).await.is_err() {
+                    return Ok(());
                 }
+                paths.push(path);
             }
         }
-        items.push(json!({
-            "public_id": row.public_id,
-            "kind": row.kind,
-            "source": row.source,
-            "content_type": row.content_type,
-            "width": row.width,
-            "height": row.height,
-            "byte_size": row.byte_size,
-            "created_at": rfc3339_utc(row.created_at),
-            "removed_at": row.removed_at.and_then(rfc3339_utc),
-            "files": paths,
-        }));
+        items.push(row.to_json(paths));
     }
-    Ok((Value::Array(items), files))
+    data.insert("uploaded_media".into(), Value::Array(items));
+    let mut data = Value::Object(data);
+    utc_timestamps(&mut data);
+    let last = tokio::task::spawn_blocking(move || zip.finish(&data)).await??;
+    // A client that left before the last chunk needs nothing more.
+    let _ = sender.send(Ok(last)).await;
+    Ok(())
 }
 
 /// Rewrites the timestamps Postgres rendered (`2026-10-27T10:15:30.5+00:00`) as RFC 3339 in
@@ -535,23 +581,72 @@ fn rfc3339_utc(at: OffsetDateTime) -> Option<String> {
     at.to_offset(UtcOffset::UTC).format(&Rfc3339).ok()
 }
 
-/// `data.json` (pretty, deflated) and the media files (stored as they are: they are WebP or
-/// JPEG already).
-fn write_zip(data: &Value, files: &[(String, Bytes)]) -> anyhow::Result<Vec<u8>> {
-    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
-    let deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
-    zip.start_file("data.json", deflated)?;
-    zip.write_all(&serde_json::to_vec_pretty(data)?)?;
-    let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
-    for (path, bytes) in files {
-        zip.start_file(path.as_str(), stored)?;
-        zip.write_all(bytes)?;
+/// A ZIP written as a stream: each step returns the bytes produced since the previous one, so
+/// they can be sent before the next file is read. Entries carry their sizes and checksums in
+/// data descriptors, which every unzip tool reads from the central directory.
+struct ExportZip {
+    zip: ZipWriter<StreamWriter<Spool>>,
+    spool: Spool,
+}
+
+impl ExportZip {
+    fn new() -> Self {
+        let spool = Spool::default();
+        ExportZip {
+            zip: ZipWriter::new_stream(spool.clone()),
+            spool,
+        }
     }
-    Ok(zip.finish()?.into_inner())
+
+    /// Adds a media file, stored as it is: WebP and JPEG compress no further.
+    fn add_media(&mut self, path: &str, bytes: &[u8]) -> anyhow::Result<Bytes> {
+        let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        self.zip.start_file(path, stored)?;
+        self.zip.write_all(bytes)?;
+        Ok(self.spool.take())
+    }
+
+    /// Adds `data.json` (pretty, deflated) and the central directory.
+    fn finish(self, data: &Value) -> anyhow::Result<Bytes> {
+        let ExportZip { mut zip, spool } = self;
+        let deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        zip.start_file("data.json", deflated)?;
+        zip.write_all(&serde_json::to_vec_pretty(data)?)?;
+        zip.finish()?;
+        Ok(spool.take())
+    }
+}
+
+/// The bytes the ZIP writer produced that are not sent yet. Shared, because the writer owns
+/// its sink.
+#[derive(Clone, Default)]
+struct Spool(Arc<Mutex<Vec<u8>>>);
+
+impl Spool {
+    fn take(&self) -> Bytes {
+        Bytes::from(std::mem::take(&mut *self.buffer()))
+    }
+
+    fn buffer(&self) -> MutexGuard<'_, Vec<u8>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl Write for Spool {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.buffer().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Cursor, Read};
+
     use super::*;
 
     #[test]
@@ -581,24 +676,40 @@ mod tests {
     }
 
     #[test]
-    fn the_zip_holds_data_json_and_the_media_files() {
-        let files = vec![(
-            "media/abc/a.webp".to_owned(),
-            Bytes::from_static(b"RIFF....WEBP"),
-        )];
-        let bytes = write_zip(&json!({"profile": {"username": "ada"}}), &files).unwrap();
+    fn the_zip_streams_each_file_then_data_json() {
+        let mut zip = ExportZip::new();
+        let first = zip.add_media("media/abc/a.webp", b"RIFF....WEBP").unwrap();
+        assert!(
+            first.starts_with(b"PK\x03\x04"),
+            "sent before the next file is read"
+        );
+        assert!(first.ends_with(b"RIFF....WEBP"));
+        let second = zip.add_media("media/abc/s.jpg", b"\xff\xd8jpeg").unwrap();
+        let last = zip
+            .finish(&json!({"profile": {"username": "ada"}}))
+            .unwrap();
+        let bytes = [first, second, last].concat();
+
         let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
         let mut names: Vec<String> = archive
             .file_names()
             .map(|name| name.unwrap().into_owned())
             .collect();
         names.sort();
-        assert_eq!(names, ["data.json", "media/abc/a.webp"]);
-        let mut data = String::new();
-        std::io::Read::read_to_string(&mut archive.by_name("data.json").unwrap(), &mut data)
-            .unwrap();
+        assert_eq!(names, ["data.json", "media/abc/a.webp", "media/abc/s.jpg"]);
+        let read = |archive: &mut zip::ZipArchive<Cursor<Vec<u8>>>, name: &str| {
+            let mut bytes = Vec::new();
+            archive
+                .by_name(name)
+                .unwrap()
+                .read_to_end(&mut bytes)
+                .unwrap();
+            bytes
+        };
+        assert_eq!(read(&mut archive, "media/abc/a.webp"), b"RIFF....WEBP");
+        assert_eq!(read(&mut archive, "media/abc/s.jpg"), b"\xff\xd8jpeg");
         assert_eq!(
-            serde_json::from_str::<Value>(&data).unwrap(),
+            serde_json::from_slice::<Value>(&read(&mut archive, "data.json")).unwrap(),
             json!({"profile": {"username": "ada"}})
         );
     }

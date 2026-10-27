@@ -373,8 +373,8 @@ impl TestApp {
     }
 
     /// Waits until no background task holds the app state any more: the mail of
-    /// `POST /api/auth/password-reset`, which is sent after the answer, or a Goodreads import
-    /// job. Every task holds a clone of `AppState`, so the reference count of its shared parts
+    /// `POST /api/auth/password-reset` or `POST /api/auth/verify-email/resend`, which is sent
+    /// after the answer, or a Goodreads import job. Every task holds a clone of `AppState`, so the reference count of its shared parts
     /// returns to its idle value. Panics after 10 seconds.
     pub async fn settle(&self) {
         for _ in 0..1000 {

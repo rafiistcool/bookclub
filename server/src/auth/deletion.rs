@@ -82,13 +82,18 @@ pub async fn delete_account(
 ///
 /// `verified_hash` is the hash the password was checked against: a password change or reset
 /// that committed since then wins (400 `Current password is wrong`).
+///
+/// Locks are taken in the order of every membership write (§5.3): the clubs the user owns, then
+/// the account, then the user's posts. A join through the user's invite locks the club and then
+/// needs the inviter's row for its foreign key, so locking the account first could deadlock.
 pub async fn delete_user(
     conn: &mut PgConnection,
     user_id: i64,
     verified_hash: &str,
 ) -> ApiResult<Vec<String>> {
-    // Locking the account first makes every concurrent write that references it (a new post,
-    // reaction, shelf entry) wait and then fail, instead of slipping in after the deletes below.
+    let owned = lock_owned_clubs(conn, user_id).await?;
+    // Locking the account makes every later write that references it (a new post, reaction,
+    // shelf entry) wait and then fail, instead of slipping in after the deletes below.
     let current = sqlx::query_scalar!(
         "SELECT password_hash FROM users WHERE id = $1 FOR UPDATE",
         user_id
@@ -99,7 +104,7 @@ pub async fn delete_user(
     if current != verified_hash {
         return Err(AppError::bad_request(msg::CURRENT_PASSWORD_WRONG));
     }
-    delete_owned_clubs(conn, user_id).await?;
+    delete_owned_clubs(conn, user_id, &owned).await?;
     delete_posts(conn, user_id).await?;
     let prefixes = sqlx::query_scalar!(
         "DELETE FROM media
@@ -119,11 +124,10 @@ pub async fn delete_user(
     Ok(prefixes)
 }
 
-/// Deletes the clubs the user owns alone; 409 when one has other members. The club rows are
-/// locked first (in id order, like every membership write), so a concurrent join either
-/// committed before (and is counted) or fails afterwards.
-async fn delete_owned_clubs(conn: &mut PgConnection, user_id: i64) -> ApiResult<()> {
-    let owned = sqlx::query_scalar!(
+/// Locks the rows of the clubs the user owns, in id order like every membership write, and
+/// returns their ids.
+async fn lock_owned_clubs(conn: &mut PgConnection, user_id: i64) -> sqlx::Result<Vec<i64>> {
+    sqlx::query_scalar!(
         "SELECT c.id FROM clubs c
          JOIN club_memberships m ON m.club_id = c.id
          WHERE m.user_id = $1 AND m.role = 'owner'
@@ -131,8 +135,14 @@ async fn delete_owned_clubs(conn: &mut PgConnection, user_id: i64) -> ApiResult<
          FOR UPDATE OF c",
         user_id
     )
-    .fetch_all(&mut *conn)
-    .await?;
+    .fetch_all(conn)
+    .await
+}
+
+/// Deletes the clubs the user owns alone; 409 when one has other members. `owned` are already
+/// locked, so a concurrent join either committed before (and is counted here) or fails
+/// afterwards.
+async fn delete_owned_clubs(conn: &mut PgConnection, user_id: i64, owned: &[i64]) -> ApiResult<()> {
     if owned.is_empty() {
         return Ok(());
     }
@@ -141,7 +151,7 @@ async fn delete_owned_clubs(conn: &mut PgConnection, user_id: i64) -> ApiResult<
         r#"SELECT EXISTS (
                SELECT 1 FROM club_memberships WHERE club_id = ANY($1) AND user_id <> $2
            ) AS "shared!""#,
-        &owned,
+        owned,
         user_id
     )
     .fetch_one(&mut *conn)
@@ -149,7 +159,7 @@ async fn delete_owned_clubs(conn: &mut PgConnection, user_id: i64) -> ApiResult<
     if shared {
         return Err(AppError::conflict(TRANSFER_CLUBS_FIRST));
     }
-    sqlx::query!("DELETE FROM clubs WHERE id = ANY($1)", &owned)
+    sqlx::query!("DELETE FROM clubs WHERE id = ANY($1)", owned)
         .execute(&mut *conn)
         .await?;
     Ok(())
@@ -159,9 +169,20 @@ async fn delete_owned_clubs(conn: &mut PgConnection, user_id: i64) -> ApiResult<
 /// them), then turns the rest, which others replied to, into tombstones. Reactions on deleted
 /// posts cascade; `author_id` becomes NULL when the user row goes.
 ///
-/// The tombstone step covers every post still left, so a reply deleted by its author between
-/// the two statements cannot leave a live post without an author (`posts_live_has_author`).
+/// The posts are locked first. A reply's foreign-key check holds its parent `FOR KEY SHARE`,
+/// which `FOR UPDATE` waits for: a reply in flight commits first and the DELETE, a new
+/// statement, sees it (the parent becomes a tombstone), and a later one waits for this
+/// transaction. Without the lock, a reply committed while the DELETE waited for its parent
+/// would fail the DELETE at `posts_parent_fk`. The tombstone step covers every post still
+/// left, so a reply deleted by its author between the two statements cannot leave a live post
+/// without an author (`posts_live_has_author`).
 async fn delete_posts(conn: &mut PgConnection, user_id: i64) -> sqlx::Result<()> {
+    sqlx::query_scalar!(
+        "SELECT id FROM posts WHERE author_id = $1 ORDER BY id FOR UPDATE",
+        user_id
+    )
+    .fetch_all(&mut *conn)
+    .await?;
     sqlx::query!(
         "DELETE FROM posts p
          WHERE p.author_id = $1
