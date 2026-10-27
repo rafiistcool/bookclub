@@ -54,6 +54,8 @@ pub mod msg {
     pub const INTERNAL: &str = "Internal Server Error";
     pub const METHOD_NOT_ALLOWED: &str = "Method Not Allowed";
     pub const CROSS_SITE_REFUSED: &str = "Cross-site request refused";
+    /// 408 from the request deadline (`serve::REQUEST_DEADLINE`).
+    pub const REQUEST_TIMEOUT: &str = "The request took too long";
     pub const VERIFY_EMAIL_FIRST: &str = "Verify your email address first";
     pub const INVALID_TIME_ZONE: &str = "That is not a valid time zone";
     pub const CLUB_FULL: &str = "This club is full";

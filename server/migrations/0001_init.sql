@@ -279,7 +279,9 @@ CREATE CONSTRAINT TRIGGER club_memberships_keep_owner
     FOR EACH ROW EXECUTE FUNCTION bc_check_club_owner();
 
 -- Members removed by an admin. A removal outlives the membership row so that a
--- removed person cannot walk back in with an invite they already know.
+-- removed person cannot walk back in with an invite they already know. (A second
+-- account could: the removal therefore also revokes the club's active invites
+-- the person knows, clubs::members::remove_member.)
 CREATE TABLE club_removals (
     club_id    bigint NOT NULL REFERENCES clubs (id) ON DELETE CASCADE,
     user_id    bigint NOT NULL REFERENCES users (id) ON DELETE CASCADE,
@@ -743,7 +745,7 @@ CREATE INDEX posts_milestone_idx ON posts (milestone_id) WHERE milestone_id IS N
 COMMENT ON TABLE posts IS
     'club_id NULL: personal diary entry, visible to the author''s audience unless only_me. club_id set: pick discussion post, visible to club members only. Replies are on the same work and in the same scope as their parent (posts_parent_fk) and one level deep (the parent has parent_id NULL; checked by the app and the importer). A post with replies is never hard-deleted: it becomes a tombstone. Read access: bc_visible_posts / bc_can_see_post.';
 COMMENT ON COLUMN posts.author_id IS
-    'NULL only on tombstones left behind by a deleted account (live posts always have an author, see posts_live_has_author). Such a diary tombstone is visible to whoever can see one of its replies (bc_visible_posts).';
+    'NULL only on tombstones left behind by a deleted account (live posts always have an author, see posts_live_has_author). Such a diary tombstone is visible to whoever can see one of its replies, unless it is only_me (bc_visible_posts).';
 COMMENT ON COLUMN posts.scope_key IS 'coalesce(club_id, 0): the thread scope used by posts_parent_fk.';
 COMMENT ON COLUMN posts.visibility IS 'Diary roots only; replies and club posts are always audience.';
 COMMENT ON COLUMN posts.spoiler_upto IS 'Percent of the book the post is safe up to; NULL = no spoiler flag.';
@@ -978,7 +980,8 @@ CREATE FUNCTION bc_visible_quotes(viewer bigint) RETURNS TABLE (
 --   * club posts and their replies: members of that club;
 --   * diary roots: bc_can_see_item(viewer, author, visibility); a root whose
 --     author account was deleted (author_id NULL, always a tombstone) is visible
---     to whoever can see the author of at least one of its replies;
+--     to whoever can see the author of at least one of its replies, unless the
+--     author had made it only_me;
 --   * diary replies: the root is visible, and the viewer is the root's author or
 --     can see the reply's author.
 -- Feeds add `deleted_at IS NULL`; threads keep tombstones as anchors.
@@ -994,7 +997,7 @@ CREATE FUNCTION bc_visible_posts(viewer bigint) RETURNS TABLE (id bigint)
         WHERE p.club_id IS NULL AND p.parent_id IS NULL
           AND ((p.author_id IN (SELECT o.user_id FROM bc_visible_owners(viewer) AS o)
                 AND (p.author_id = viewer OR p.visibility = 'audience'))
-               OR (p.author_id IS NULL AND EXISTS (
+               OR (p.author_id IS NULL AND p.visibility = 'audience' AND EXISTS (
                        SELECT 1
                        FROM posts AS r
                        JOIN bc_visible_owners(viewer) AS o ON o.user_id = r.author_id
@@ -1006,9 +1009,9 @@ CREATE FUNCTION bc_visible_posts(viewer bigint) RETURNS TABLE (id bigint)
         WHERE r.club_id IS NULL
           AND (p.author_id = viewer
                OR (r.author_id IN (SELECT o.user_id FROM bc_visible_owners(viewer) AS o)
+                   AND p.visibility = 'audience'
                    AND (p.author_id IS NULL
-                        OR (p.author_id IN (SELECT o.user_id FROM bc_visible_owners(viewer) AS o)
-                            AND p.visibility = 'audience'))));
+                        OR p.author_id IN (SELECT o.user_id FROM bc_visible_owners(viewer) AS o))));
     END;
 
 CREATE FUNCTION bc_can_see_post(viewer bigint, post bigint) RETURNS boolean

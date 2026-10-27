@@ -442,13 +442,15 @@ async fn a_member_who_left_rejoins_with_the_same_link(db: PgPool) {
 }
 
 /// A removed member cannot walk back in with an invite created before the removal (it is not
-/// used), but can with a newer one, which deletes the removal row.
+/// used), but can with a newer one, which deletes the removal row. The link they joined with is
+/// revoked; an invite they never saw stays good for others.
 #[sqlx::test]
 async fn a_removed_member_needs_an_invite_made_after_the_removal(db: PgPool) {
     let app = TestApp::new(db).await;
     let owner = app.user("owner").await;
     let club = app.club(&owner, "Readers").await;
     let old = link(&owner, &club).await;
+    let unseen = link(&owner, &club).await;
     let older_single = code_of(&invite(&owner, &club, json!({"kind": "single_use"})).await);
     let ada = app.user("ada").await;
     accept(&ada, &old).await.assert_status(200);
@@ -457,13 +459,17 @@ async fn a_removed_member_needs_an_invite_made_after_the_removal(db: PgPool) {
         .await
         .assert_status(204);
 
-    for code in [&old, &older_single] {
+    for code in [&old, &unseen, &older_single] {
         accept(&ada, code).await.assert_detail(400, INVALID);
     }
     assert_eq!(use_count(&app, &old).await, 1);
+    assert_eq!(use_count(&app, &unseen).await, 0);
     assert_eq!(use_count(&app, &older_single).await, 0);
-    // Others still use the old link.
+    // The link Ada used is revoked; the one she never saw still works for others.
     accept(&app.user("bob").await, &old)
+        .await
+        .assert_detail(400, INVALID);
+    accept(&app.user("cleo").await, &unseen)
         .await
         .assert_status(200);
 
@@ -473,11 +479,126 @@ async fn a_removed_member_needs_an_invite_made_after_the_removal(db: PgPool) {
         app.scalar_i64("SELECT count(*) FROM club_removals").await,
         0
     );
-    // Back in good standing: after leaving, the old link works again.
+    // Back in good standing: after leaving, an invite from before the removal works again.
     ada.post(&format!("/api/clubs/{}/leave", club.slug), json!({}))
         .await
         .assert_status(204);
-    accept(&ada, &old).await.assert_status(200);
+    accept(&ada, &unseen).await.assert_status(200);
+}
+
+/// A removal revokes the club's active invites the removed person knows, so a second account
+/// cannot use them either (through sign-up or accept): the invites they created and the ones
+/// they redeemed, and, for an admin (who could list them all), every one. Expired and used-up
+/// invites keep their state; another club's invites are untouched.
+#[sqlx::test]
+async fn a_removal_revokes_the_invites_the_removed_person_knows(db: PgPool) {
+    let app = TestApp::with_env(db, &[("SIGNUP_MODE", "invite")]).await;
+    let owner = app.user("owner").await;
+    let club = app.club(&owner, "Readers").await;
+    let other_club = app.club(&owner, "Elsewhere").await;
+    let elsewhere = link(&owner, &other_club).await;
+
+    // Mallory, an admin, made a link; she knows every code from the invite list.
+    let mallory = app.user("mallory").await;
+    app.join(&club, &mallory, "admin").await;
+    let hers = link(&mallory, &club).await;
+    let owners = link(&owner, &club).await;
+    let expired = link(&owner, &club).await;
+    let used_up = code_of(&invite(&owner, &club, json!({"kind": "single_use"})).await);
+    accept(&app.user("dan").await, &used_up)
+        .await
+        .assert_status(200);
+    app.exec(&format!(
+        "UPDATE club_invites SET expires_at = now() - interval '1 minute' WHERE code = '{expired}'"
+    ))
+    .await;
+    owner
+        .delete(&format!("/api/clubs/{}/members/mallory", club.slug))
+        .await
+        .assert_status(204);
+
+    let revoked = |code: String| {
+        let app = &app;
+        async move {
+            app.scalar_i64(&format!(
+                "SELECT count(*) FROM club_invites WHERE code = '{code}' AND revoked_at IS NOT NULL"
+            ))
+            .await
+        }
+    };
+    assert_eq!(revoked(hers.clone()).await, 1);
+    assert_eq!(revoked(owners.clone()).await, 1);
+    assert_eq!(revoked(expired).await, 0, "already dead: left as it was");
+    assert_eq!(revoked(used_up).await, 0, "already dead: left as it was");
+    assert_eq!(revoked(elsewhere.clone()).await, 0, "another club");
+    // A second account gets in with none of them.
+    let res = app
+        .anon()
+        .post(
+            "/api/auth/register",
+            json!({"username": "mallory2", "email": "m2@example.test",
+                   "password": PASSWORD, "invite_code": hers}),
+        )
+        .await;
+    res.assert_detail(400, INVALID);
+    accept(&app.user("mallory3").await, &owners)
+        .await
+        .assert_detail(400, INVALID);
+    accept(&app.user("erin").await, &elsewhere)
+        .await
+        .assert_status(200);
+
+    // A plain member: only the invites they made (as an admin, before a demotion) or used.
+    let fresh = link(&owner, &club).await;
+    let bob = app.user("bob").await;
+    app.join(&club, &bob, "admin").await;
+    let bobs = link(&bob, &club).await;
+    owner
+        .patch(
+            &format!("/api/clubs/{}/members/bob", club.slug),
+            json!({"role": "member"}),
+        )
+        .await
+        .assert_status(200);
+    let cleo = app.user("cleo").await;
+    accept(&cleo, &fresh).await.assert_status(200);
+    let untouched = link(&owner, &club).await;
+    for (name, code) in [("bob", &bobs), ("cleo", &fresh)] {
+        assert_eq!(revoked(code.clone()).await, 0, "{name}: {code}");
+        owner
+            .delete(&format!("/api/clubs/{}/members/{name}", club.slug))
+            .await
+            .assert_status(204);
+        assert_eq!(revoked(code.clone()).await, 1, "{name}: {code}");
+    }
+    assert_eq!(revoked(untouched.clone()).await, 0);
+    accept(&app.user("frank").await, &untouched)
+        .await
+        .assert_status(200);
+}
+
+/// Accepting is limited to 20 attempts per account and hour, valid code or not, so an account
+/// cannot guess codes past the preview's per-IP limit (§10.1).
+#[sqlx::test]
+async fn accepts_are_limited_per_account(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let owner = app.user("owner").await;
+    let club = app.club(&owner, "Readers").await;
+    let code = link(&owner, &club).await;
+    let guesser = app.user("guesser").await;
+    for n in 0..20 {
+        accept(&guesser, &format!("GUESS{n:05}"))
+            .await
+            .assert_detail(400, INVALID);
+    }
+    let res = accept(&guesser, &code).await;
+    res.assert_detail(429, "Slow down a little. Try again later.");
+    assert!(res.header("retry-after").is_some());
+    assert_eq!(use_count(&app, &code).await, 0);
+    // Another account is not affected.
+    accept(&app.user("ada").await, &code)
+        .await
+        .assert_status(200);
 }
 
 /// Of concurrent redemptions of a single-use invite exactly one succeeds.

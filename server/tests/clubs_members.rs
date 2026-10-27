@@ -847,6 +847,13 @@ async fn an_admin_removed_or_demoted_meanwhile_cannot_create_or_revoke_invites(d
         )
         .await
         .json();
+    // Expired: the removal revokes only active invites, so a revocation would be the removed
+    // admin's own.
+    app.exec(&format!(
+        "UPDATE club_invites SET expires_at = now() - interval '1 minute' WHERE id = {}",
+        invite["id"]
+    ))
+    .await;
     let revoke = {
         let admin = s.admin.clone();
         let path = format!("/api/clubs/{}/invites/{}", s.club.slug, invite["id"]);

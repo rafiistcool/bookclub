@@ -47,7 +47,7 @@ impl FromRequestParts<AppState> for CurrentUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let presented = session::presented(&parts.headers);
+        let presented = session::presented(&state.config, &parts.headers);
         let slot = parts.extensions.get::<CookieSlot>().cloned();
         let found = match presented.secret() {
             Some((secret, kind)) => resolve(state, &secret, kind).await?,

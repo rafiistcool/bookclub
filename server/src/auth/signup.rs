@@ -138,7 +138,9 @@ pub async fn register(
         &session::device_label(&headers),
     )
     .await?;
-    if let Some((secret, SessionKind::Cookie)) = session::presented(&headers).secret() {
+    if let Some((secret, SessionKind::Cookie)) =
+        session::presented(&state.config, &headers).secret()
+    {
         session::delete_by_secret(&mut tx, &secret, SessionKind::Cookie).await?;
     }
     let user = user_out(&mut tx, user_id).await?;

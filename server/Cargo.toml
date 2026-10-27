@@ -17,6 +17,8 @@ caseless = "0.2.2"
 clap = { version = "4.6.7", features = ["derive", "env"] }
 csv = "1.4.0"
 futures = "0.3.34"
+hyper = "1.12.0"  # the server loop (serve.rs) names hyper's request body
+hyper-util = { version = "0.1.21", features = ["server-auto", "server-graceful", "service", "tokio"] }  # serve.rs: a header read timeout, which axum::serve cannot set
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 ipnet = "2.12.2"
 jiff = { version = "0.2.38", features = ["tzdb-bundle-always"] }

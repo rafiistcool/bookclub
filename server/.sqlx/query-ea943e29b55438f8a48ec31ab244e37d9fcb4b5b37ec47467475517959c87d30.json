@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT coalesce(jsonb_agg(\n                      CASE WHEN bc_is_member($1, p.club_id)\n                           THEN (to_jsonb(p) - 'set_by')\n                                || jsonb_build_object('club_name', c.name, 'work_title', w.title)\n                           ELSE jsonb_build_object(\n                               'id', p.id, 'club_id', p.club_id, 'club_name', c.name,\n                               'work_id', p.work_id, 'work_title', w.title,\n                               'started_at', p.started_at)\n                      END\n                  ORDER BY p.id), '[]') AS \"rows!\"\n           FROM club_picks p\n           JOIN clubs c ON c.id = p.club_id\n           JOIN works w ON w.id = p.work_id\n           WHERE p.set_by = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "rows!",
+        "type_info": "Jsonb",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "ea943e29b55438f8a48ec31ab244e37d9fcb4b5b37ec47467475517959c87d30"
+}

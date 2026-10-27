@@ -12,6 +12,7 @@ use super::invites::{ALREADY_IN_CLUB, consume, join, normalize_code};
 use super::lock_club;
 use super::out::{ClubOut, club_out};
 use crate::AppState;
+use crate::auth::account::account_key;
 use crate::auth::extract::CurrentUser;
 use crate::client_ip::ClientIp;
 use crate::dto::ClubRef;
@@ -90,6 +91,8 @@ pub async fn preview(
 /// Joins the invite's club as a member. One transaction: the club lock, the "already in this
 /// club" check (the invite is then not used), the atomic use of the invite, the removal check,
 /// the 20-member limit, the membership, the redemption log and the `member_joined` event.
+/// 20 attempts per account and hour, valid code or not, so an account cannot guess codes past
+/// the preview's limit.
 #[utoipa::path(
     post,
     path = "/api/invites/{code}/accept",
@@ -101,7 +104,8 @@ pub async fn preview(
         (status = 200, body = ClubOut, description = "The club just joined"),
         (status = 400, body = ErrorBody, description = "`That invite code is not valid` (unknown, revoked, expired, used up, a sign-up invite, or created before the caller was removed from the club)"),
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
-        (status = 409, body = ErrorBody, description = "`You are already in this club`, `This club is full`")
+        (status = 409, body = ErrorBody, description = "`You are already in this club`, `This club is full`"),
+        (status = 429, body = ErrorBody, description = "`Slow down a little. Try again later.`")
     )
 )]
 pub async fn accept(
@@ -109,6 +113,11 @@ pub async fn accept(
     State(state): State<AppState>,
     ApiPath(code): ApiPath<String>,
 ) -> ApiResult<Json<ClubOut>> {
+    state
+        .limits
+        .invite_accept_user
+        .check_and_hit(&account_key(user.id))
+        .map_err(|wait| wait.into_error(msg::SLOW_DOWN))?;
     let code = normalize_code(&code);
     let invalid = || AppError::bad_request(msg::INVITE_INVALID);
     let mut tx = state.db.begin().await?;

@@ -59,7 +59,11 @@ impl Modify for SecuritySchemes {
         let components = openapi.components.get_or_insert_with(Default::default);
         components.add_security_scheme(
             COOKIE_SCHEME,
-            SecurityScheme::ApiKey(ApiKey::Cookie(ApiKeyValue::new(SESSION_COOKIE))),
+            SecurityScheme::ApiKey(ApiKey::Cookie(ApiKeyValue::with_description(
+                SESSION_COOKIE,
+                "The session cookie. Named `__Host-bookclub_session` when it is `Secure` \
+                 (`COOKIE_SECURE`, the production default).",
+            ))),
         );
         components.add_security_scheme(
             BEARER_SCHEME,

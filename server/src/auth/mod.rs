@@ -30,8 +30,12 @@ use crate::dto::{ClubSummary, UserOut};
 use crate::error::{ApiResult, AppError};
 use crate::media::shared::urls::avatar_url;
 
-/// Name of the session cookie.
+/// Name of the session cookie when it is not `Secure` (`COOKIE_SECURE=false`, the DEV_MODE
+/// default). `session::cookie_name` picks the name for a configuration.
 pub const SESSION_COOKIE: &str = "bookclub_session";
+/// Name of the `Secure` session cookie: the `__Host-` prefix makes browsers refuse it unless
+/// this host set it, with `Path=/` and no `Domain`.
+pub const SECURE_SESSION_COOKIE: &str = "__Host-bookclub_session";
 
 /// The service accent colours: the legacy defaults (docs/phase1/spec/auth.md §1.20).
 const THEME: &str = "#b44a2a";

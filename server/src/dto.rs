@@ -203,6 +203,10 @@ pub struct ReactionOut {
 }
 
 /// [`UserSummary`] for each existing id. A removed avatar has no URL.
+///
+/// Checks nothing: it names any user id it is given. Callers pass only ids the viewer may see
+/// (conventions §6.3: reaction users, parent authors and reader lists come from
+/// `bc_visible_owners` or the club's members, never from the row alone).
 pub async fn user_summaries(
     conn: &mut PgConnection,
     ids: &[i64],

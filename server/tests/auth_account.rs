@@ -410,7 +410,8 @@ async fn change_password_requires_auth(db: PgPool) {
 }
 
 /// New (endpoint-map §2): a password change deletes every other session and bearer token and
-/// voids open reset links; the current session stays.
+/// voids open reset links and a pending address change; the current session stays. An
+/// unverified account keeps the link that verifies its own address.
 #[sqlx::test]
 async fn change_password_revokes_other_sessions_and_reset_links(db: PgPool) {
     let app = TestApp::new(db).await;
@@ -457,12 +458,38 @@ async fn change_password_revokes_other_sessions_and_reset_links(db: PgPool) {
         .await
     };
     assert_eq!(open(ada.id(), "reset_password").await, 0);
-    assert_eq!(open(ada.id(), "verify_email").await, 1);
+    assert_eq!(open(ada.id(), "verify_email").await, 0);
     assert_eq!(open(other.id(), "reset_password").await, 1);
     assert_eq!(
         app.scalar_i64(&format!(
             "SELECT count(*) FROM users WHERE id = {} AND password_changed_at > now() - interval '1 minute'",
             ada.id()
+        ))
+        .await,
+        1
+    );
+}
+
+/// An unverified account's open link verifies its own address, not a change someone else
+/// started: a password change leaves it open.
+#[sqlx::test]
+async fn change_password_keeps_the_link_of_an_unverified_address(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let cleo = app.user_unverified("cleo").await;
+    app.exec(&format!(
+        "INSERT INTO email_tokens (user_id, purpose, email, token_hash, expires_at)
+         VALUES ({}, 'verify_email', 'cleo@example.test', sha256('c'), now() + interval '1 hour')",
+        cleo.id()
+    ))
+    .await;
+    cleo.patch("/api/auth/password", change(PASSWORD, "newpassword1"))
+        .await
+        .assert_status(204);
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM email_tokens
+             WHERE user_id = {} AND purpose = 'verify_email' AND used_at IS NULL",
+            cleo.id()
         ))
         .await,
         1

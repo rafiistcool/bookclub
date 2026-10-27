@@ -442,7 +442,8 @@ async fn diary_roots_and_replies(db: PgPool) {
 }
 
 /// A diary root whose author deleted the account stays visible to whoever can see the author of
-/// one of its replies; each reply keeps its own rule.
+/// one of its replies; each reply keeps its own rule. A root the author had made only_me stays
+/// hidden, with its replies.
 #[sqlx::test]
 async fn tombstone_of_a_deleted_account(db: PgPool) {
     let app = TestApp::new(db).await;
@@ -458,10 +459,19 @@ async fn tombstone_of_a_deleted_account(db: PgPool) {
     let root = diary_root(&app, work, gone.id(), "audience").await;
     let by_co_member = reply(&app, work, root, v.co_member.id()).await;
     let by_stranger = reply(&app, work, root, v.stranger.id()).await;
-    // Account deletion (conventions §5.6): the root has replies, so it becomes a tombstone,
+    // Replies written while the root was audience; then its author hid it (PATCH visibility).
+    let hidden = diary_root(&app, work, gone.id(), "audience").await;
+    let hidden_by_co_member = reply(&app, work, hidden, v.co_member.id()).await;
+    let hidden_by_stranger = reply(&app, work, hidden, v.stranger.id()).await;
+    app.exec(&format!(
+        "UPDATE posts SET visibility = 'only_me' WHERE id = {hidden}"
+    ))
+    .await;
+    // Account deletion (conventions §5.6): the roots have replies, so they become tombstones,
     // then the author's id becomes NULL through the foreign key.
     app.exec(&format!(
-        "UPDATE posts SET body = '', spoiler_upto = NULL, deleted_at = now() WHERE id = {root};
+        "UPDATE posts SET body = '', spoiler_upto = NULL, deleted_at = now()
+             WHERE id IN ({root}, {hidden});
          DELETE FROM users WHERE id = {};",
         gone.id()
     ))
@@ -495,6 +505,16 @@ async fn tombstone_of_a_deleted_account(db: PgPool) {
         let mut expected = expected.to_vec();
         expected.sort_unstable();
         assert_eq!(seen, expected, "{}", viewer.username());
+        let hidden_seen = ids(
+            &app,
+            format!(
+                "SELECT id FROM bc_visible_posts({}) \
+                 WHERE id IN ({hidden}, {hidden_by_co_member}, {hidden_by_stranger})",
+                viewer.id()
+            ),
+        )
+        .await;
+        assert_eq!(hidden_seen, Vec::<i64>::new(), "{}", viewer.username());
     }
 
     let mut conn = app.db.acquire().await.unwrap();

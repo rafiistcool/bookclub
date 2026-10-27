@@ -124,8 +124,48 @@ async fn production_cookies_are_secure(db: PgPool) {
         .await;
     res.assert_status(204);
     let cookie = res.set_cookies().pop().unwrap();
-    assert!(cookie.starts_with("bookclub_session="));
+    assert!(cookie.starts_with("__Host-bookclub_session="), "{cookie}");
     assert!(cookie.contains("Secure"), "{cookie}");
+    assert!(
+        cookie.contains("Path=/") && !cookie.contains("Domain"),
+        "{cookie}"
+    );
+}
+
+/// Cookie tossing (§5.1): a `Secure` session cookie is `__Host-bookclub_session`, which a page
+/// on a sibling subdomain cannot set. A planted `bookclub_session` for the parent domain, or an
+/// encoded spelling of the `__Host-` name, is ignored; a second `__Host-` cookie signs the
+/// request in as nobody instead of as the attacker.
+#[sqlx::test]
+async fn a_planted_session_cookie_signs_nobody_in(db: PgPool) {
+    let app = TestApp::with_env(db, &PRODUCTION_ENV).await;
+    let ada = app.user("ada").await;
+    let mallory = app.user("mallory").await;
+    let planted = mallory.cookie().unwrap();
+    for tossed in [
+        format!("bookclub_session={planted}"),
+        format!("%5F%5FHost-bookclub_session={planted}"),
+        format!("__Host-bookclub%5Fsession={planted}"),
+    ] {
+        let res = ada
+            .clone()
+            .with_header("cookie", &tossed)
+            .get("/api/auth/me")
+            .await;
+        res.assert_status(200);
+        assert_eq!(res.json()["username"], "ada", "{tossed}");
+        app.anon()
+            .with_header("cookie", &tossed)
+            .get("/api/auth/me")
+            .await
+            .assert_detail(401, "Not signed in");
+    }
+    let res = ada
+        .clone()
+        .with_header("cookie", &format!("__Host-bookclub_session={planted}"))
+        .get("/api/auth/me")
+        .await;
+    res.assert_detail(401, "Not signed in");
 }
 
 /// parity: test_selfhost.py::test_trusted_proxy_denies_forwarded_proto

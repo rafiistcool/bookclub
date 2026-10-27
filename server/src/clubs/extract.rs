@@ -176,8 +176,10 @@ pub async fn role_in(
     .await
 }
 
-/// The `ClubRef` (slug, name) of each existing club id, for DTO annotation. Callers pass ids of
-/// rows the viewer may already see; this loader checks nothing.
+/// The `ClubRef` (slug, name) of each existing club id, for DTO annotation. This loader checks
+/// nothing: callers pass only club ids already restricted to the viewer (`ClubMember`,
+/// `member_by_slug`, `role_in`, or `JOIN bc_member_clubs($viewer)`), never every club whose row
+/// matches (a `club_picks` list of all clubs reading a work would name foreign clubs).
 pub async fn club_refs(
     conn: &mut PgConnection,
     club_ids: &[i64],

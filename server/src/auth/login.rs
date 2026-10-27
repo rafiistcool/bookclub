@@ -11,6 +11,7 @@ use serde::Deserialize;
 use sqlx::PgConnection;
 use utoipa::ToSchema;
 
+use super::account::{account_key, email_login_key};
 use super::password::Verdict;
 use super::rules;
 use super::session::{self, SessionKind};
@@ -43,8 +44,9 @@ pub(crate) struct Authenticated {
     pub rehash: Option<String>,
 }
 
-/// Signs in with a cookie session. Ten failures per account (or per unknown-name bucket) in
-/// ten minutes, and thirty attempts per IP address, answer 429 before any password is checked.
+/// Signs in with a cookie session. Ten failures per account and identifier kind (or per unknown
+/// name) in ten minutes, and thirty attempts per IP address, answer 429 before any password is
+/// checked.
 #[utoipa::path(
     post,
     path = "/api/auth/login",
@@ -75,7 +77,9 @@ pub async fn login(
     )
     .await?;
     // Signing in while signed in switches the session.
-    if let Some((secret, SessionKind::Cookie)) = session::presented(&headers).secret() {
+    if let Some((secret, SessionKind::Cookie)) =
+        session::presented(&state.config, &headers).secret()
+    {
         session::delete_by_secret(&mut tx, &secret, SessionKind::Cookie).await?;
     }
     tx.commit().await?;
@@ -93,7 +97,7 @@ pub async fn login(
     responses((status = 204, description = "Signed out"))
 )]
 pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Response> {
-    let Some((secret, kind)) = session::presented(&headers).secret() else {
+    let Some((secret, kind)) = session::presented(&state.config, &headers).secret() else {
         return Ok(StatusCode::NO_CONTENT.into_response());
     };
     let live = session::delete_by_secret(&mut *state.db.acquire().await?, &secret, kind).await?;
@@ -107,9 +111,13 @@ pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> ApiRes
 /// Checks a username (or verified email) and password under the login limits (§10.1):
 ///
 /// 1. 30 attempts per IP address (`ip_key`) per 10 minutes.
-/// 2. 10 failures per account key (`u:<id>`, or `unknown_identifier_key` for a name that names
-///    no account) per 10 minutes, counted with `check_and_hit` **before** the password is
-///    verified, so concurrent guesses cannot pass together; a success clears the key.
+/// 2. 10 failures per identifier per 10 minutes, counted with `check_and_hit` **before** the
+///    password is verified, so concurrent guesses cannot pass together; a success clears the
+///    key. The key is `u:<id>` for a username, `u:<id>:email` for a verified address and
+///    `unknown_identifier_key` (in `login_unknown`) for an identifier that names no account.
+///    Every identifier thus fills its own bucket, whether or not it names an account: neither a
+///    filled bucket nor a fresh one tells an address in use from a free one, or links a username
+///    to its address.
 ///
 /// An unknown account verifies against a dummy hash, so it takes as long as a real one. The
 /// caller creates the session in a transaction that starts with [`confirm`].
@@ -125,15 +133,17 @@ pub(crate) async fn authenticate(
         .check_and_hit(&ip_key(ip))
         .map_err(too_many)?;
     let account = find_account(&mut *state.db.acquire().await?, identifier).await?;
-    let key = match &account {
-        Some((id, _)) => format!("u:{id}"),
-        None => unknown_identifier_key(identifier),
+    let (failures, key) = match &account {
+        Some((id, _)) if identifier.contains('@') => {
+            (&state.limits.login_failures, email_login_key(*id))
+        }
+        Some((id, _)) => (&state.limits.login_failures, account_key(*id)),
+        None => (
+            &state.limits.login_unknown,
+            unknown_identifier_key(identifier),
+        ),
     };
-    state
-        .limits
-        .login_failures
-        .check_and_hit(&key)
-        .map_err(too_many)?;
+    failures.check_and_hit(&key).map_err(too_many)?;
     let stored = account.as_ref().map(|(_, hash)| hash.as_str());
     let verdict = state.passwords.verify(password, stored).await;
     let (Verdict::Match { rehash }, Some((user_id, stored))) = (verdict, account) else {
@@ -142,7 +152,7 @@ pub(crate) async fn authenticate(
             msg::WRONG_CREDENTIALS,
         ));
     };
-    state.limits.login_failures.clear(&key);
+    failures.clear(&key);
     let rehash = if rehash {
         Some(state.passwords.hash(password).await?)
     } else {

@@ -171,9 +171,14 @@ impl TestApp {
         &self.state.config
     }
 
+    /// The name of the session cookie under this configuration (`session::cookie_name`).
+    pub fn cookie_name(&self) -> &'static str {
+        session::cookie_name(&self.state.config)
+    }
+
     /// A client without a session.
     pub fn anon(&self) -> TestClient {
-        TestClient::new(self.router.clone(), None, None)
+        TestClient::new(self.router.clone(), self.cookie_name(), None, None)
     }
 
     /// A signed-in user with the verified address `<username>@example.test` and the password
@@ -213,6 +218,7 @@ impl TestApp {
             .unwrap();
         TestClient::new(
             self.router.clone(),
+            self.cookie_name(),
             Some((id, username.to_owned())),
             Some(session.secret),
         )

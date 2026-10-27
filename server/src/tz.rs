@@ -47,7 +47,10 @@ pub fn zone_or_utc(name: &str) -> TimeZone {
 /// - A value without an offset is local time in `zone`; gaps and overlaps resolve like Python's
 ///   `fold=0` (jiff's compatible disambiguation).
 ///
-/// The result is UTC. `Err(())` means the caller answers 400 `error::msg::MEETING_AT_FORMAT`.
+/// The result is UTC, in the years 1 to 9999 (Python's `datetime` range; the RFC 3339
+/// serialiser of every DTO handles no other): year 0000, and a time whose UTC instant leaves
+/// that range (`0001-01-01T00:00+01:00`), are refused. `Err(())` means the caller answers 400
+/// `error::msg::MEETING_AT_FORMAT`.
 #[allow(clippy::result_unit_err)] // frozen signature (conventions §12); the caller owns the message
 pub fn parse_meeting(value: Option<&str>, zone: &TimeZone) -> Result<Option<OffsetDateTime>, ()> {
     let Some(value) = value else {
@@ -65,7 +68,21 @@ pub fn parse_meeting(value: Option<&str>, zone: &TimeZone) -> Result<Option<Offs
             .compatible()
             .map_err(|_| ())?,
     };
-    Ok(Some(from_jiff(timestamp)))
+    let utc = from_jiff(timestamp);
+    if !(1..=9999).contains(&utc.year()) {
+        return Err(());
+    }
+    Ok(Some(utc))
+}
+
+/// Whether a personal date (`finished_on`, a Goodreads "Date Read") may be stored with
+/// [`noon_local_utc`]: 0001-01-02 to 9999-12-30. Noon on such a date is in the UTC years 1 to
+/// 9999 in every zone, so it always serialises; a `time::Date` body field also accepts year 0
+/// and negative years, which must not be stored. Callers answer 400 `Invalid value` otherwise.
+pub fn personal_date_in_range(date: Date) -> bool {
+    let first = Date::from_calendar_date(1, Month::January, 2).expect("a valid date");
+    let last = Date::from_calendar_date(9999, Month::December, 30).expect("a valid date");
+    (first..=last).contains(&date)
 }
 
 /// `"%Y-%m-%dT%H:%M"` in `zone`, the value of a `datetime-local` input.
@@ -90,7 +107,8 @@ pub fn today(zone: &TimeZone) -> Date {
 }
 
 /// 12:00 local time on `date` in `zone`, as UTC (how personal dates such as `finished_on` are
-/// stored, so they read back as the same date in that zone).
+/// stored, so they read back as the same date in that zone). Callers check
+/// [`personal_date_in_range`] first; outside it the result may not serialise.
 pub fn noon_local_utc(date: Date, zone: &TimeZone) -> OffsetDateTime {
     let local = CivilDate::new(
         date.year() as i16,
@@ -130,7 +148,8 @@ fn parse_iso(text: &str) -> Option<(CivilDateTime, Option<Offset>)> {
     let bytes = text.as_bytes();
     let mut cursor = Cursor { bytes, pos: 0 };
 
-    let year = cursor.digits(4)?;
+    // Year 0000 is valid ISO 8601 but not a Python date (MINYEAR is 1).
+    let year = cursor.digits(4).filter(|year| *year >= 1)?;
     cursor.expect(b'-')?;
     let month = cursor.digits(2)?;
     cursor.expect(b'-')?;
@@ -347,6 +366,54 @@ mod tests {
             "20260822",
         ] {
             assert_eq!(parse_meeting(Some(bad), &TimeZone::UTC), Err(()), "{bad:?}");
+        }
+    }
+
+    /// Every accepted value serialises as RFC 3339: the UTC instant stays in the years 1 to
+    /// 9999, like Python's `datetime` (which raises OverflowError beyond it).
+    #[test]
+    fn times_outside_the_years_1_to_9999_are_refused() {
+        for (bad, zone_name) in [
+            ("0000-01-01", "UTC"),
+            ("0000-01-01", "Europe/Berlin"),
+            ("0000-06-01T12:00Z", "UTC"),
+            ("0000-01-01T00:00+01:00", "Europe/Berlin"),
+            ("0001-01-01T00:00+01:00", "UTC"),
+            ("0001-01-01", "Europe/Berlin"),
+            ("9999-12-31T23:00-05:00", "UTC"),
+            ("9999-12-31T23:59", "America/New_York"),
+        ] {
+            assert_eq!(
+                parse_meeting(Some(bad), &zone(zone_name)),
+                Err(()),
+                "{bad:?} in {zone_name}"
+            );
+        }
+        let first = parse("0001-01-01T00:00Z", "UTC").unwrap();
+        assert_eq!(first, datetime!(0001-01-01 0:00 UTC));
+        let last = parse("9999-12-30T12:00", "Pacific/Kiritimati").unwrap();
+        for at in [first, last] {
+            let text = at.format(&time::format_description::well_known::Rfc3339);
+            assert!(text.is_ok(), "{at}");
+        }
+    }
+
+    #[test]
+    fn personal_dates_stay_inside_the_serialisable_years() {
+        for date in [
+            date!(-0001 - 01 - 01),
+            date!(0000 - 01 - 01),
+            date!(0001 - 01 - 01),
+            date!(9999 - 12 - 31),
+        ] {
+            assert!(!personal_date_in_range(date), "{date}");
+        }
+        for zone_name in ["Pacific/Kiritimati", "Pacific/Pago_Pago", "Etc/GMT+12"] {
+            for date in [date!(0001 - 01 - 02), date!(9999 - 12 - 30)] {
+                assert!(personal_date_in_range(date));
+                let stored = noon_local_utc(date, &zone(zone_name));
+                assert!((1..=9999).contains(&stored.year()), "{date} {zone_name}");
+            }
         }
     }
 

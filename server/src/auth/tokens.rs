@@ -179,7 +179,10 @@ pub async fn revoke_session(
     if deleted.is_none() {
         return Err(AppError::not_found(NO_SUCH_SESSION));
     }
-    let by_cookie = matches!(session::presented(&headers), Presented::Cookie(_));
+    let by_cookie = matches!(
+        session::presented(&state.config, &headers),
+        Presented::Cookie(_)
+    );
     if session_id == user.session_id && by_cookie {
         let cookie = session::clear_cookie(&state.config);
         return Ok((StatusCode::NO_CONTENT, [(SET_COOKIE, cookie)]).into_response());

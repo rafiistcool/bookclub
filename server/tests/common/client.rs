@@ -14,13 +14,15 @@ use super::{TestResponse, send};
 
 const BOUNDARY: &str = "bookclub-test-boundary-7MA4YWxkTrZu0gW";
 
-/// One browser or app: a cookie jar for `bookclub_session`, an optional bearer token, an
+/// One browser or app: a cookie jar for the session cookie (`bookclub_session`, or
+/// `__Host-bookclub_session` when the app's cookies are `Secure`), an optional bearer token, an
 /// optional client IP (`ConnectInfo`; without one the server sees `0.0.0.0`) and extra headers.
 ///
 /// Clones share the cookie jar: a login through one is seen by the others.
 #[derive(Clone)]
 pub struct TestClient {
     router: Router,
+    cookie_name: &'static str,
     cookie: Arc<Mutex<Option<String>>>,
     bearer: Option<String>,
     ip: Option<IpAddr>,
@@ -64,14 +66,21 @@ impl Part {
 }
 
 impl TestClient {
-    /// An anonymous client for any router, e.g. a small router around one extractor.
+    /// An anonymous client for any router, e.g. a small router around one extractor. Its
+    /// cookie jar holds `bookclub_session` (a DEV_MODE configuration).
     pub fn for_router(router: Router) -> Self {
-        Self::new(router, None, None)
+        Self::new(router, SESSION_COOKIE, None, None)
     }
 
-    pub(super) fn new(router: Router, user: Option<(i64, String)>, cookie: Option<String>) -> Self {
+    pub(super) fn new(
+        router: Router,
+        cookie_name: &'static str,
+        user: Option<(i64, String)>,
+        cookie: Option<String>,
+    ) -> Self {
         Self {
             router,
+            cookie_name,
             cookie: Arc::new(Mutex::new(cookie)),
             bearer: None,
             ip: None,
@@ -125,7 +134,7 @@ impl TestClient {
             builder = builder.header("content-type", content_type);
         }
         if let Some(cookie) = self.cookie() {
-            builder = builder.header("cookie", format!("{SESSION_COOKIE}={cookie}"));
+            builder = builder.header("cookie", format!("{}={cookie}", self.cookie_name));
         }
         if let Some(token) = &self.bearer {
             builder = builder.header("authorization", format!("Bearer {token}"));
@@ -230,7 +239,7 @@ impl TestClient {
     /// Like a browser: a `Set-Cookie` for the session stores its value, an empty value or
     /// `Max-Age=0` deletes it.
     fn store_cookies(&self, response: &TestResponse) {
-        let prefix = format!("{SESSION_COOKIE}=");
+        let prefix = format!("{}=", self.cookie_name);
         for header in response.set_cookies() {
             let Some(rest) = header.strip_prefix(&prefix) else {
                 continue;

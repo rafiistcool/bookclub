@@ -131,9 +131,14 @@ fn lock(entry: &Mutex<VecDeque<Instant>>) -> std::sync::MutexGuard<'_, VecDeque<
 
 /// Every limit of §10.1. Each test gets a fresh set, because the harness builds a fresh `AppState`.
 pub struct RateLimits {
-    /// Login failures per account key (`u:<id>`, or [`unknown_identifier_key`]); shared with
-    /// password change. Cleared on success.
+    /// Login failures per account and identifier kind: `u:<id>` for the username (shared with
+    /// the current-password check of password change, email change and account deletion),
+    /// `u:<id>:email` for the verified address. Cleared on success.
     pub login_failures: SlidingWindow,
+    /// Login failures per identifier that names no account, keyed by
+    /// [`unknown_identifier_key`]. Its own cache, so a flood of made-up names cannot evict the
+    /// keys of real accounts.
+    pub login_unknown: SlidingWindow,
     /// Login attempts per [`ip_key`].
     pub login_ip: SlidingWindow,
     pub signup_ip: SlidingWindow,
@@ -145,6 +150,8 @@ pub struct RateLimits {
     /// Any mail to one case-folded address across all accounts. Silent: the mail is not sent.
     pub email_target: SlidingWindow,
     pub invite_preview_ip: SlidingWindow,
+    /// `POST /api/invites/{code}/accept` per account, valid code or not.
+    pub invite_accept_user: SlidingWindow,
     pub refresh_user: SlidingWindow,
     pub upload_user: SlidingWindow,
     pub report_user: SlidingWindow,
@@ -158,6 +165,7 @@ impl RateLimits {
     pub fn new() -> Self {
         Self {
             login_failures: SlidingWindow::new(10, 10 * MINUTE),
+            login_unknown: SlidingWindow::new(10, 10 * MINUTE),
             login_ip: SlidingWindow::new(30, 10 * MINUTE),
             signup_ip: SlidingWindow::new(5, HOUR),
             reset_ip: SlidingWindow::new(5, HOUR),
@@ -165,6 +173,7 @@ impl RateLimits {
             email_send_user: SlidingWindow::new(3, HOUR),
             email_target: SlidingWindow::new(6, DAY),
             invite_preview_ip: SlidingWindow::new(60, HOUR),
+            invite_accept_user: SlidingWindow::new(20, HOUR),
             refresh_user: SlidingWindow::new(10, HOUR),
             upload_user: SlidingWindow::new(30, DAY),
             report_user: SlidingWindow::new(20, DAY),
@@ -193,11 +202,13 @@ pub fn ip_key(ip: IpAddr) -> String {
     }
 }
 
-/// Key for an identifier that names no account: `"n:"` plus the first 4 hex digits of its
-/// SHA-256 (65,536 buckets at most, so attacker-chosen names cannot flush real buckets).
+/// Key for an identifier that names no account: `"n:"` plus the hex SHA-256 of the normalised
+/// identifier. Every name has its own bucket, like an account: a shared bucket would let
+/// colliding names fill it and tell an unknown address from a known one by the 429.
 pub fn unknown_identifier_key(normalised: &str) -> String {
     let digest = Sha256::digest(normalised.as_bytes());
-    format!("n:{:02x}{:02x}", digest[0], digest[1])
+    let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!("n:{hex}")
 }
 
 #[cfg(test)]
@@ -317,17 +328,15 @@ mod tests {
     }
 
     #[test]
-    fn unknown_identifiers_land_in_at_most_65536_buckets() {
-        let key = unknown_identifier_key("nobody");
-        assert_eq!(key.len(), 6);
-        assert!(key.starts_with("n:"));
-        assert!(key[2..].chars().all(|c| c.is_ascii_hexdigit()));
-        assert_eq!(key, unknown_identifier_key("nobody"));
-        let keys: HashSet<String> = (0..200_000)
+    fn every_unknown_identifier_has_its_own_key() {
+        assert_eq!(
+            unknown_identifier_key("nobody"),
+            "n:6382b3cc881412b77bfcaeed026001c00d9e3025e66c20f6e7e92f079851462a"
+        );
+        let keys: HashSet<String> = (0..100_000)
             .map(|i| unknown_identifier_key(&format!("user{i}")))
             .collect();
-        assert!(keys.len() <= 65_536);
-        assert!(keys.len() > 60_000, "{}", keys.len());
+        assert_eq!(keys.len(), 100_000);
     }
 
     #[test]
@@ -335,6 +344,7 @@ mod tests {
         let limits = RateLimits::new();
         let cases = [
             (&limits.login_failures, 10, 600),
+            (&limits.login_unknown, 10, 600),
             (&limits.login_ip, 30, 600),
             (&limits.signup_ip, 5, 3600),
             (&limits.reset_ip, 5, 3600),
@@ -342,6 +352,7 @@ mod tests {
             (&limits.email_send_user, 3, 3600),
             (&limits.email_target, 6, 86_400),
             (&limits.invite_preview_ip, 60, 3600),
+            (&limits.invite_accept_user, 20, 3600),
             (&limits.refresh_user, 10, 3600),
             (&limits.upload_user, 30, 86_400),
             (&limits.report_user, 20, 86_400),

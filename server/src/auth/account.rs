@@ -222,8 +222,8 @@ pub async fn update_notifications(
 
 /// Changes the password. It shares the login failure limit (10 wrong current passwords in ten
 /// minutes, then 429); a right current password clears it. Every other session and bearer
-/// token of the user is deleted, and every open reset link is voided; the current session
-/// stays. A password change or reset that commits while this one verifies wins: this one then
+/// token of the user is deleted, and every open reset link is voided, and so is a pending
+/// address change of a verified account; the current session stays. A password change or reset that commits while this one verifies wins: this one then
 /// answers `Current password is wrong`.
 #[utoipa::path(
     patch,
@@ -252,19 +252,17 @@ pub async fn change_password(
 
     let mut tx = state.db.begin().await?;
     // Only over the hash that was verified: a change or reset that committed meanwhile wins.
-    let stored_now = sqlx::query!(
-        "UPDATE users SET password_hash = $3, password_changed_at = now()
-         WHERE id = $1 AND password_hash = $2",
+    let verified = sqlx::query_scalar!(
+        r#"UPDATE users SET password_hash = $3, password_changed_at = now()
+           WHERE id = $1 AND password_hash = $2
+           RETURNING email_verified_at IS NOT NULL AS "verified!""#,
         user.id,
         stored,
         new_hash
     )
-    .execute(&mut *tx)
+    .fetch_optional(&mut *tx)
     .await?
-    .rows_affected();
-    if stored_now == 0 {
-        return Err(AppError::bad_request(msg::CURRENT_PASSWORD_WRONG));
-    }
+    .ok_or_else(|| AppError::bad_request(msg::CURRENT_PASSWORD_WRONG))?;
     sqlx::query!(
         "DELETE FROM sessions WHERE user_id = $1 AND id <> $2",
         user.id,
@@ -273,6 +271,12 @@ pub async fn change_password(
     .execute(&mut *tx)
     .await?;
     mail::void_open_tokens(&mut tx, user.id, TokenPurpose::ResetPassword).await?;
+    if verified {
+        // The open link is a pending address change, which whoever knew the old password may
+        // have started; the owner starts it again if it was theirs. An unverified account's
+        // link verifies its own address and stays.
+        mail::void_open_tokens(&mut tx, user.id, TokenPurpose::VerifyEmail).await?;
+    }
     tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -314,7 +318,15 @@ pub(crate) async fn verify_current_password(
     Ok(stored)
 }
 
-/// The rate-limit key of an account, `u:<id>`: `login_failures` and every per-account limit.
+/// The rate-limit key of an account, `u:<id>`: every per-account limit, and in
+/// `login_failures` the logins by username and the current-password check.
 pub(crate) fn account_key(user_id: i64) -> String {
     format!("u:{user_id}")
+}
+
+/// The `login_failures` key of the logins by an account's verified address, `u:<id>:email`.
+/// Apart from the username's, so a filled bucket of one never shows that the other names the
+/// same account.
+pub(crate) fn email_login_key(user_id: i64) -> String {
+    format!("u:{user_id}:email")
 }

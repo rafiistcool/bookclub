@@ -223,9 +223,11 @@ async fn delete_posts(conn: &mut PgConnection, user_id: i64) -> sqlx::Result<()>
     )
     .execute(&mut *conn)
     .await?;
+    // The reading state at the time of writing is the deleted user's too.
     sqlx::query!(
         "UPDATE posts
-         SET body = '', spoiler_upto = NULL, deleted_at = coalesce(deleted_at, now())
+         SET body = '', spoiler_upto = NULL, progress_at = NULL, status_at = NULL,
+             deleted_at = coalesce(deleted_at, now())
          WHERE author_id = $1",
         user_id
     )

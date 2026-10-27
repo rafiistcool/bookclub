@@ -162,14 +162,17 @@ fn parse_json_body<T: DeserializeOwned>(is_json: bool, bytes: &[u8]) -> ApiResul
         .map_err(|error| AppError::bad_request(json_message(&error.into_inner().to_string())))
 }
 
-/// Whether any string value in `value` contains U+0000, which no `text` column accepts (it
-/// would turn the request into a 500).
+/// Whether any string in `value`, object keys included, contains U+0000, which neither a `text`
+/// nor a `jsonb` column accepts (it would turn the request into a 500): a map-typed field, such
+/// as an edit request's `fields`, stores its keys too.
 fn has_nul(value: &serde_json::Value) -> bool {
     use serde_json::Value;
     match value {
         Value::String(text) => text.contains('\0'),
         Value::Array(items) => items.iter().any(has_nul),
-        Value::Object(fields) => fields.values().any(has_nul),
+        Value::Object(fields) => fields
+            .iter()
+            .any(|(key, field)| key.contains('\0') || has_nul(field)),
         Value::Null | Value::Bool(_) | Value::Number(_) => false,
     }
 }
@@ -746,6 +749,8 @@ mod tests {
             r#"{"name":"a\u0000b"}"#,
             r#"{"name":"x","tags":["ok","\u0000"]}"#,
             r#"{"name":"x","unknown":{"deep":"\u0000"}}"#,
+            r#"{"name":"x","unknown":{"a\u0000":1}}"#,
+            r#"{"name":"x","\u0000":1}"#,
         ] {
             let result = post_json(body).await;
             assert_eq!(result.0, StatusCode::BAD_REQUEST, "{body}");

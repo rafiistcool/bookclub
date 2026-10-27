@@ -24,6 +24,7 @@ pub mod overlap;
 pub mod picks;
 pub mod posts;
 pub mod ratelimit;
+pub mod serve;
 pub mod shelf;
 pub mod spa;
 pub mod text;
@@ -32,12 +33,13 @@ pub mod visibility;
 pub mod votes;
 
 use std::any::Any;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::body::Body;
+use axum::body::{Body, to_bytes};
 use axum::extract::DefaultBodyLimit;
-use axum::http::header::REFERRER_POLICY;
+use axum::http::header::{CONTENT_TYPE, REFERRER_POLICY};
 use axum::http::{HeaderValue, Request, StatusCode};
 use axum::middleware;
 use axum::response::{IntoResponse, Response};
@@ -171,6 +173,10 @@ pub fn app(state: AppState) -> Router {
         router = router.layer(cors);
     }
     router
+        .layer(middleware::map_response(json_server_errors))
+        .layer(middleware::from_fn(|request, next| {
+            serve::deadline(serve::REQUEST_DEADLINE, request, next)
+        }))
         .layer(CatchPanicLayer::custom(panic_response))
         .layer(
             TraceLayer::new_for_http()
@@ -183,7 +189,7 @@ pub fn app(state: AppState) -> Router {
                     tracing::info_span!(
                         "request",
                         method = %request.method(),
-                        path = %request.uri().path(),
+                        path = %loggable_path(request.uri().path()),
                         request_id,
                     )
                 })
@@ -218,6 +224,35 @@ fn cors_layer(config: &Config) -> Option<CorsLayer> {
     )
 }
 
+/// The path for the access log, without invite codes: a code is a credential (§19), and
+/// `/api/invites/{code}`, `/api/invites/{code}/accept` and the SPA's `/join/{code}` carry one.
+fn loggable_path(path: &str) -> Cow<'_, str> {
+    for prefix in ["/api/invites/", "/join/"] {
+        if let Some(rest) = path.strip_prefix(prefix) {
+            let tail = rest.find('/').map_or("", |slash| &rest[slash..]);
+            return Cow::Owned(format!("{prefix}{{code}}{tail}"));
+        }
+    }
+    Cow::Borrowed(path)
+}
+
+/// A plain-text 500 becomes the JSON 500 of every other error (§4.1). axum answers one when a
+/// response body fails to serialise (a timestamp outside the years RFC 3339 can write, say).
+async fn json_server_errors(response: Response) -> Response {
+    let plain = response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("text/plain"));
+    if response.status() != StatusCode::INTERNAL_SERVER_ERROR || !plain {
+        return response;
+    }
+    let text = to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .unwrap_or_default();
+    AppError::internal(String::from_utf8_lossy(&text)).into_response()
+}
+
 /// A panicking handler answers 500 `{"detail":"Internal Server Error"}` like every other error.
 fn panic_response(panic: Box<dyn Any + Send + 'static>) -> Response<Body> {
     let message = panic
@@ -231,9 +266,44 @@ fn panic_response(panic: Box<dyn Any + Send + 'static>) -> Response<Body> {
 
 #[cfg(test)]
 mod tests {
-    use axum::body::to_bytes;
-
     use super::*;
+
+    #[test]
+    fn invite_codes_stay_out_of_the_log() {
+        for (path, logged) in [
+            ("/api/invites/AB12CD34EF", "/api/invites/{code}"),
+            (
+                "/api/invites/AB12CD34EF/accept",
+                "/api/invites/{code}/accept",
+            ),
+            ("/join/AB12CD34EF", "/join/{code}"),
+            (
+                "/api/clubs/readers-x1y2/invites/7",
+                "/api/clubs/readers-x1y2/invites/7",
+            ),
+            ("/api/books/works/42", "/api/books/works/42"),
+        ] {
+            assert_eq!(loggable_path(path), logged);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_plain_text_500_becomes_json() {
+        let plain = (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            [(CONTENT_TYPE, "text/plain; charset=utf-8")],
+            "The year component cannot be formatted into the requested format.",
+        )
+            .into_response();
+        let response = json_server_errors(plain).await;
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(&body[..], br#"{"detail":"Internal Server Error"}"#);
+        // Everything else passes untouched.
+        let teapot = (StatusCode::IM_A_TEAPOT, "short and stout").into_response();
+        let response = json_server_errors(teapot).await;
+        assert_eq!(response.status(), StatusCode::IM_A_TEAPOT);
+    }
 
     #[tokio::test]
     async fn a_panic_is_a_json_500() {

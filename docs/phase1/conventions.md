@@ -39,6 +39,7 @@ server/
     ratelimit.rs  client_ip.rs    # §10
     outbound.rs                   # reqwest client, per-host throttles, cooldown, retry (§10)
     openapi.rs  spa.rs  health.rs
+    serve.rs                      # the server loop (header read timeout) and the request deadline (§3)
     jobs.rs                       # background job runner (§16)
     visibility.rs                 # #46 policy API (§6)
     activity/{mod.rs, record.rs, feed.rs}         # record() is W1, feed.rs is CLUB
@@ -178,19 +179,21 @@ pub enum ImportError { TargetNotEmpty, Source(String), Upstream(String), Db(sqlx
 5. build `AppState`
 6. `jobs::spawn_all(state.clone(), shutdown.clone())`
 7. bind
-8. `axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())` with graceful shutdown, which also cancels the jobs
+8. `serve::run(listener, app(state), serve::HEADER_READ_TIMEOUT, shutdown)`: what `axum::serve(…into_make_service_with_connect_info::<SocketAddr>())` with graceful shutdown did (every request carries `ConnectInfo<SocketAddr>`; shutdown lets open requests finish and also cancels the jobs), plus hyper's header read timeout of 30 s, which hyper enforces only with a timer and `axum::serve` gives it none. A connection that has not sent a complete request head within 30 s is closed (slowloris). `hyper` and `hyper-util` are direct dependencies for it (§18).
 
 **Layers, outermost first:**
 1. tower-http `SetRequestId` / `PropagateRequestId` (`x-request-id`)
 2. `SetResponseHeader` `Referrer-Policy: same-origin` on every response (no URL of ours leaks to a third party). It sits outside the layers below so their own answers (the panic 500, a CORS preflight, the origin check's 403) carry it too.
 3. `TraceLayer`
 4. `CatchPanicLayer`, answering 500 `{"detail":"Internal Server Error"}`
+4a. the request deadline (`serve::deadline`, `serve::REQUEST_DEADLINE` = 600 s): a request that has not produced its response within 10 minutes, reading its body included, answers 408 `{"detail":"The request took too long"}` and its handler is dropped (the transaction rolls back). Long enough for a 50 MB upload over a slow uplink; a streamed response body (the export) does not count. A client that sends its body one byte at a time holds a task for 10 minutes, not for days.
+4b. `json_server_errors`: a plain-text 500 (axum's answer when a response body fails to serialise) becomes the JSON 500, logged at ERROR with axum's message.
 5. CORS: only when `CORS_ORIGINS` is set (Phase 4 apps), or for the Vite origin in DEV_MODE
 6. the origin check (§5.8)
 7. `auth::session::maintain_cookie`: the session extractor cannot touch the response, so it leaves a note in a per-request slot that this layer reads: a cookie that resolved to no live session gets a clearing `Set-Cookie` on the 401, and a cookie session that slid gets its cookie again (§5.1). A handler that sets the session cookie itself (login, logout) wins.
 8. `DefaultBodyLimit::max(1 MiB)`; upload routes override it per route (§4.6)
 
-There are no global timeouts; handlers bound their outbound calls instead (§10.3).
+Apart from the header read timeout and the request deadline, there are no global timeouts; handlers bound their outbound calls (§10.3). Per-IP connection caps and tighter timeouts belong to the reverse proxy (#51); a server that faces clients directly (`TRUSTED_PROXIES=none`) has only the two bounds above.
 
 **Fallbacks:**
 - An unknown `/api/…` path (and `/api` itself) or `/media/…` path gets 404 `{"detail":"Not found"}`, whatever the method.
@@ -272,7 +275,7 @@ The specs list several endpoints where validation runs before a 404. Keep those:
 `ApiJson<T>` is the only JSON body extractor. Never use `axum::Json` for input; `Json` for output is fine.
 
 1. An empty body gives 400 `Field required`, whatever the content type (checked first, parity with FastAPI). A body over the route's `DefaultBodyLimit` gives 413 `Request body is too large`.
-2. The `Content-Type` must be `application/json` (parameters allowed). Otherwise 400 `Input should be a valid dictionary or object to extract fields from`. Unparsable JSON gives 400 `JSON decode error`. A non-object gives 400 `Input should be a valid dictionary or object to extract fields from`. A string value anywhere in the body (unknown keys included) that contains U+0000 gives 400 `Invalid value`: Postgres `text` cannot store it, and the statement would fail with a 500.
+2. The `Content-Type` must be `application/json` (parameters allowed). Otherwise 400 `Input should be a valid dictionary or object to extract fields from`. Unparsable JSON gives 400 `JSON decode error`. A non-object gives 400 `Input should be a valid dictionary or object to extract fields from`. A string anywhere in the body, object keys and unknown keys included, that contains U+0000 gives 400 `Invalid value`: Postgres `text` and `jsonb` cannot store it, and the statement would fail with a 500 (a map-typed field, such as an edit request's `fields`, stores its keys too).
 3. The value is deserialised with `serde_path_to_error`. The first serde error maps to a pydantic-style message:
 
    | serde error | detail |
@@ -357,7 +360,8 @@ impl ApiMultipart {
 
 - **Login** (and register, and token creation) generates 32 random bytes and stores `sha256(bytes)` in `sessions.token_hash`. Randomness everywhere (session and email tokens, public ids, invite codes, slugs) comes from one W1 helper, `auth::random::fill(&mut [u8])`, which uses `rand::TryRng::try_fill_bytes(&mut rand::rngs::SysRng, …)` (rand 0.10 has no `OsRng`; `SysRng` is the OS source and is fallible: `fill` panics on an OS failure, which the `CatchPanicLayer` turns into a 500).
   - The cookie value is `base64url_nopad(bytes)`.
-  - The cookie is `bookclub_session=<value>; Path=/; HttpOnly; SameSite=Lax; Max-Age=34560000`, plus `Secure` unless `COOKIE_SECURE=false` (the DEV_MODE default).
+  - The cookie is `__Host-bookclub_session=<value>; Path=/; HttpOnly; SameSite=Lax; Max-Age=34560000; Secure`. With `COOKIE_SECURE=false` (the DEV_MODE default) it is `bookclub_session=<value>` without `Secure`, because browsers accept the `__Host-` prefix only on a `Secure` cookie. `session::cookie_name(config)` picks the name; `auth::SESSION_COOKIE` and `auth::SECURE_SESSION_COOKIE` are the two.
+  - **Cookie tossing.** A page on a sibling subdomain can set a cookie for the parent domain, which the browser then sends next to ours, and a last-wins parser would sign the victim in as the attacker. The `__Host-` prefix makes the browser refuse any such cookie under that name (it must come from this host, with `Path=/` and no `Domain`). `session::presented` therefore reads the cookie by its **raw** name (no percent-decoding: the browser checks the prefix on the raw name, so `%5F%5FHost-bookclub_session` is another cookie to it), and a request that carries the session cookie more than once presents a malformed cookie (401 and a clearing cookie, never "the last one wins").
 - **Idle expiry slides.** On every authenticated request, when `last_used_at < now - 1 hour`, the extractor sets `last_used_at = now` and `expires_at = now + 30 days` (cookie) or `+ 90 days` (bearer). The cookie's Max-Age is fixed at 400 days, the browser maximum; the server decides validity. When a cookie session slides, the response carries the same cookie again (`maintain_cookie`, §3), so the browser's 400 days restart too.
 - **Logout** deletes the row and sends a clearing cookie, but only when a valid session existed (parity). A logout that presents a bearer token deletes that token's session (no cookie is sent).
 - **Login, register and token creation are the only places that create sessions.** Login and register called with a cookie session delete that session (they switch the browser to the new one, parity with the legacy app); token creation leaves the caller's cookie alone.
@@ -369,7 +373,9 @@ impl ApiMultipart {
   pub struct NewSession { pub id: i64, pub secret: String /* cookie value or "bc_…" */, pub label: String,
                           pub created_at: OffsetDateTime, pub last_used_at: OffsetDateTime }
   pub enum Presented { Nothing, Bearer(Option<[u8; 32]>), Cookie(Option<[u8; 32]>) }  // None = malformed
-  pub fn presented(headers: &HeaderMap) -> Presented;      // bearer header first, then the cookie
+  pub fn cookie_name(config: &Config) -> &'static str;     // __Host-bookclub_session when Secure, else bookclub_session
+  pub fn presented(config: &Config, headers: &HeaderMap) -> Presented;  // bearer header first, then the cookie by its raw name;
+                                                            // the cookie twice → Cookie(None)
   pub async fn create(conn, user_id: i64, kind: SessionKind, label: &str) -> sqlx::Result<NewSession>;
   pub async fn delete_by_secret(conn, secret: &[u8; 32], kind: SessionKind) -> sqlx::Result<bool>; // true: it was live
   pub fn token_hash(secret: &[u8; 32]) -> Vec<u8>;         // sessions.token_hash
@@ -427,7 +433,8 @@ pub async fn member_by_slug(conn: &mut PgConnection, user: &CurrentUser, slug: &
 /// The user's role in a club, None for a non-member. For club rows reached by a global id
 /// (/api/posts/{post_id} on a club post, a club reply created through the diary route).
 pub async fn role_in(conn: &mut PgConnection, user_id: i64, club_id: i64) -> sqlx::Result<Option<Role>>;
-/// The ClubRef list of the viewer's clubs (slug, name), for DTO annotation.
+/// The ClubRef (slug, name) of each existing club id, for DTO annotation. Checks nothing: callers pass only
+/// club ids already restricted to the viewer (`ClubMember`, `member_by_slug`, `role_in`, or `JOIN bc_member_clubs($viewer)`).
 pub async fn club_refs(conn: &mut PgConnection, club_ids: &[i64]) -> sqlx::Result<HashMap<i64, ClubRef>>;
 ```
 
@@ -453,7 +460,7 @@ pub async fn club_refs(conn: &mut PgConnection, club_ids: &[i64]) -> sqlx::Resul
 
   **Wave 1 step 5 implementation** (`clubs::{manage, members, invites, redeem, out}`):
   - `clubs::lock_club(conn, club_id) -> sqlx::Result<bool>` takes the club-row lock (false: the club is gone); `clubs::locked_role(conn, user_id, club_id) -> ApiResult<Role>` takes it and re-reads the caller's role; `clubs::member_named(conn, club_id, username)` reads a member's id and role inside the transaction. Inside the lock, a caller who is no longer a member gets 404 `No such club`.
-  - Removal: the target is looked up first (404 `No member with that name` for an unknown name or a non-member); removing yourself is 400 `Use leave to leave the club`; when the in-statement guard matches no row (an admin removing an admin or the owner) the answer is 403 `Only the club owner can do that`. A removal upserts `club_removals` with `removed_at = clock_timestamp()`, the time under the club lock: `now()` is the start of the transaction, which can precede an invite that took the lock first.
+  - Removal: the target is looked up first (404 `No member with that name` for an unknown name or a non-member); removing yourself is 400 `Use leave to leave the club`; when the in-statement guard matches no row (an admin removing an admin or the owner) the answer is 403 `Only the club owner can do that`. A removal upserts `club_removals` with `removed_at = clock_timestamp()`, the time under the club lock: `now()` is the start of the transaction, which can precede an invite that took the lock first. Under the same lock it revokes (`revoked_at = clock_timestamp()`) every **active** invite of the club the person knows, so a second account cannot walk back in with one: the invites they created or redeemed (`club_invite_uses`), and, when the target was an admin (admins list every invite), all of them. Expired and used-up invites keep their state. What the server cannot know stays: a link someone forwarded to a plain member, or the codes a member saw while an admin before a demotion; the admins revoke those (they see every invite with its creator). A role change revokes nothing: a demoted admin's links stay the club's invites, which the other admins see and can revoke.
   - Invite create and revoke (`clubs::invites`) take the club lock through `locked_role` before they write: 404 `No such club` for a caller removed meanwhile, 403 `Only club admins can do that` for one demoted. `insert_invite` dates the invite with `clock_timestamp()`. A removal and a club invite are therefore dated in the order they held the lock, which is what `join` compares: an admin removed while their invite request waited gets no code to walk back in with, and an invite created after a removal works for the removed person.
   - Role change: `{"role": "owner"}` and a target who is the owner (the caller) are 400 `Use transfer to change the owner`; any other role than `admin`/`member` is 400 `Invalid value`.
   - Transfer to yourself is a harmless no-op (demote, then promote the same row).
@@ -477,9 +484,9 @@ pub async fn club_refs(conn: &mut PgConnection, club_ids: &[i64]) -> sqlx::Resul
       pub async fn verify(&self, password: &str, stored: Option<&str>) -> Verdict;
   }
   ```
-- **Login order** (`auth::login::authenticate`, shared by login and token creation): `login_ip.check_and_hit(ip_key)` → look the account up → `login_failures.check_and_hit(u:<id> | unknown_identifier_key)` → verify → on success `clear` the key and, when `rehash`, hash again. The transaction that creates the session starts with `auth::login::confirm`: it locks the user row (`SELECT password_hash … FOR NO KEY UPDATE`; not `FOR SHARE`, so two rehashing logins of one account cannot deadlock), answers 401 `Wrong username or password` when the hash is no longer the one verified, and stores the rehash. A password change or reset that committed during the verify therefore wins, and one that commits later waits for the login, so its session revocation deletes the new session too. Identifiers are stripped and lowercased; one containing `@` is looked up as a **verified** address (`lower(email) = lower($1)`).
-- **Password change**: read the stored hash → `login_failures.check_and_hit(u:<id>)` → verify the current password (400 `Current password is wrong`) → `clear` the key → 400 `Pick a different password` when the new one equals it → hash → one transaction: store it only over the verified hash (`UPDATE … WHERE id = $1 AND password_hash = <verified>`; 0 rows, i.e. a change or reset committed meanwhile, is 400 `Current password is wrong`), bump `password_changed_at`, delete every other session and token, void every open reset link. A right current password clears the failures even when the answer is `Pick a different password` (reasoned change: the hit was counted before verifying, and Python neither recorded nor cleared there).
-- **Password reset confirm** (§5.5) stores the new hash and deletes the sessions in one transaction; `confirm` and the guarded change UPDATE above then keep a racing login or change from outliving it. It also clears the account's `login_failures` key.
+- **Login order** (`auth::login::authenticate`, shared by login and token creation): `login_ip.check_and_hit(ip_key)` → look the account up → `check_and_hit` of the identifier's failure key (`login_failures`: `u:<id>` for a username, `u:<id>:email` for a verified address; `login_unknown`: `unknown_identifier_key` for an identifier that names no account) → verify → on success `clear` the key and, when `rehash`, hash again. The transaction that creates the session starts with `auth::login::confirm`: it locks the user row (`SELECT password_hash … FOR NO KEY UPDATE`; not `FOR SHARE`, so two rehashing logins of one account cannot deadlock), answers 401 `Wrong username or password` when the hash is no longer the one verified, and stores the rehash. A password change or reset that committed during the verify therefore wins, and one that commits later waits for the login, so its session revocation deletes the new session too. Identifiers are stripped and lowercased; one containing `@` is looked up as a **verified** address (`lower(email) = lower($1)`). **Every identifier has a bucket of its own**, known or not, so a full or fresh bucket never tells a verified address from a free one, and ten failures of a username never show which address is its (§10.1). The price: 10 guesses per identifier, so 20 per account (name and address) per 10 minutes.
+- **Password change**: read the stored hash → `login_failures.check_and_hit(u:<id>)` → verify the current password (400 `Current password is wrong`) → `clear` the key → 400 `Pick a different password` when the new one equals it → hash → one transaction: store it only over the verified hash (`UPDATE … WHERE id = $1 AND password_hash = <verified>`; 0 rows, i.e. a change or reset committed meanwhile, is 400 `Current password is wrong`), bump `password_changed_at`, delete every other session and token, void every open reset link and, on an account whose own address is verified, the open verification link (a pending address change, §5.5). A right current password clears the failures even when the answer is `Pick a different password` (reasoned change: the hit was counted before verifying, and Python neither recorded nor cleared there).
+- **Password reset confirm** (§5.5) stores the new hash and deletes the sessions in one transaction; `confirm` and the guarded change UPDATE above then keep a racing login or change from outliving it. It also clears the account's `login_failures` keys (`u:<id>` and `u:<id>:email`).
 - **Email change and account deletion** check the password with the same steps (`auth::account::verify_current_password`, §5.5) and guard their transaction by the verified hash: they lock the user row and answer 400 `Current password is wrong` when it changed since the check.
 - **Unknown accounts** run a verify against a fixed dummy hash, so their timing matches.
 - **Rules:**
@@ -524,7 +531,7 @@ pub async fn club_refs(conn: &mut PgConnection, club_ids: &[i64]) -> sqlx::Resul
 **Addresses and uniqueness.** Only **verified** addresses are unique (`users_verified_email_key`), and only verified addresses are used for login by email and for reset. An unverified address is just what someone typed; it cannot squat anyone's address.
 - **Accepted addresses** (`auth::rules::valid_email`, 400 `Enter a valid email address`): at most 254 characters, a plain `local@domain` with an RFC 5322 dot-atom local part (atext plus non-ASCII letters; no quotes, comments, angle brackets, commas, whitespace, control or format characters) and a domain of at least two labels of letters, digits and inner hyphens, which lettre also parses as an `Address` unchanged. Anything a mail library could read as another mailbox (`"a"@b.de`, `(c)a@b.de`, `x<a@b.de>`) is refused, so `verified_holder`, `users_verified_email_key` and the `email_target` limit always see the address the mail goes to. `SmtpEmail` sends to `Mailbox::new(None, address)`, never to a parsed mailbox string. Provider aliases (`a+tag@`, Gmail dots) remain distinct addresses.
 - `users.email` is the account address. On an account with no verified address, a sign-up or `PUT /api/auth/me/email` writes the new address there at once (unverified). On an account with a verified address, the new address lives only on the open `verify_email` token until it is verified; `UserOut.pending_email` shows it.
-- **No enumeration.** Register and `PUT /api/auth/me/email` never reveal whether an address is in use: they answer exactly as for a free address. When the address already belongs to a **verified** account, no verification link is sent; that address gets the "someone tried to use your address" notice instead (§9). The new account keeps an unverified address it can never verify. `PUT /me/email` on a verified account still issues the (unsent) verification token in that case, so `UserOut.pending_email` shows the address exactly as for a free one, and the old address gets the same "email changed" notice. The reset request answers 204 before it looks anything up, and resend answers before its link is sent (it sends nothing when a verified account holds the address).
+- **No enumeration.** Register and `PUT /api/auth/me/email` never reveal whether an address is in use: they answer exactly as for a free address. When the address already belongs to a **verified** account, no verification link is sent; that address gets the "someone tried to use your address" notice instead (§9). The new account keeps an unverified address it can never verify. `PUT /me/email` on a verified account still issues the (unsent) verification token in that case, so `UserOut.pending_email` shows the address exactly as for a free one, and the old address gets the same "email changed" notice. The reset request answers 204 before it looks anything up, and resend answers before its link is sent (it sends nothing when a verified account holds the address). The stored state differs (sign-up issues no token for a held address), so nothing may show an unverified account's open link: `UserOut.pending_email` and the export's `profile.pending_email` are null unless the account's own address is verified, and the login failure buckets are per identifier (§5.4).
 
 **Token invalidation** (each in the same transaction as the event):
 
@@ -533,7 +540,7 @@ pub async fn club_refs(conn: &mut PgConnection, club_ids: &[i64]) -> sqlx::Resul
 | A new `verify_email` token is issued (register, `PUT /me/email`, resend) | Every older open `verify_email` token is marked used: at most one is open. |
 | `PUT /me/email` | Also every open `reset_password` token is marked used. |
 | Verification succeeds | Every other open `verify_email` and every open `reset_password` token is marked used. |
-| Password change, password reset | Every open `reset_password` token is marked used (plus the session revocation of §5.1). |
+| Password change, password reset | Every open `reset_password` token is marked used (plus the session revocation of §5.1). On an account whose own address is verified (always, for a reset), every open `verify_email` token too: it is a pending address change, which whoever knew the old password may have started, and its link would later take the account's address. The owner starts a change of their own again. An unverified account's link verifies its own address and stays. |
 
 - **Newest link** means the highest `id`, never `created_at`. Every flow that issues a verification token holds the `users` row lock (sign-up creates the row in the same transaction), and identity values are taken at insert, so ids follow issue order. `created_at` is the start of the issuing transaction: a request that began first but waited for the lock issues the later link with the earlier time. Verify, `UserOut.pending_email`, the email flows and the export's `pending_email` all order by `id`.
 - **Verify** accepts a token only when it is open (unused, unexpired), is the user's newest `verify_email` token, and its `email` is the address still pending (`users.email` for an unverified account, else the token address itself). Success sets `users.email = token.email` and `email_verified_at`. If another account verified the same address first, it answers 409 `That email is already in use` (the unique index decides; mapped with `is_unique_violation`); the link stays unused. Only the holder of a link can see that, so it does not enumerate. Verify needs no session and signs nobody in.
@@ -542,7 +549,7 @@ pub async fn club_refs(conn: &mut PgConnection, club_ids: &[i64]) -> sqlx::Resul
   - the account's own verified address (compared with `lower()`, like the unique index) cancels a pending change: every open verification link is voided, nothing is sent;
   - otherwise an unverified (or missing) address is replaced at once, and a verification token is issued for the new address in every case (it voids the older one) → commit → the "email changed" notice to the old address when it is verified, then the link to the new address, or the "address in use" notice (`Attempt::EmailChange`) to the verified account that holds it.
 - **Reset request** (`POST /api/auth/password-reset`, `{email}` stripped, not validated): `reset_ip.check_and_hit(ip_key)` (429 `Too many attempts. Wait a few minutes.`) → 204 at once. A spawned task then looks the address up among verified accounts (`verified_holder`), applies `reset_account` (3 an hour, silent), issues the reset token for the stored address and delivers the link. An unknown or unverified address does nothing.
-- **Reset confirm** requires `token.email = users.email AND users.email_verified_at IS NOT NULL`; anything else is 400 `That link has expired or was already used`. Order: body validation (400 `New password must be at least 8 characters`) → the token is checked read-only first, so a made-up token costs no argon2 work → hash → one transaction: lock the user row, mark the token used (re-checked), check the address rule, store the hash and bump `password_changed_at`, delete every session and token of the user, void every open reset link → commit → `login_failures.clear(u:<id>)` (the link proves the mailbox, so someone else's failed guesses no longer lock the owner out). A refused link stays unused.
+- **Reset confirm** requires `token.email = users.email AND users.email_verified_at IS NOT NULL`; anything else is 400 `That link has expired or was already used`. Order: body validation (400 `New password must be at least 8 characters`) → the token is checked read-only first, so a made-up token costs no argon2 work → hash → one transaction: lock the user row, mark the token used (re-checked), check the address rule, store the hash and bump `password_changed_at`, delete every session and token of the user, void every open reset link and the open verification link (a pending address change) → commit → `login_failures.clear` of `u:<id>` and `u:<id>:email` (the link proves the mailbox, so someone else's failed guesses no longer lock the owner out). A refused link stays unused.
 - **Rate limits** (§10.1): `PUT /me/email` and resend share the per-account `email_send_user` bucket (3 per hour, 429 `Slow down a little. Try again later.`). Every mail to an address (verification link, notice, reset) also counts against `email_target` (6 per day per case-folded address across all accounts); over it, the mail is silently not sent and the response is unchanged.
 - **Sign-up gate:** `SIGNUP_MODE=invite` is the Phase 1/2 default (a closed beta until #55). Sign-up then requires a valid invite: a club invite (it also joins the club) or a sign-up invite minted by an instance admin (club_id NULL). With `SIGNUP_MODE=open` a code is optional, and a given code must still be valid.
 - **Sign-up order** (`POST /api/auth/register`): body validation (400, every message in field order: username, email, password, timezone, locale) → `signup_ip.check_and_hit(ip_key)` (429; every validated attempt counts) → username taken (409) → no code in invite mode (400 `Sign-up needs an invite code right now`; a code that normalises to nothing counts as none) → hash → one transaction: insert the user (a concurrent same-name sign-up is 409 through `users_username_key`), consume the invite (400 `That invite code is not valid`), join its club, issue the verification token **or**, when a verified account holds the address, nothing; create the session; delete the caller's previous cookie session → commit → send the link or the notice → 201 `UserOut` with `Set-Cookie`. Any failure rolls the account and the invite use back.
@@ -562,10 +569,10 @@ Body `{password}`. The password is checked with `auth::account::verify_current_p
 2. **Posts:**
    - First, every post of the user is locked (`SELECT id FROM posts WHERE author_id = $1 ORDER BY id FOR UPDATE`). A reply's foreign-key check holds its parent `FOR KEY SHARE`, which conflicts: a reply in flight commits before the lock is granted, and one that comes later waits for the deletion. Without the lock, a reply committed while the DELETE below waited for its parent would fail the DELETE at `posts_parent_fk` (a 500).
    - Then the user's posts that nobody else replied to are deleted (with the user's own replies under them, in one statement). It is a new statement, so it sees every reply committed before the locks were granted.
-   - Then every post of the user that is left (others replied to it) becomes a tombstone (body `''`, spoiler NULL, `deleted_at` kept or now). Tombstoning "everything left" instead of re-checking the replies means a reply deleted between the two statements cannot leave a live post without an author.
+   - Then every post of the user that is left (others replied to it) becomes a tombstone (body `''`, spoiler NULL, `deleted_at` kept or now). `progress_at` and `status_at` are cleared too: they are the deleted user's reading state. (A tombstone of a post its author deleted keeps them, parity: spec/diary.md.) Tombstoning "everything left" instead of re-checking the replies means a reply deleted between the two statements cannot leave a live post without an author.
    - Their reactions cascade.
    - `author_id` then becomes NULL through the foreign key. Live posts can't exist at this point; the `posts_live_has_author` check enforces it.
-   - A diary tombstone with `author_id` NULL stays visible to whoever can see the author of one of its replies, so the other users' replies stay visible to the same people as before (`bc_visible_posts`).
+   - A diary tombstone with `author_id` NULL stays visible to whoever can see the author of one of its replies (`bc_visible_posts`, §6.3), unless the author had made it `only_me`: then it stays hidden with its replies, as before the deletion. The audience of an `audience` thread changes: the root's author no longer limits it, so each reply reaches its own author's audience (people who never saw the thread may now see the anonymous root and those replies), and people who saw the thread only through the root's author lose it. Replies are always `audience`, so no reply reaches anyone its author did not allow.
 3. **Media:** delete **every** avatar media row the user uploaded (`media WHERE kind = 'avatar' AND (uploaded_by = $user OR id = users.avatar_media_id)`, not only the current one) and remember their storage prefixes (`storage_key`). Cover photos the user uploaded are catalog contributions: they stay, with `uploaded_by` set to NULL by the FK.
 4. **Delete the user.** This cascades:
    - sessions and email tokens
@@ -594,12 +601,20 @@ The response is a ZIP that contains `data.json` and `media/`. It is `auth::expor
 - Most rows are the table row as Postgres renders it (`to_jsonb(row)`) minus the reference to the user, plus readable names (`work_title`, `club_name`), so a column added later is exported without a code change. Sessions use an allow-list (never `token_hash`); the profile drops `password_hash`.
 - Timestamps are RFC 3339 in UTC with `Z`, like the API (§12): the string value of every key ending in `_at` that parses as RFC 3339 is rewritten (`posts.progress_at` is a number and `posts.status_at` a status, so they stay).
 - `catalog_contributions` is `{works, editions}`, `edit_requests` `{filed, decided}`, `reports` `{filed, resolved}`, `physical_shelf_layout` an object or null; every other key is an array. `invite_uses` names the club and the time, never the code (the invite belongs to whoever created it).
+- **Clubs the user no longer belongs to** (left or removed): the export must not be a window into them (DSGVO Art. 15(4): the copy must not touch the rights of others). Their rows keep only what the user wrote and nobody can change since, plus the club's current name:
+  - `members_invited`: only clubs the user is a member of (`bc_is_member`); other people's memberships are theirs.
+  - `clubs_created`: `{id, name, created_at}`, not slug and time zone.
+  - `picks_set`: `{id, club_id, club_name, work_id, work_title, started_at}`, not the note, meeting, end or reminder, which other admins edit.
+  - `milestones_created`: `{id, club_id, club_name, pick_id, created_at}`, not the title, range or due date.
+  - `invites_created`: the whole row (with `code`, `use_count`, `revoked_at`) only while the user may list the invite (an admin or owner of its club; an instance admin for a sign-up invite), else `{id, club_id, club_name, created_at, expires_at, max_uses}`. The code is a credential of the club.
+  
+  Club names are the current ones in every section (a rename after the user left shows; the name is what makes the rows readable).
 
 **`data.json`** holds one key per foreign-key column that references `users(id)`:
 
 | Key | Source (`table.column`) |
 |---|---|
-| `profile` | `users` row minus `password_hash`, plus `pending_email` |
+| `profile` | `users` row minus `password_hash`, plus `pending_email` (as in `UserOut`: null unless the account's own address is verified, §5.5 "No enumeration") |
 | `sessions` | `sessions.user_id`: label, kind, created, last used (never `token_hash`) |
 | `shelf_entries` (with work titles) | `shelf_entries.user_id` |
 | `physical_shelf_layout` | `physical_shelf_layouts.user_id` |
@@ -639,7 +654,7 @@ On top of that, the **origin check layer** answers 403 `{"detail":"Cross-site re
 - may authenticate by cookie: it has no bearer token and carries a `Cookie` header, whatever cookies it holds, and
 - carries an `Origin` header that is not `PUBLIC_URL`'s origin, not in `CORS_ORIGINS`, and not the Vite origin in DEV_MODE.
 
-Any cookie counts, not only a literal `bookclub_session`: the check fails closed instead of depending on how the session extractor parses cookie names (axum-extra's `CookieJar` percent-decodes them, so `bookclub%5Fsession` is the session cookie to it). Bearer-token requests skip the check. **The frontend sends nothing extra.** It is `auth::origin::check` (W1, implemented in step 1); the cookie name is `auth::SESSION_COOKIE`.
+Any cookie counts, not only a literal session cookie: the check fails closed instead of depending on how the session extractor parses cookie names (it reads the raw name, §5.1, but a check that never parses names cannot drift from it). Bearer-token requests skip the check. **The frontend sends nothing extra.** It is `auth::origin::check` (W1, implemented in step 1); the cookie name is `session::cookie_name(config)` (§5.1).
 
 ## 6. Visibility policy (#46)
 
@@ -714,7 +729,7 @@ In particular, `quote_count`, the stats quote counts and every rating aggregate 
 - A root is visible when `bc_can_see_item(viewer, author, visibility)`.
 - A reply is visible when its root is visible **and** the viewer is its author, the root's author, or in the reply author's audience.
 - Replies are always `audience`. The author of an entry sees every reply to it.
-- **Tombstone of a deleted account** (`author_id` NULL, §5.6): the root is visible to every viewer who can see the author of at least one of its replies, and each reply keeps its own rule (visible when the viewer can see the reply's author). The other users' replies therefore stay visible to the same people as before the deletion.
+- **Tombstone of a deleted account** (`author_id` NULL, §5.6): an `audience` root is visible to every viewer who can see the author of at least one of its replies, and each reply keeps its own rule (visible when the viewer can see the reply's author). An `only_me` root stays hidden, with its replies, from everyone. The audience is therefore not the same as before the deletion: each reply reaches its own author's audience, no longer limited by the root's author (§5.6).
 
 **Club post** (`club_id` set):
 - Visible to members of that club. Replies inherit the scope; the schema enforces it (`posts_parent_fk` ties a reply to its parent's work and scope).
@@ -1130,24 +1145,26 @@ impl SlidingWindow {
     pub fn check_and_hit(&self, key: &str) -> Result<(), RetryAfter>;   // atomic per key; a refusal records nothing
     pub fn clear(&self, key: &str);
 }
-pub struct RateLimits { pub login_failures, pub login_ip, pub signup_ip, pub reset_ip, pub reset_account,
-    pub email_send_user, pub email_target, pub invite_preview_ip, pub refresh_user, pub upload_user,
+pub struct RateLimits { pub login_failures, pub login_unknown, pub login_ip, pub signup_ip, pub reset_ip, pub reset_account,
+    pub email_send_user, pub email_target, pub invite_preview_ip, pub invite_accept_user, pub refresh_user, pub upload_user,
     pub report_user, pub edit_request_user, pub custom_book_user, pub export_user: SlidingWindow }
 /// Rate-limit key for a client address: an IPv4 address as is, an IPv6 address by its /64 prefix
 /// (a client with a /64 can otherwise mint a fresh key per request).
 pub fn ip_key(ip: IpAddr) -> String;
-/// Key for an identifier that names no account: "n:" + the first 4 hex digits of its SHA-256
-/// (65,536 buckets at most, so attacker-chosen names cannot flush real buckets).
+/// Key for an identifier that names no account (in `login_unknown`): "n:" + the hex SHA-256 of the normalised
+/// identifier. One bucket per name, like an account: shared buckets let colliding names fill an address's bucket,
+/// and the 429 then told a free address from a verified one.
 pub fn unknown_identifier_key(normalised: &str) -> String;
 ```
 
 - **Login and password change** call `login_failures.check_and_hit(key)` **before** verifying the password and `clear(key)` on success. `check` followed by `hit` after a failure is not enough: the verify awaits the password semaphore, so concurrent attempts would all pass `check` before the first `hit` lands, and thousands of guesses could reach one account. With `check_and_hit` the counting is unchanged (10 failures, then 429; a success clears), and of N concurrent attempts at most 10 are verified. A refused attempt records nothing, so the right password is refused while the key is blocked, as in Python.
-- **Bounded memory:** each limit has its own cache, `max_capacity` 100,000 keys, with `time_to_idle` = the window. Account keys (`u:<id>`, at most one per account) and hashed unknown-identifier keys are bounded by construction.
+- **Bounded memory:** each limit has its own cache, `max_capacity` 100,000 keys, with `time_to_idle` = the window. Account keys (`u:<id>` and `u:<id>:email`, at most two per account) are bounded by construction. Unknown identifiers have their own cache, `login_unknown`, so a flood of made-up names evicts only other made-up names, never an account's failures.
 - **Every test gets a fresh `RateLimits`**, because the harness builds a fresh `AppState`.
 
 | Limit | Threshold |
 |---|---|
-| Login failures (per account key `u:<id>`, or `unknown_identifier_key` when the account is unknown) | 10 per 600 s, cleared on success, shared with password change |
+| `login_failures`: login failures per account and identifier kind (`u:<id>` for the username, `u:<id>:email` for the verified address) | 10 per 600 s, cleared on success; `u:<id>` is shared with the current-password check (password change, email change, account deletion) |
+| `login_unknown`: login failures per identifier that names no account (`unknown_identifier_key`) | 10 per 600 s |
 | Login attempts per IP (`ip_key`) | 30 per 600 s |
 | Sign-up per IP | 5 per hour |
 | Reset per IP | 5 per hour |
@@ -1155,6 +1172,7 @@ pub fn unknown_identifier_key(normalised: &str) -> String;
 | `email_send_user`: verification resend and `PUT /api/auth/me/email`, per account | 3 per hour |
 | `email_target`: any mail to one address (case-folded), across all accounts | 6 per day, silent (the mail is not sent; the response is unchanged) |
 | Invite preview per IP | 60 per hour |
+| `invite_accept_user`: `POST /api/invites/{code}/accept` per account (`u:<id>`), valid code or not | 20 per hour (429 `Slow down a little. Try again later.`, checked before the transaction) |
 | Refresh | 10 per hour per user |
 | Uploads | 30 per day |
 | Reports | 20 per day |
@@ -1293,12 +1311,17 @@ pub fn parse_meeting(value: Option<&str>, zone: &TimeZone) -> Result<Option<Offs
     // None/""/whitespace → None; trailing Z; accepts date-only (midnight), YYYY-MM-DD[T| ]HH[:MM[:SS[.f]]],
     // lowercase t, ±HH:MM/±HHMM/Z; naive values use Disambiguation::Compatible (= Python fold=0); → UTC.
     // Error → caller returns 400 error::msg::MEETING_AT_FORMAT (also for closes_at and due_at). Fractions may use
-    // '.' or ','. ISO week dates and the basic format (20260822T1900) are rejected. The function carries
-    // #[allow(clippy::result_unit_err)].
+    // '.' or ','. ISO week dates and the basic format (20260822T1900) are rejected. Year 0000, and any value whose
+    // UTC instant falls outside the years 1..=9999, is an error too (Python's datetime range; time's RFC 3339
+    // serialiser writes no other year, and axum would answer a plain-text 500 for a stored one). The function
+    // carries #[allow(clippy::result_unit_err)].
 pub fn local_minute(dt: OffsetDateTime, zone: &TimeZone) -> String;  // "%Y-%m-%dT%H:%M"
 pub fn label(dt: OffsetDateTime, zone: &TimeZone) -> String;         // "%a %d %b %Y, %H:%M %Z", English, zero-padded day
 pub fn today(zone: &TimeZone) -> time::Date;
-pub fn noon_local_utc(date: time::Date, zone: &TimeZone) -> OffsetDateTime;
+pub fn noon_local_utc(date: time::Date, zone: &TimeZone) -> OffsetDateTime;  // callers check personal_date_in_range first
+pub fn personal_date_in_range(date: time::Date) -> bool;  // 0001-01-02..=9999-12-30: noon there is in the UTC years
+    // 1..=9999 in every zone. A `time::Date` body field also accepts year 0 and negative years; every personal date
+    // (finished_on, Goodreads "Date Read") outside the range is 400 `Invalid value` before it is stored.
 ```
 
 **Which zone applies:**
@@ -1365,7 +1388,7 @@ pub fn round_half_even(x: f64, digits: usize) -> f64;  // via format!("{:.*}") �
 - **DTOs:** every request and response type derives `utoipa::ToSchema`; query structs derive `IntoParams`. Schema names are the TypeScript type names the frontend will import (`BookOut`, `ShelfItemOut`, …), so keep them stable and **unique crate-wide**: utoipa silently keeps only one of two same-named schemas. The shared DTOs live only in `crate::dto` (§20); a package never defines its own copy.
 - **Operation ids:** every `#[utoipa::path]` sets `operation_id = "<module>_<action>"` (e.g. `shelf_list_entries`, `catalog_get_work`); utoipa would otherwise use the bare handler name, and two packages' `list` handlers would collide only after both merge.
 - **Handlers** carry `#[utoipa::path(method, path = "/api/…", operation_id = "…", tag = "<module>", params(…), request_body = …, responses((status = 200, body = X), (status = 4xx, body = ErrorBody, description = "…")))]`. Document every status the handler can return. `ErrorBody { detail: String }` is shared from `error.rs`.
-- **Security schemes** are registered in `openapi::ApiDoc`: cookie `bookclub_session` and `bearer`.
+- **Security schemes** are registered in `openapi::ApiDoc`: cookie `bookclub_session` (its description says the cookie is `__Host-bookclub_session` when `Secure`, §5.1; the scheme name stays) and `bearer`.
 - **Every §0 DTO is registered** in `openapi::ApiDoc` (`components(schemas(BookOut, EditionOut, ContributorOut, SearchHit, SearchPage, UserOut, UserSummary, ClubRef, ClubSummary, ShelfStatus, Visibility, CatalogSource, ReactionOut, ErrorBody))`), so the document contains them from Wave 1 on, whether or not a merged handler uses them yet.
 - **W1 checks** (`tests/openapi_smoke.rs`): operation ids unique; every operation has a tag and responses; every operation id matches `^[a-z]+_[a-z0-9_]+$`; and a source scan of `server/src/**/*.rs` finds every `derive(… ToSchema …)` struct or enum name at most once.
 - **`Patch<T>` fields** use `#[schema(value_type = Option<T>)]`. Timestamps use the utoipa `time` feature.
@@ -1438,6 +1461,7 @@ impl TestApp {
                                                      // ("SIGNUP_MODE", "open") or &PRODUCTION_ENV
     pub async fn with_real_lookup(db: PgPool) -> Self; // lookup = state.catalog (real chain against `upstream`)
     pub fn config(&self) -> &Config;
+    pub fn cookie_name(&self) -> &'static str;      // session::cookie_name(config): __Host-bookclub_session under PRODUCTION_ENV
     pub fn anon(&self) -> TestClient;
     pub async fn user(&self, username: &str) -> TestClient;          // verified email <username>@example.test,
                                                                      // password PASSWORD ("password1"), signed in
@@ -1463,7 +1487,7 @@ pub struct TestClub { pub id: i64, pub slug: String, pub name: String }
 pub struct TestWork { pub id: i64, pub title: String }
 pub struct TestEdition { pub id: i64, pub work_id: i64, pub isbn13: String }
 
-pub struct TestClient { /* Router clone, cookie jar for bookclub_session, optional bearer, client ip */ }
+pub struct TestClient { /* Router clone, cookie jar for the session cookie (TestApp::cookie_name()), optional bearer, client ip */ }
 impl TestClient {
     pub async fn get(&self, path: &str) -> TestResponse;
     pub async fn post(&self, path: &str, body: Value) -> TestResponse;
@@ -1481,7 +1505,8 @@ impl TestClient {
     pub fn for_router(router: Router) -> TestClient;                     // anonymous, any router (extractor tests)
     pub fn cookie(&self) -> Option<String>; pub fn set_cookie(&self, value: Option<&str>);   // the jar
 }
-// Clones share the cookie jar. A Set-Cookie for bookclub_session stores its value; an empty value or Max-Age=0
+// Clones share the cookie jar. A Set-Cookie for the session cookie (bookclub_session, or __Host-bookclub_session
+// under a Secure configuration such as PRODUCTION_ENV) stores its value; an empty value or Max-Age=0
 // empties the jar. Without with_ip the server sees 0.0.0.0.
 pub enum Part { File { name: String, filename: String, content_type: String, bytes: Vec<u8> }, Text { name: String, value: String } }
 impl Part { pub fn file(filename: &str, content_type: &str, bytes: Vec<u8>) -> Part; /* name "file" */ pub fn text(name: &str, value: &str) -> Part; }
@@ -1606,6 +1631,8 @@ caseless = "0.2.2"                                 # Unicode case folding (= Pyt
 clap = { version = "4.6.7", features = ["derive", "env"] }
 csv = "1.4.0"                                      # Goodreads import (flexible rows)
 futures = "0.3.34"
+hyper = "1.12.0"                                   # serve.rs names hyper's request body (Wave 1 security review)
+hyper-util = { version = "0.1.21", features = ["server-auto", "server-graceful", "service", "tokio"] }  # serve.rs: header read timeout
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 ipnet = "2.12.2"
 jiff = { version = "0.2.38", features = ["tzdb-bundle-always"] }
@@ -1646,6 +1673,7 @@ wiremock = "0.6.5"
 - `sqlx` gains `json` for `jsonb`.
 - `time` gains `serde-human-readable` (Wave 1): without it `time::Date` serialises as a `(year, ordinal)` tuple.
 - `tower` moves from dev-dependencies to dependencies.
+- `hyper` and `hyper-util` (Wave 1 security review): the server loop of §3, because `axum::serve` gives hyper no timer and so no header read timeout. Both were already locked as dependencies of axum, with these features; they add no crate.
 - `unicode-normalization` (Wave 1 step 2): DNB delivers decomposed umlauts; ingest and the MARC mapping store NFC. It was already locked as a dependency of `caseless`, so it adds no crate.
 - **Not used:**
   - `utoipa-scalar`: no docs UI is needed, and its optional `time < 0.3.52` pin would clash.
@@ -1666,7 +1694,7 @@ wiremock = "0.6.5"
 ## 19. Logging and operational rules
 
 - Use `tracing` with fields, not string formatting: `tracing::warn!(url = %u, status, latency_ms, "open library request failed")`.
-- **Never log:** passwords, tokens, cookies, email tokens, the email body (except in `LogEmail` in dev) or full email addresses at INFO.
+- **Never log:** passwords, tokens, cookies, email tokens, invite codes, the email body (except in `LogEmail` in dev) or full email addresses at INFO. The access log's `path` (the `TraceLayer` span in `lib.rs`) replaces the code in `/api/invites/{code}…` and `/join/{code}` with `{code}`.
 - `AppError::internal` logs the cause at ERROR with the request id.
 - **Outbound calls** log URL, status and latency: INFO on success, WARN on failure.
 - **The health check** stays as scaffolded.
@@ -1741,7 +1769,9 @@ pub struct ClubSummary { pub slug: String, pub name: String, pub role: String /*
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct ReactionOut { pub emoji: String, pub count: i64, pub mine: bool, pub users: Vec<String> }
 
-// Loaders that are not catalog-specific (catalog loaders are in catalog::shared::books, §7.1):
+// Loaders that are not catalog-specific (catalog loaders are in catalog::shared::books, §7.1).
+// Checks nothing: it names any existing user id. Callers pass only ids the viewer may see (§6.3: reaction users,
+// parent authors and reader lists come from bc_visible_owners or the club's members, never from the row alone).
 pub async fn user_summaries(conn: &mut PgConnection, ids: &[i64]) -> sqlx::Result<HashMap<i64, UserSummary>>;
 ```
 

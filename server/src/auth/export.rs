@@ -101,6 +101,12 @@ pub async fn export_me(user: CurrentUser, State(state): State<AppState>) -> ApiR
 
 /// `profile`, `sessions` and the personal data (shelf, layout, favourites, search history,
 /// quotes, posts, reactions, import jobs).
+///
+/// `profile.pending_email` follows `UserOut`: the address of the newest open verification link
+/// of an account whose own address is verified, else null. An unverified account's link is for
+/// the address in `profile.email`, or, after a sign-up with an address a verified account
+/// holds, does not exist; showing it would tell the two sign-ups apart (§5.5 "No
+/// enumeration").
 async fn account_sections(
     conn: &mut PgConnection,
     user_id: i64,
@@ -109,10 +115,12 @@ async fn account_sections(
     let profile = sqlx::query_scalar!(
         r#"SELECT (to_jsonb(u) - 'password_hash')
                   || jsonb_build_object('pending_email',
-                         (SELECT t.email FROM email_tokens t
-                          WHERE t.user_id = u.id AND t.purpose = 'verify_email'
-                            AND t.used_at IS NULL AND t.expires_at > now()
-                          ORDER BY t.id DESC LIMIT 1)) AS "profile!"
+                         CASE WHEN u.email_verified_at IS NOT NULL THEN
+                             (SELECT t.email FROM email_tokens t
+                              WHERE t.user_id = u.id AND t.purpose = 'verify_email'
+                                AND t.used_at IS NULL AND t.expires_at > now()
+                              ORDER BY t.id DESC LIMIT 1)
+                         END) AS "profile!"
            FROM users u WHERE u.id = $1"#,
         user_id
     )
@@ -231,6 +239,13 @@ async fn account_sections(
 }
 
 /// Memberships, removals, clubs, invites, picks, milestones, votes and activity events.
+///
+/// Rows in a club the user no longer belongs to keep only what the user wrote and nobody can
+/// change since (ids, dates, the work), plus the club's name: other members' memberships, the
+/// note and meeting of a pick, a milestone's title and dates, an invite's code, counters and
+/// revocation, and the club's settings are club data a former member no longer sees
+/// (DSGVO Art. 15(4)). Invites keep their live state only while the user may list them (an
+/// admin of the club, or an instance admin for a sign-up invite).
 async fn club_sections(
     conn: &mut PgConnection,
     user_id: i64,
@@ -258,7 +273,7 @@ async fn club_sections(
            FROM club_memberships m
            JOIN clubs c ON c.id = m.club_id
            JOIN users u ON u.id = m.user_id
-           WHERE m.invited_by = $1"#,
+           WHERE m.invited_by = $1 AND bc_is_member($1, m.club_id)"#,
         user_id
     )
     .fetch_one(&mut *conn)
@@ -278,7 +293,12 @@ async fn club_sections(
     data.insert("club_removals".into(), removals);
 
     let clubs = sqlx::query_scalar!(
-        r#"SELECT coalesce(jsonb_agg(to_jsonb(c) - 'created_by' ORDER BY c.id), '[]') AS "rows!"
+        r#"SELECT coalesce(jsonb_agg(
+                      CASE WHEN bc_is_member($1, c.id) THEN to_jsonb(c) - 'created_by'
+                           ELSE jsonb_build_object(
+                               'id', c.id, 'name', c.name, 'created_at', c.created_at)
+                      END
+                  ORDER BY c.id), '[]') AS "rows!"
            FROM clubs c WHERE c.created_by = $1"#,
         user_id
     )
@@ -287,8 +307,21 @@ async fn club_sections(
     data.insert("clubs_created".into(), clubs);
 
     let invites = sqlx::query_scalar!(
-        r#"SELECT coalesce(jsonb_agg((to_jsonb(i) - 'created_by')
-                      || jsonb_build_object('club_name', c.name)
+        r#"SELECT coalesce(jsonb_agg(
+                      CASE WHEN CASE WHEN i.club_id IS NULL
+                                     THEN (SELECT is_admin FROM users WHERE id = $1)
+                                     ELSE EXISTS (
+                                         SELECT 1 FROM club_memberships m
+                                         WHERE m.club_id = i.club_id AND m.user_id = $1
+                                           AND m.role IN ('owner', 'admin'))
+                                END
+                           THEN (to_jsonb(i) - 'created_by')
+                                || jsonb_build_object('club_name', c.name)
+                           ELSE jsonb_build_object(
+                               'id', i.id, 'club_id', i.club_id, 'club_name', c.name,
+                               'created_at', i.created_at, 'expires_at', i.expires_at,
+                               'max_uses', i.max_uses)
+                      END
                   ORDER BY i.id), '[]') AS "rows!"
            FROM club_invites i LEFT JOIN clubs c ON c.id = i.club_id
            WHERE i.created_by = $1"#,
@@ -314,8 +347,15 @@ async fn club_sections(
     data.insert("invite_uses".into(), uses);
 
     let picks = sqlx::query_scalar!(
-        r#"SELECT coalesce(jsonb_agg((to_jsonb(p) - 'set_by')
-                      || jsonb_build_object('club_name', c.name, 'work_title', w.title)
+        r#"SELECT coalesce(jsonb_agg(
+                      CASE WHEN bc_is_member($1, p.club_id)
+                           THEN (to_jsonb(p) - 'set_by')
+                                || jsonb_build_object('club_name', c.name, 'work_title', w.title)
+                           ELSE jsonb_build_object(
+                               'id', p.id, 'club_id', p.club_id, 'club_name', c.name,
+                               'work_id', p.work_id, 'work_title', w.title,
+                               'started_at', p.started_at)
+                      END
                   ORDER BY p.id), '[]') AS "rows!"
            FROM club_picks p
            JOIN clubs c ON c.id = p.club_id
@@ -328,8 +368,14 @@ async fn club_sections(
     data.insert("picks_set".into(), picks);
 
     let milestones = sqlx::query_scalar!(
-        r#"SELECT coalesce(jsonb_agg((to_jsonb(m) - 'created_by')
-                      || jsonb_build_object('club_name', c.name)
+        r#"SELECT coalesce(jsonb_agg(
+                      CASE WHEN bc_is_member($1, m.club_id)
+                           THEN (to_jsonb(m) - 'created_by')
+                                || jsonb_build_object('club_name', c.name)
+                           ELSE jsonb_build_object(
+                               'id', m.id, 'club_id', m.club_id, 'club_name', c.name,
+                               'pick_id', m.pick_id, 'created_at', m.created_at)
+                      END
                   ORDER BY m.id), '[]') AS "rows!"
            FROM milestones m JOIN clubs c ON c.id = m.club_id
            WHERE m.created_by = $1"#,

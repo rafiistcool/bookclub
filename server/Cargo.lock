@@ -331,6 +331,8 @@ dependencies = [
  "csv",
  "futures",
  "http-body-util",
+ "hyper",
+ "hyper-util",
  "image",
  "ipnet",
  "jiff",

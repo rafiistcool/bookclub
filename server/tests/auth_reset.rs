@@ -351,16 +351,79 @@ async fn a_made_up_token_costs_no_hashing(db: PgPool) {
     assert_eq!(login(&app, "ada", PASSWORD).await, 204);
 }
 
-/// The link proves the mailbox: failed guesses by someone else no longer lock the owner out.
+/// The link proves the mailbox: failed guesses by someone else no longer lock the owner out,
+/// by username or by address.
 #[sqlx::test]
 async fn a_reset_clears_the_login_failures(db: PgPool) {
     let app = TestApp::new(db).await;
     app.user("ada").await;
-    for _ in 0..10 {
-        assert_eq!(login(&app, "ada", "guess guess").await, 401);
+    for identifier in ["ada", "ada@example.test"] {
+        for _ in 0..10 {
+            assert_eq!(login(&app, identifier, "guess guess").await, 401);
+        }
+        assert_eq!(login(&app, identifier, PASSWORD).await, 429);
     }
-    assert_eq!(login(&app, "ada", PASSWORD).await, 429);
     let link = reset_link(&app, "ada@example.test").await;
     confirm(&app, &link, NEW_PASSWORD).await.assert_status(204);
+    assert_eq!(login(&app, "ada@example.test", NEW_PASSWORD).await, 204);
     assert_eq!(login(&app, "ada", NEW_PASSWORD).await, 204);
+}
+
+/// Someone who knew the password starts an address change; the owner recovers with a reset
+/// (`by_reset`) or a password change. The pending change dies with it, so its link cannot later
+/// take the account's address (and with it the next reset).
+async fn recovery_cancels_a_pending_address_change(db: PgPool, by_reset: bool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let intruder = app.anon().with_ip(ip(7));
+    intruder
+        .post(
+            "/api/auth/login",
+            json!({"username": "ada", "password": PASSWORD}),
+        )
+        .await
+        .assert_status(204);
+    intruder
+        .put(
+            "/api/auth/me/email",
+            json!({"email": "attacker@evil.example", "current_password": PASSWORD}),
+        )
+        .await
+        .assert_status(204);
+    let stolen = app.last_link_token("attacker@evil.example");
+
+    if by_reset {
+        let link = reset_link(&app, "ada@example.test").await;
+        confirm(&app, &link, NEW_PASSWORD).await.assert_status(204);
+    } else {
+        ada.patch(
+            "/api/auth/password",
+            json!({"current_password": PASSWORD, "new_password": NEW_PASSWORD}),
+        )
+        .await
+        .assert_status(204);
+    }
+    app.anon()
+        .post("/api/auth/verify-email", json!({"token": stolen}))
+        .await
+        .assert_detail(400, LINK_EXPIRED);
+    assert_eq!(
+        app.scalar_i64(
+            "SELECT count(*) FROM users
+             WHERE email = 'ada@example.test' AND email_verified_at IS NOT NULL"
+        )
+        .await,
+        1
+    );
+    assert_eq!(login(&app, "ada@example.test", NEW_PASSWORD).await, 204);
+}
+
+#[sqlx::test]
+async fn a_reset_cancels_a_pending_address_change(db: PgPool) {
+    recovery_cancels_a_pending_address_change(db, true).await;
+}
+
+#[sqlx::test]
+async fn a_password_change_cancels_a_pending_address_change(db: PgPool) {
+    recovery_cancels_a_pending_address_change(db, false).await;
 }

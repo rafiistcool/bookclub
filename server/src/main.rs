@@ -1,4 +1,3 @@
-use std::net::SocketAddr;
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -6,7 +5,7 @@ use anyhow::{Context, Result};
 use bookclub_server::clubs::out::invite_out;
 use bookclub_server::config::Config;
 use bookclub_server::importer::{self, ImportError};
-use bookclub_server::{AppState, admin, app, jobs};
+use bookclub_server::{AppState, admin, app, jobs, serve};
 use clap::{Parser, Subcommand};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{Connection, PgConnection, PgPool};
@@ -94,15 +93,16 @@ async fn serve() -> Result<()> {
     tracing::info!("listening on http://{bind_addr}");
 
     let stop = shutdown.clone();
-    axum::serve(
+    serve::run(
         listener,
-        app(state).into_make_service_with_connect_info::<SocketAddr>(),
+        app(state),
+        serve::HEADER_READ_TIMEOUT,
+        async move {
+            shutdown_signal().await;
+            stop.cancel();
+        },
     )
-    .with_graceful_shutdown(async move {
-        shutdown_signal().await;
-        stop.cancel();
-    })
-    .await?;
+    .await;
 
     shutdown.cancel();
     if tokio::time::timeout(JOBS_STOP_TIMEOUT, async {

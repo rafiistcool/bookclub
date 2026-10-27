@@ -136,6 +136,11 @@ pub async fn change_role(
 /// Removes someone from the club. Admins remove members; the owner also removes admins. Nobody
 /// removes the owner, and nobody removes themselves (that is `leave`). Invites created before
 /// the removal no longer work for that person; a newer invite does.
+///
+/// The removal also revokes every active invite of the club the person knows, so a second
+/// account cannot walk back in with one: the invites they created or redeemed, and, when they
+/// were an admin (admins list every invite), all of them. A link someone else forwarded to them
+/// is beyond what the server knows; the admins revoke it.
 #[utoipa::path(
     delete,
     path = "/api/clubs/{slug}/members/{username}",
@@ -166,7 +171,7 @@ pub async fn remove_member(
     if caller < Role::Admin {
         return Err(AppError::forbidden(msg::ONLY_ADMINS));
     }
-    let (target, _) = target_named(&mut tx, club_id, &username).await?;
+    let (target, target_role) = target_named(&mut tx, club_id, &username).await?;
     if target == member.user.id {
         return Err(AppError::bad_request(USE_LEAVE));
     }
@@ -195,8 +200,34 @@ pub async fn remove_member(
     )
     .execute(&mut *tx)
     .await?;
+    revoke_known_invites(&mut tx, club_id, target, target_role >= Role::Admin).await?;
     tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Revokes the active invites of the club that `user_id` knows: those they created or
+/// redeemed, or every one when `all` (a removed admin could list them). Runs under the club
+/// lock of the removal, so no invite can be created or redeemed in between.
+async fn revoke_known_invites(
+    conn: &mut PgConnection,
+    club_id: i64,
+    user_id: i64,
+    all: bool,
+) -> sqlx::Result<()> {
+    sqlx::query!(
+        "UPDATE club_invites SET revoked_at = clock_timestamp()
+         WHERE club_id = $1 AND revoked_at IS NULL
+           AND (expires_at IS NULL OR expires_at > now())
+           AND (max_uses IS NULL OR use_count < max_uses)
+           AND ($3 OR created_by = $2
+                OR id IN (SELECT invite_id FROM club_invite_uses WHERE user_id = $2))",
+        club_id,
+        user_id,
+        all
+    )
+    .execute(conn)
+    .await?;
+    Ok(())
 }
 
 /// Leaves the club. The owner transfers ownership first (or deletes the club). Leaving records

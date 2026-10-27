@@ -338,8 +338,9 @@ async fn deletion_removes_personal_data_and_every_avatar(db: PgPool) {
         .assert_status(401);
 }
 
-/// §5.6: the user's posts that others replied to become anonymous tombstones; every other post
-/// is deleted, with its reactions. Other users' replies stay visible to the same people.
+/// §5.6: the user's posts that others replied to become anonymous tombstones (without the
+/// reading state they were written at); every other post is deleted, with its reactions. Other
+/// users' replies stay visible to the audience of their authors.
 #[sqlx::test]
 async fn posts_with_replies_by_others_become_tombstones(db: PgPool) {
     let app = TestApp::new(db).await;
@@ -367,6 +368,8 @@ async fn posts_with_replies_by_others_become_tombstones(db: PgPool) {
     let private = post(&app, w, a, None, None, "only for ada").await;
     app.exec(&format!(
         "UPDATE posts SET visibility = 'only_me' WHERE id = {private};
+         UPDATE posts SET progress_at = 42, status_at = 'currently_reading'
+             WHERE id IN ({answered}, {diary});
          INSERT INTO post_reactions (post_id, user_id, emoji) VALUES
              ({alone}, {b}, '🔥'), ({bobs_post}, {a}, '📚'), ({answered}, {b}, '👍');"
     ))
@@ -384,14 +387,20 @@ async fn posts_with_replies_by_others_become_tombstones(db: PgPool) {
         "deleted: {alone} {self_thread} {self_reply} {adas_reply} {private}"
     );
     for tombstone in [answered, diary] {
-        let row: (Option<i64>, String, Option<i32>, bool) = sqlx::query_as(
-            "SELECT author_id, body, spoiler_upto, deleted_at IS NOT NULL FROM posts WHERE id = $1",
+        let row: (Option<i64>, String, Option<i32>, bool, bool) = sqlx::query_as(
+            "SELECT author_id, body, spoiler_upto, deleted_at IS NOT NULL,
+                    progress_at IS NULL AND status_at IS NULL
+             FROM posts WHERE id = $1",
         )
         .bind(tombstone)
         .fetch_one(&app.db)
         .await
         .unwrap();
-        assert_eq!(row, (None, String::new(), None, true), "post {tombstone}");
+        assert_eq!(
+            row,
+            (None, String::new(), None, true, true),
+            "post {tombstone}"
+        );
     }
     for reply in [bobs_reply, diary_reply] {
         assert_eq!(

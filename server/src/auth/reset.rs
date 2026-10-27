@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use serde::Deserialize;
 use utoipa::ToSchema;
 
-use super::account::account_key;
+use super::account::{account_key, email_login_key};
 use super::login::too_many;
 use super::mail::{self, LINK_EXPIRED, TokenPurpose};
 use super::rules;
@@ -116,9 +116,9 @@ async fn reset_mail(state: &AppState, email: &str) -> sqlx::Result<Option<Email>
 }
 
 /// Sets a new password with a reset link. The link must be open and still for the account's
-/// verified address. Every session and bearer token of the account is deleted and every open
-/// reset link voided; the user then logs in. A right link also clears the account's login
-/// failures.
+/// verified address. Every session and bearer token of the account is deleted, and every open
+/// reset link and a pending address change are voided; the user then logs in. A right link
+/// also clears the account's login failures.
 #[utoipa::path(
     post,
     path = "/api/auth/password-reset/confirm",
@@ -183,9 +183,13 @@ pub async fn confirm_reset(
         .execute(&mut *tx)
         .await?;
     mail::void_open_tokens(&mut tx, user_id, TokenPurpose::ResetPassword).await?;
+    // A pending address change may be the work of whoever knew the old password: the owner
+    // starts it again if it was theirs.
+    mail::void_open_tokens(&mut tx, user_id, TokenPurpose::VerifyEmail).await?;
     tx.commit().await?;
     // The link proves the mailbox; failed guesses by someone else no longer lock the owner out.
     state.limits.login_failures.clear(&account_key(user_id));
+    state.limits.login_failures.clear(&email_login_key(user_id));
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -12,6 +12,7 @@ use bookclub_server::outbound::user_agent;
 use bookclub_server::ratelimit::unknown_identifier_key;
 use common::*;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 
 fn config_from(pairs: &[(&str, &str)]) -> anyhow::Result<Config> {
@@ -273,49 +274,73 @@ async fn ipv6_addresses_in_one_slash_64_share_the_login_bucket(db: PgPool) {
         .assert_status(204);
 }
 
-/// Names that name no account share at most 65,536 failure buckets (the first 4 hex digits of
-/// their SHA-256), so attacker-chosen names cannot flush the buckets of real accounts; two
-/// unknown names in one bucket share its limit.
+/// Every login identifier fills its own failure bucket, whether it names an account or not
+/// (§10.1), so the answers never tell a verified address from a free or unverified one:
+///
+/// - names that share the first 16 bits of an address's SHA-256 (the old buckets) cannot fill
+///   the address's bucket: after ten of them, the address still answers 401;
+/// - ten failures of the address itself then make it 429, for every kind of address alike;
+/// - ten failures of a username leave its verified address alone, so they do not link the two.
 #[sqlx::test]
-async fn unknown_names_land_in_hashed_buckets(db: PgPool) {
+async fn failure_buckets_tell_no_identifier_from_another(db: PgPool) {
     let app = TestApp::new(db).await;
-    let target = unknown_identifier_key("nobody");
-    let twin = (0..)
-        .map(|n| format!("ghost{n}"))
-        .find(|name| unknown_identifier_key(name) == target)
-        .unwrap();
-    let elsewhere = (0..)
-        .map(|n| format!("ghost{n}"))
-        .find(|name| unknown_identifier_key(name) != target)
-        .unwrap();
-    for n in 0..10u16 {
-        let ip: IpAddr = format!("198.51.100.{n}").parse().unwrap();
-        app.anon()
-            .with_ip(ip)
-            .post(
-                "/api/auth/login",
-                json!({"username": "nobody", "password": "nope"}),
-            )
-            .await
-            .assert_status(401);
+    app.user("ada").await;
+    app.user_unverified("cleo").await;
+    let login = |n: u16, username: String| {
+        let client = app
+            .anon()
+            .with_ip(format!("198.51.100.{n}").parse().unwrap());
+        async move {
+            client
+                .post(
+                    "/api/auth/login",
+                    json!({"username": username, "password": "nope"}),
+                )
+                .await
+                .status
+                .as_u16()
+        }
+    };
+    let prefix = |text: &str| Sha256::digest(text.as_bytes())[..2].to_vec();
+    let addresses = [
+        "ada@example.test",
+        "cleo@example.test",
+        "nobody@example.test",
+    ];
+    // Ten names in each address's old bucket, found in one pass.
+    let buckets: Vec<Vec<u8>> = addresses.iter().map(|a| prefix(a)).collect();
+    let mut twins: Vec<Vec<String>> = vec![Vec::new(); addresses.len()];
+    for i in 0.. {
+        let name = format!("ghost{i}");
+        let bucket = prefix(&name);
+        if let Some(at) = buckets.iter().position(|b| *b == bucket)
+            && twins[at].len() < 10
+        {
+            twins[at].push(name);
+        }
+        if twins.iter().all(|names| names.len() == 10) {
+            break;
+        }
     }
-    app.anon()
-        .post(
-            "/api/auth/login",
-            json!({"username": twin, "password": "nope"}),
-        )
-        .await
-        .assert_status(429);
-    app.anon()
-        .post(
-            "/api/auth/login",
-            json!({"username": elsewhere, "password": "nope"}),
-        )
-        .await
-        .assert_status(401);
-    // The bucket space is bounded.
-    let buckets: std::collections::HashSet<String> = (0..300_000)
-        .map(|n| unknown_identifier_key(&format!("name{n}")))
-        .collect();
-    assert!(buckets.len() <= 65_536, "{}", buckets.len());
+    for ((n, address), names) in (0u16..).zip(addresses).zip(twins) {
+        for twin in names {
+            assert_ne!(
+                unknown_identifier_key(&twin),
+                unknown_identifier_key(address)
+            );
+            assert_eq!(login(n, twin).await, 401);
+        }
+        assert_eq!(login(n, address.to_owned()).await, 401, "{address}");
+        for _ in 0..9 {
+            assert_eq!(login(10 + n, address.to_owned()).await, 401, "{address}");
+        }
+        assert_eq!(login(20 + n, address.to_owned()).await, 429, "{address}");
+    }
+
+    app.user("bob").await;
+    for _ in 0..10 {
+        assert_eq!(login(41, "bob".to_owned()).await, 401);
+    }
+    assert_eq!(login(41, "bob".to_owned()).await, 429);
+    assert_eq!(login(42, "bob@example.test".to_owned()).await, 401);
 }

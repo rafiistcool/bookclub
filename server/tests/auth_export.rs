@@ -432,19 +432,29 @@ async fn every_section_holds_the_users_rows(db: PgPool) {
             json!("Third Club"),
         ),
         ("clubs_created", "name", json!("Readers"), json!("Old Club")),
-        ("invites_created", "code", json!("ADAS"), json!("BOBS")),
+        (
+            "invites_created",
+            "club_name",
+            json!("Readers"),
+            json!("Old Club"),
+        ),
         (
             "invite_uses",
             "club_name",
             json!("Old Club"),
             json!("Readers"),
         ),
-        ("picks_set", "note", json!("our pick"), json!("not hers")),
+        (
+            "picks_set",
+            "club_name",
+            json!("Readers"),
+            json!("Old Club"),
+        ),
         (
             "milestones_created",
-            "title",
-            json!("Part one"),
-            json!("Part two"),
+            "club_name",
+            json!("Readers"),
+            json!("Old Club"),
         ),
         (
             "nominations",
@@ -527,6 +537,46 @@ async fn every_section_holds_the_users_rows(db: PgPool) {
     assert!(used.get("code").is_none(), "another user's invite code");
     let event = one_row(&data, "events");
     assert_eq!(event["kind"], "member_joined");
+    // Ada is the owner of Readers: its rows are whole. Bob is not in Old Club: its rows keep
+    // only what he wrote and nobody changed since.
+    assert_eq!(one_row(&data, "invites_created")["code"], "ADAS");
+    assert_eq!(one_row(&data, "picks_set")["note"], "our pick");
+    assert_eq!(one_row(&data, "milestones_created")["title"], "Part one");
+    assert!(one_row(&data, "clubs_created").get("slug").is_some());
+    let keys = |row: Value| -> Vec<String> { row.as_object().unwrap().keys().cloned().collect() };
+    for (section, expected) in [
+        ("clubs_created", &["created_at", "id", "name"][..]),
+        (
+            "invites_created",
+            &[
+                "club_id",
+                "club_name",
+                "created_at",
+                "expires_at",
+                "id",
+                "max_uses",
+            ],
+        ),
+        (
+            "picks_set",
+            &[
+                "club_id",
+                "club_name",
+                "id",
+                "started_at",
+                "work_id",
+                "work_title",
+            ],
+        ),
+        (
+            "milestones_created",
+            &["club_id", "club_name", "created_at", "id", "pick_id"],
+        ),
+    ] {
+        let mut found = keys(one_row(&bobs, section));
+        found.sort();
+        assert_eq!(found, expected, "Bob's {section}");
+    }
 
     let media = data["uploaded_media"].as_array().unwrap();
     let ids: Vec<&str> = media
@@ -633,4 +683,125 @@ async fn exports_are_limited_to_five_an_hour(db: PgPool) {
     limited.assert_detail(429, "Slow down a little. Try again later.");
     assert!(limited.header("retry-after").is_some());
     export(&app.user("bob").await).await.assert_status(200);
+}
+
+/// A sign-up with a free address and one with an address a verified account holds export the
+/// same profile, apart from the values that name the account: `pending_email` follows
+/// `UserOut` and stays null for an unverified account (§5.5 "No enumeration").
+#[sqlx::test]
+async fn the_export_tells_no_sign_up_from_another(db: PgPool) {
+    let app = TestApp::with_env(db, &[("SIGNUP_MODE", "open")]).await;
+    app.user("victim").await;
+    let mut profiles = Vec::new();
+    for (username, email) in [
+        ("probe1", "victim@example.test"),
+        ("probe2", "free@example.test"),
+    ] {
+        let client = app.anon();
+        client
+            .post(
+                "/api/auth/register",
+                json!({"username": username, "email": email, "password": PASSWORD}),
+            )
+            .await
+            .assert_status(201);
+        let mut profile = data_json(&export(&client).await)["profile"].clone();
+        assert_eq!(profile["pending_email"], Value::Null, "{username}");
+        let fields = profile.as_object_mut().unwrap();
+        fields.retain(|key, _| !matches!(key.as_str(), "id" | "username" | "email"));
+        fields.retain(|key, _| !key.ends_with("_at"));
+        profiles.push(profile);
+    }
+    assert_eq!(profiles[0], profiles[1]);
+    // The free address does have its open link: only the profile leaves it out.
+    assert_eq!(
+        app.scalar_i64(
+            "SELECT count(*) FROM email_tokens WHERE email = 'free@example.test' AND used_at IS NULL"
+        )
+        .await,
+        1
+    );
+}
+
+/// After a removal, the export of the removed admin keeps their own facts about the club, but
+/// none of what the other members wrote or changed since: who joined through their invites,
+/// the pick's note and meeting, a milestone's title and date, an invite's code and counters,
+/// the club's settings (DSGVO Art. 15(4)).
+#[sqlx::test]
+async fn a_former_member_exports_no_club_data_of_others(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let mallory = app.user("mallory").await;
+    let owner = app.user("owner").await;
+    let club = app.club(&mallory, "Readers").await;
+    app.join(&club, &owner, "admin").await;
+    mallory
+        .post(
+            &format!("/api/clubs/{}/transfer", club.slug),
+            json!({"username": "owner"}),
+        )
+        .await
+        .assert_status(200);
+    let code = mallory
+        .post(
+            &format!("/api/clubs/{}/invites", club.slug),
+            json!({"kind": "link"}),
+        )
+        .await
+        .json()["code"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let bob = app.user("bob").await;
+    bob.post(&format!("/api/invites/{code}/accept"), json!({}))
+        .await
+        .assert_status(200);
+    let work = app.work("Circe").await;
+    let (c, m, w) = (club.id, mallory.id(), work.id);
+    app.exec(&format!(
+        "INSERT INTO club_picks (club_id, work_id, set_by, note) VALUES ({c}, {w}, {m}, 'chapter 1');
+         INSERT INTO milestones (club_id, pick_id, title, created_by)
+             SELECT {c}, id, 'Part one', {m} FROM club_picks WHERE club_id = {c};"
+    ))
+    .await;
+    let before = data_json(&export(&mallory).await);
+    assert_eq!(one_row(&before, "members_invited")["username"], "bob");
+    assert_eq!(one_row(&before, "picks_set")["note"], "chapter 1");
+    assert_eq!(one_row(&before, "invites_created")["code"], code.as_str());
+
+    owner
+        .delete(&format!("/api/clubs/{}/members/mallory", club.slug))
+        .await
+        .assert_status(204);
+    app.exec(&format!(
+        "UPDATE club_picks SET note = 'Meet at Anna''s, Hauptstr. 5',
+                               meeting_at = now() + interval '3 days' WHERE club_id = {c};
+         UPDATE milestones SET title = 'Secret plan', due_at = now() WHERE club_id = {c};
+         UPDATE clubs SET timezone = 'Europe/Berlin' WHERE id = {c};"
+    ))
+    .await;
+    let after = data_json(&export(&mallory).await);
+    let text = after.to_string();
+    for secret in [
+        "Hauptstr",
+        "Secret plan",
+        "Europe/Berlin",
+        "bob",
+        code.as_str(),
+    ] {
+        assert!(!text.contains(secret), "{secret} in {text}");
+    }
+    assert_eq!(after["members_invited"], json!([]));
+    let pick = one_row(&after, "picks_set");
+    assert_eq!(pick["work_title"], "Circe");
+    assert!(pick.get("meeting_at").is_none() && pick.get("ended_at").is_none());
+    assert!(
+        one_row(&after, "milestones_created")
+            .get("due_at")
+            .is_none()
+    );
+    let invite = one_row(&after, "invites_created");
+    assert!(invite.get("use_count").is_none() && invite.get("revoked_at").is_none());
+    let created = one_row(&after, "clubs_created");
+    assert_eq!(created["name"], "Readers");
+    assert_eq!(one_row(&after, "club_removals")["club_name"], "Readers");
 }

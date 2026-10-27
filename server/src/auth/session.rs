@@ -9,11 +9,11 @@
 use std::sync::{Arc, Mutex};
 
 use axum::extract::{Request, State};
-use axum::http::header::{AUTHORIZATION, SET_COOKIE, USER_AGENT};
+use axum::http::header::{AUTHORIZATION, COOKIE, SET_COOKIE, USER_AGENT};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::Response;
-use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
+use axum_extra::extract::cookie::{Cookie, SameSite};
 use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -21,7 +21,7 @@ use sqlx::PgConnection;
 use time::OffsetDateTime;
 use utoipa::ToSchema;
 
-use super::{SESSION_COOKIE, random};
+use super::{SECURE_SESSION_COOKIE, SESSION_COOKIE, random};
 use crate::AppState;
 use crate::config::Config;
 use crate::text::truncate_chars;
@@ -38,7 +38,7 @@ pub const MAX_LABEL_CHARS: usize = 200;
 #[sqlx(type_name = "text", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum SessionKind {
-    /// The `bookclub_session` cookie of the web app; idle expiry 30 days.
+    /// The session cookie of the web app ([`cookie_name`]); idle expiry 30 days.
     Cookie,
     /// An `Authorization: Bearer bc_…` token of the apps; idle expiry 90 days.
     Bearer,
@@ -63,7 +63,8 @@ pub enum Presented {
     Nothing,
     /// An `Authorization: Bearer …` header; `None` when it is not a well-formed `bc_` token.
     Bearer(Option<[u8; 32]>),
-    /// The session cookie; `None` when its value does not decode to 32 bytes.
+    /// The session cookie; `None` when its value does not decode to 32 bytes, or when the
+    /// request carries the cookie more than once.
     Cookie(Option<[u8; 32]>),
 }
 
@@ -78,14 +79,40 @@ impl Presented {
     }
 }
 
+/// The session cookie's name: `__Host-bookclub_session` when the cookie is `Secure`, so the
+/// browser accepts it only from this host (a page on a sibling subdomain cannot plant one);
+/// plain `bookclub_session` otherwise, because the prefix requires `Secure`.
+pub fn cookie_name(config: &Config) -> &'static str {
+    if config.cookie_secure {
+        SECURE_SESSION_COOKIE
+    } else {
+        SESSION_COOKIE
+    }
+}
+
 /// Reads the bearer token (first) or the session cookie of a request.
-pub fn presented(headers: &HeaderMap) -> Presented {
+///
+/// The cookie is found by its name exactly as sent, never percent-decoded: the browser checks
+/// the `__Host-` prefix on the raw name, so `%5F%5FHost-bookclub_session` is another cookie. A
+/// request that carries the session cookie twice (one planted next to the real one) presents
+/// a malformed cookie: it is not signed in as either.
+pub fn presented(config: &Config, headers: &HeaderMap) -> Presented {
     if let Some(token) = bearer_token(headers) {
         return Presented::Bearer(token.strip_prefix(BEARER_PREFIX).and_then(decode_secret));
     }
-    match CookieJar::from_headers(headers).get(SESSION_COOKIE) {
-        Some(cookie) => Presented::Cookie(decode_secret(cookie.value())),
-        None => Presented::Nothing,
+    let name = cookie_name(config);
+    let mut values = headers
+        .get_all(COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(';'))
+        .filter_map(|pair| pair.split_once('='))
+        .filter(|(key, _)| key.trim() == name)
+        .map(|(_, value)| value.trim());
+    match (values.next(), values.next()) {
+        (None, _) => Presented::Nothing,
+        (Some(value), None) => Presented::Cookie(decode_secret(value)),
+        (Some(_), Some(_)) => Presented::Cookie(None),
     }
 }
 
@@ -185,7 +212,7 @@ pub fn clear_cookie(config: &Config) -> HeaderValue {
 }
 
 fn cookie_header(config: &Config, value: String, max_age: i64) -> HeaderValue {
-    let cookie = Cookie::build((SESSION_COOKIE, value))
+    let cookie = Cookie::build((cookie_name(config), value))
         .path("/")
         .http_only(true)
         .same_site(SameSite::Lax)
@@ -242,7 +269,7 @@ pub async fn maintain_cookie(
     let Some(action) = slot.take() else {
         return response;
     };
-    if sets_session_cookie(response.headers()) {
+    if sets_session_cookie(&state.config, response.headers()) {
         return response;
     }
     let header = match action {
@@ -256,8 +283,8 @@ pub async fn maintain_cookie(
     response
 }
 
-fn sets_session_cookie(headers: &HeaderMap) -> bool {
-    let prefix = format!("{SESSION_COOKIE}=");
+fn sets_session_cookie(config: &Config, headers: &HeaderMap) -> bool {
+    let prefix = format!("{}=", cookie_name(config));
     headers
         .get_all(SET_COOKIE)
         .iter()
@@ -296,7 +323,8 @@ mod tests {
     fn cookies_carry_the_documented_attributes() {
         let set = set_cookie(&config(true), "abc");
         let set = set.to_str().unwrap();
-        assert!(set.starts_with("bookclub_session=abc;"), "{set}");
+        assert!(set.starts_with("__Host-bookclub_session=abc;"), "{set}");
+        assert!(!set.contains("Domain"), "{set}");
         for part in [
             "HttpOnly",
             "SameSite=Lax",
@@ -311,6 +339,59 @@ mod tests {
         assert!(clear.starts_with("bookclub_session=;"), "{clear}");
         assert!(clear.contains("Max-Age=0"));
         assert!(!clear.contains("Secure"));
+        let clear = clear_cookie(&config(true));
+        assert!(
+            clear
+                .to_str()
+                .unwrap()
+                .starts_with("__Host-bookclub_session=;")
+        );
+    }
+
+    /// Cookie tossing: a page on a sibling subdomain can set `bookclub_session` (or an encoded
+    /// spelling of the `__Host-` name) for the parent domain, but never the `__Host-` cookie
+    /// itself. Only that raw name counts, and a second copy of it is refused.
+    #[test]
+    fn only_the_raw_host_cookie_counts() {
+        let secret = [7u8; 32];
+        let encoded = BASE64_URL_SAFE_NO_PAD.encode(secret);
+        let planted = BASE64_URL_SAFE_NO_PAD.encode([9u8; 32]);
+        let cookie = |value: String| {
+            let mut headers = HeaderMap::new();
+            headers.insert(COOKIE, HeaderValue::from_str(&value).unwrap());
+            headers
+        };
+        let secure = config(true);
+        let real = cookie(format!("theme=x; __Host-bookclub_session={encoded}"));
+        assert_eq!(presented(&secure, &real), Presented::Cookie(Some(secret)));
+        for tossed in [
+            format!("bookclub_session={planted}"),
+            format!("%5F%5FHost-bookclub_session={planted}"),
+            format!("__Host-bookclub%5Fsession={planted}"),
+        ] {
+            assert_eq!(presented(&secure, &cookie(tossed)), Presented::Nothing);
+        }
+        let twice = cookie(format!(
+            "__Host-bookclub_session={encoded}; __Host-bookclub_session={planted}"
+        ));
+        assert_eq!(presented(&secure, &twice), Presented::Cookie(None));
+        // Two Cookie headers (HTTP/2 sends one per cookie) count the same.
+        let mut split = cookie(format!("__Host-bookclub_session={encoded}"));
+        split.append(
+            COOKIE,
+            HeaderValue::from_str(&format!("__Host-bookclub_session={planted}")).unwrap(),
+        );
+        assert_eq!(presented(&secure, &split), Presented::Cookie(None));
+
+        let plain = config(false);
+        let dev = cookie(format!("bookclub_session={encoded}"));
+        assert_eq!(presented(&plain, &dev), Presented::Cookie(Some(secret)));
+        let doubled = cookie(format!(
+            "bookclub_session={planted}; bookclub_session={encoded}"
+        ));
+        assert_eq!(presented(&plain, &doubled), Presented::Cookie(None));
+        let encoded_name = cookie(format!("bookclub%5Fsession={planted}"));
+        assert_eq!(presented(&plain, &encoded_name), Presented::Nothing);
     }
 
     #[test]
@@ -320,14 +401,18 @@ mod tests {
         let cookie = format!("theme=x; bookclub_session={encoded}");
         let mut with_cookie = HeaderMap::new();
         with_cookie.insert("cookie", HeaderValue::from_str(&cookie).unwrap());
-        assert_eq!(presented(&with_cookie), Presented::Cookie(Some(secret)));
+        let config = config(false);
+        assert_eq!(
+            presented(&config, &with_cookie),
+            Presented::Cookie(Some(secret))
+        );
 
         let mut both = with_cookie.clone();
         let bearer = format!("bearer bc_{encoded}");
         both.insert(AUTHORIZATION, HeaderValue::from_str(&bearer).unwrap());
-        assert_eq!(presented(&both), Presented::Bearer(Some(secret)));
+        assert_eq!(presented(&config, &both), Presented::Bearer(Some(secret)));
         assert_eq!(
-            presented(&both).secret(),
+            presented(&config, &both).secret(),
             Some((secret, SessionKind::Bearer))
         );
     }
@@ -355,7 +440,7 @@ mod tests {
             (headers(&[]), Presented::Nothing),
         ];
         for (headers, expected) in cases {
-            assert_eq!(presented(&headers), expected, "{headers:?}");
+            assert_eq!(presented(&config(false), &headers), expected, "{headers:?}");
             assert_eq!(expected.secret(), None);
         }
     }

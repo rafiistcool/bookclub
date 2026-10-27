@@ -150,10 +150,11 @@ async fn ten_failures_block_the_account(db: PgPool) {
     login(&anon, "ada", PASSWORD)
         .await
         .assert_detail(429, "Too many attempts. Wait a few minutes.");
-    // The email address names the same account and bucket.
+    // The verified address fills a bucket of its own (§10.1): a blocked username does not
+    // show which address belongs to it.
     login(&anon, "ada@example.test", PASSWORD)
         .await
-        .assert_status(429);
+        .assert_status(204);
 }
 
 /// A success clears the failures, so the next ten failures are counted from zero.
