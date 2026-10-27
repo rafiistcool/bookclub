@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO work_authors (work_id, author_id, position)\n             SELECT $2, author_id, position FROM work_authors WHERE work_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "54712fc67f65d7418cd64d1ff0cdc4126e1b78996effeaf19245f64c21c02037"
+}

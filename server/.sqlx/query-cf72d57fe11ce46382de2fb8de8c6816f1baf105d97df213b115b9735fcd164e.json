@@ -1,0 +1,65 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT l.id AS loser_id, l.created_at AS loser_at, w.id AS winner_id,\n                w.created_at AS winner_at\n         FROM next_up_nominations l\n         JOIN next_up_nominations w ON w.vote_id = l.vote_id AND w.work_id = $2\n         WHERE l.work_id = $1\n         ORDER BY l.vote_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "loser_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "next_up_nominations",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "loser_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "next_up_nominations",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "winner_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "next_up_nominations",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "winner_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "next_up_nominations",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "cf72d57fe11ce46382de2fb8de8c6816f1baf105d97df213b115b9735fcd164e"
+}

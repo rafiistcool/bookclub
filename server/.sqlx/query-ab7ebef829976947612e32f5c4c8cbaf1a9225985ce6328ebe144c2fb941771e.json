@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id FROM users\n         WHERE id IN (SELECT user_id FROM shelf_entries WHERE work_id = $1\n                      UNION SELECT user_id FROM user_favorites WHERE work_id = $1)\n         ORDER BY id FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ab7ebef829976947612e32f5c4c8cbaf1a9225985ce6328ebe144c2fb941771e"
+}

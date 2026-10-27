@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE catalog_edit_requests\n         SET payload = jsonb_set(payload, '{into_work_id}', to_jsonb($2::bigint))\n         WHERE kind = 'work_merge' AND status = 'open' AND payload ->> 'into_work_id' = ($1::bigint)::text",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4ea5bc105ee844225d8cc4ce17952d8d888f541063806dd286aa0556aedf3a7d"
+}

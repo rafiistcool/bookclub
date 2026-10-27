@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE user_favorites SET work_id = $3 WHERE user_id = $1 AND work_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f88a0efbd67b24648ad22a40cea0ae17d0f1dfa0495ecf8c2e37c6142101bf00"
+}

@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT kind, status, work_id, edition_id, media_id, payload\n         FROM catalog_edit_requests WHERE id = $1 FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "catalog_edit_requests",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "catalog_edit_requests",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "work_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "catalog_edit_requests",
+            "name": "work_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "edition_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "catalog_edit_requests",
+            "name": "edition_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "media_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "catalog_edit_requests",
+            "name": "media_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "payload",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "catalog_edit_requests",
+            "name": "payload"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "0372a935b4cf7f4b6601cb05ca98820e56d942a037530931019c766ad9cc47b2"
+}
