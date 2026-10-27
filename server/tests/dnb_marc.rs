@@ -6,7 +6,7 @@
 //! - `inverted_authors.xml`: IDN 1209562634, reiheN. Two `aut` names (one with GND), ISBN-13 and
 //!   ISBN-10 of one book, 653 Paperback against a "Festeinband" binding, the 9999 placeholder year.
 //! - `translators_gnd.xml`: IDN 1209150832, reiheN. Two translators and two editors with GND ids,
-//!   plus `aui`, `waw` and `ctb` roles that are not mapped.
+//!   plus `aui`, `waw` and `ctb` roles that are not mapped; the placeholder date 2040/204001.
 //! - `translator_no_gnd.xml`: IDN 1422369358, OAI `dnb:reiheA`. A translator without GND id, a
 //!   binding but no 653.
 //! - `multi_isbn.xml`: IDN 850639050, SRU (1985). Two co-publishers' ISBNs, each with its own
@@ -15,13 +15,17 @@
 //!   carries blurbs only as 856 links, and no recorded record had a 520, so one 520 field was
 //!   added to this copy by hand (marked VLB-BLURB-MUST-NOT-BE-STORED).
 //! - `deleted_header.xml`: one OAI `<record>` with `<header status="deleted">`, reiheN. DNB still
-//!   sends the metadata of deleted records; the caller must check the header.
+//!   sends the metadata of deleted records; the caller must check the header. Placeholder date
+//!   2050/205004.
 
 use bookclub_server::catalog::shared::dnb_marc::{DnbRecord, map_record};
-use bookclub_server::catalog::shared::ingest::{self, ContributorRole, Format, Mode, WorkGrouping};
+use bookclub_server::catalog::shared::ingest::{
+    self, ContributorRole, EditionRecord, Format, Mode, Source, WorkGrouping, WorkRecord,
+};
 use bookclub_server::extract::Patch;
 use serde_json::Value;
 use sqlx::PgPool;
+use time::Date;
 use time::macros::date;
 
 const FIXTURES: [&str; 7] = [
@@ -44,6 +48,16 @@ fn fixture(name: &str) -> String {
 
 fn map(name: &str) -> DnbRecord {
     map_record(&fixture(name)).unwrap_or_else(|e| panic!("{name}: {e}"))
+}
+
+/// The mapping's rule (§7.5): a year more than five years ahead is a DNB placeholder. Computed
+/// here so the fixture assertions hold whenever the tests run.
+fn announced(year: i32) -> Option<i32> {
+    (year <= time::OffsetDateTime::now_utc().year() + 5).then_some(year)
+}
+
+fn announced_date(date: Date) -> Patch<Date> {
+    announced(date.year()).map_or(Patch::Missing, |_| Patch::Value(date))
 }
 
 fn isbns(rec: &DnbRecord) -> Vec<&str> {
@@ -166,6 +180,13 @@ fn translators_and_editors_with_gnd_ids() {
     assert_eq!(e.format, Some(Format::Hardcover));
     assert_eq!(e.pages, Some(496));
     assert_eq!(e.publisher.as_deref(), Some("Schöffling"));
+    // 264 $c 2040 and 263 204001: DNB does not know the date yet.
+    assert_eq!(e.publication_year, announced(2040));
+    assert_eq!(
+        e.planned_publication_date,
+        announced_date(date!(2040 - 01 - 01))
+    );
+    assert_eq!(rec.work.first_publish_year, announced(2040));
 }
 
 #[test]
@@ -251,17 +272,11 @@ async fn every_fixture_ingests_without_vlb_text(db: PgPool) {
     let mut conn = db.acquire().await.unwrap();
     for name in FIXTURES {
         let rec = map(name);
-        for edition in &rec.editions {
-            ingest::upsert_edition_with_work(
-                &mut conn,
-                &rec.work,
-                edition,
-                WorkGrouping::DnbTitleAuthor,
-                Mode::Replace,
-            )
+        let ids = ingest::upsert_dnb_record(&mut conn, &rec, Mode::Replace)
             .await
             .unwrap_or_else(|e| panic!("{name}: {e}"));
-        }
+        assert_eq!(ids.len(), rec.editions.len());
+        assert!(ids.iter().all(|(work, _)| *work == ids[0].0), "{name}");
     }
     let text = catalog_text(&db).await;
     for forbidden in [
@@ -284,16 +299,11 @@ async fn every_fixture_ingests_without_vlb_text(db: PgPool) {
     assert_eq!((works, editions), (7, 8));
     // Mapping a record again changes nothing.
     let before = catalog_text(&db).await;
-    let rec = map("translators_gnd.xml");
-    ingest::upsert_edition_with_work(
-        &mut conn,
-        &rec.work,
-        &rec.editions[0],
-        WorkGrouping::DnbTitleAuthor,
-        Mode::Replace,
-    )
-    .await
-    .unwrap();
+    for name in ["translators_gnd.xml", "multi_isbn.xml"] {
+        ingest::upsert_dnb_record(&mut conn, &map(name), Mode::Replace)
+            .await
+            .unwrap();
+    }
     let after = catalog_text(&db).await;
     let strip = |s: &str| {
         regex::Regex::new(r#""updated_at": ?"[^"]*""#)
@@ -302,6 +312,39 @@ async fn every_fixture_ingests_without_vlb_text(db: PgPool) {
             .into_owned()
     };
     assert_eq!(strip(&before), strip(&after));
+}
+
+#[sqlx::test]
+async fn a_multi_isbn_record_stays_on_one_work_when_its_first_isbn_is_known(db: PgPool) {
+    let rec = map("multi_isbn.xml");
+    let mut conn = db.acquire().await.unwrap();
+    // CAT persisted an Open Library hit for the first ISBN while DNB was cooling down.
+    let (ol_work, ol_edition) = ingest::upsert_edition_with_work(
+        &mut conn,
+        &WorkRecord {
+            ol_work_id: Some("OL123W".into()),
+            ..WorkRecord::new(Source::OpenLibrary, "Fragmente")
+        },
+        &EditionRecord {
+            isbn13: rec.editions[0].isbn13.clone(),
+            ..EditionRecord::new(Source::OpenLibrary)
+        },
+        WorkGrouping::NewWork,
+        Mode::Refresh,
+    )
+    .await
+    .unwrap();
+    let ids = ingest::upsert_dnb_record(&mut conn, &rec, Mode::Replace)
+        .await
+        .unwrap();
+    assert_eq!(ids[0], (ol_work, ol_edition), "found by ISBN");
+    assert_eq!(ids[1].0, ol_work, "the co-publisher's edition joins it");
+    assert_ne!(ids[1].1, ol_edition);
+    let works: i64 = sqlx::query_scalar("SELECT count(*) FROM works")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(works, 1);
 }
 
 #[sqlx::test]
@@ -323,6 +366,12 @@ async fn a_deleted_header_withdraws_the_edition(db: PgPool) {
     assert_eq!(
         earlier.work.authors[0].sort_name.as_deref(),
         Some("Paulitz, Udo")
+    );
+    // 264 $c 2050 and 263 205004 are placeholders.
+    assert_eq!(earlier.editions[0].publication_year, announced(2050));
+    assert_eq!(
+        earlier.editions[0].planned_publication_date,
+        announced_date(date!(2050 - 04 - 01))
     );
     let mut conn = db.acquire().await.unwrap();
     let (_, edition) = ingest::upsert_edition_with_work(

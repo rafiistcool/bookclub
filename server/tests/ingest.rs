@@ -13,12 +13,17 @@ use bookclub_server::catalog::shared::isbn::{Isbn13, parse_isbn};
 use bookclub_server::catalog::shared::lookup::{Resolved, local_isbn};
 use bookclub_server::catalog::shared::work_ref::{WorkRef, resolve_local};
 use bookclub_server::dto::CatalogSource;
+use bookclub_server::error::is_deadlock;
 use bookclub_server::extract::Patch;
 use serde_json::{Map, Value, json};
-use sqlx::PgPool;
 use sqlx::pool::PoolConnection;
 use sqlx::postgres::Postgres;
+use sqlx::{PgConnection, PgPool};
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::time::Duration;
 use time::macros::date;
+use tokio::sync::Barrier;
 
 const ISBN_A: &str = "9783895614194";
 const ISBN_B: &str = "9783312015689";
@@ -407,13 +412,21 @@ async fn replace_clears_only_the_sources_own_fields(db: PgPool) {
     )
     .await
     .unwrap();
-    // A reader fills the empty language.
+    // A reader fills the empty language; Open Library (equal rank) fills the empty subtitle.
     let user = EditionRecord {
         isbn13: Some(isbn(ISBN_A)),
         language: Some("ger".into()),
         ..EditionRecord::new(Source::User)
     };
     ingest::upsert_edition(&mut c, work_id, &user, Mode::Refresh)
+        .await
+        .unwrap();
+    let open_library = EditionRecord {
+        isbn13: Some(isbn(ISBN_A)),
+        subtitle: Some("Roman".into()),
+        ..EditionRecord::new(Source::OpenLibrary)
+    };
+    ingest::upsert_edition(&mut c, work_id, &open_library, Mode::Refresh)
         .await
         .unwrap();
 
@@ -424,7 +437,8 @@ async fn replace_clears_only_the_sources_own_fields(db: PgPool) {
         .unwrap();
     assert_eq!(row(&db, "editions", edition).await["pages"], 300);
 
-    // Replace clears DNB's own fields, keeps the reader's and the planned date (Missing).
+    // Replace clears DNB's own fields, keeps the reader's, Open Library's (same rank, another
+    // source) and the planned date (Missing).
     ingest::upsert_edition_with_work(&mut c, &work, &bare, WorkGrouping::NewWork, Mode::Replace)
         .await
         .unwrap();
@@ -433,10 +447,12 @@ async fn replace_clears_only_the_sources_own_fields(db: PgPool) {
     assert_eq!(e["publisher"], "");
     assert_eq!(e["format"], Value::Null);
     assert_eq!(e["language"], "ger");
+    assert_eq!(e["subtitle"], "Roman");
     assert_eq!(e["planned_publication_date"], "2026-09-01");
     assert_eq!(
         e["field_sources"],
-        json!({"language": "user", "planned_publication_date": "dnb"})
+        json!({"language": "user", "subtitle": "openlibrary",
+               "planned_publication_date": "dnb"})
     );
 
     // Null clears the planned date.
@@ -1148,6 +1164,11 @@ async fn admin_fields_win_over_every_source(db: PgPool) {
     )
     .await
     .unwrap();
+    // Null clears the field and drops its provenance.
+    let w = row(&db, "works", work_id).await;
+    assert_eq!(w["first_publish_year"], Value::Null);
+    assert_eq!(w["field_sources"].get("first_publish_year"), None);
+    assert_eq!(w["field_sources"]["pages"], "admin");
     ingest::upsert_work(&mut c, &rec, Mode::Replace)
         .await
         .unwrap();
@@ -1166,10 +1187,12 @@ async fn admin_fields_win_over_every_source(db: PgPool) {
     );
     assert_eq!(w["match_key"], "circe (fixed)\u{1f}miller");
 
+    // Every key is checked before anything is written.
+    let before = row(&db, "works", work_id).await;
     let bad = ingest::apply_admin_fields(
         &mut c,
         CoverTarget::Work(work_id),
-        &fields(json!({"foo": 1})),
+        &fields(json!({"pages": 5, "foo": 1})),
     )
     .await
     .unwrap_err();
@@ -1177,6 +1200,7 @@ async fn admin_fields_win_over_every_source(db: PgPool) {
         (bad.status.as_u16(), bad.detail.as_ref()),
         (400, "Unknown field: foo")
     );
+    assert_eq!(row(&db, "works", work_id).await, before);
     let bad = ingest::apply_admin_fields(
         &mut c,
         CoverTarget::Work(work_id),
@@ -1209,6 +1233,8 @@ async fn admin_fields_win_over_every_source(db: PgPool) {
         work_id,
         &EditionRecord {
             isbn13: Some(isbn(ISBN_A)),
+            publisher: Some("Bloomsbury".into()),
+            pages: Some(400),
             ..EditionRecord::new(Source::OpenLibrary)
         },
         Mode::Refresh,
@@ -1219,7 +1245,8 @@ async fn admin_fields_win_over_every_source(db: PgPool) {
         &mut c,
         CoverTarget::Edition(edition),
         &fields(json!({"format": "paperback", "language": "ENG",
-                       "planned_publication_date": "2026-09-01", "title": "Kirke"})),
+                       "planned_publication_date": "2026-09-01", "title": "Kirke",
+                       "publisher": null, "pages": null})),
     )
     .await
     .unwrap();
@@ -1228,15 +1255,24 @@ async fn admin_fields_win_over_every_source(db: PgPool) {
     assert_eq!(e["language"], "eng");
     assert_eq!(e["planned_publication_date"], "2026-09-01");
     assert_eq!(e["field_sources"]["format"], "admin");
+    assert_eq!((&e["publisher"], &e["pages"]), (&json!(""), &Value::Null));
+    assert_eq!(e["field_sources"].get("publisher"), None);
+    assert_eq!(e["field_sources"].get("pages"), None);
     assert_eq!(row(&db, "works", work_id).await["search_extra"], "Kirke");
-    let bad = ingest::apply_admin_fields(
-        &mut c,
-        CoverTarget::Edition(edition),
-        &fields(json!({"format": "scroll"})),
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(bad.detail.as_ref(), "Invalid value for format");
+    let before = row(&db, "editions", edition).await;
+    for (body, detail) in [
+        (json!({"format": "scroll"}), "Invalid value for format"),
+        (
+            json!({"pages": 5, "planned_publication_date": "3500-01-01"}),
+            "Invalid value for planned_publication_date",
+        ),
+    ] {
+        let bad = ingest::apply_admin_fields(&mut c, CoverTarget::Edition(edition), &fields(body))
+            .await
+            .unwrap_err();
+        assert_eq!((bad.status.as_u16(), bad.detail.as_ref()), (400, detail));
+    }
+    assert_eq!(row(&db, "editions", edition).await, before);
 }
 
 #[sqlx::test]
@@ -1699,4 +1735,676 @@ async fn references_resolve_to_the_current_work(db: PgPool) {
             .as_u16(),
         400
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Upgrades, merges and grouping edge cases
+// ---------------------------------------------------------------------------------------------
+
+/// A legacy bare-facts work with one edition of `raw`.
+async fn legacy_book(c: &mut PgConnection, title: &str, raw: &str) -> (i64, i64) {
+    ingest::upsert_edition_with_work(
+        c,
+        &WorkRecord {
+            author_names: "Udo Paulitz".into(),
+            ..WorkRecord::new(Source::Legacy, title)
+        },
+        &EditionRecord {
+            isbn13: Some(isbn(raw)),
+            ..EditionRecord::new(Source::Legacy)
+        },
+        WorkGrouping::NewWork,
+        Mode::Refresh,
+    )
+    .await
+    .unwrap()
+}
+
+/// What CAT persists for an Open Library ISBN hit: the work and the edition record.
+fn open_library_hit(ol_id: &str, title: &str, raw: &str) -> (WorkRecord, EditionRecord) {
+    (
+        WorkRecord {
+            author_names: "Udo Paulitz".into(),
+            ..ol_work(ol_id, title)
+        },
+        EditionRecord {
+            isbn13: Some(isbn(raw)),
+            publisher: Some("GeraMond".into()),
+            ..EditionRecord::new(Source::OpenLibrary)
+        },
+    )
+}
+
+#[sqlx::test]
+async fn a_legacy_work_upgraded_by_open_library_takes_its_work_id(db: PgPool) {
+    let mut c = conn(&db).await;
+    let (work_id, edition) = legacy_book(&mut c, "Traktoren (alt)", ISBN_C).await;
+
+    // rematch-legacy: an Open Library hit for the ISBN.
+    let (work, ed) = open_library_hit("OL9W", "Traktoren", ISBN_C);
+    let found =
+        ingest::upsert_edition_with_work(&mut c, &work, &ed, WorkGrouping::NewWork, Mode::Refresh)
+            .await
+            .unwrap();
+    assert_eq!(found, (work_id, edition));
+    let w = row(&db, "works", work_id).await;
+    assert_eq!(w["source"], "openlibrary");
+    assert_eq!(w["ol_work_id"], "OL9W");
+    assert_eq!(w["title"], "Traktoren");
+    assert_eq!(
+        w["details_fetched_at"],
+        Value::Null,
+        "the first detail view fetches the full record"
+    );
+    assert_eq!(row(&db, "editions", edition).await["source"], "openlibrary");
+    let out = books::book_out(&mut c, BookRef::work(work_id))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(out.ol_work_key.as_deref(), Some("/works/OL9W"));
+    // A search hit for that id finds the upgraded work instead of creating a second one.
+    assert_eq!(
+        ingest::upsert_work_stubs(&mut c, &[ol_work("OL9W", "Traktoren")])
+            .await
+            .unwrap(),
+        [work_id]
+    );
+    assert_eq!(scalar_i64(&db, "SELECT count(*) FROM works").await, 1);
+}
+
+#[sqlx::test]
+async fn a_legacy_work_stays_legacy_when_its_open_library_id_is_taken(db: PgPool) {
+    let mut c = conn(&db).await;
+    let existing = ingest::upsert_work(&mut c, &ol_work("OL9W", "Traktoren"), Mode::Refresh)
+        .await
+        .unwrap();
+    let (work_id, edition) = legacy_book(&mut c, "Traktoren (alt)", ISBN_C).await;
+    let (work, ed) = open_library_hit("OL9W", "Traktoren", ISBN_C);
+    let found =
+        ingest::upsert_edition_with_work(&mut c, &work, &ed, WorkGrouping::NewWork, Mode::Refresh)
+            .await
+            .unwrap();
+    assert_eq!(found, (work_id, edition), "the bare-facts edition is found");
+    let w = row(&db, "works", work_id).await;
+    assert_eq!(w["source"], "legacy", "a visible merge candidate");
+    assert_eq!(w["ol_work_id"], Value::Null);
+    assert_eq!(
+        w["title"], "Traktoren",
+        "its legacy-ranked fields are upgraded"
+    );
+    assert_eq!(w["field_sources"]["title"], "openlibrary");
+    assert_eq!(row(&db, "works", existing).await["ol_work_id"], "OL9W");
+}
+
+#[sqlx::test]
+async fn an_open_library_record_never_retitles_a_dnb_work(db: PgPool) {
+    let mut c = conn(&db).await;
+    let tolkien = [("J. R. R. Tolkien", "Tolkien, J. R. R.", None)];
+    let (work_id, edition) = ingest::upsert_edition_with_work(
+        &mut c,
+        &dnb_work("Der Hobbit", &tolkien),
+        &dnb_edition(ISBN_A, "1", "Der Hobbit"),
+        WorkGrouping::DnbTitleAuthor,
+        Mode::Replace,
+    )
+    .await
+    .unwrap();
+    // CAT persists an Open Library hit for the ISBN while DNB cools down.
+    let found = ingest::upsert_edition_with_work(
+        &mut c,
+        &WorkRecord {
+            author_names: "J.R.R. Tolkien".into(),
+            ..ol_work("OL27482W", "The Hobbit")
+        },
+        &EditionRecord {
+            isbn13: Some(isbn(ISBN_A)),
+            ..EditionRecord::new(Source::OpenLibrary)
+        },
+        WorkGrouping::NewWork,
+        Mode::Refresh,
+    )
+    .await
+    .unwrap();
+    assert_eq!(found, (work_id, edition));
+    let w = row(&db, "works", work_id).await;
+    assert_eq!(w["title"], "Der Hobbit");
+    assert_eq!(w["author_names"], "J. R. R. Tolkien");
+    assert_eq!(w["field_sources"]["title"], "dnb");
+    assert_eq!(w["source"], "dnb");
+    assert_eq!(w["ol_work_id"], Value::Null);
+    assert_eq!(scalar_i64(&db, "SELECT count(*) FROM works").await, 1);
+}
+
+/// Marks `loser` as merged into `winner`, as `catalog::merge_works` does when both keep their
+/// Open Library ids.
+async fn merge(db: &PgPool, loser: i64, winner: i64) {
+    sqlx::query("UPDATE works SET merged_into_id = $2 WHERE id = $1")
+        .bind(loser)
+        .bind(winner)
+        .execute(db)
+        .await
+        .unwrap();
+}
+
+#[sqlx::test]
+async fn a_merged_away_open_library_id_resolves_to_the_surviving_work(db: PgPool) {
+    let mut c = conn(&db).await;
+    let winner = ingest::upsert_work(&mut c, &ol_work("OL1W", "Circe"), Mode::Refresh)
+        .await
+        .unwrap();
+    let loser = ingest::upsert_work(&mut c, &ol_work("OL2W", "Circe (dup)"), Mode::Refresh)
+        .await
+        .unwrap();
+    merge(&db, loser, winner).await;
+    let loser_before = row(&db, "works", loser).await;
+
+    let refresh = WorkRecord {
+        description: Some("From the duplicate".into()),
+        full_details: true,
+        ..ol_work("OL2W", "Circe, again")
+    };
+    assert_eq!(
+        ingest::upsert_work(&mut c, &refresh, Mode::Refresh)
+            .await
+            .unwrap(),
+        winner
+    );
+    // An ISBN hit whose Open Library edition names the merged-away work.
+    let (work_id, edition) = ingest::upsert_edition_with_work(
+        &mut c,
+        &refresh,
+        &EditionRecord {
+            isbn13: Some(isbn(ISBN_A)),
+            ..EditionRecord::new(Source::OpenLibrary)
+        },
+        WorkGrouping::NewWork,
+        Mode::Refresh,
+    )
+    .await
+    .unwrap();
+    assert_eq!(work_id, winner);
+    // POST /api/shelf {work_id: loser, edition_id} resolves the work, then accepts the edition.
+    let current = require_work(&mut c, loser).await.unwrap();
+    require_edition_of(&mut c, current, edition).await.unwrap();
+    assert_eq!(
+        ingest::upsert_work_stubs(
+            &mut c,
+            &[ol_work("OL2W", "Circe"), ol_work("OL1W", "Circe")]
+        )
+        .await
+        .unwrap(),
+        [winner, winner]
+    );
+    // Neither row took the duplicate's record.
+    assert_eq!(row(&db, "works", loser).await, loser_before);
+    let w = row(&db, "works", winner).await;
+    assert_eq!(
+        (&w["title"], &w["description"]),
+        (&json!("Circe"), &json!(""))
+    );
+
+    // A second merge makes a chain; every path follows it to the end.
+    let last = ingest::upsert_work(&mut c, &ol_work("OL3W", "Circe: A Novel"), Mode::Refresh)
+        .await
+        .unwrap();
+    merge(&db, winner, last).await;
+    assert_eq!(require_work(&mut c, loser).await.unwrap(), last);
+    assert_eq!(
+        resolve_local(&mut c, &WorkRef::parse(&loser.to_string()).unwrap())
+            .await
+            .unwrap(),
+        Some(last)
+    );
+    assert_eq!(
+        resolve_local(&mut c, &WorkRef::parse("OL2W").unwrap())
+            .await
+            .unwrap(),
+        Some(last)
+    );
+    assert_eq!(
+        ingest::upsert_work_stubs(&mut c, &[ol_work("OL2W", "Circe")])
+            .await
+            .unwrap(),
+        [last]
+    );
+    let (into, _) = ingest::upsert_edition_with_work(
+        &mut c,
+        &dnb_work("Kirke", &[]),
+        &dnb_edition(ISBN_B, "2", "Kirke"),
+        WorkGrouping::Into(loser),
+        Mode::Replace,
+    )
+    .await
+    .unwrap();
+    assert_eq!(into, last, "Into follows merges too");
+    let missing = ingest::upsert_edition_with_work(
+        &mut c,
+        &dnb_work("Kirke", &[]),
+        &dnb_edition(ISBN_C, "3", "Kirke"),
+        WorkGrouping::Into(last + 100),
+        Mode::Replace,
+    )
+    .await;
+    assert!(missing.is_err(), "Into a missing work");
+    assert_eq!(scalar_i64(&db, "SELECT count(*) FROM editions").await, 2);
+}
+
+#[sqlx::test]
+async fn dnb_grouping_skips_merged_away_works(db: PgPool) {
+    let mut c = conn(&db).await;
+    let paulitz = [("Udo Paulitz", "Paulitz, Udo", None)];
+    let (first, _) = ingest::upsert_edition_with_work(
+        &mut c,
+        &dnb_work("Traktoren", &paulitz),
+        &dnb_edition(ISBN_A, "1", "Traktoren"),
+        WorkGrouping::DnbTitleAuthor,
+        Mode::Replace,
+    )
+    .await
+    .unwrap();
+    let winner = ingest::upsert_work(
+        &mut c,
+        &WorkRecord::new(Source::User, "Traktoren"),
+        Mode::Refresh,
+    )
+    .await
+    .unwrap();
+    merge(&db, first, winner).await;
+    let (second, _) = ingest::upsert_edition_with_work(
+        &mut c,
+        &dnb_work("Traktoren", &paulitz),
+        &dnb_edition(ISBN_B, "2", "Traktoren"),
+        WorkGrouping::DnbTitleAuthor,
+        Mode::Replace,
+    )
+    .await
+    .unwrap();
+    assert_ne!(second, first, "the merged-away work is no grouping target");
+    assert_ne!(second, winner, "neither is a user work");
+}
+
+#[sqlx::test]
+async fn authorless_dnb_records_are_never_grouped_by_title_alone(db: PgPool) {
+    let mut c = conn(&db).await;
+    let mut works = Vec::new();
+    for (raw, idn) in [(ISBN_A, "1"), (ISBN_B, "2")] {
+        let (work, _) = ingest::upsert_edition_with_work(
+            &mut c,
+            &dnb_work("Gedichte", &[]),
+            &dnb_edition(raw, idn, "Gedichte"),
+            WorkGrouping::DnbTitleAuthor,
+            Mode::Replace,
+        )
+        .await
+        .unwrap();
+        works.push(work);
+    }
+    assert_ne!(works[0], works[1], "two anthologies with one title");
+    // The same record again finds its edition, and so its work.
+    let (again, _) = ingest::upsert_edition_with_work(
+        &mut c,
+        &dnb_work("Gedichte", &[]),
+        &dnb_edition(ISBN_A, "1", "Gedichte"),
+        WorkGrouping::DnbTitleAuthor,
+        Mode::Replace,
+    )
+    .await
+    .unwrap();
+    assert_eq!(again, works[0]);
+}
+
+#[sqlx::test]
+async fn an_edition_of_another_work_keeps_its_work(db: PgPool) {
+    let mut c = conn(&db).await;
+    let (work, edition) = edition_owned_by(&db, Source::OpenLibrary).await;
+    let other = ingest::upsert_work(
+        &mut c,
+        &WorkRecord::new(Source::User, "Other"),
+        Mode::Refresh,
+    )
+    .await
+    .unwrap();
+    let rec = EditionRecord {
+        isbn13: Some(isbn(ISBN_A)),
+        ..EditionRecord::new(Source::User)
+    };
+    assert_eq!(
+        ingest::upsert_edition(&mut c, other, &rec, Mode::Refresh)
+            .await
+            .unwrap(),
+        (work, edition),
+        "CAT answers 409"
+    );
+    assert_eq!(row(&db, "editions", edition).await["work_id"], work);
+}
+
+#[sqlx::test]
+async fn planned_years_beyond_the_schema_never_reach_the_work(db: PgPool) {
+    let mut c = conn(&db).await;
+    let work_id = ingest::upsert_work(
+        &mut c,
+        &WorkRecord::new(Source::User, "Kirke"),
+        Mode::Refresh,
+    )
+    .await
+    .unwrap();
+    // A record's out-of-range planned date is dropped.
+    let rec = EditionRecord {
+        isbn13: Some(isbn(ISBN_A)),
+        planned_publication_date: Patch::Value(date!(3001 - 01 - 01)),
+        ..EditionRecord::new(Source::Dnb)
+    };
+    let (_, edition) = ingest::upsert_edition(&mut c, work_id, &rec, Mode::Replace)
+        .await
+        .unwrap();
+    assert_eq!(
+        row(&db, "editions", edition).await["planned_publication_date"],
+        Value::Null
+    );
+    // A stored one (editions.planned_publication_date has no CHECK) is not used for the year.
+    sqlx::query("UPDATE editions SET planned_publication_date = '9999-12-01' WHERE id = $1")
+        .bind(edition)
+        .execute(&db)
+        .await
+        .unwrap();
+    let pages = EditionRecord {
+        pages: Some(100),
+        ..rec
+    };
+    ingest::upsert_edition(&mut c, work_id, &pages, Mode::Refresh)
+        .await
+        .unwrap();
+    let w = row(&db, "works", work_id).await;
+    assert_eq!(w["pages"], 100);
+    assert_eq!(w["first_publish_year"], Value::Null);
+    assert_eq!(w["field_sources"].get("first_publish_year"), None);
+}
+
+#[sqlx::test]
+async fn nul_characters_never_reach_postgres(db: PgPool) {
+    let mut c = conn(&db).await;
+    let stub = WorkRecord {
+        author_names: "Madeline\u{0} Miller".into(),
+        ..ol_work("OL1W", "Cir\u{0}ce")
+    };
+    let ids = ingest::upsert_work_stubs(&mut c, &[stub]).await.unwrap();
+    let w = row(&db, "works", ids[0]).await;
+    assert_eq!(
+        (&w["title"], &w["author_names"]),
+        (&json!("Circe"), &json!("Madeline Miller"))
+    );
+    let full = WorkRecord {
+        description: Some("A witch\u{0}.".into()),
+        authors: vec![AuthorRecord::named("Madeline Miller\u{0}")],
+        ..ol_work("OL1W", "Circe")
+    };
+    ingest::upsert_work(&mut c, &full, Mode::Refresh)
+        .await
+        .unwrap();
+    assert_eq!(row(&db, "works", ids[0]).await["description"], "A witch.");
+}
+
+#[sqlx::test]
+async fn set_cover_refuses_a_media_row_that_is_not_a_cover(db: PgPool) {
+    let mut c = conn(&db).await;
+    let work_id = ingest::upsert_work(&mut c, &ol_work("OL1W", "Circe"), Mode::Refresh)
+        .await
+        .unwrap();
+    let avatar: i64 = sqlx::query_scalar(
+        "INSERT INTO media (public_id, kind, source) VALUES ('aaaaaaaaaaaaaaaaaaaaaaaaaa', 'avatar', 'upload')
+         RETURNING id",
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert!(
+        !ingest::set_cover(
+            &mut c,
+            CoverTarget::Work(work_id),
+            avatar,
+            Source::Admin,
+            false
+        )
+        .await
+        .unwrap()
+    );
+    assert_eq!(
+        row(&db, "works", work_id).await["cover_media_id"],
+        Value::Null
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Concurrency: callers run ingest in transactions (§7.2)
+// ---------------------------------------------------------------------------------------------
+
+async fn backend_pid(conn: &mut PgConnection) -> i32 {
+    sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(conn)
+        .await
+        .unwrap()
+}
+
+/// Polls `pg_stat_activity` until backend `pid` waits for a lock (advisory or row lock).
+async fn wait_until_blocked(db: &PgPool, pid: i32) {
+    for _ in 0..1000 {
+        let blocked: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+                            WHERE pid = $1 AND wait_event_type = 'Lock')",
+        )
+        .bind(pid)
+        .fetch_one(db)
+        .await
+        .unwrap();
+        if blocked {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("backend {pid} never waited for a lock");
+}
+
+#[sqlx::test]
+async fn concurrent_dnb_ingests_of_one_title_share_one_work(db: PgPool) {
+    let author = [("Mario Giordano", "Giordano, Mario", None)];
+    let work = dnb_work("Tante Poldi", &author);
+    // HAR's page transaction holds the hardcover's locks...
+    let mut harvest = db.begin().await.unwrap();
+    let (first_work, _) = ingest::upsert_edition_with_work(
+        &mut harvest,
+        &work,
+        &dnb_edition(ISBN_A, "1", "Tante Poldi"),
+        WorkGrouping::DnbTitleAuthor,
+        Mode::Replace,
+    )
+    .await
+    .unwrap();
+    // ...while CAT's SRU lookup ingests the paperback.
+    let mut lookup = db.begin().await.unwrap();
+    let pid = backend_pid(&mut lookup).await;
+    let paperback = dnb_edition(ISBN_B, "2", "Tante Poldi");
+    let task = tokio::spawn(async move {
+        let ids = ingest::upsert_edition_with_work(
+            &mut lookup,
+            &work,
+            &paperback,
+            WorkGrouping::DnbTitleAuthor,
+            Mode::Replace,
+        )
+        .await
+        .unwrap();
+        lookup.commit().await.unwrap();
+        ids
+    });
+    // The lookup waits for the match-key lock, then sees the committed work.
+    wait_until_blocked(&db, pid).await;
+    harvest.commit().await.unwrap();
+    let (second_work, _) = task.await.unwrap();
+    assert_eq!(second_work, first_work);
+    assert_eq!(scalar_i64(&db, "SELECT count(*) FROM works").await, 1);
+    assert_eq!(
+        scalar_i64(&db, "SELECT count(DISTINCT work_id) FROM editions").await,
+        1
+    );
+    assert_eq!(scalar_i64(&db, "SELECT count(*) FROM editions").await, 2);
+}
+
+#[sqlx::test]
+async fn concurrent_ingests_of_one_isbn_make_one_edition(db: PgPool) {
+    let work_id = {
+        let mut c = conn(&db).await;
+        ingest::upsert_work(
+            &mut c,
+            &WorkRecord::new(Source::User, "Kirke"),
+            Mode::Refresh,
+        )
+        .await
+        .unwrap()
+    };
+    // Without a transaction the advisory locks end with each statement, so the inserts race
+    // and the losers merge into the winner's row (ON CONFLICT DO NOTHING).
+    let start = Arc::new(Barrier::new(4));
+    let tasks: Vec<_> = (0..4)
+        .map(|i| {
+            let (db, start) = (db.clone(), start.clone());
+            tokio::spawn(async move {
+                let mut c = db.acquire().await.unwrap();
+                let rec = EditionRecord {
+                    isbn13: Some(isbn(ISBN_A)),
+                    pages: Some(100 + i),
+                    ..EditionRecord::new(Source::OpenLibrary)
+                };
+                start.wait().await;
+                ingest::upsert_edition(&mut c, work_id, &rec, Mode::Refresh).await
+            })
+        })
+        .collect();
+    let mut editions = HashSet::new();
+    for task in tasks {
+        let (work, edition) = task.await.unwrap().unwrap();
+        assert_eq!(work, work_id);
+        editions.insert(edition);
+    }
+    assert_eq!(editions.len(), 1);
+    assert_eq!(scalar_i64(&db, "SELECT count(*) FROM editions").await, 1);
+}
+
+#[sqlx::test]
+async fn transactions_over_several_records_can_deadlock_and_retry(db: PgPool) {
+    let (first_work, second_work) = {
+        let mut c = conn(&db).await;
+        let first = ingest::upsert_work(&mut c, &WorkRecord::new(Source::User, "A"), Mode::Refresh)
+            .await
+            .unwrap();
+        let second =
+            ingest::upsert_work(&mut c, &WorkRecord::new(Source::User, "B"), Mode::Refresh)
+                .await
+                .unwrap();
+        (first, second)
+    };
+    let rec = |raw: &str| EditionRecord {
+        isbn13: Some(isbn(raw)),
+        ..EditionRecord::new(Source::User)
+    };
+    // Two page transactions take the same two ISBN locks in opposite order.
+    let mut one = db.begin().await.unwrap();
+    ingest::upsert_edition(&mut one, first_work, &rec(ISBN_A), Mode::Refresh)
+        .await
+        .unwrap();
+    let mut two = db.begin().await.unwrap();
+    ingest::upsert_edition(&mut two, second_work, &rec(ISBN_B), Mode::Refresh)
+        .await
+        .unwrap();
+    let pid = backend_pid(&mut one).await;
+    let b = rec(ISBN_B);
+    let task = tokio::spawn(async move {
+        let result = ingest::upsert_edition(&mut one, first_work, &b, Mode::Refresh).await;
+        (one, result)
+    });
+    wait_until_blocked(&db, pid).await;
+    let second = ingest::upsert_edition(&mut two, second_work, &rec(ISBN_A), Mode::Refresh).await;
+    let (one, first) = task.await.unwrap();
+    // Postgres aborts exactly one of them; the caller sees is_deadlock and retries it.
+    let failed = match (first, second) {
+        (Err(e), Ok(_)) => {
+            two.commit().await.unwrap();
+            drop(one);
+            e
+        }
+        (Ok(_), Err(e)) => {
+            one.commit().await.unwrap();
+            drop(two);
+            e
+        }
+        other => panic!("expected one deadlock abort, got {other:?}"),
+    };
+    assert!(is_deadlock(&failed), "{failed}");
+    assert!(!is_deadlock(&sqlx::Error::RowNotFound));
+    assert_eq!(scalar_i64(&db, "SELECT count(*) FROM editions").await, 2);
+}
+
+#[sqlx::test]
+async fn a_takedown_waits_for_the_ingest_that_attaches_its_cover(db: PgPool) {
+    let media = {
+        let mut c = conn(&db).await;
+        ingest::ol_cover_media(&mut c, 77).await.unwrap().unwrap()
+    };
+    let photo = upload_media(&db, "pppppppppppppppppppppppppp", false).await;
+    let photo_work = {
+        let mut c = conn(&db).await;
+        ingest::upsert_work(&mut c, &ol_work("OL2W", "Kirke"), Mode::Refresh)
+            .await
+            .unwrap()
+    };
+    // First an Open Library cover attached by ingest, then a first upload through set_cover.
+    for (target, media_id) in [(None, media), (Some(photo_work), photo)] {
+        // The ingest attaches the media row in an open transaction...
+        let mut writer = db.begin().await.unwrap();
+        let work_id = match target {
+            None => ingest::upsert_work(
+                &mut writer,
+                &WorkRecord {
+                    ol_cover_id: Some(77),
+                    ..ol_work("OL1W", "Circe")
+                },
+                Mode::Refresh,
+            )
+            .await
+            .unwrap(),
+            Some(work_id) => {
+                assert!(
+                    ingest::set_cover(
+                        &mut writer,
+                        CoverTarget::Work(work_id),
+                        media_id,
+                        Source::User,
+                        true
+                    )
+                    .await
+                    .unwrap()
+                );
+                work_id
+            }
+        };
+        // ...and the takedown's UPDATE waits for it, so clear_media sees the reference.
+        let mut takedown = db.begin().await.unwrap();
+        let pid = backend_pid(&mut takedown).await;
+        let task = tokio::spawn(async move {
+            sqlx::query("UPDATE media SET removed_at = now() WHERE id = $1")
+                .bind(media_id)
+                .execute(&mut *takedown)
+                .await
+                .unwrap();
+            let cleared = ingest::clear_media(&mut takedown, media_id).await.unwrap();
+            takedown.commit().await.unwrap();
+            cleared
+        });
+        wait_until_blocked(&db, pid).await;
+        writer.commit().await.unwrap();
+        assert_eq!(task.await.unwrap(), 1);
+        assert_eq!(
+            row(&db, "works", work_id).await["cover_media_id"],
+            Value::Null
+        );
+    }
 }

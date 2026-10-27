@@ -49,6 +49,29 @@ pub async fn follow_merges(conn: &mut PgConnection, work_id: i64) -> sqlx::Resul
     .await
 }
 
+/// [`follow_merges`] for many works in one query: the current work per requested id; ids that
+/// do not exist are left out.
+pub async fn follow_merges_many(
+    conn: &mut PgConnection,
+    work_ids: &[i64],
+) -> sqlx::Result<HashMap<i64, i64>> {
+    let rows = sqlx::query!(
+        r#"WITH RECURSIVE chain (start, id, merged_into_id, hops) AS (
+               SELECT id, id, merged_into_id, 0 FROM works WHERE id = ANY($1)
+               UNION ALL
+               SELECT c.start, w.id, w.merged_into_id, c.hops + 1
+               FROM works w JOIN chain c ON w.id = c.merged_into_id
+               WHERE c.hops < $2
+           )
+           SELECT start AS "start!", id AS "id!" FROM chain WHERE merged_into_id IS NULL"#,
+        work_ids,
+        MAX_MERGE_HOPS
+    )
+    .fetch_all(conn)
+    .await?;
+    Ok(rows.into_iter().map(|row| (row.start, row.id)).collect())
+}
+
 /// The non-empty spine colour (`''` means "sampled, no usable colour").
 fn spine(color: Option<String>) -> Option<String> {
     color.filter(|c| !c.is_empty())

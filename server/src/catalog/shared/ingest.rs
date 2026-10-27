@@ -5,7 +5,8 @@
 //! ([`decide`]), and writes it back once. Derived columns (`search_extra`, `match_key`) and the
 //! NULL fill of work fields from editions are maintained after every edition write. Callers run
 //! multi-statement writes in a transaction; the advisory locks taken here then serialise
-//! concurrent ingests of the same ISBN, IDN, OL edition or DNB title.
+//! concurrent ingests of the same ISBN, IDN, OL edition or DNB title. A transaction over several
+//! records can still deadlock with another one and is retried (§7.2 "Deadlocks").
 
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -13,15 +14,16 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
-use sqlx::PgConnection;
 use sqlx::types::Json;
+use sqlx::{Connection, PgConnection};
 use time::Date;
 use time::macros::format_description;
 use unicode_normalization::UnicodeNormalization;
 
-use super::books::follow_merges;
+use super::books::{follow_merges, follow_merges_many};
+use super::dnb_marc::DnbRecord;
 use super::isbn::Isbn13;
-use crate::error::{ApiResult, AppError, msg};
+use crate::error::{ApiResult, AppError, is_unique_violation, msg};
 use crate::extract::Patch;
 use crate::media::shared::urls::new_public_id;
 use crate::text::{casefold, char_len, collapse_ws, py_strip, truncate_chars};
@@ -263,9 +265,10 @@ pub enum WorkGrouping {
     /// Create a new work from the WorkRecord (no deduplication; the caller decided). A record
     /// with an `ol_work_id` still finds that work.
     NewWork,
-    /// Attach to this existing work (following merges).
+    /// Attach to this existing work (following merges; Err for a missing work).
     Into(i64),
     /// DNB: an existing non-merged `source='dnb'` work with the same match_key, else a new work.
+    /// A record without an author always gets a new work.
     DnbTitleAuthor,
 }
 
@@ -543,8 +546,14 @@ impl Merger {
 // ---------------------------------------------------------------------------------------------
 
 /// Catalog text is stored composed (NFC), so the same title from two sources compares equal.
+/// Control characters other than tab and line breaks are dropped: Postgres `text` refuses U+0000,
+/// which Open Library JSON sometimes carries, and the others are never meant as text.
 fn nfc(value: &str) -> String {
-    value.nfc().collect()
+    value
+        .chars()
+        .filter(|c| !c.is_control() || matches!(c, '\t' | '\n' | '\r'))
+        .nfc()
+        .collect()
 }
 
 fn clean_line(value: Option<&str>, max: usize) -> Option<String> {
@@ -556,8 +565,20 @@ fn clean_pages(pages: Option<i32>) -> Option<i32> {
     pages.filter(|p| (1..=100_000).contains(p))
 }
 
+/// The years `works.first_publish_year` and `editions.publication_year` accept.
+const YEARS: std::ops::RangeInclusive<i32> = -5000..=3000;
+
 fn clean_year(year: Option<i32>) -> Option<i32> {
-    year.filter(|y| (-5000..=3000).contains(y))
+    year.filter(|y| YEARS.contains(y))
+}
+
+/// A planned date whose year the work's `first_publish_year` could not take is dropped (the
+/// record has no value, which keeps the stored date).
+fn clean_planned(date: &Patch<Date>) -> Patch<Date> {
+    match date {
+        Patch::Value(d) if !YEARS.contains(&d.year()) => Patch::Missing,
+        other => other.clone(),
+    }
 }
 
 fn clean_id(value: Option<&str>, pattern: &Regex) -> Option<String> {
@@ -591,6 +612,9 @@ struct CleanWork {
     ol_rating: Option<f64>,
     ol_rating_count: Option<i32>,
     ol_cover_id: Option<i64>,
+    /// The usable media row for `ol_cover_id`, resolved by [`CleanWork::resolve_cover`] before
+    /// any catalog row is locked (see [`CleanEdition::resolve_cover`]).
+    cover: Option<i64>,
     ol_work_id: Option<String>,
 }
 
@@ -640,8 +664,14 @@ impl CleanWork {
                 .filter(|r| r.is_finite() && (0.0..=5.0).contains(r)),
             ol_rating_count: rec.ol_rating_count.filter(|c| *c >= 0),
             ol_cover_id: rec.ol_cover_id.filter(|id| *id > 0),
+            cover: None,
             ol_work_id: clean_id(rec.ol_work_id.as_deref(), &OL_WORK_ID),
         }
+    }
+
+    async fn resolve_cover(&mut self, conn: &mut PgConnection) -> sqlx::Result<()> {
+        self.cover = cover_for(conn, self.ol_cover_id).await?;
+        Ok(())
     }
 
     fn surname(&self) -> String {
@@ -664,6 +694,9 @@ struct CleanEdition {
     publication_year: Option<i32>,
     planned_publication_date: Patch<Date>,
     ol_cover_id: Option<i64>,
+    /// The usable media row for `ol_cover_id`, resolved by [`CleanEdition::resolve_cover`]
+    /// before any catalog row is locked.
+    cover: Option<i64>,
     contributors: Vec<(AuthorRecord, ContributorRole)>,
     created_by: Option<i64>,
 }
@@ -683,8 +716,9 @@ impl CleanEdition {
             format: rec.format.map(|f| f.as_str().to_owned()),
             pages: clean_pages(rec.pages),
             publication_year: clean_year(rec.publication_year),
-            planned_publication_date: rec.planned_publication_date.clone(),
+            planned_publication_date: clean_planned(&rec.planned_publication_date),
             ol_cover_id: rec.ol_cover_id.filter(|id| *id > 0),
+            cover: None,
             contributors: rec
                 .contributors
                 .iter()
@@ -699,6 +733,14 @@ impl CleanEdition {
         self.title
             .clone()
             .filter(|t| casefold(&collapse_ws(t)) != casefold(&collapse_ws(work_title)))
+    }
+
+    /// Resolves (and share-locks) the cover's media row. Called first, before the edition or its
+    /// work is locked, so a takedown that holds the media row never waits for a row this ingest
+    /// holds.
+    async fn resolve_cover(&mut self, conn: &mut PgConnection) -> sqlx::Result<()> {
+        self.cover = cover_for(conn, self.ol_cover_id).await?;
+        Ok(())
     }
 
     /// The advisory lock keys of this edition's identifiers.
@@ -745,8 +787,10 @@ fn upgraded_source(current: &str, by: Source) -> String {
 /// space of `jobs::lock_ids`).
 const LOCK_SPACE: i32 = 0x6263_0100;
 
-/// Takes transaction-level advisory locks on `keys`, in a fixed order (no deadlocks). Outside a
-/// transaction they end with the statement, which is harmless.
+/// Takes transaction-level advisory locks on `keys`, in a fixed order, so two calls never
+/// deadlock over the keys they share. Locks taken by earlier calls in the same transaction, and
+/// row locks, are outside that order (§7.2 "Deadlocks", [`crate::error::is_deadlock`]). Outside
+/// a transaction they end with the statement, which is harmless.
 async fn lock_keys(conn: &mut PgConnection, keys: &[String]) -> sqlx::Result<()> {
     let mut ids: Vec<i32> = keys
         .iter()
@@ -933,6 +977,9 @@ pub async fn ol_cover_media(
 }
 
 /// [`ol_cover_media`] for many cover ids at once: the usable (not removed) media id per cover id.
+/// The rows are locked `FOR SHARE` until the transaction ends, so a takedown's
+/// `UPDATE media SET removed_at` waits for this ingest to commit and its `clear_media` then sees
+/// the reference.
 async fn ol_cover_medias(
     conn: &mut PgConnection,
     ol_cover_ids: &[i64],
@@ -971,7 +1018,9 @@ async fn ol_cover_medias(
     }
     let rows = sqlx::query!(
         r#"SELECT id, ol_cover_id AS "ol_cover_id!" FROM media
-           WHERE ol_cover_id = ANY($1) AND removed_at IS NULL"#,
+           WHERE ol_cover_id = ANY($1) AND removed_at IS NULL
+           ORDER BY id
+           FOR SHARE"#,
         &wanted
     )
     .fetch_all(conn)
@@ -1002,6 +1051,7 @@ struct WorkRow {
     pages: Option<i32>,
     ol_rating: Option<f64>,
     ol_rating_count: Option<i32>,
+    ol_work_id: Option<String>,
     source: String,
     cover_media_id: Option<i64>,
     field_sources: Json<Map<String, Value>>,
@@ -1011,7 +1061,7 @@ async fn load_work(conn: &mut PgConnection, work_id: i64) -> sqlx::Result<Option
     sqlx::query_as!(
         WorkRow,
         r#"SELECT id, title, subtitle, author_names, first_publish_year, description, subjects,
-                  pages, ol_rating, ol_rating_count, source, cover_media_id,
+                  pages, ol_rating, ol_rating_count, ol_work_id, source, cover_media_id,
                   field_sources AS "field_sources: Json<Map<String, Value>>"
            FROM works WHERE id = $1 FOR UPDATE"#,
         work_id
@@ -1040,10 +1090,13 @@ enum WorkScope {
 }
 
 /// Inserts a new work; `None` when a concurrent insert took its `ol_work_id`.
-async fn insert_work(conn: &mut PgConnection, rec: &WorkRecord) -> sqlx::Result<Option<i64>> {
+async fn insert_work(
+    conn: &mut PgConnection,
+    rec: &WorkRecord,
+    w: &CleanWork,
+) -> sqlx::Result<Option<i64>> {
     let source = row_source(rec.source)?;
-    let w = CleanWork::new(rec);
-    let cover = cover_for(conn, w.ol_cover_id).await?;
+    let cover = w.cover;
     let mut prov = Provenance::default();
     let title = w.title.clone().unwrap_or_else(|| "Untitled".to_owned());
     prov.set("title", rec.source);
@@ -1101,16 +1154,47 @@ async fn insert_work(conn: &mut PgConnection, rec: &WorkRecord) -> sqlx::Result<
     Ok(id)
 }
 
+/// Gives the work `ol_work_id` when it has none and no other work holds it; returns whether it
+/// did. Two works claiming one id at once meet on `works_ol_work_id_key`: the loser's UPDATE fails
+/// inside a savepoint, so the caller's transaction goes on.
+async fn claim_ol_work_id(
+    conn: &mut PgConnection,
+    work_id: i64,
+    ol_work_id: &str,
+) -> sqlx::Result<bool> {
+    let mut savepoint = conn.begin().await?;
+    let claimed = sqlx::query!(
+        "UPDATE works SET ol_work_id = $2, updated_at = now()
+         WHERE id = $1 AND ol_work_id IS NULL
+           AND NOT EXISTS (SELECT 1 FROM works WHERE ol_work_id = $2)",
+        work_id,
+        ol_work_id
+    )
+    .execute(&mut *savepoint)
+    .await;
+    match claimed {
+        Ok(done) => {
+            savepoint.commit().await?;
+            Ok(done.rows_affected() == 1)
+        }
+        Err(e) if is_unique_violation(&e, "works_ol_work_id_key") => {
+            savepoint.rollback().await?;
+            Ok(false)
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// Merges `rec` into the work under the provenance rules.
 async fn update_work(
     conn: &mut PgConnection,
     mut row: WorkRow,
     rec: &WorkRecord,
+    w: &CleanWork,
     mode: Mode,
     scope: WorkScope,
 ) -> sqlx::Result<()> {
     row_source(rec.source)?;
-    let w = CleanWork::new(rec);
     let fallback = Source::parse(&row.source).unwrap_or(Source::Legacy);
     let mut m = Merger::new(row.field_sources.0.clone(), fallback, rec.source, mode);
     if let WorkScope::ParentOfEdition { open } = scope {
@@ -1134,8 +1218,7 @@ async fn update_work(
         m.field("description", &mut row.description, w.description.clone());
         m.field("subjects", &mut row.subjects, w.subjects.clone());
         m.field("pages", &mut row.pages, w.pages.map(Some));
-        let cover = cover_for(conn, w.ol_cover_id).await?;
-        m.value_only("cover_media_id", &mut row.cover_media_id, cover.map(Some));
+        m.value_only("cover_media_id", &mut row.cover_media_id, w.cover.map(Some));
         if w.ol_rating.is_some() && w.ol_rating != row.ol_rating {
             row.ol_rating = w.ol_rating;
             m.changed = true;
@@ -1145,7 +1228,18 @@ async fn update_work(
             m.changed = true;
         }
     }
-    let source = upgraded_source(&row.source, rec.source);
+    let mut source = upgraded_source(&row.source, rec.source);
+    // An `openlibrary` work has an ol_work_id: a legacy work upgraded by an Open Library record
+    // takes the record's id, or stays `legacy` (a merge candidate) when another work holds it.
+    if source != row.source && rec.source == Source::OpenLibrary && row.ol_work_id.is_none() {
+        let claimed = match &w.ol_work_id {
+            Some(ol_work_id) => claim_ol_work_id(conn, row.id, ol_work_id).await?,
+            None => false,
+        };
+        if !claimed {
+            source = row.source.clone();
+        }
+    }
     let fetched = full && rec.full_details;
     if m.changed || source != row.source || fetched {
         sqlx::query!(
@@ -1195,28 +1289,32 @@ async fn update_work(
 /// A work identified by `ol_work_id` is found and updated per `mode`. With `ol_work_id` None, a
 /// new work is ALWAYS created, for any source (no deduplication; the caller groups).
 /// `Source::OpenLibrary` requires `ol_work_id` (debug_assert; `Err(Protocol)` in release). Sets
-/// `details_fetched_at` when `full_details`.
+/// `details_fetched_at` when `full_details`. A work found by `ol_work_id` that was merged away
+/// resolves to the surviving work, which is returned untouched: it has its own Open Library
+/// record, and the merged row is never written again.
 pub async fn upsert_work(
     conn: &mut PgConnection,
     rec: &WorkRecord,
     mode: Mode,
 ) -> sqlx::Result<i64> {
     row_source(rec.source)?;
-    let ol_work_id = clean_id(rec.ol_work_id.as_deref(), &OL_WORK_ID);
-    let Some(ol_work_id) = ol_work_id else {
+    let mut w = CleanWork::new(rec);
+    let Some(ol_work_id) = w.ol_work_id.clone() else {
         if rec.source == Source::OpenLibrary {
             debug_assert!(false, "an Open Library work record needs its ol_work_id");
             return Err(sqlx::Error::Protocol(
                 "an Open Library work record needs a valid ol_work_id".into(),
             ));
         }
-        return insert_work(conn, rec)
+        w.resolve_cover(conn).await?;
+        return insert_work(conn, rec, &w)
             .await?
             .ok_or(sqlx::Error::RowNotFound);
     };
+    w.resolve_cover(conn).await?;
     let existing = match find_work_by_ol(conn, &ol_work_id).await? {
         Some(id) => id,
-        None => match insert_work(conn, rec).await? {
+        None => match insert_work(conn, rec, &w).await? {
             Some(id) => return Ok(id),
             // A concurrent insert won; merge into its row.
             None => find_work_by_ol(conn, &ol_work_id)
@@ -1224,16 +1322,23 @@ pub async fn upsert_work(
                 .ok_or(sqlx::Error::RowNotFound)?,
         },
     };
+    let current = follow_merges(conn, existing)
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)?;
+    if current != existing {
+        return Ok(current);
+    }
     if mode != Mode::InsertOnly
         && let Some(row) = load_work(conn, existing).await?
     {
-        update_work(conn, row, rec, mode, WorkScope::Full).await?;
+        update_work(conn, row, rec, &w, mode, WorkScope::Full).await?;
     }
     Ok(existing)
 }
 
 /// Search stubs: one batched `INSERT … ON CONFLICT DO NOTHING` for the records with an
-/// `ol_work_id` (existing rows are untouched); returns ids in input order. Stubs carry
+/// `ol_work_id` (existing rows are untouched); returns ids in input order, resolved through
+/// merges like [`upsert_work`]. Stubs carry
 /// `author_names` only; author records come with the full record. Records without an
 /// `ol_work_id` are inserted one by one (each is a new work).
 pub async fn upsert_work_stubs(
@@ -1336,11 +1441,18 @@ pub async fn upsert_work_stubs(
     .into_iter()
     .map(|row| (row.ol_work_id, row.id))
     .collect();
+    // A merged-away work that kept its ol_work_id stands for the work it was merged into.
+    let found: Vec<i64> = ids.values().copied().collect();
+    let current = follow_merges_many(conn, &found).await?;
 
     let mut out = Vec::with_capacity(recs.len());
     for (rec, w) in recs.iter().zip(&cleaned) {
         let id = match &w.ol_work_id {
-            Some(ol_id) => *ids.get(ol_id).ok_or(sqlx::Error::RowNotFound)?,
+            Some(ol_id) => ids
+                .get(ol_id)
+                .and_then(|id| current.get(id))
+                .copied()
+                .ok_or(sqlx::Error::RowNotFound)?,
             None => upsert_work(conn, rec, Mode::InsertOnly).await?,
         };
         out.push(id);
@@ -1390,14 +1502,14 @@ async fn refresh_derived(conn: &mut PgConnection, work_id: i64) -> sqlx::Result<
 }
 
 /// Fills the work's NULL `pages`, `first_publish_year` (from `publication_year`, else the year
-/// of `planned_publication_date`) and `cover_media_id` from this edition, with the edition's
-/// provenance.
+/// of `planned_publication_date` when `first_publish_year` can take it) and `cover_media_id` from
+/// this edition, with the edition's provenance.
 async fn fill_work_from_edition(conn: &mut PgConnection, edition_id: i64) -> sqlx::Result<()> {
     sqlx::query!(
         r#"UPDATE works w SET
                pages = COALESCE(w.pages, e.pages),
                first_publish_year = COALESCE(w.first_publish_year, e.publication_year,
-                                             EXTRACT(YEAR FROM e.planned_publication_date)::int),
+                                             e.planned_year),
                cover_media_id = COALESCE(w.cover_media_id, e.cover_media_id),
                field_sources = w.field_sources
                    || CASE WHEN w.pages IS NULL AND e.pages IS NOT NULL
@@ -1408,7 +1520,7 @@ async fn fill_work_from_edition(conn: &mut PgConnection, edition_id: i64) -> sql
                            WHEN e.publication_year IS NOT NULL
                            THEN jsonb_build_object('first_publish_year',
                                 COALESCE(e.field_sources -> 'publication_year', to_jsonb(e.source)))
-                           WHEN e.planned_publication_date IS NOT NULL
+                           WHEN e.planned_year IS NOT NULL
                            THEN jsonb_build_object('first_publish_year',
                                 COALESCE(e.field_sources -> 'planned_publication_date',
                                          to_jsonb(e.source)))
@@ -1418,11 +1530,16 @@ async fn fill_work_from_edition(conn: &mut PgConnection, edition_id: i64) -> sql
                                 COALESCE(e.field_sources -> 'cover_media_id', to_jsonb(e.source)))
                            ELSE '{}'::jsonb END,
                updated_at = now()
-           FROM editions e
-           WHERE e.id = $1 AND w.id = e.work_id
+           FROM (SELECT e.*,
+                        CASE WHEN EXTRACT(YEAR FROM e.planned_publication_date)
+                                  BETWEEN -5000 AND 3000
+                             THEN EXTRACT(YEAR FROM e.planned_publication_date)::int
+                        END AS planned_year
+                 FROM editions e WHERE e.id = $1) e
+           WHERE w.id = e.work_id
              AND ((w.pages IS NULL AND e.pages IS NOT NULL)
                   OR (w.first_publish_year IS NULL
-                      AND (e.publication_year IS NOT NULL OR e.planned_publication_date IS NOT NULL))
+                      AND (e.publication_year IS NOT NULL OR e.planned_year IS NOT NULL))
                   OR (w.cover_media_id IS NULL AND e.cover_media_id IS NOT NULL))"#,
         edition_id
     )
@@ -1511,7 +1628,7 @@ async fn insert_edition(
 ) -> sqlx::Result<Option<i64>> {
     let source = row_source(ed.source)?;
     let title = ed.own_title(&work_title(conn, work_id).await?);
-    let cover = cover_for(conn, ed.ol_cover_id).await?;
+    let cover = ed.cover;
     let planned = match &ed.planned_publication_date {
         Patch::Value(date) => Some(*date),
         _ => None,
@@ -1595,8 +1712,11 @@ async fn update_edition(
         &mut row.planned_publication_date,
         &ed.planned_publication_date,
     );
-    let cover = cover_for(conn, ed.ol_cover_id).await?;
-    m.value_only("cover_media_id", &mut row.cover_media_id, cover.map(Some));
+    m.value_only(
+        "cover_media_id",
+        &mut row.cover_media_id,
+        ed.cover.map(Some),
+    );
     let contributors = m.action(
         "contributors",
         row.contributor_count > 0,
@@ -1700,7 +1820,16 @@ async fn update_parent_work(
     let title_owner = Provenance(row.field_sources.0.clone()).get("title");
     let open = row.source == Source::Legacy.as_str()
         || (rec.source == Source::Dnb && title_owner == Some(Source::Dnb) && editions == 1);
-    update_work(conn, row, rec, mode, WorkScope::ParentOfEdition { open }).await
+    let w = CleanWork::new(rec);
+    update_work(
+        conn,
+        row,
+        rec,
+        &w,
+        mode,
+        WorkScope::ParentOfEdition { open },
+    )
+    .await
 }
 
 /// Inserts `ed` under `work_id`, or merges it into the edition a concurrent insert created.
@@ -1732,7 +1861,9 @@ async fn insert_or_merge_edition(
 ///   inserts the edition.
 ///
 /// In both cases NULL work fields are filled from the edition (§7.3). Returns
-/// (work_id, edition_id). `InsertOnly` returns a found edition untouched.
+/// (work_id, edition_id). `InsertOnly` returns a found edition untouched. A legacy work upgraded
+/// by an Open Library record takes the record's `ol_work_id`, or stays `legacy` when another work
+/// holds it.
 pub async fn upsert_edition_with_work(
     conn: &mut PgConnection,
     work: &WorkRecord,
@@ -1741,7 +1872,8 @@ pub async fn upsert_edition_with_work(
     mode: Mode,
 ) -> sqlx::Result<(i64, i64)> {
     row_source(work.source)?;
-    let clean = CleanEdition::new(ed);
+    let mut clean = CleanEdition::new(ed);
+    clean.resolve_cover(conn).await?;
     lock_keys(conn, &clean.lock_keys()).await?;
     if let Some(row) = find_edition(conn, &clean).await? {
         let found = (row.work_id, row.id);
@@ -1758,27 +1890,66 @@ pub async fn upsert_edition_with_work(
         WorkGrouping::Into(id) => follow_merges(conn, id)
             .await?
             .ok_or(sqlx::Error::RowNotFound)?,
-        WorkGrouping::DnbTitleAuthor => {
-            let w = CleanWork::new(work);
-            let key = match_key(w.title.as_deref().unwrap_or("Untitled"), &w.surname());
-            lock_keys(conn, &[format!("match:{key}")]).await?;
-            let existing = sqlx::query_scalar!(
-                "SELECT id FROM works
-                 WHERE match_key = $1 AND source = 'dnb' AND merged_into_id IS NULL
-                 ORDER BY id LIMIT 1",
-                key
-            )
-            .fetch_optional(&mut *conn)
-            .await?;
-            match existing {
-                Some(id) => id,
-                None => upsert_work(conn, work, mode).await?,
+        WorkGrouping::DnbTitleAuthor => match dnb_match_key(work) {
+            Some(key) => {
+                lock_keys(conn, &[format!("match:{key}")]).await?;
+                let existing = sqlx::query_scalar!(
+                    "SELECT id FROM works
+                     WHERE match_key = $1 AND source = 'dnb' AND merged_into_id IS NULL
+                     ORDER BY id LIMIT 1",
+                    key
+                )
+                .fetch_optional(&mut *conn)
+                .await?;
+                match existing {
+                    Some(id) => id,
+                    None => upsert_work(conn, work, mode).await?,
+                }
             }
-        }
+            None => upsert_work(conn, work, mode).await?,
+        },
     };
     let (work_id, edition_id) = insert_or_merge_edition(conn, work_id, &clean, mode).await?;
     finish_edition(conn, work_id, edition_id).await?;
     Ok((work_id, edition_id))
+}
+
+/// The key `WorkGrouping::DnbTitleAuthor` groups by; `None` for a record without an author, whose
+/// title alone would group unrelated anthologies, calendars and yearbooks into one work.
+fn dnb_match_key(work: &WorkRecord) -> Option<String> {
+    let w = CleanWork::new(work);
+    let surname = w.surname();
+    (!surname.is_empty()).then(|| match_key(w.title.as_deref().unwrap_or("Untitled"), &surname))
+}
+
+/// One mapped DNB record (§7.5), for HAR and CAT's SRU lookup: the first edition finds or creates
+/// its work with `WorkGrouping::DnbTitleAuthor`, the others join that work
+/// (`WorkGrouping::Into`), so a record's co-publisher editions never split across works. The
+/// advisory locks of every edition and of the match key are taken first, in one call. Returns
+/// (work_id, edition_id) per edition, in record order; an edition found under another work keeps
+/// it, like in [`upsert_edition_with_work`].
+pub async fn upsert_dnb_record(
+    conn: &mut PgConnection,
+    rec: &DnbRecord,
+    mode: Mode,
+) -> sqlx::Result<Vec<(i64, i64)>> {
+    let mut keys: Vec<String> = rec
+        .editions
+        .iter()
+        .flat_map(|edition| CleanEdition::new(edition).lock_keys())
+        .collect();
+    keys.extend(dnb_match_key(&rec.work).map(|key| format!("match:{key}")));
+    lock_keys(conn, &keys).await?;
+    let mut grouping = WorkGrouping::DnbTitleAuthor;
+    let mut out = Vec::with_capacity(rec.editions.len());
+    for edition in &rec.editions {
+        let ids = upsert_edition_with_work(conn, &rec.work, edition, grouping, mode).await?;
+        if out.is_empty() {
+            grouping = WorkGrouping::Into(ids.0);
+        }
+        out.push(ids);
+    }
+    Ok(out)
 }
 
 /// An edition of a known work (OL editions list, a user adding an edition). Same find-or-insert
@@ -1790,7 +1961,8 @@ pub async fn upsert_edition(
     rec: &EditionRecord,
     mode: Mode,
 ) -> sqlx::Result<(i64, i64)> {
-    let clean = CleanEdition::new(rec);
+    let mut clean = CleanEdition::new(rec);
+    clean.resolve_cover(conn).await?;
     lock_keys(conn, &clean.lock_keys()).await?;
     let (work_id, edition_id) = match find_edition(conn, &clean).await? {
         Some(row) => {
@@ -1840,6 +2012,18 @@ pub async fn set_cover(
     by: Source,
     only_if_empty: bool,
 ) -> sqlx::Result<bool> {
+    // Locked first and until the transaction ends, like the media rows ingest attaches: a
+    // takedown's UPDATE of the row then waits, and its clear_media sees this reference.
+    let usable = sqlx::query_scalar!(
+        "SELECT id FROM media WHERE id = $1 AND kind = 'cover' AND removed_at IS NULL FOR SHARE",
+        media_id
+    )
+    .fetch_optional(&mut *conn)
+    .await?
+    .is_some();
+    if !usable {
+        return Ok(false);
+    }
     let current = match target {
         CoverTarget::Work(id) => sqlx::query!(
             r#"SELECT cover_media_id, field_sources ->> 'cover_media_id' AS "owner?", source
@@ -1879,9 +2063,7 @@ pub async fn set_cover(
             "UPDATE works SET cover_media_id = $2,
                     field_sources = field_sources || jsonb_build_object('cover_media_id', $3::text),
                     updated_at = now()
-             WHERE id = $1 AND cover_media_id IS NOT DISTINCT FROM $4
-               AND EXISTS (SELECT 1 FROM media m
-                           WHERE m.id = $2 AND m.kind = 'cover' AND m.removed_at IS NULL)",
+             WHERE id = $1 AND cover_media_id IS NOT DISTINCT FROM $4",
             id,
             media_id,
             by.as_str(),
@@ -1894,9 +2076,7 @@ pub async fn set_cover(
             "UPDATE editions SET cover_media_id = $2,
                     field_sources = field_sources || jsonb_build_object('cover_media_id', $3::text),
                     updated_at = now()
-             WHERE id = $1 AND cover_media_id IS NOT DISTINCT FROM $4
-               AND EXISTS (SELECT 1 FROM media m
-                           WHERE m.id = $2 AND m.kind = 'cover' AND m.removed_at IS NULL)",
+             WHERE id = $1 AND cover_media_id IS NOT DISTINCT FROM $4",
             id,
             media_id,
             by.as_str(),
@@ -1945,7 +2125,8 @@ fn admin_text(key: &str, value: &Value, max: usize) -> ApiResult<Option<String>>
     match value {
         Value::Null => Ok(None),
         Value::String(s) => {
-            let s = py_strip(s);
+            let s = nfc(s);
+            let s = py_strip(&s);
             if char_len(s) > max {
                 return Err(invalid(key));
             }
@@ -2025,7 +2206,7 @@ async fn apply_admin_work(
                 admin_mark(&mut prov, "author_names", !row.author_names.is_empty());
             }
             "year" => {
-                row.first_publish_year = admin_int(key, value, -5000..=3000)?;
+                row.first_publish_year = admin_int(key, value, YEARS)?;
                 admin_mark(
                     &mut prov,
                     "first_publish_year",
@@ -2138,7 +2319,7 @@ async fn apply_admin_edition(
                 admin_mark(&mut prov, "pages", pages.is_some());
             }
             "publication_year" => {
-                year = admin_int(key, value, -5000..=3000)?;
+                year = admin_int(key, value, YEARS)?;
                 admin_mark(&mut prov, "publication_year", year.is_some());
             }
             "planned_publication_date" => {
@@ -2146,7 +2327,9 @@ async fn apply_admin_edition(
                     None => None,
                     Some(text) => Some(
                         Date::parse(&text, format_description!("[year]-[month]-[day]"))
-                            .map_err(|_| invalid(key))?,
+                            .ok()
+                            .filter(|date| YEARS.contains(&date.year()))
+                            .ok_or_else(|| invalid(key))?,
                     ),
                 };
                 admin_mark(&mut prov, "planned_publication_date", planned.is_some());
@@ -2211,6 +2394,9 @@ mod tests {
         // A missing value keeps under Refresh; under Replace it clears only the source's own field.
         assert_eq!(decide(true, Dnb, false, Dnb, Mode::Refresh), Keep);
         assert_eq!(decide(true, Dnb, false, Dnb, Mode::Replace), Clear);
+        // Same source, not same rank: DNB's Replace never clears what Open Library wrote.
+        assert_eq!(decide(true, OpenLibrary, false, Dnb, Mode::Replace), Keep);
+        assert_eq!(decide(true, Dnb, false, OpenLibrary, Mode::Replace), Keep);
         assert_eq!(decide(true, Legacy, false, Dnb, Mode::Replace), Keep);
         assert_eq!(decide(true, User, false, Dnb, Mode::Replace), Keep);
         assert_eq!(decide(false, Dnb, false, Dnb, Mode::Replace), Keep);
@@ -2310,6 +2496,19 @@ mod tests {
         };
         let decomposed = CleanWork::new(&WorkRecord::new(Source::Dnb, "Der Mo\u{308}rder"));
         assert_eq!(decomposed.title.as_deref(), Some("Der Mörder"));
+        // Postgres text refuses U+0000; it and the other control characters are dropped.
+        let nul = CleanWork::new(&WorkRecord {
+            author_names: "Ada\u{0} Lovelace".into(),
+            authors: vec![AuthorRecord::named("\u{0}")],
+            description: Some("Line one\u{0}\nline\u{7} two\u{85}".into()),
+            subjects: Some(vec!["Fic\u{0}tion".into()]),
+            ..WorkRecord::new(Source::OpenLibrary, "Cir\u{0}ce\u{1b}")
+        });
+        assert_eq!(nul.title.as_deref(), Some("Circe"));
+        assert_eq!(nul.author_names.as_deref(), Some("Ada Lovelace"));
+        assert!(nul.authors.is_empty());
+        assert_eq!(nul.description.as_deref(), Some("Line one\nline two"));
+        assert_eq!(nul.subjects, Some(vec!["Fiction".to_owned()]));
         let w = CleanWork::new(&rec);
         assert_eq!(w.title.as_deref().map(char_len), Some(1000));
         assert_eq!(w.pages, None);
@@ -2330,6 +2529,17 @@ mod tests {
         assert_eq!(ed.language.as_deref(), Some("ger"));
         assert_eq!(ed.dnb_idn, None);
         assert_eq!(ed.own_title("Circe"), None);
+        let ed = CleanEdition::new(&EditionRecord {
+            publisher: Some("Reclam\u{0}".into()),
+            planned_publication_date: Patch::Value(time::macros::date!(3001 - 01 - 01)),
+            ..EditionRecord::new(Source::Dnb)
+        });
+        assert_eq!(ed.publisher.as_deref(), Some("Reclam"));
+        assert_eq!(
+            ed.planned_publication_date,
+            Patch::Missing,
+            "a year works.first_publish_year cannot take"
+        );
         let ed = CleanEdition::new(&EditionRecord {
             title: Some("circe ".into()),
             ..EditionRecord::new(Source::Dnb)

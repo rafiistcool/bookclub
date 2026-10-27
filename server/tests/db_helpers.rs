@@ -149,6 +149,36 @@ async fn activity_record_writes_both_scopes_and_drops_nulls(db: PgPool) {
 }
 
 #[sqlx::test]
+async fn activity_record_stores_every_kind_the_schema_allows(db: PgPool) {
+    let ada = insert_user(&db, "ada").await;
+    let club = insert_club(&db, ada, "readers-k3x9").await;
+    let mut conn = db.acquire().await.unwrap();
+    for kind in EventKind::ALL {
+        // The events.kind and events_scope CHECKs reject a misspelled or mis-scoped kind.
+        let club_id = (!kind.is_personal()).then_some(club);
+        activity::record(
+            &mut conn,
+            NewEvent {
+                club_id,
+                actor_id: Some(ada),
+                kind,
+                work_id: None,
+                pick_id: None,
+                payload: Map::new(),
+            },
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{kind:?}: {e}"));
+    }
+    let kinds: Vec<String> = sqlx::query_scalar("SELECT kind FROM events ORDER BY id")
+        .fetch_all(&db)
+        .await
+        .unwrap();
+    let expected: Vec<&str> = EventKind::ALL.iter().map(|k| k.as_str()).collect();
+    assert_eq!(kinds, expected);
+}
+
+#[sqlx::test]
 async fn activity_record_asserts_the_scope_of_the_kind(db: PgPool) {
     let ada = insert_user(&db, "ada").await;
     let club = insert_club(&db, ada, "readers-k3x9").await;
@@ -178,6 +208,22 @@ async fn activity_record_asserts_the_scope_of_the_kind(db: PgPool) {
         .await
         .unwrap();
     assert_eq!(count, 0);
+}
+
+/// The media row's columns that `register` sets, apart from the storage key, the bytes'
+/// metadata and created_at, as JSON.
+async fn media_row(db: &PgPool, id: i64) -> Value {
+    sqlx::query_scalar(
+        "SELECT jsonb_build_object('public_id', public_id, 'kind', kind, 'source', source,
+                'width', width, 'height', height, 'byte_size', byte_size,
+                'dominant_color', dominant_color, 'uploaded_by', uploaded_by,
+                'removed_at', removed_at, 'ol_cover_id', ol_cover_id)
+         FROM media WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(db)
+    .await
+    .unwrap()
 }
 
 #[sqlx::test]
@@ -219,11 +265,18 @@ async fn registered_media_point_at_their_storage_prefix(db: PgPool) {
     assert_eq!(row.2, ["a"]);
     assert_eq!(row.3, hash);
     assert_eq!(row.4, created);
+    assert_eq!(
+        media_row(&db, id).await,
+        json!({"public_id": public_id, "kind": "avatar", "source": "legacy", "width": 256,
+               "height": 256, "byte_size": 1234, "dominant_color": null, "uploaded_by": ada,
+               "removed_at": null, "ol_cover_id": null})
+    );
 
     // A cover without created_at gets now(); its hash is not removed until a takedown.
+    let cover_public_id = urls::new_public_id();
     let cover = media::register(
         &mut conn,
-        &urls::new_public_id(),
+        &cover_public_id,
         &NewMedia {
             kind: "cover",
             source: "upload",
@@ -240,6 +293,24 @@ async fn registered_media_point_at_their_storage_prefix(db: PgPool) {
     )
     .await
     .unwrap();
+    assert_eq!(
+        media_row(&db, cover).await,
+        json!({"public_id": cover_public_id, "kind": "cover",
+               "source": "upload", "width": 800, "height": 1200, "byte_size": 50_000,
+               "dominant_color": "#112233", "uploaded_by": ada, "removed_at": null,
+               "ol_cover_id": null})
+    );
+    let age: f64 = sqlx::query_scalar(
+        "SELECT EXTRACT(EPOCH FROM now() - created_at)::float8 FROM media WHERE id = $1",
+    )
+    .bind(cover)
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert!(
+        (0.0..60.0).contains(&age),
+        "created_at None = now(), {age}s ago"
+    );
     assert!(!media::is_removed_hash(&mut conn, &[9u8; 32]).await.unwrap());
     sqlx::query("UPDATE media SET removed_at = now() WHERE id = $1")
         .bind(cover)

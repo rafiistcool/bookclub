@@ -25,6 +25,26 @@ pub enum EventKind {
 }
 
 impl EventKind {
+    /// Every kind, in `events.kind` CHECK order.
+    pub const ALL: [EventKind; 16] = [
+        EventKind::MemberJoined,
+        EventKind::PickSet,
+        EventKind::PickCleared,
+        EventKind::NotePosted,
+        EventKind::Reaction,
+        EventKind::Nominated,
+        EventKind::Voted,
+        EventKind::VoteClosed,
+        EventKind::MilestoneAdded,
+        EventKind::ShelfAdded,
+        EventKind::ShelfMoved,
+        EventKind::ShelfFinished,
+        EventKind::ShelfDnf,
+        EventKind::ShelfRemoved,
+        EventKind::Progress,
+        EventKind::QuoteAdded,
+    ];
+
     /// Personal events have no club (`club_id` NULL) and are joined into club feeds at read time.
     pub fn is_personal(self) -> bool {
         matches!(
@@ -114,28 +134,11 @@ mod tests {
 
     #[test]
     fn personal_kinds_match_the_schema_check() {
-        let personal: Vec<&str> = [
-            EventKind::MemberJoined,
-            EventKind::PickSet,
-            EventKind::PickCleared,
-            EventKind::NotePosted,
-            EventKind::Reaction,
-            EventKind::Nominated,
-            EventKind::Voted,
-            EventKind::VoteClosed,
-            EventKind::MilestoneAdded,
-            EventKind::ShelfAdded,
-            EventKind::ShelfMoved,
-            EventKind::ShelfFinished,
-            EventKind::ShelfDnf,
-            EventKind::ShelfRemoved,
-            EventKind::Progress,
-            EventKind::QuoteAdded,
-        ]
-        .into_iter()
-        .filter(|kind| kind.is_personal())
-        .map(EventKind::as_str)
-        .collect();
+        let personal: Vec<&str> = EventKind::ALL
+            .into_iter()
+            .filter(|kind| kind.is_personal())
+            .map(EventKind::as_str)
+            .collect();
         // events_scope in 0001_init.sql.
         assert_eq!(
             personal,
@@ -149,5 +152,32 @@ mod tests {
                 "quote_added"
             ]
         );
+    }
+
+    #[test]
+    fn all_lists_every_kind_once() {
+        use EventKind::*;
+        for (i, kind) in EventKind::ALL.into_iter().enumerate() {
+            // Exhaustive: a new variant does not compile until it has its place in ALL.
+            let place = match kind {
+                MemberJoined => 0,
+                PickSet => 1,
+                PickCleared => 2,
+                NotePosted => 3,
+                Reaction => 4,
+                Nominated => 5,
+                Voted => 6,
+                VoteClosed => 7,
+                MilestoneAdded => 8,
+                ShelfAdded => 9,
+                ShelfMoved => 10,
+                ShelfFinished => 11,
+                ShelfDnf => 12,
+                ShelfRemoved => 13,
+                Progress => 14,
+                QuoteAdded => 15,
+            };
+            assert_eq!(place, i, "{kind:?}");
+        }
     }
 }

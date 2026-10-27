@@ -45,8 +45,15 @@ const READ_TAGS: &[&str] = &[
     "020", "041", "100", "245", "260", "263", "264", "300", "337", "338", "653", "700",
 ];
 
-/// DNB's placeholder years for "not known yet" (`2099`, `9999`) are treated as missing.
-const FIRST_PLACEHOLDER_YEAR: i32 = 2099;
+/// DNB announces books a year or two ahead. A year further out than this is one of its
+/// placeholders for "not known yet" (recorded records carry 2040, 2050 and 9999, with 263 dates
+/// to match) and counts as missing, in 260/264 `$c` and in 263 alike.
+const ANNOUNCEMENT_HORIZON_YEARS: i32 = 5;
+
+/// The latest year a record can carry: the current year plus [`ANNOUNCEMENT_HORIZON_YEARS`].
+fn latest_year() -> i32 {
+    time::OffsetDateTime::now_utc().year() + ANNOUNCEMENT_HORIZON_YEARS
+}
 
 static YEAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b(\d{4})\b").unwrap());
 static PAGES: LazyLock<Regex> =
@@ -307,15 +314,16 @@ fn people(marc: &Marc) -> (Vec<AuthorRecord>, Vec<(AuthorRecord, ContributorRole
     (authors, contributors)
 }
 
-/// A publication year from a 260/264 `$c` ("2026", "[2026]", "September 2026", "© 2025").
-fn year_of(value: &str) -> Option<i32> {
+/// A publication year from a 260/264 `$c` ("2026", "[2026]", "September 2026", "© 2025"); a
+/// year after `latest` is a placeholder.
+fn year_of(value: &str, latest: i32) -> Option<i32> {
     let year: i32 = YEAR.captures(value)?[1].parse().ok()?;
-    (year < FIRST_PLACEHOLDER_YEAR).then_some(year)
+    (year <= latest).then_some(year)
 }
 
 /// The publication statements (`$b` publisher, `$c` year): 264 with ind2 1 first, then other
 /// 264s, then 260.
-fn imprints(marc: &Marc) -> Vec<(Option<String>, Option<i32>)> {
+fn imprints(marc: &Marc, latest: i32) -> Vec<(Option<String>, Option<i32>)> {
     let published = marc.fields("264").filter(|f| f.ind2.trim() == "1");
     let other = marc.fields("264").filter(|f| f.ind2.trim() != "1");
     published
@@ -324,7 +332,7 @@ fn imprints(marc: &Marc) -> Vec<(Option<String>, Option<i32>)> {
         .map(|f| {
             (
                 f.first("b").map(clean).and_then(non_empty),
-                f.all("c").find_map(year_of),
+                f.all("c").find_map(|c| year_of(c, latest)),
             )
         })
         .collect()
@@ -353,10 +361,10 @@ fn pages(marc: &Marc) -> Option<i32> {
         .find_map(|v| PAGES.captures(v)?[1].parse().ok())
 }
 
-/// 263 `$a` `YYYYMM` → the first of that month.
-fn planned_date(marc: &Marc) -> Option<Date> {
+/// 263 `$a` `YYYYMM` → the first of that month; a year after `latest` is a placeholder.
+fn planned_date(marc: &Marc, latest: i32) -> Option<Date> {
     let value = marc.fields("263").find_map(|f| f.first("a"))?.trim();
-    let year: i32 = value.get(0..4)?.parse().ok()?;
+    let year: i32 = value.get(0..4)?.parse().ok().filter(|y| *y <= latest)?;
     let month: u8 = value.get(4..6)?.parse().ok()?;
     Date::from_calendar_date(year, Month::try_from(month).ok()?, 1).ok()
 }
@@ -476,6 +484,11 @@ fn isbns(marc: &Marc) -> Vec<IsbnEntry> {
 
 /// Maps one MARC21-xml `<record>`. Err for a record without 001 or without a usable title.
 pub fn map_record(record_xml: &str) -> Result<DnbRecord, MarcError> {
+    map_record_until(record_xml, latest_year())
+}
+
+/// [`map_record`] with years after `latest` treated as placeholders.
+fn map_record_until(record_xml: &str, latest: i32) -> Result<DnbRecord, MarcError> {
     let marc = parse(record_xml)?;
     let idn = marc
         .control("001")
@@ -486,12 +499,12 @@ pub fn map_record(record_xml: &str) -> Result<DnbRecord, MarcError> {
     let (title, subtitle) = title(&marc);
     let title = title.ok_or(MarcError::NoTitle)?;
     let (authors, contributors) = people(&marc);
-    let imprints = imprints(&marc);
+    let imprints = imprints(&marc, latest);
     let first_publisher = imprints.iter().find_map(|(p, _)| p.clone());
     let publication_year = imprints.iter().find_map(|(_, y)| *y);
     let language = language(&marc);
     let pages = pages(&marc);
-    let planned = planned_date(&marc);
+    let planned = planned_date(&marc, latest);
     let produktform: Vec<&str> = marc
         .fields("653")
         .flat_map(|f| f.all("a"))
@@ -600,6 +613,15 @@ mod tests {
         )
     }
 
+    /// One datafield with these subfields.
+    fn datafield(tag: &str, ind2: &str, subfields: &[(&str, &str)]) -> String {
+        let subfields: String = subfields
+            .iter()
+            .map(|(code, value)| format!(r#"<subfield code="{code}">{value}</subfield>"#))
+            .collect();
+        format!(r#"<datafield tag="{tag}" ind1=" " ind2="{ind2}">{subfields}</datafield>"#)
+    }
+
     fn formats(rec: &DnbRecord) -> Vec<Option<Format>> {
         rec.editions.iter().map(|e| e.format).collect()
     }
@@ -695,23 +717,36 @@ mod tests {
         for value in [
             "Gb. : EUR 22.00",
             "geb.",
+            "Gebunden",
             "Gewebe",
             "Hldr.",
             "Pp. : DM 68.00",
+            "Hperg.",
             "Festeinband",
+            "Leinen",
+            "Ln.",
+            "Lw. : DM 40.00",
+            "Hardcover",
         ] {
             assert_eq!(binding_format(value), Some(Format::Hardcover), "{value}");
         }
         for value in [
             "kart. : DM 28.00",
+            "KT",
             "Broschur",
             "brosch.",
+            "Broschiert",
+            "Klappenbroschur : EUR 25.00 (DE)",
             "PB. : ca. EUR 14.95",
-            "KT",
+            "Paperback",
+            "Taschenbuch",
         ] {
             assert_eq!(binding_format(value), Some(Format::Paperback), "{value}");
         }
         assert_eq!(binding_format(": EUR 12.00 (DE)"), None);
+        // Words only, and only before the first colon.
+        assert_eq!(binding_format("Gbx."), None);
+        assert_eq!(binding_format("EUR 12.00 : kart."), None);
     }
 
     #[test]
@@ -739,11 +774,14 @@ mod tests {
 
     #[test]
     fn dates_years_pages_and_language() {
-        let rec = map_record(&record(
-            r#"<datafield tag="263" ind1=" " ind2=" "><subfield code="a">202609</subfield></datafield>
+        let rec = map_record_until(
+            &record(
+                r#"<datafield tag="263" ind1=" " ind2=" "><subfield code="a">202609</subfield></datafield>
                <datafield tag="264" ind1=" " ind2="1"><subfield code="b">Reclam</subfield><subfield code="c">2099</subfield></datafield>
                <datafield tag="300" ind1=" " ind2=" "><subfield code="a">1 Online-Ressource (352 Seiten)</subfield></datafield>"#,
-        ))
+            ),
+            2031,
+        )
         .unwrap();
         let edition = &rec.editions[0];
         assert_eq!(
@@ -756,9 +794,91 @@ mod tests {
         assert_eq!(edition.language.as_deref(), Some("ger"), "from 008");
         assert_eq!(edition.isbn13, None);
         assert_eq!(edition.dnb_idn.as_deref(), Some("123456789X"));
-        assert_eq!(year_of("September 2026"), Some(2026));
-        assert_eq!(year_of("[2026]"), Some(2026));
-        assert_eq!(year_of("9999"), None);
+        assert_eq!(year_of("September 2026", 2031), Some(2026));
+        assert_eq!(year_of("[2026]", 2031), Some(2026));
+        assert_eq!(year_of("2031", 2031), Some(2031));
+        assert_eq!(year_of("9999", 2031), None);
+    }
+
+    #[test]
+    fn far_future_years_are_placeholders() {
+        // translators_gnd.xml and deleted_header.xml carry 2040/204001 and 2050/205004.
+        let placeholder = record(&format!(
+            "{}{}",
+            datafield("263", " ", &[("a", "204001")]),
+            datafield("264", "1", &[("b", "Schöffling"), ("c", "2040")])
+        ));
+        let rec = map_record_until(&placeholder, 2031).unwrap();
+        let edition = &rec.editions[0];
+        assert_eq!(edition.publication_year, None);
+        assert_eq!(edition.planned_publication_date, Patch::Missing);
+        assert_eq!(rec.work.first_publish_year, None);
+        assert_eq!(edition.publisher.as_deref(), Some("Schöffling"));
+        // An announcement within the horizon is kept.
+        let rec = map_record_until(&placeholder, 2040).unwrap();
+        assert_eq!(rec.editions[0].publication_year, Some(2040));
+        assert_eq!(
+            rec.editions[0].planned_publication_date,
+            Patch::Value(date!(2040 - 01 - 01))
+        );
+    }
+
+    #[test]
+    fn relators_decide_the_role() {
+        let rec = map_record(&record(&format!(
+            "{}{}{}{}",
+            // Older records carry no relator on the main entry: it is the author.
+            datafield(
+                "100",
+                " ",
+                &[("a", "Kafka, Franz"), ("0", "(DE-588)118559230")]
+            ),
+            // An added entry without a relator says nothing about the role.
+            datafield("700", " ", &[("a", "Brod, Max")]),
+            datafield("700", " ", &[("a", "Kubin, Alfred"), ("4", "ill")]),
+            datafield("700", " ", &[("a", "Kubin, Alfred"), ("4", "ill")]),
+        )))
+        .unwrap();
+        assert_eq!(rec.work.author_names, "Franz Kafka");
+        assert_eq!(rec.work.authors.len(), 1);
+        assert_eq!(rec.work.authors[0].gnd_id.as_deref(), Some("118559230"));
+        let contributors: Vec<(&str, ContributorRole)> = rec.editions[0]
+            .contributors
+            .iter()
+            .map(|(person, role)| (person.name.as_str(), *role))
+            .collect();
+        assert_eq!(
+            contributors,
+            [("Alfred Kubin", ContributorRole::Illustrator)]
+        );
+    }
+
+    #[test]
+    fn imprints_prefer_the_publication_264_then_260() {
+        let rec = map_record(&record(&datafield(
+            "260",
+            " ",
+            &[("a", "Stuttgart"), ("b", "Klett :"), ("c", "1998")],
+        )))
+        .unwrap();
+        assert_eq!(rec.editions[0].publisher.as_deref(), Some("Klett"));
+        assert_eq!(rec.editions[0].publication_year, Some(1998));
+
+        let rec = map_record(&record(&format!(
+            "{}{}{}",
+            datafield("264", "3", &[("b", "Druckerei"), ("c", "2019")]),
+            datafield("260", " ", &[("b", "Alt"), ("c", "2018")]),
+            datafield("264", "1", &[("b", "Verlag"), ("c", "2020")]),
+        )))
+        .unwrap();
+        assert_eq!(rec.editions[0].publisher.as_deref(), Some("Verlag"));
+        assert_eq!(rec.editions[0].publication_year, Some(2020));
+    }
+
+    #[test]
+    fn the_041_language_wins_over_008() {
+        let rec = map_record(&record(&datafield("041", " ", &[("a", "eng")]))).unwrap();
+        assert_eq!(rec.editions[0].language.as_deref(), Some("eng"));
     }
 
     #[test]

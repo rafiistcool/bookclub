@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE editions SET cover_media_id = $2,\n                    field_sources = field_sources || jsonb_build_object('cover_media_id', $3::text),\n                    updated_at = now()\n             WHERE id = $1 AND cover_media_id IS NOT DISTINCT FROM $4",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "07929907298bde62294a8cef073039a7dddeb81f5d5f0de7a2c0728c5fae37a6"
+}

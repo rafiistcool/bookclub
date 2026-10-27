@@ -196,6 +196,15 @@ pub fn is_unique_violation(error: &sqlx::Error, constraint: &str) -> bool {
     })
 }
 
+/// True when Postgres aborted the transaction to break a deadlock (SQLSTATE 40P01). A caller
+/// that holds one transaction across several catalog ingests (HAR's page) can deadlock with a
+/// concurrent one and retries the whole transaction (conventions.md §7.2).
+pub fn is_deadlock(error: &sqlx::Error) -> bool {
+    error
+        .as_database_error()
+        .is_some_and(|db| db.code().as_deref() == Some("40P01"))
+}
+
 #[cfg(test)]
 mod tests {
     use axum::body::to_bytes;

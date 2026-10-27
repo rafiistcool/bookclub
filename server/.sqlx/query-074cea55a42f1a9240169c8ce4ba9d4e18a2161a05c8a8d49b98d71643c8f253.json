@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE works SET ol_work_id = $2, updated_at = now()\n         WHERE id = $1 AND ol_work_id IS NULL\n           AND NOT EXISTS (SELECT 1 FROM works WHERE ol_work_id = $2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "074cea55a42f1a9240169c8ce4ba9d4e18a2161a05c8a8d49b98d71643c8f253"
+}

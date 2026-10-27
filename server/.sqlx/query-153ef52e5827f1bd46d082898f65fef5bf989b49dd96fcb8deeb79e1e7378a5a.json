@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id FROM works\n                 WHERE match_key = $1 AND source = 'dnb' AND merged_into_id IS NULL\n                 ORDER BY id LIMIT 1",
+  "query": "SELECT id FROM media WHERE id = $1 AND kind = 'cover' AND removed_at IS NULL FOR SHARE",
   "describe": {
     "columns": [
       {
@@ -9,7 +9,7 @@
         "type_info": "Int8",
         "origin": {
           "Table": {
-            "table": "works",
+            "table": "media",
             "name": "id"
           }
         }
@@ -17,12 +17,12 @@
     ],
     "parameters": {
       "Left": [
-        "Text"
+        "Int8"
       ]
     },
     "nullable": [
       false
     ]
   },
-  "hash": "89b45b75c091dab1413d6000e16c14fb7905a5455b86061d9629bc3c825161e3"
+  "hash": "153ef52e5827f1bd46d082898f65fef5bf989b49dd96fcb8deeb79e1e7378a5a"
 }
