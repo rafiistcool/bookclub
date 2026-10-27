@@ -7,7 +7,9 @@
 //! - `favorites`: the three favourite works under `/api/auth/me/favorites`.
 //! - `layout`: the physical shelf layout and its validation.
 //! - `search_history`: the caller's last 20 searches.
-//! - `goodreads`: the CSV import job.
+//! - `goodreads`: the Goodreads CSV import, a background job with progress.
+//! - `quotes`: the lines a reader keeps, each `audience` or `only_me`.
+//! - `stats`: the personal and the club year in review, on one `MemberYear` rule set.
 //!
 //! Every write of a user's shelf, favourites or layout first locks that user's row
 //! ([`lock_user`]), so two devices editing one shelf run one after the other and the column
@@ -19,7 +21,9 @@ pub mod favorites;
 pub mod goodreads;
 pub mod layout;
 pub mod ordering;
+pub mod quotes;
 pub mod search_history;
+pub mod stats;
 
 use serde::Deserialize;
 use sqlx::PgConnection;
@@ -34,9 +38,11 @@ use crate::error::{ApiResult, AppError};
 use crate::extract::Validate;
 use crate::visibility;
 
-/// The shelf routes, the favourites under `/api/auth/me/favorites` and the search history.
+/// The shelf routes, the favourites under `/api/auth/me/favorites`, the Goodreads import, the
+/// search history, the quotes and both stats routes.
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
+        .merge(goodreads::routes())
         .routes(routes!(entries::list_shelf, entries::add_to_shelf))
         .routes(routes!(entries::update_entry, entries::remove_entry))
         .routes(routes!(layout::get_layout, layout::save_layout))
@@ -51,6 +57,10 @@ pub fn routes() -> OpenApiRouter<AppState> {
             search_history::clear_history
         ))
         .routes(routes!(search_history::delete_history_entry))
+        .routes(routes!(quotes::list_quotes, quotes::add_quote))
+        .routes(routes!(quotes::update_quote, quotes::delete_quote))
+        .routes(routes!(stats::personal_stats))
+        .routes(routes!(stats::club_stats))
 }
 
 /// `?username=` on the personal reads: whose data to show. Missing or empty means the caller.

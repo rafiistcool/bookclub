@@ -1,7 +1,8 @@
-//! Who sees whose shelf, favourites and physical layout (#46, conventions §6.5): the owner and
-//! their audience; strangers, former co-members and members of other clubs get the same 404 as
-//! an unknown name. `only_me` ratings are redacted for everyone but the owner. Only the owner
-//! saves a layout: `PUT ?username=` naming anyone else is 404.
+//! Who sees whose shelf, favourites, physical layout, quotes and stats (#46, conventions §6.5):
+//! the owner and their audience; strangers, former co-members and members of other clubs get the
+//! same 404 as an unknown name (an empty list for `GET /api/quotes?username=`). `only_me`
+//! ratings and quotes are left out for everyone but the owner, in the stats too. Only the owner
+//! saves a layout: `PUT ?username=` naming anyone else is 404. Club stats are for members.
 
 mod common;
 
@@ -200,4 +201,204 @@ async fn layout_is_visible_to_the_audience_and_saved_by_its_owner_only(db: PgPoo
             .await,
         1
     );
+}
+
+/// Keeps a quote; asserts 201.
+async fn quote(client: &TestClient, work: &TestWork, body: &str, visibility: &str) -> Value {
+    let res = client
+        .post(
+            "/api/quotes",
+            json!({"work_id": work.id, "body": body, "visibility": visibility}),
+        )
+        .await;
+    res.assert_status(201);
+    res.json()
+}
+
+fn bodies(res: &TestResponse) -> Vec<String> {
+    res.json()["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["body"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[sqlx::test]
+async fn quotes_are_visible_to_the_audience_without_only_me_ones(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let v = Viewers::new(&app).await;
+    let circe = app.ol_work("OL1W", "Circe", "").await;
+    let open = quote(&v.owner, &circe, "Open line", "audience").await;
+    let private = quote(&v.owner, &circe, "Private line", "only_me").await;
+
+    let own = v.owner.get("/api/quotes?username=owner").await;
+    assert_eq!(bodies(&own), vec!["Private line", "Open line"]);
+    assert_eq!(bodies(&v.owner.get("/api/quotes").await).len(), 2);
+
+    for viewer in v.audience() {
+        let res = viewer.get("/api/quotes?username=owner").await;
+        res.assert_status(200);
+        assert_eq!(bodies(&res), vec!["Open line"]);
+        assert_eq!(res.json()["items"][0]["mine"], false);
+        assert_eq!(res.json()["items"][0]["author"], "owner");
+        // Without a filter too, and for the work.
+        assert_eq!(bodies(&viewer.get("/api/quotes").await), vec!["Open line"]);
+        let by_work = viewer.get(&format!("/api/quotes?work={}", circe.id)).await;
+        assert_eq!(bodies(&by_work), vec!["Open line"]);
+        // Someone else's quote: 403 when visible, 404 when not.
+        viewer
+            .patch(&format!("/api/quotes/{}", open["id"]), json!({"page": 1}))
+            .await
+            .assert_detail(403, "You can only edit your own quotes");
+        viewer
+            .delete(&format!("/api/quotes/{}", open["id"]))
+            .await
+            .assert_detail(403, "You can only delete your own quotes");
+        viewer
+            .patch(
+                &format!("/api/quotes/{}", private["id"]),
+                json!({"page": 1}),
+            )
+            .await
+            .assert_detail(404, "No quote with that id");
+        viewer
+            .delete(&format!("/api/quotes/{}", private["id"]))
+            .await
+            .assert_detail(404, "No quote with that id");
+    }
+    for viewer in v.strangers() {
+        // An unknown name and a stranger give the same empty list.
+        let hidden = viewer.get("/api/quotes?username=owner").await;
+        let unknown = viewer.get(&format!("/api/quotes?username={UNKNOWN}")).await;
+        assert_eq!(hidden.json(), json!({"items": []}));
+        assert_eq!(hidden.json(), unknown.json());
+        assert_eq!(
+            bodies(&viewer.get("/api/quotes").await),
+            Vec::<String>::new()
+        );
+        for quote in [&open, &private] {
+            viewer
+                .patch(&format!("/api/quotes/{}", quote["id"]), json!({"page": 1}))
+                .await
+                .assert_detail(404, "No quote with that id");
+            viewer
+                .delete(&format!("/api/quotes/{}", quote["id"]))
+                .await
+                .assert_detail(404, "No quote with that id");
+        }
+    }
+    // Nothing changed.
+    assert_eq!(bodies(&v.owner.get("/api/quotes").await).len(), 2);
+}
+
+#[sqlx::test]
+async fn personal_stats_leave_only_me_ratings_and_quotes_out_for_others(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let v = Viewers::new(&app).await;
+    let open = app.ol_work("OL1W", "Circe", "").await;
+    let private = app.ol_work("OL2W", "Song", "").await;
+    add(&v.owner, &open, json!({"status": "finished", "rating": 4})).await;
+    add(
+        &v.owner,
+        &private,
+        json!({"status": "finished", "rating": 5, "rating_visibility": "only_me"}),
+    )
+    .await;
+    quote(&v.owner, &open, "Open line", "audience").await;
+    quote(&v.owner, &private, "Private line", "only_me").await;
+
+    let own = v.owner.get("/api/stats").await.json();
+    assert_eq!(own["finished"], 2);
+    assert_eq!(own["average_rating"], 4.5);
+    assert_eq!(own["five_stars"], 1);
+    assert_eq!(own["top_book"]["title"], "Song");
+    assert_eq!(own["quotes"], 2);
+    assert_eq!(v.owner.get("/api/stats?username=owner").await.json(), own);
+
+    for viewer in v.audience() {
+        let res = viewer.get("/api/stats?username=owner").await;
+        res.assert_status(200);
+        let seen = res.json();
+        assert_eq!(seen["username"], "owner");
+        // The book counts (shelf state); its rating does not.
+        assert_eq!(seen["finished"], 2);
+        assert_eq!(seen["average_rating"], 4.0);
+        assert_eq!(seen["five_stars"], 0);
+        assert_eq!(seen["top_book"]["title"], "Circe");
+        assert_eq!(seen["quotes"], 1);
+        // The viewer's own stats are their own.
+        assert_eq!(viewer.get("/api/stats").await.json()["finished"], 0);
+    }
+    for viewer in v.strangers() {
+        assert_hidden_like_unknown(
+            viewer,
+            |name| format!("/api/stats?username={name}"),
+            "owner",
+        )
+        .await;
+    }
+    v.owner
+        .get(&format!("/api/stats?username={UNKNOWN}"))
+        .await
+        .assert_detail(404, "No member with that name");
+}
+
+#[sqlx::test]
+async fn club_stats_are_for_members_with_only_me_ratings_left_out(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let v = Viewers::new(&app).await;
+    let circe = app.ol_work("OL1W", "Circe", "").await;
+    app.exec(&format!(
+        "INSERT INTO club_picks (club_id, work_id, set_by) VALUES ({}, {}, {})",
+        v.shared.id,
+        circe.id,
+        v.owner.id()
+    ))
+    .await;
+    add(
+        &v.owner,
+        &circe,
+        json!({"status": "finished", "rating": 5, "rating_visibility": "only_me"}),
+    )
+    .await;
+    add(
+        &v.co_member,
+        &circe,
+        json!({"status": "finished", "rating": 3}),
+    )
+    .await;
+    quote(&v.owner, &circe, "Private line", "only_me").await;
+    let path = format!("/api/clubs/{}/stats", v.shared.slug);
+
+    let member = |stats: &Value, name: &str| -> Value {
+        stats["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["username"] == name)
+            .cloned()
+            .unwrap()
+    };
+    let seen = v.co_member.get(&path).await.json();
+    assert_eq!(seen["picks"][0]["ratings"], json!([3]));
+    assert_eq!(seen["picks"][0]["finished"], 2);
+    assert_eq!(seen["picks"][0]["average_rating"], 3.0);
+    assert_eq!(seen["club_average_rating"], 3.0);
+    let owner = member(&seen, "owner");
+    assert_eq!(owner["finished"], 1);
+    assert_eq!(owner["average_rating"], Value::Null);
+    assert_eq!(owner["top_book"], Value::Null);
+    assert_eq!(owner["quotes"], 0);
+    // The former member is not a member any more.
+    assert_eq!(seen["members"].as_array().unwrap().len(), 2);
+
+    // The owner sees their own rating and quote, as everywhere.
+    let own = v.owner.get(&path).await.json();
+    assert_eq!(own["picks"][0]["ratings"], json!([5, 3]));
+    assert_eq!(member(&own, "owner")["quotes"], 1);
+
+    for viewer in v.strangers() {
+        viewer.get(&path).await.assert_detail(404, "No such club");
+    }
 }

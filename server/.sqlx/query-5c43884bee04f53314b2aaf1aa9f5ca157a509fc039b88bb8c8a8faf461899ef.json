@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT q.is_self AS \"is_self!\" FROM bc_visible_quotes($1) AS q WHERE q.id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "is_self!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "5c43884bee04f53314b2aaf1aa9f5ca157a509fc039b88bb8c8a8faf461899ef"
+}

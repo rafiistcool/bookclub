@@ -305,7 +305,42 @@ async fn add_entry(
     );
     apply_progress(&mut fields, status, body.progress);
     apply_reading_dates(&mut fields, status, false, now);
-    let visibility = body.rating_visibility.unwrap_or(Visibility::Audience);
+    let entry = NewEntry {
+        user_id,
+        work_id,
+        edition_id: body.edition_id,
+        status,
+        rating_visibility: body.rating_visibility.unwrap_or(Visibility::Audience),
+        fields: &fields,
+        now,
+    };
+    let Some(id) = insert_entry(conn, &entry).await? else {
+        return Ok(None);
+    };
+    status_event(conn, user_id, work_id, status, &fields, true).await?;
+    Ok(Some(id))
+}
+
+/// A new shelf entry with its fields already computed (the add and the Goodreads import).
+pub(super) struct NewEntry<'a> {
+    pub user_id: i64,
+    pub work_id: i64,
+    pub edition_id: Option<i64>,
+    pub status: ShelfStatus,
+    pub rating_visibility: Visibility,
+    pub fields: &'a StatusFields,
+    /// The entry's `updated_at`.
+    pub now: OffsetDateTime,
+}
+
+/// Inserts the entry at the top of its status column and renumbers the column (`place_item`
+/// at 0); `None` when the user already has an entry for the work. Records no event. The caller
+/// holds the user's lock.
+pub(super) async fn insert_entry(
+    conn: &mut PgConnection,
+    entry: &NewEntry<'_>,
+) -> sqlx::Result<Option<i64>> {
+    let fields = entry.fields;
     let id = sqlx::query_scalar!(
         "INSERT INTO shelf_entries (user_id, work_id, edition_id, status, position, rating,
                                     rating_visibility, take, dnf_reason, progress, updated_at,
@@ -313,16 +348,16 @@ async fn add_entry(
          VALUES ($1, $2, $3, $4, 0, $5, $6, $7, $8, $9, $10, $11, $12)
          ON CONFLICT ON CONSTRAINT shelf_entries_user_work_key DO NOTHING
          RETURNING id",
-        user_id,
-        work_id,
-        body.edition_id,
-        status_text(status),
+        entry.user_id,
+        entry.work_id,
+        entry.edition_id,
+        status_text(entry.status),
         fields.rating,
-        visibility_text(visibility),
+        visibility_text(entry.rating_visibility),
         fields.take,
         fields.dnf_reason,
         fields.progress,
-        now,
+        entry.now,
         fields.started_at,
         fields.finished_at
     )
@@ -331,9 +366,8 @@ async fn add_entry(
     let Some(id) = id else {
         return Ok(None);
     };
-    let siblings = column_ids(conn, user_id, status, id).await?;
+    let siblings = column_ids(conn, entry.user_id, entry.status, id).await?;
     write_positions(conn, &column_order(&siblings, id, 0)).await?;
-    status_event(conn, user_id, work_id, status, &fields, true).await?;
     Ok(Some(id))
 }
 

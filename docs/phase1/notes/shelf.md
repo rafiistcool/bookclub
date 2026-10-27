@@ -91,6 +91,114 @@ Every test of `test_shelf.py` (16), `test_reading_dates.py` (12), `test_physical
 - **MED:** `POST /api/shelf/spine-colors` is MED's; SHELF registers no route on that path.
 - **IMP:** the stored layout is the normalised JSON of `PhysicalShelfLayout` (legacy-mapping.md §5). The GET reader (`shelf::layout`, private `stored_layout`) fills `lights`, `decorations` and spine `display` and lowercases colours, but answers the default layout for anything the current schema refuses (for example a decoration on the rows without its entry in `decorations`). An imported layout must therefore pass the full validation, or the member sees the default. After Wave 2 the integrator can make the reader public if IMP should share it.
 
-### Part 2 (not in this part)
+## Part 2: the Goodreads import, quotes, personal and club stats
 
-The Goodreads import job (`POST /api/shelf/import`, `GET /api/shelf/import/{job_id}`, `shelf::goodreads::resume`), quotes (`/api/quotes*`), personal stats (`GET /api/stats`) and club stats (`GET /api/clubs/{slug}/stats`, `MemberYear`). Their parity tests are `test_import.py` (8) and `test_stats_milestones_quotes.py::{test_stats_year_in_review, test_stats_with_empty_club, test_quotes_crud_and_filters}`. Their visibility tests (quotes, stats) also belong to part 2.
+### Modules (`server/src/shelf/`)
+
+| File | Contents |
+|---|---|
+| `goodreads.rs` | `routes()` (the upload route with a 2 MiB body limit), `POST /api/shelf/import`, `GET /api/shelf/import/{job_id}`, the parser (`parse_goodreads_csv`, `clean_isbn`, `GoodreadsRow`, `ParsedExport`), the job (`resume`, private `run`/`process`/`find`/`import_row`/`shelve`), `ImportJobOut`, `ImportSkipOut`, `ImportSkipCode`, `ImportStatus`, `GoodreadsUpload` (the multipart schema) |
+| `quotes.rs` | `GET/POST /api/quotes`, `PATCH/DELETE /api/quotes/{quote_id}`, `QuoteOut`, `QuoteListOut`, `QuoteIn`, `QuotePatchIn`, `QuoteQuery` |
+| `stats.rs` | `GET /api/stats`, `GET /api/clubs/{slug}/stats`, the one rule set (`ReadingLog`, `year_totals`, `member_years`, `mean`), `PersonalStatsOut`, `ClubStatsOut`, `MemberYear`, `MonthCount`, `PickStat`, `StatsQuery`, `ClubStatsQuery` |
+| `entries.rs` | gained `NewEntry` and `insert_entry` (insert at the top of the column and renumber, no event), shared by `POST /api/shelf` and the import |
+
+Operation ids (tag `shelf`): `shelf_start_import`, `shelf_get_import`, `shelf_list_quotes`, `shelf_add_quote`, `shelf_update_quote`, `shelf_delete_quote`, `shelf_personal_stats`, `shelf_club_stats`. Schema names: `ImportJobOut`, `ImportSkipOut`, `ImportSkipCode`, `ImportStatus`, `GoodreadsUpload`, `QuoteOut`, `QuoteListOut`, `QuoteIn`, `QuotePatchIn`, `PersonalStatsOut`, `ClubStatsOut`, `MemberYear`, `MonthCount`, `PickStat`. Other packages must not reuse them.
+
+### How the import works
+
+- **Upload.** `CurrentUser` first (401 before the body is read), then the `file` part. The route raises the body limit to 2 MiB (conventions §4.6). The reader stops just after 1,500,000 bytes. A body over the 2 MiB limit gives the same 400 `That file is too large. Keep the export under 1.5 MB.` as a large file, never a 413. A missing `file` part, or a body that is not multipart, gives 400 `Field required`.
+- **Parse** (synchronous, legacy strings): the size, UTF-8 (a BOM is allowed), then the headers (`title` and `exclusive shelf`, trimmed and case-insensitive). Rows are mapped as in spec §2.7, with the 400-row cap (one `stopped_after_400` skip), `no_title` (`Untitled`) and `unknown_shelf`. Extra cells are ignored, which avoids the Python 500 (spec §6 risk 18).
+- **Job.** The parsed rows, `total` (the rows to look up), `skipped` and the first 25 parse skips are stored in `import_jobs`. The answer is **202** `ImportJobOut` (`status: queued`), and a `tokio::spawn` task runs the job. The `import_jobs_one_active` unique index decides "one active job per user", so two concurrent uploads give one 202 and one 409 (tested).
+- **One row at a time.** For each row from `processed` on:
+  1. The row is looked up on a pool connection, outside any transaction: `resolve_isbn` (when the row has a valid ISBN), then `resolve_text(title, authors)`. The first hit wins.
+  2. One transaction locks the user row, then the job row (`FOR UPDATE`, checking that `processed` is still this row's index). It inserts the entry at the top of its column (`insert_entry`), or records the skip. It then advances `processed`, `imported`/`skipped` and `skips` (appended while it has fewer than 25), and commits.
+  3. When every row is done, the job becomes `done`, `rows` is emptied and `finished_at` is set.
+- **Errors.** A database error or a panic marks the job `failed`, with `error` = `The import stopped unexpectedly. Try again.` (the cause is logged). `rows` is emptied, and the rows already committed stay on the shelf.
+- **Resume.** `resume` (once at startup) spawns a run for every `queued` or `running` job. A run claims its job with `UPDATE … SET status = 'running' … RETURNING`. Because each row commits with its progress, a resumed job never looks up or shelves a committed row again. Two runs on one job (resume racing a fresh spawn) are safe: the `processed` check makes the loser stop.
+- **No events** are recorded (parity, conventions §15).
+
+### Deviations and decisions (part 2)
+
+**Import:**
+1. **Background job instead of one request.** The legacy single transaction is replaced by one transaction per row (above), so progress is visible and a restart loses nothing. Lookups run one after another per job, not two at a time: Open Library's global 3 req/s limit is the bottleneck either way. Jobs of different users run concurrently.
+2. **`total`** counts the rows to look up. Rows skipped while parsing are in `skipped` (and `skips`) from the start, so a finished job has `imported + skipped = total + <parse skips>`.
+3. **Lookup outcome.** `no_match` only when every lookup gave a definite answer. When a lookup was throttled or unavailable (`LookupError::Throttled`/`Unavailable`) and nothing hit, the code is `catalog_unavailable` and the job goes on. A throttled ISBN lookup still tries title and author (the local full-text step can hit).
+4. **Editions.** Only an ISBN hit sets `edition_id` (the edition must belong to the work after following merges). A title-and-author hit names no edition, because it does not identify the reader's copy. A hit on a merged-away work shelves the work it was merged into.
+5. **ISBNs** go through `parse_isbn`, so an ISBN with a bad checksum is dropped and the row is looked up by title and author. ISBN-10s become ISBN-13s. (Python sent any 10- or 13-character string to Open Library.) `clean_isbn` itself is unchanged.
+6. **`My Rating`** (an integer 1–5; Goodreads writes 0 for "no rating") is imported for `read` rows, with `rating_visibility` `audience`. **`Date Read`** (`YYYY/MM/DD` or `YYYY-MM-DD`) of a `read` row becomes `finished_at` at noon in the user's zone, and `started_at` is clamped to it, like a `finished_on` PATCH. A date outside the personal date range, or in the future in the user's zone, is ignored: the entry gets the import time, as before.
+7. **The 409** `An import is already running` also carries the active job as `job` (an `ImportJobOut`), so a reloaded page can resume polling. `GET /api/shelf/import/{job_id}` of another user's job is 404 `No such import`, like a missing one.
+8. **CSV edge cases.** A blank line before the header row is skipped (Python saw an empty header and answered `That does not look like a Goodreads export`). With duplicate header names the last column wins (Python's row dict).
+
+**Quotes:**
+9. **Requests.** `POST` takes `{work_id, edition_id?, body, page?, visibility?}`; the legacy book metadata (`ol_work_key`, `title`, …) is gone. An unknown work is 404 `No such book.` (it replaces `title is required for a new book`), and a merged work resolves to its target. `edition_id` must be an edition of the work (400 `That edition belongs to another book`, a missing edition too). Without it, the quote takes the caller's shelf edition of the work at creation time, else null.
+10. **`PATCH`** takes `{body?, page?, visibility?}`. `body: null` and `visibility: null` count as absent, `page: null` clears the page. Check order (diary R6): validation (400) → not visible (404 `No quote with that id`) → someone else's (403) → `Nothing to update` (400). `DELETE` checks the same way. A quote the caller cannot see (a stranger's, or someone else's `only_me` one) is 404, never 403. `updated_at` is set on every PATCH; it is not in `QuoteOut`.
+11. **`GET /api/quotes`.** `work` is a numeric work id (a merged id finds its target; an unknown id gives `{"items": []}`; `OL1W` is 400 `Input should be a valid integer, unable to parse string as an integer`). `username` goes through `visibility::visible_user`: an unknown name and a stranger both give `{"items": []}`. That function also trims the name (Python only lowercased it). `limit` is 1..500 (default 100) with pydantic's messages. The order is `id DESC`.
+12. **`QuoteOut`** = `{id, book, edition_id, author, mine, body, page, visibility, created_at, created_label}`. `book` uses the quote's edition as context. `created_label` is `tz::label` in the viewer's zone.
+13. **`quote_added`** is personal (`club_id` NULL, `work_id` set), with payload `{page?, excerpt, quote_id}`. `excerpt` is the first 80 characters of the trimmed body. Deleting a quote keeps the event.
+
+**Stats:**
+14. **Personal stats** `GET /api/stats?username=&year=` → `PersonalStatsOut {username, year, years, finished, dnf, pages, average_rating, five_stars, top_book, longest_book, quotes, by_month}`: the legacy `MemberYear` fields of one user, plus `years` (that user's years ∪ the current UTC year, newest first) and `by_month` (that user's finished books per UTC month). `?username=` follows `resolve_owner` (404 `No member with that name` for strangers and unknown names).
+15. **Club stats** `GET /api/clubs/{slug}/stats?year=` → `ClubStatsOut` (the legacy `StatsOut` shape, renamed so the schema name says what it is):
+    - `members` are the club's current members, sorted by `(-finished, username)`.
+    - `years` and `by_month` cover those members.
+    - `picks` are the club's picks, all time, `id DESC`. `readers`, `finished`, `dnf` and `ratings` count the current members' entries for the pick's work, any year (`readers`: any status).
+    - `set_by` is `unknown` when the setter's account is gone; a setter who left the club still shows their name.
+    - `best_pick`: the max `(average_rating, number of ratings)`; on a full tie the newest pick wins.
+16. **One rule set** (`member_years`):
+    - An entry counts in the UTC year of `finished_at`, else of `updated_at`.
+    - `pages` are the entry edition's, else the work's, else 0, and `top_book`/`longest_book` are `BookOut`s with the entry's edition as context. Pick books have no edition context.
+    - Ties: `top_book` takes the max `(rating, entry id)`; `longest_book` takes the first max in entry-id order.
+    - Means use `text::round_half_even(…, 2)`.
+    - Counts and pages are JSON integers (`i64`).
+    - The default `year` is the newest of `years`; any year in 2000..2100 is accepted.
+17. **`only_me`.** Every shelf and quote read goes through `bc_visible_shelf(viewer)` and `bc_visible_quotes(viewer)`. For another viewer, an `only_me` entry still counts as finished (shelf state), but its rating is not in `average_rating`, `five_stars`, `top_book`, the pick `ratings` or the club mean, and `only_me` quotes are not in `quotes`. The viewer's own `only_me` ratings and quotes count for that viewer, so the club stats a member sees can differ from another member's by that member's own `only_me` items.
+
+### Detail strings (part 2)
+
+From endpoint-map §11.3, which FE must map: `An import is already running`, `No such import`.
+
+New, not in the design. It is the `error` field of a failed job, not a `detail`, so FE shows it or maps it: `The import stopped unexpectedly. Try again.`
+
+Kept verbatim from the legacy app, as `const`s in their module. The frontend does not map them today:
+- `That file is too large. Keep the export under 1.5 MB.`
+- `The file must be a UTF-8 Goodreads CSV export`
+- `That does not look like a Goodreads export`
+- `Paste the line you want to keep`
+- `Keep it to 1000 characters`
+- `No quote with that id`
+- `You can only edit your own quotes`
+- `You can only delete your own quotes`
+- `Nothing to update`
+
+The skip `reason`s stay the legacy English (`Stopped after 400 rows`, `No title`, `Unknown shelf`, `No match`, `Catalog unavailable`, `Already on your shelf`); FE translates by `code`.
+
+From `error::msg`: `NO_SUCH_BOOK`, `EDITION_OF_ANOTHER_BOOK`, `NO_MEMBER`, `NO_SUCH_CLUB` (the club extractor).
+
+### Python tests ported with a reasoned change (part 2)
+
+All 8 tests of `test_import.py` and the three stats and quotes tests have a Rust test with a `/// parity:` line (`tests/shelf_import.rs`, `tests/shelf_quotes.rs`, `tests/shelf_stats.rs`). These carry a reasoned change:
+
+- `test_import.py::test_parse_fixture_maps_shelves_and_skips` -> a row without an ISBN has `isbn13: None` (legacy `""`), and the rows also carry `rating` and `read_on`.
+- `test_import.py::test_import_matches_isbn_and_title` -> the monkeypatched Open Library client becomes `FakeCatalog`, with Circe by ISBN and Achilles by title and author. The upload answers 202 and the test asserts the finished job, whose skips carry `code`. The calls `isbn:9780316556347` and `text:The Song of Achilles|Madeline Miller` are asserted.
+- `test_import.py::test_import_skips_books_already_on_shelf` -> the ISBN resolves to the existing work (`FakeHit::Existing`).
+- `test_import.py::test_import_rejects_oversized_file` -> also checks a body over the 2 MiB route limit (same 400).
+- `test_stats_milestones_quotes.py::test_stats_year_in_review` -> the legacy club-wide answer is split: the member numbers come from `GET /api/stats` and from `members` of the club stats, and the picks and club totals from the club stats. The pick is inserted by SQL (picks are CLUB's).
+- `test_stats_milestones_quotes.py::test_stats_with_empty_club` -> asserted on both endpoints.
+- `test_stats_milestones_quotes.py::test_quotes_crud_and_filters`:
+  - "unknown book needs a title" becomes 404 `No such book.` for an unknown work id, and `?work=` takes the work id.
+  - The book detail's `quote_count` is CAT's (`BookDetailOut`); the test checks the count CAT reads, `bc_visible_quotes(viewer)` for the work.
+  - The feed is CLUB's; the test checks the `quote_added` row in `events`.
+  - grace sees ada's quote because they share a club (the legacy "everyone in the instance").
+
+### For FE (#48), part 2
+
+- **Import.** `POST /api/shelf/import` answers **202** with `ImportJobOut {id, status, total, processed, imported, skipped, skips: [{title, code, reason}], error}`. Poll `GET /api/shelf/import/{id}` until `status` is `done` or `failed`. Progress is `processed / total`. Show `skip.title || "Untitled"` and translate by `code`. A 409 carries the running job as `job`.
+- **Quotes.** The quotes page sends `work_id` (and optionally `edition_id` and `visibility`). `?work=` takes a work id. `QuoteOut` adds `edition_id` and `visibility`.
+- **Stats.** Stats are optional in Phase 1 (work-plan, diary 15). The personal stats are `PersonalStatsOut`, the club stats `ClubStatsOut` (the legacy `StatsOut` fields).
+
+### For other packages, part 2
+
+- **CLUB:** `quote_added` events are personal and carry `quote_id`. The feed hides them from others when the quote is gone or `only_me` (conventions §6.4). The import records no events. `GET /api/clubs/{slug}/stats` is SHELF's path.
+- **CAT:** `BookDetailOut.quote_count` should count `bc_visible_quotes(viewer)` rows for the work, so other users' `only_me` quotes are not counted. The import calls `resolve_isbn` and `resolve_text` on a plain pool connection (autocommit, no transaction around them), one row at a time per job. Jobs of different users run at the same time, so two lookups may persist the same Open Library work concurrently.
+- **IMP:** quotes are imported with `visibility` `audience` and the `edition_id` of legacy-mapping.md. `import_jobs` has no legacy rows.
+- **PAR:** the visibility matrix for quotes and stats is in `tests/shelf_visibility.rs`: the audience, strangers (another club, no club, a former co-member) and an unknown name, for the quote list, PATCH and DELETE, the personal stats, and the club stats (members only).

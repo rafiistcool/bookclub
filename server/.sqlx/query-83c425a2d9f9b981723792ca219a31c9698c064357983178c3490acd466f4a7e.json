@@ -1,0 +1,116 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO import_jobs (user_id, rows, total, skipped, skips)\n           VALUES ($1, $2, $3, $4, $5)\n           RETURNING id, status AS \"status: ImportStatus\", total, processed, imported, skipped,\n                     skips AS \"skips: SqlJson<Vec<ImportSkipOut>>\", error",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "import_jobs",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "status: ImportStatus",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "import_jobs",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "total",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "import_jobs",
+            "name": "total"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "processed",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "import_jobs",
+            "name": "processed"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "imported",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "import_jobs",
+            "name": "imported"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "skipped",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "import_jobs",
+            "name": "skipped"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "skips: SqlJson<Vec<ImportSkipOut>>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "import_jobs",
+            "name": "skips"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "error",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "import_jobs",
+            "name": "error"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Jsonb",
+        "Int4",
+        "Int4",
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "83c425a2d9f9b981723792ca219a31c9698c064357983178c3490acd466f4a7e"
+}

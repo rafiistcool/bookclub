@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE import_jobs\n         SET status = 'failed', error = $2, rows = '[]', finished_at = now()\n         WHERE id = $1 AND status IN ('queued', 'running')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "eb5d6a13c26501bc9028b9e98e12e4b13a5bf13e29b033cf4adf3cbcf3ec9b2d"
+}
