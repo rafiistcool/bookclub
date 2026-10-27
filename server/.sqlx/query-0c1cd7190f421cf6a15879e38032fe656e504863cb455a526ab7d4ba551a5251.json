@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT notify_meeting, notify_pick, notify_note FROM users WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "notify_meeting",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "notify_meeting"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "notify_pick",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "notify_pick"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "notify_note",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "notify_note"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "0c1cd7190f421cf6a15879e38032fe656e504863cb455a526ab7d4ba551a5251"
+}

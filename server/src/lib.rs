@@ -164,6 +164,10 @@ pub fn app(state: AppState) -> Router {
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(middleware::from_fn_with_state(
             state.clone(),
+            auth::session::maintain_cookie,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
             auth::origin::check,
         ));
     if let Some(cors) = cors_layer(&state.config) {

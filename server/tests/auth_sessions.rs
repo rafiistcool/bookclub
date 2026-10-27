@@ -1,0 +1,504 @@
+//! Server-side sessions, bearer tokens, the session list and the origin check
+//! (docs/phase1/conventions.md §5.1, §5.2, §5.3, §5.8; endpoint-map §2).
+
+mod common;
+
+use axum::http::Method;
+use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine};
+use common::*;
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use sqlx::PgPool;
+
+async fn token(app: &TestApp, username: &str, label: &str) -> Value {
+    let res = app
+        .anon()
+        .post(
+            "/api/auth/tokens",
+            json!({"username": username, "password": PASSWORD, "label": label}),
+        )
+        .await;
+    res.assert_status(201);
+    res.json()
+}
+
+/// Seconds from now until the session's `expires_at`.
+async fn expires_in(app: &TestApp, session: i64) -> i64 {
+    app.scalar_i64(&format!(
+        "SELECT extract(epoch FROM expires_at - now())::bigint FROM sessions WHERE id = {session}"
+    ))
+    .await
+}
+
+async fn session_of(app: &TestApp, user: &TestClient) -> i64 {
+    app.scalar_i64(&format!(
+        "SELECT id FROM sessions WHERE user_id = {} AND kind = 'cookie'",
+        user.id()
+    ))
+    .await
+}
+
+const DAY: i64 = 86_400;
+
+#[sqlx::test]
+async fn the_cookie_is_random_and_stored_only_as_a_hash(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let anon = app.anon();
+    let res = anon
+        .post(
+            "/api/auth/login",
+            json!({"username": "ada", "password": PASSWORD}),
+        )
+        .await;
+    res.assert_status(204);
+    let cookie = res.set_cookies().pop().unwrap();
+    for part in ["HttpOnly", "SameSite=Lax", "Path=/", "Max-Age=34560000"] {
+        assert!(cookie.contains(part), "{cookie} lacks {part}");
+    }
+    let value = anon.cookie().unwrap();
+    assert_ne!(Some(value.clone()), ada.cookie());
+    let secret = BASE64_URL_SAFE_NO_PAD.decode(&value).unwrap();
+    assert_eq!(secret.len(), 32);
+    let hash = Sha256::digest(&secret).to_vec();
+    let stored: (Vec<u8>, String, i64) = sqlx::query_as(
+        "SELECT token_hash, kind, extract(epoch FROM expires_at - now())::bigint
+         FROM sessions WHERE token_hash = $1",
+    )
+    .bind(&hash)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(stored.1, "cookie");
+    assert!(
+        (30 * DAY - 60..=30 * DAY).contains(&stored.2),
+        "{}",
+        stored.2
+    );
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM sessions WHERE encode(token_hash, 'escape') LIKE '%{value}%'"
+        ))
+        .await,
+        0
+    );
+}
+
+/// parity: test_selfhost.py::test_session_cookie_not_secure_on_plain_http
+///
+/// Reasoned change: `Secure` comes from `COOKIE_SECURE` (default `!DEV_MODE`), not from the
+/// request scheme.
+#[sqlx::test]
+async fn dev_mode_cookies_are_not_secure(db: PgPool) {
+    let app = TestApp::new(db).await;
+    app.user("ada").await;
+    let res = app
+        .anon()
+        .post(
+            "/api/auth/login",
+            json!({"username": "ada", "password": PASSWORD}),
+        )
+        .await;
+    let cookie = res.set_cookies().pop().unwrap();
+    assert!(cookie.starts_with("bookclub_session="));
+    assert!(!cookie.to_lowercase().contains("secure"), "{cookie}");
+}
+
+/// parity: test_selfhost.py::test_session_cookie_secure_on_https_and_forwarded_proto
+#[sqlx::test]
+async fn production_cookies_are_secure(db: PgPool) {
+    let app = TestApp::with_env(db, &PRODUCTION_ENV).await;
+    app.user("ada").await;
+    let res = app
+        .anon()
+        .post(
+            "/api/auth/login",
+            json!({"username": "ada", "password": PASSWORD}),
+        )
+        .await;
+    res.assert_status(204);
+    let cookie = res.set_cookies().pop().unwrap();
+    assert!(cookie.starts_with("bookclub_session="));
+    assert!(cookie.contains("Secure"), "{cookie}");
+}
+
+/// parity: test_selfhost.py::test_trusted_proxy_denies_forwarded_proto
+///
+/// `X-Forwarded-Proto` never decides `Secure`; `COOKIE_SECURE=false` wins.
+#[sqlx::test]
+async fn forwarded_proto_does_not_make_cookies_secure(db: PgPool) {
+    let mut env = PRODUCTION_ENV.to_vec();
+    env.push(("COOKIE_SECURE", "false"));
+    env.push(("TRUSTED_PROXIES", "127.0.0.1"));
+    let app = TestApp::with_env(db, &env).await;
+    app.user("ada").await;
+    let res = app
+        .anon()
+        .with_header("x-forwarded-proto", "https")
+        .post(
+            "/api/auth/login",
+            json!({"username": "ada", "password": PASSWORD}),
+        )
+        .await;
+    res.assert_status(204);
+    let cookie = res.set_cookies().pop().unwrap().to_lowercase();
+    assert!(cookie.contains("bookclub_session="));
+    assert!(!cookie.contains("secure"), "{cookie}");
+    assert!(cookie.contains("httponly"));
+    assert!(cookie.contains("samesite=lax"));
+}
+
+/// Idle expiry slides (§5.1): a session used after more than an hour moves its expiry to 30
+/// days from now, and the cookie is sent again; a fresh session is left alone.
+#[sqlx::test]
+async fn cookie_sessions_slide(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let id = session_of(&app, &ada).await;
+    let res = ada.get("/api/auth/me").await;
+    res.assert_status(200);
+    assert!(
+        res.set_cookies().is_empty(),
+        "a fresh session is not touched"
+    );
+
+    app.exec(&format!(
+        "UPDATE sessions SET last_used_at = now() - interval '2 hours', expires_at = now() + interval '1 day'
+         WHERE id = {id}"
+    ))
+    .await;
+    let before = ada.cookie();
+    let res = ada.get("/api/auth/me").await;
+    res.assert_status(200);
+    let renewed = res.set_cookies();
+    assert_eq!(renewed.len(), 1, "{renewed:?}");
+    assert!(renewed[0].contains("Max-Age=34560000"));
+    assert_eq!(ada.cookie(), before, "the same session");
+    assert!((30 * DAY - 60..=30 * DAY).contains(&expires_in(&app, id).await));
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM sessions WHERE id = {id} AND last_used_at > now() - interval '1 minute'"
+        ))
+        .await,
+        1
+    );
+    // Less than an hour later nothing is written.
+    app.exec(&format!(
+        "UPDATE sessions SET last_used_at = now() - interval '59 minutes', expires_at = now() + interval '1 day'
+         WHERE id = {id}"
+    ))
+    .await;
+    ada.get("/api/auth/me").await.assert_status(200);
+    assert!(expires_in(&app, id).await <= DAY);
+}
+
+/// A cookie that resolves to no live session is 401 with a clearing `Set-Cookie`.
+#[sqlx::test]
+async fn dead_cookies_are_cleared(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let expired = app.user("expired").await;
+    app.exec(&format!(
+        "UPDATE sessions SET expires_at = now() - interval '1 second' WHERE user_id = {}",
+        expired.id()
+    ))
+    .await;
+    let deleted = app.user("deleted").await;
+    app.exec(&format!("DELETE FROM users WHERE id = {}", deleted.id()))
+        .await;
+    let garbage = app.anon();
+    garbage.set_cookie(Some("not-base64!"));
+    let unknown = app.anon();
+    unknown.set_cookie(Some(&BASE64_URL_SAFE_NO_PAD.encode([9u8; 32])));
+    for client in [&expired, &deleted, &garbage, &unknown] {
+        let res = client.get("/api/auth/me").await;
+        res.assert_detail(401, "Not signed in");
+        let cleared = res.set_cookies();
+        assert_eq!(cleared.len(), 1, "{cleared:?}");
+        assert!(cleared[0].starts_with("bookclub_session=;"));
+        assert!(cleared[0].contains("Max-Age=0"));
+        assert!(client.cookie().is_none());
+    }
+}
+
+#[sqlx::test]
+async fn bearer_tokens(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let created = token(&app, " ADA ", " Ada's phone ").await;
+    let secret = created["token"].as_str().unwrap();
+    assert!(secret.starts_with("bc_"), "{secret}");
+    assert_eq!(
+        BASE64_URL_SAFE_NO_PAD.decode(&secret[3..]).unwrap().len(),
+        32
+    );
+    let session = &created["session"];
+    assert_eq!(session["kind"], "bearer");
+    assert_eq!(session["label"], "Ada's phone");
+    assert_eq!(session["current"], false);
+    let created_at = session["created_at"].as_str().unwrap();
+    assert!(created_at.ends_with('Z'), "{created_at}");
+    let id = session["id"].as_i64().unwrap();
+    assert!((90 * DAY - 60..=90 * DAY).contains(&expires_in(&app, id).await));
+
+    let phone = app.anon().with_bearer(secret);
+    let me = phone.get("/api/auth/me").await;
+    me.assert_status(200);
+    assert_eq!(me.json()["id"], ada.id());
+    assert!(me.set_cookies().is_empty());
+
+    // Bearer sessions slide by 90 days.
+    app.exec(&format!(
+        "UPDATE sessions SET last_used_at = now() - interval '2 hours', expires_at = now() + interval '1 day'
+         WHERE id = {id}"
+    ))
+    .await;
+    let me = phone.get("/api/auth/me").await;
+    assert!(
+        me.set_cookies().is_empty(),
+        "no cookie for a bearer session"
+    );
+    assert!((90 * DAY - 60..=90 * DAY).contains(&expires_in(&app, id).await));
+
+    // Labels are cut to 200 characters.
+    let long = token(&app, "ada", &"x".repeat(250)).await;
+    assert_eq!(
+        long["session"]["label"].as_str().unwrap().chars().count(),
+        200
+    );
+}
+
+/// Token creation has the login errors and limits.
+#[sqlx::test]
+async fn tokens_need_the_right_password(db: PgPool) {
+    let app = TestApp::new(db).await;
+    app.user("ada").await;
+    let wrong = json!({"username": "ada", "password": "nope", "label": "x"});
+    for _ in 0..10 {
+        app.anon()
+            .post("/api/auth/tokens", wrong.clone())
+            .await
+            .assert_detail(401, "Wrong username or password");
+    }
+    app.anon()
+        .post(
+            "/api/auth/tokens",
+            json!({"username": "ada", "password": PASSWORD, "label": "x"}),
+        )
+        .await
+        .assert_detail(429, "Too many attempts. Wait a few minutes.");
+    app.anon()
+        .post(
+            "/api/auth/tokens",
+            json!({"username": "ada", "password": PASSWORD}),
+        )
+        .await
+        .assert_detail(400, "Field required");
+}
+
+/// The bearer token is read first; a bad one is 401 even next to a valid cookie, and that
+/// cookie is not cleared.
+#[sqlx::test]
+async fn the_bearer_token_wins_over_the_cookie(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let grace = app.user("grace").await;
+    app.user("ada").await;
+    let ada_token = token(&app, "ada", "phone").await["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let both = grace.clone().with_bearer(&ada_token);
+    assert_eq!(both.get("/api/auth/me").await.json()["username"], "ada");
+    for bad in ["bc_nope", "nope", &ada_token[3..]] {
+        let res = grace.clone().with_bearer(bad).get("/api/auth/me").await;
+        res.assert_detail(401, "Not signed in");
+        assert!(res.set_cookies().is_empty());
+    }
+    assert!(grace.cookie().is_some());
+    grace.get("/api/auth/me").await.assert_status(200);
+    // A cookie value is not a bearer token, and a bearer token is not a cookie.
+    let as_bearer = grace.cookie().unwrap();
+    app.anon()
+        .with_bearer(&format!("bc_{as_bearer}"))
+        .get("/api/auth/me")
+        .await
+        .assert_status(401);
+    let as_cookie = app.anon();
+    as_cookie.set_cookie(Some(&ada_token[3..]));
+    as_cookie.get("/api/auth/me").await.assert_status(401);
+}
+
+#[sqlx::test]
+async fn the_session_list(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app
+        .user("ada")
+        .await
+        .with_header("user-agent", "Firefox/140");
+    let phone_token = token(&app, "ada", "Phone").await;
+    let grace = app.user("grace").await;
+    app.exec(
+        "UPDATE sessions SET last_used_at = now() - interval '5 minutes' WHERE kind = 'bearer'",
+    )
+    .await;
+    // An expired session is not listed.
+    app.exec(&format!(
+        "INSERT INTO sessions (user_id, kind, token_hash, expires_at)
+         VALUES ({}, 'cookie', sha256('old'), now() - interval '1 second')",
+        ada.id()
+    ))
+    .await;
+    let list = ada.get("/api/auth/sessions").await;
+    list.assert_status(200);
+    let items = list.json()["items"].as_array().unwrap().clone();
+    assert_eq!(items.len(), 2, "{items:?}");
+    assert_eq!(items[0]["kind"], "cookie");
+    assert_eq!(items[0]["current"], true);
+    assert_eq!(items[1]["kind"], "bearer");
+    assert_eq!(items[1]["label"], "Phone");
+    assert_eq!(items[1]["current"], false);
+    assert_eq!(items[1]["id"], phone_token["session"]["id"]);
+    for item in &items {
+        let mut keys: Vec<&str> = item
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "created_at",
+                "current",
+                "id",
+                "kind",
+                "label",
+                "last_used_at"
+            ]
+        );
+    }
+    // Through the token, the bearer session is the current one.
+    let phone = app
+        .anon()
+        .with_bearer(phone_token["token"].as_str().unwrap());
+    let via_phone = phone.get("/api/auth/sessions").await.json();
+    let current: Vec<&Value> = via_phone["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["current"] == true)
+        .collect();
+    assert_eq!(current.len(), 1);
+    assert_eq!(current[0]["kind"], "bearer");
+    // Only the caller's sessions.
+    assert_eq!(
+        grace.get("/api/auth/sessions").await.json()["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    app.anon()
+        .get("/api/auth/sessions")
+        .await
+        .assert_detail(401, "Not signed in");
+}
+
+#[sqlx::test]
+async fn revoking_sessions(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let grace = app.user("grace").await;
+    let phone_token = token(&app, "ada", "Phone").await;
+    let phone = app
+        .anon()
+        .with_bearer(phone_token["token"].as_str().unwrap());
+    let phone_id = phone_token["session"]["id"].as_i64().unwrap();
+    let grace_session = session_of(&app, &grace).await;
+
+    ada.delete(&format!("/api/auth/sessions/{grace_session}"))
+        .await
+        .assert_detail(404, "No such session");
+    grace.get("/api/auth/me").await.assert_status(200);
+    ada.delete("/api/auth/sessions/999999")
+        .await
+        .assert_detail(404, "No such session");
+    ada.delete("/api/auth/sessions/abc").await.assert_detail(
+        400,
+        "Input should be a valid integer, unable to parse string as an integer",
+    );
+
+    let res = ada.delete(&format!("/api/auth/sessions/{phone_id}")).await;
+    res.assert_status(204);
+    assert!(res.set_cookies().is_empty());
+    phone.get("/api/auth/me").await.assert_status(401);
+    ada.get("/api/auth/me").await.assert_status(200);
+
+    // Revoking the current cookie session logs out.
+    let own = session_of(&app, &ada).await;
+    let res = ada.delete(&format!("/api/auth/sessions/{own}")).await;
+    res.assert_status(204);
+    assert!(res.set_cookies()[0].contains("Max-Age=0"));
+    assert!(ada.cookie().is_none());
+    ada.get("/api/auth/me").await.assert_status(401);
+}
+
+/// The origin check (§5.8) with a real session: a cookie request from a foreign origin is
+/// refused before it reaches the handler; same-origin and bearer requests pass.
+#[sqlx::test]
+async fn cross_site_cookie_requests_are_refused(db: PgPool) {
+    let app = TestApp::with_env(db, &PRODUCTION_ENV).await;
+    let ada = app.user("ada").await;
+    let change = json!({"theme": "ink"});
+    let evil = ada.clone().with_header("origin", "https://evil.example");
+    evil.patch("/api/auth/me/preferences", change.clone())
+        .await
+        .assert_detail(403, "Cross-site request refused");
+    assert_eq!(ada.get("/api/auth/me").await.json()["theme"], "paper");
+    evil.post("/api/auth/logout", json!(null))
+        .await
+        .assert_detail(403, "Cross-site request refused");
+    // Reads are not refused.
+    evil.get("/api/auth/me").await.assert_status(200);
+
+    let own = ada
+        .clone()
+        .with_header("origin", "https://books.example.com");
+    own.patch("/api/auth/me/preferences", change.clone())
+        .await
+        .assert_status(200);
+
+    let phone_token = token(&app, "ada", "Phone").await;
+    app.anon()
+        .with_bearer(phone_token["token"].as_str().unwrap())
+        .with_header("origin", "https://evil.example")
+        .patch("/api/auth/me/preferences", json!({"theme": "slate"}))
+        .await
+        .assert_status(200);
+    // Without any cookie there is nothing to forge: login from anywhere is answered.
+    app.anon()
+        .with_header("origin", "https://evil.example")
+        .post(
+            "/api/auth/login",
+            json!({"username": "ada", "password": PASSWORD}),
+        )
+        .await
+        .assert_status(204);
+}
+
+/// A request with a malformed JSON body and no session is 401; with a session the body is
+/// checked (conventions §4.2).
+#[sqlx::test]
+async fn extractor_order(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let res = ada
+        .request(
+            Method::PATCH,
+            "/api/auth/password",
+            Some("application/json"),
+            b"{".to_vec(),
+        )
+        .await;
+    res.assert_detail(400, "JSON decode error");
+}

@@ -187,7 +187,8 @@ pub enum ImportError { TargetNotEmpty, Source(String), Upstream(String), Db(sqlx
 4. `CatchPanicLayer`, answering 500 `{"detail":"Internal Server Error"}`
 5. CORS: only when `CORS_ORIGINS` is set (Phase 4 apps), or for the Vite origin in DEV_MODE
 6. the origin check (§5.8)
-7. `DefaultBodyLimit::max(1 MiB)`; upload routes override it per route (§4.6)
+7. `auth::session::maintain_cookie`: the session extractor cannot touch the response, so it leaves a note in a per-request slot that this layer reads: a cookie that resolved to no live session gets a clearing `Set-Cookie` on the 401, and a cookie session that slid gets its cookie again (§5.1). A handler that sets the session cookie itself (login, logout) wins.
+8. `DefaultBodyLimit::max(1 MiB)`; upload routes override it per route (§4.6)
 
 There are no global timeouts; handlers bound their outbound calls instead (§10.3).
 
@@ -356,9 +357,28 @@ impl ApiMultipart {
 - **Login** (and register, and token creation) generates 32 random bytes and stores `sha256(bytes)` in `sessions.token_hash`. Randomness everywhere (session and email tokens, public ids, invite codes, slugs) comes from one W1 helper, `auth::random::fill(&mut [u8])`, which uses `rand::TryRng::try_fill_bytes(&mut rand::rngs::SysRng, …)` (rand 0.10 has no `OsRng`; `SysRng` is the OS source and is fallible: `fill` panics on an OS failure, which the `CatchPanicLayer` turns into a 500).
   - The cookie value is `base64url_nopad(bytes)`.
   - The cookie is `bookclub_session=<value>; Path=/; HttpOnly; SameSite=Lax; Max-Age=34560000`, plus `Secure` unless `COOKIE_SECURE=false` (the DEV_MODE default).
-- **Idle expiry slides.** On every authenticated request, when `last_used_at < now - 1 hour`, the extractor sets `last_used_at = now` and `expires_at = now + 30 days` (cookie) or `+ 90 days` (bearer). The cookie's Max-Age is fixed at 400 days, the browser maximum; the server decides validity.
-- **Logout** deletes the row and sends a clearing cookie, but only when a valid session existed (parity).
-- **A cookie that does not resolve** (unknown or expired session, deleted user) gets 401 plus a clearing `Set-Cookie`.
+- **Idle expiry slides.** On every authenticated request, when `last_used_at < now - 1 hour`, the extractor sets `last_used_at = now` and `expires_at = now + 30 days` (cookie) or `+ 90 days` (bearer). The cookie's Max-Age is fixed at 400 days, the browser maximum; the server decides validity. When a cookie session slides, the response carries the same cookie again (`maintain_cookie`, §3), so the browser's 400 days restart too.
+- **Logout** deletes the row and sends a clearing cookie, but only when a valid session existed (parity). A logout that presents a bearer token deletes that token's session (no cookie is sent).
+- **Login, register and token creation are the only places that create sessions.** Login and register called with a cookie session delete that session (they switch the browser to the new one, parity with the legacy app); token creation leaves the caller's cookie alone.
+- **A cookie that does not resolve** (unknown or expired session, deleted user, a value that is not base64url of 32 bytes) gets 401 plus a clearing `Set-Cookie` (through `maintain_cookie`). Only a 401 clears it: a public route that reads the user optionally (`MaybeUser`) answers as usual.
+- **Mechanics** live in `auth::session` (W1):
+
+  ```rust
+  pub enum SessionKind { Cookie, Bearer }            // sessions.kind; serialised "cookie" | "bearer"
+  pub struct NewSession { pub id: i64, pub secret: String /* cookie value or "bc_…" */, pub label: String,
+                          pub created_at: OffsetDateTime, pub last_used_at: OffsetDateTime }
+  pub enum Presented { Nothing, Bearer(Option<[u8; 32]>), Cookie(Option<[u8; 32]>) }  // None = malformed
+  pub fn presented(headers: &HeaderMap) -> Presented;      // bearer header first, then the cookie
+  pub async fn create(conn, user_id: i64, kind: SessionKind, label: &str) -> sqlx::Result<NewSession>;
+  pub async fn delete_by_secret(conn, secret: &[u8; 32], kind: SessionKind) -> sqlx::Result<bool>; // true: it was live
+  pub fn token_hash(secret: &[u8; 32]) -> Vec<u8>;         // sessions.token_hash
+  pub fn set_cookie(config: &Config, value: &str) -> HeaderValue;
+  pub fn clear_cookie(config: &Config) -> HeaderValue;
+  pub fn device_label(headers: &HeaderMap) -> String;      // the User-Agent, the label of a cookie session
+  pub async fn maintain_cookie(State<AppState>, Request, Next) -> Response;   // the layer of §3
+  ```
+
+  Labels are cut to 200 characters. Tests create signed-in users with `session::create` (§17.2), so no login limit is touched.
 - **Revocation:**
   - A password change deletes every other session and token of the user.
   - A password reset deletes all of them.
@@ -367,7 +387,9 @@ impl ApiMultipart {
 
 ### 5.2 Bearer tokens
 
-- `POST /api/auth/tokens` returns `bc_<base64url(32 bytes)>`, stored in the same table with `kind='bearer'`.
+- `POST /api/auth/tokens` returns `bc_<base64url(32 bytes)>`, stored in the same table with `kind='bearer'` (the hash is of the 32 bytes, as for cookies). Its response `{token, session: SessionOut}` has `session.current = false`: the request that created it did not use it.
+- A request that presents a bearer header is decided by it alone: a malformed or unknown token is 401 even next to a valid cookie, and that cookie is not cleared. A cookie value is never accepted as a bearer token and vice versa (`kind` is part of the lookup).
+- `GET /api/auth/sessions` lists the caller's live sessions (`expires_at > now`), most recently used first (`last_used_at DESC, id DESC`); `current` marks the one that authenticated the request.
 - The extractor reads `Authorization: Bearer bc_…` **before** the cookie. A bearer request never needs the origin check (§5.8).
 - Phase 4 device tokens (APNs/FCM) will reference `sessions.id` from a new table.
 
@@ -407,7 +429,7 @@ pub async fn role_in(conn: &mut PgConnection, user_id: i64, club_id: i64) -> sql
 pub async fn club_refs(conn: &mut PgConnection, club_ids: &[i64]) -> sqlx::Result<HashMap<i64, ClubRef>>;
 ```
 
-`auth::user_out(conn: &mut PgConnection, user_id: i64) -> ApiResult<UserOut>` (W1, frozen) builds the full `UserOut` including `clubs`; MED's avatar endpoints return it.
+`auth::user_out(conn: &mut PgConnection, user_id: i64) -> ApiResult<UserOut>` (W1, frozen) builds the full `UserOut` including `clubs`; MED's avatar endpoints return it. `pending_email` is the address of the newest open verification link of an account whose own address is verified (an email change waiting for confirmation), else null; `clubs` are ordered newest join first; a user that no longer exists is 401 `Not signed in`.
 
 - **Club data rule:**
   - On `/api/clubs/{slug}/…` routes, every query on club data takes `club_id` **only** from the `ClubMember` extractor.
@@ -432,7 +454,21 @@ pub async fn club_refs(conn: &mut PgConnection, club_ids: &[i64]) -> sqlx::Resul
 - **Hashing.** The `argon2` crate (0.6) uses `Argon2id`. Production parameters are the crate default (`m = 19456 KiB, t = 2, p = 1`, OWASP).
 - **Verification** parses the PHC string with `argon2::password_hash::phc::PasswordHash::new` (argon2 0.6; the old `password_hash::PasswordHash` path is a deprecated alias and fails clippy `-D warnings`) and verifies with the parameters stored in it, so legacy argon2-cffi hashes (`m=65536,t=3,p=4`) verify unchanged. An unparsable hash counts as a mismatch, never a 500. Hashing is `Argon2::default().hash_password(pw.as_bytes())`: argon2 0.6 generates the salt itself.
 - **Rehash on login.** After a successful login, a hash whose parameters differ from the current ones is re-hashed and stored, inside the login transaction.
-- **Blocking work** (hash and verify) runs in `tokio::task::spawn_blocking`, behind a `tokio::sync::Semaphore` of 4 permits held by `Passwords`. That bounds memory: legacy hashes use 64 MiB each.
+- **Blocking work** (hash and verify) runs in `tokio::task::spawn_blocking`, behind a `tokio::sync::Semaphore` of 4 permits held by `Passwords`. That bounds memory: legacy hashes use 64 MiB each. The semaphore is an `Arc<Semaphore>` and each operation moves an owned permit into its blocking task, so a request cancelled by a disconnecting client cannot free its permit while the hash still runs.
+- **API** (`auth::password`, W1):
+
+  ```rust
+  pub struct Passwords { pub params: argon2::Params, pub permits: Arc<Semaphore>, /* the dummy hash */ }
+  pub enum Verdict { Mismatch, Match { rehash: bool } }    // rehash: not argon2id v19 with params' m, t, p
+  impl Passwords {
+      pub fn new() -> Self; pub fn for_tests() -> Self;
+      pub async fn hash(&self, password: &str) -> anyhow::Result<String>;            // a PHC string
+      /// None = unknown account: verifies against a dummy hash made with `params`, always Mismatch.
+      pub async fn verify(&self, password: &str, stored: Option<&str>) -> Verdict;
+  }
+  ```
+- **Login order** (`auth::login::authenticate`, shared by login and token creation): `login_ip.check_and_hit(ip_key)` → look the account up → `login_failures.check_and_hit(u:<id> | unknown_identifier_key)` → verify → on success `clear` the key and, when `rehash`, hash again and store it in the login transaction (`UPDATE … WHERE password_hash = <old>`, so a concurrent password change wins). Identifiers are stripped and lowercased; one containing `@` is looked up as a **verified** address (`lower(email) = lower($1)`).
+- **Password change**: `login_failures.check_and_hit(u:<id>)` → verify the current password (400 `Current password is wrong`) → `clear` the key → 400 `Pick a different password` when the new one equals it → hash → one transaction: store it, bump `password_changed_at`, delete every other session and token, void every open reset link. A right current password clears the failures even when the answer is `Pick a different password` (reasoned change: the hit was counted before verifying, and Python neither recorded nor cleared there).
 - **Unknown accounts** run a verify against a fixed dummy hash, so their timing matches.
 - **Rules:**
   - Length ≥ 8 is counted in **characters** (`chars().count()`), with no maximum.
@@ -450,7 +486,24 @@ pub async fn club_refs(conn: &mut PgConnection, club_ids: &[i64]) -> sqlx::Resul
   - `{PUBLIC_URL}/reset-password#token=…`
   - `{PUBLIC_URL}/join/{code}` (invite links; the code is meant to be shared)
 - **Using a token** marks it used, in the same transaction as its effect.
-- **Mail is sent after the transaction commits.** A send failure is logged and does not fail the request. Resend exists for verification, and reset can be requested again.
+- **Mail is sent after the transaction commits.** A send failure is logged and does not fail the request. Resend exists for verification, and reset can be requested again. The handler awaits the send (`auth::mail::deliver`, at most 15 s, then it logs and gives up) before it answers, so tests see the mail at once.
+- **API** (`auth::mail`, W1; the email flows of Wave 1 step 4 build on it):
+
+  ```rust
+  pub enum TokenPurpose { VerifyEmail, ResetPassword }                     // email_tokens.purpose
+  pub struct Holder { pub user_id: i64, pub username: String, pub locale: String, pub email: String }
+  /// Marks every older open verify_email token of the user used, then issues one (48 h). Returns the link token.
+  pub async fn issue_verify_token(conn, user_id: i64, email: &str) -> sqlx::Result<String>;
+  pub async fn issue_reset_token(conn, user_id: i64, email: &str) -> sqlx::Result<String>;   // 1 h
+  pub async fn void_open_tokens(conn, user_id: i64, purpose: TokenPurpose) -> sqlx::Result<()>;
+  pub fn link_token_hash(token: &str) -> Option<Vec<u8>>;   // None: not base64url of 32 bytes
+  pub fn verify_link(config: &Config, token: &str) -> String; pub fn reset_link(config: &Config, token: &str) -> String;
+  pub fn site(config: &Config) -> email::templates::Site<'_>;
+  /// The verified account holding an address (`lower(email) = lower($1)`), for the "address in use" notice.
+  pub async fn verified_holder(conn, email: &str) -> sqlx::Result<Option<Holder>>;
+  /// After commit: email_target.check_and_hit(casefold(to)) (silent when over), then send; failures logged.
+  pub async fn deliver(state: &AppState, email: Email);
+  ```
 
 **Addresses and uniqueness.** Only **verified** addresses are unique (`users_verified_email_key`), and only verified addresses are used for login by email and for reset. An unverified address is just what someone typed; it cannot squat anyone's address.
 - `users.email` is the account address. On an account with no verified address, a sign-up or `PUT /api/auth/me/email` writes the new address there at once (unverified). On an account with a verified address, the new address lives only on the open `verify_email` token until it is verified; `UserOut.pending_email` shows it.
@@ -468,7 +521,9 @@ pub async fn club_refs(conn: &mut PgConnection, club_ids: &[i64]) -> sqlx::Resul
 - **Verify** accepts a token only when it is open (unused, unexpired), is the user's newest `verify_email` token, and its `email` is the address still pending (`users.email` for an unverified account, else the token address itself). Success sets `users.email = token.email` and `email_verified_at`. If another account verified the same address first, it answers 409 `That email is already in use` (the unique index decides; mapped with `is_unique_violation`). Only the holder of a link can see that, so it does not enumerate.
 - **Reset confirm** requires `token.email = users.email AND users.email_verified_at IS NOT NULL`; anything else is 400 `That link has expired or was already used`.
 - **Rate limits** (§10.1): `PUT /me/email` and resend share the per-account `email_send_user` bucket (3 per hour, 429 `Slow down a little. Try again later.`). Every mail to an address (verification link, notice, reset) also counts against `email_target` (6 per day per case-folded address across all accounts); over it, the mail is silently not sent and the response is unchanged.
-- **Sign-up gate:** `SIGNUP_MODE=invite` is the Phase 1/2 default (a closed beta until #55). Sign-up then requires a valid invite: a club invite (it also joins the club) or a sign-up invite minted by an instance admin (club_id NULL).
+- **Sign-up gate:** `SIGNUP_MODE=invite` is the Phase 1/2 default (a closed beta until #55). Sign-up then requires a valid invite: a club invite (it also joins the club) or a sign-up invite minted by an instance admin (club_id NULL). With `SIGNUP_MODE=open` a code is optional, and a given code must still be valid.
+- **Sign-up order** (`POST /api/auth/register`): body validation (400, every message in field order: username, email, password, timezone, locale) → `signup_ip.check_and_hit(ip_key)` (429; every validated attempt counts) → username taken (409) → no code in invite mode (400 `Sign-up needs an invite code right now`; a code that normalises to nothing counts as none) → hash → one transaction: insert the user (a concurrent same-name sign-up is 409 through `users_username_key`), consume the invite (400 `That invite code is not valid`), join its club, issue the verification token **or**, when a verified account holds the address, nothing; create the session; delete the caller's previous cookie session → commit → send the link or the notice → 201 `UserOut` with `Set-Cookie`. Any failure rolls the account and the invite use back.
+- **Invite seam** (`clubs::invites`, W1): `normalize_code(raw)` (whitespace and `-` removed, uppercased), `consume(conn, code, user_id) -> Option<ConsumedInvite>` (the atomic consume of §13 plus the `club_invite_uses` row) and `join(conn, &invite, club_id, user_id) -> ApiResult<()>`. `ConsumedInvite { id, club_id: Option<i64>, created_by: Option<i64>, created_at }`. Sign-up calls `join` for a club invite; Wave 1 step 5 implements it (club-row lock, the removal check against `created_at`, the 20-member limit, the membership with `invited_by`, deleting the removal row, `member_joined`) and reuses `consume`/`join` for `POST /api/invites/{code}/accept`, which checks "already in this club" before consuming. Until step 5, `join` refuses every club invite with 400 `That invite code is not valid`.
 - **Before verification,** a user can log in and use everything personal, join clubs by invite, and post. Creating a club requires a verified email (`VerifiedUser`). That limits abuse once sign-up is open.
 - **Imported users** have `email` NULL. `UserOut.needs_email_prompt = email IS NULL AND email_prompt_dismissed_at IS NULL`.
 
@@ -1004,6 +1059,16 @@ pub struct SmtpEmail { … }  // lettre AsyncSmtpTransport<Tokio1Executor>, rust
 ```
 
 - **Templates** are plain text only, in English and German by `users.locale`, in `email/templates.rs`: verify, reset, email changed (to the old address), and "someone tried to use your address" (sent to a verified address instead of a verification link when a sign-up or an email change named it, §5.5; it says what was tried and links to login and password reset, and contains no link that changes anything).
+
+  ```rust
+  pub struct Site<'a> { pub service: &'a str, pub public_url: &'a str }        // auth::mail::site(&config)
+  pub struct Recipient<'a> { pub to: &'a str, pub username: &'a str, pub locale: &'a str }   // "de" = German
+  pub enum Attempt { SignUp, EmailChange }
+  pub fn verify_email(site: Site, to: Recipient, link: &str) -> Email;
+  pub fn reset_password(site: Site, to: Recipient, link: &str) -> Email;
+  pub fn email_changed(site: Site, to: Recipient, new_address: &str) -> Email;
+  pub fn address_in_use(site: Site, to: Recipient, attempt: Attempt) -> Email;  // links: {PUBLIC_URL}/login, /forgot-password
+  ```
 - **Provider:** an EU-hosted transactional provider with a DPA, reached over SMTP. The choice is Rafael's decision; record it in #39. SMTP keeps any provider swappable.
 
 ## 10. Rate limiting, client IP, outbound HTTP
@@ -1331,14 +1396,18 @@ impl TestApp {
     pub async fn new(db: PgPool) -> Self;            // DEV_MODE-like config, cheap argon2, MemMediaStore,
                                                      // CapturingEmail, FakeCatalog as `lookup`, every
                                                      // upstream URL pointed at `upstream`
+    pub async fn with_env(db: PgPool, env: &[(&str, &str)]) -> Self; // new() plus env vars (later win), e.g.
+                                                     // ("SIGNUP_MODE", "open") or &PRODUCTION_ENV
     pub async fn with_real_lookup(db: PgPool) -> Self; // lookup = state.catalog (real chain against `upstream`)
     pub fn config(&self) -> &Config;
     pub fn anon(&self) -> TestClient;
     pub async fn user(&self, username: &str) -> TestClient;          // verified email <username>@example.test,
-                                                                     // password "password1", signed in
+                                                                     // password PASSWORD ("password1"), signed in
+                                                                     // (session row created directly: no limits)
     pub async fn user_unverified(&self, username: &str) -> TestClient;
     pub async fn admin(&self, username: &str) -> TestClient;         // is_admin
-    pub async fn club(&self, owner: &TestClient, name: &str) -> TestClub;            // via POST /api/clubs
+    pub async fn club(&self, owner: &TestClient, name: &str) -> TestClub;            // via POST /api/clubs (step 5;
+                                                                     // W1 step 3 inserts club + owner row directly)
     pub async fn join(&self, club: &TestClub, who: &TestClient, role: &str);       // direct insert ("admin"|"member")
     pub async fn work(&self, title: &str) -> TestWork;               // ingest::upsert_work (source user, no authors)
     pub async fn ol_work(&self, ol_id: &str, title: &str, authors: &str) -> TestWork;
@@ -1368,13 +1437,31 @@ impl TestClient {
     pub async fn put_multipart(&self, path: &str, parts: Vec<Part>) -> TestResponse;
     pub fn with_ip(self, ip: IpAddr) -> Self; pub fn with_header(self, k: &str, v: &str) -> Self;
     pub fn with_bearer(self, token: &str) -> Self;
-    pub fn id(&self) -> i64; pub fn username(&self) -> &str;
+    pub fn id(&self) -> i64; pub fn username(&self) -> &str;           // panic for an anonymous client
+    pub fn for_router(router: Router) -> TestClient;                     // anonymous, any router (extractor tests)
+    pub fn cookie(&self) -> Option<String>; pub fn set_cookie(&self, value: Option<&str>);   // the jar
 }
+// Clones share the cookie jar. A Set-Cookie for bookclub_session stores its value; an empty value or Max-Age=0
+// empties the jar. Without with_ip the server sees 0.0.0.0.
 pub enum Part { File { name: String, filename: String, content_type: String, bytes: Vec<u8> }, Text { name: String, value: String } }
 impl Part { pub fn file(filename: &str, content_type: &str, bytes: Vec<u8>) -> Part; /* name "file" */ pub fn text(name: &str, value: &str) -> Part; }
 pub struct TestResponse { pub status: StatusCode, pub headers: HeaderMap, pub body: Bytes }
 impl TestResponse { pub fn json(&self) -> Value; pub fn detail(&self) -> String;
+    pub fn text(&self) -> String; pub fn header(&self, name: &str) -> Option<&str>; pub fn set_cookies(&self) -> Vec<String>;
     pub fn assert_status(&self, s: u16) -> &Self; pub fn assert_detail(&self, s: u16, d: &str) -> &Self; }
+pub struct CapturingEmail { /* Mutex<Vec<Email>> */ }   // impl EmailSender
+impl CapturingEmail { pub fn sent(&self) -> Vec<Email>; pub fn sent_to(&self, to: &str) -> Vec<Email>; }  // case-insensitive
+
+pub const PASSWORD: &str = "password1";
+pub const PRODUCTION_ENV: [(&str, &str); 6];   // DEV_MODE=false plus PUBLIC_URL https://books.example.com,
+                                               // TRUSTED_PROXIES none, CONTACT_EMAIL, SMTP_URL, EMAIL_FROM
+// Low-level helpers for tests that need no database or build their own state:
+pub fn test_config(extra: &[(&str, &str)]) -> Config;      // DEV_MODE plus extra
+pub fn test_state(db: PgPool) -> AppState;                  // AppState::new with test_config, cheap argon2
+pub fn test_state_with(db: PgPool, config: Config) -> AppState;
+pub fn unreachable_db() -> PgPool;                          // never connects
+pub async fn send(app: Router, request: Request<Body>) -> TestResponse;
+pub async fn get(app: Router, path: &str) -> TestResponse;
 
 /// A programmable CatalogLookup. Unprogrammed ISBNs and texts are Ok(None).
 pub struct FakeCatalog { /* Mutex<…>; creates works and editions through ingest */ }
@@ -1391,11 +1478,17 @@ impl FakeCatalog {
     pub fn fail_isbn(&self, isbn13: &str, err: FakeError, times: Option<usize>);   // None = always; Some(n) = the next n calls
     pub fn calls(&self) -> Vec<String>;                          // "isbn:978…", "isbn_remote:978…", "text:<title>|<authors>"
 }
+// resolve_isbn runs lookup::local_isbn first, like CAT; failures and programmed hits stand for the remote step.
+// resolve_isbn_remote and resolve_text have no local step. A FakeHit::New with an ISBN is created with
+// upsert_edition_with_work(WorkGrouping::NewWork, Mode::Refresh), without one with upsert_work.
 ```
+
+**`tests/common/visibility.rs`** is the template for `tests/<pkg>_visibility.rs` (§6.5): `Viewers::new(&app)` creates `owner`, `comember` (shares the club `shared` with the owner, and the club `other` with `otherclub`), `otherclub`, `stranger` and `former` (left `shared`); `audience()` and `strangers()` list them; `assert_hidden_like_unknown(viewer, |name| path, "owner")` asserts that a stranger's answer is a 404 identical to the one for the unknown name `visibility::UNKNOWN`. `tests/harness.rs` tests the harness itself.
 
 ### 17.3 Faking outbound HTTP
 
-- `TestApp::new` starts one `wiremock::MockServer` and points every upstream URL at it.
+- `TestApp::new` starts one `wiremock::MockServer` and points every upstream URL at it, keeping the real paths: `OPENLIBRARY_URL` and `OPENLIBRARY_COVERS_URL` are the server's root (API paths like `/works/…` and cover paths like `/b/id/…` do not collide), `DNB_SRU_URL` is `{uri}/sru/dnb` and `DNB_OAI_URL` is `{uri}/oai/repository`.
+- Its `Outbound` throttles allow 1000 requests a second, so tests do not wait for the production spacing. A test of the throttle itself builds its own `HostThrottle`.
 - Tests mount mocks for Open Library, cover, DNB SRU and DNB OAI paths, and assert on the received requests: query parameters, User-Agent and call counts.
 - An unmatched request answers 404 and is recorded. `upstream_requests()` then shows that it was sent.
 - The local-reads parity tests assert `upstream_requests().is_empty()`.

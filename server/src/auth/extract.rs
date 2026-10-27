@@ -3,7 +3,9 @@
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
+use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine};
 
+use super::session::{self, CookieAction, CookieSlot, Presented, SessionKind};
 use crate::AppState;
 use crate::error::{AppError, msg};
 
@@ -35,13 +37,76 @@ pub struct InstanceAdmin(pub CurrentUser);
 impl FromRequestParts<AppState> for CurrentUser {
     type Rejection = AppError;
 
+    /// One query joins `sessions` and `users`. A session idle for over an hour slides: its
+    /// `expires_at` moves to 30 days (cookie) or 90 days (bearer) from now. A cookie that names
+    /// no live session gets a clearing `Set-Cookie` with the 401 (`session::maintain_cookie`).
     async fn from_request_parts(
-        _parts: &mut Parts,
-        _state: &AppState,
+        parts: &mut Parts,
+        state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        // Wave 1 step 3 resolves the bearer token or the session cookie (§5.1, §5.2).
-        Err(AppError::unauthorized())
+        let presented = session::presented(&parts.headers);
+        let slot = parts.extensions.get::<CookieSlot>().cloned();
+        let found = match presented.secret() {
+            Some((secret, kind)) => resolve(state, &secret, kind).await?,
+            None => None,
+        };
+        let Some((user, slid)) = found else {
+            if let (Presented::Cookie(_), Some(slot)) = (presented, &slot) {
+                slot.set(CookieAction::Clear);
+            }
+            return Err(AppError::unauthorized());
+        };
+        if let (true, Presented::Cookie(Some(secret)), Some(slot)) = (slid, presented, &slot) {
+            slot.set(CookieAction::Renew(BASE64_URL_SAFE_NO_PAD.encode(secret)));
+        }
+        Ok(user)
     }
+}
+
+/// The user behind a live session, and whether the session slid just now.
+async fn resolve(
+    state: &AppState,
+    secret: &[u8; 32],
+    kind: SessionKind,
+) -> Result<Option<(CurrentUser, bool)>, AppError> {
+    let mut conn = state.db.acquire().await?;
+    let Some(row) = sqlx::query!(
+        r#"SELECT s.id AS session_id, s.last_used_at < now() - interval '1 hour' AS "stale!",
+                  u.id, u.username, u.is_admin, u.email_verified_at IS NOT NULL AS "email_verified!",
+                  u.locale, u.timezone
+           FROM sessions s
+           JOIN users u ON u.id = s.user_id
+           WHERE s.token_hash = $1 AND s.kind = $2 AND s.expires_at > now()"#,
+        session::token_hash(secret),
+        kind as SessionKind
+    )
+    .fetch_optional(&mut *conn)
+    .await?
+    else {
+        return Ok(None);
+    };
+    if row.stale {
+        sqlx::query!(
+            "UPDATE sessions
+             SET last_used_at = now(),
+                 expires_at = now() + CASE kind WHEN 'cookie' THEN interval '30 days'
+                                                ELSE interval '90 days' END
+             WHERE id = $1",
+            row.session_id
+        )
+        .execute(&mut *conn)
+        .await?;
+    }
+    let user = CurrentUser {
+        id: row.id,
+        username: row.username,
+        is_admin: row.is_admin,
+        email_verified: row.email_verified,
+        locale: row.locale,
+        timezone: row.timezone,
+        session_id: row.session_id,
+    };
+    Ok(Some((user, row.stale)))
 }
 
 impl FromRequestParts<AppState> for MaybeUser {

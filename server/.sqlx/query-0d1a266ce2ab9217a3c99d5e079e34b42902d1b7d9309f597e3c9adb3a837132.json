@@ -1,0 +1,108 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.id AS post_id, p.work_id, p.author_id, p.parent_id, p.club_id, p.pick_id,\n                  m.role AS \"club_role?: Role\", p.deleted_at IS NOT NULL AS \"deleted!\"\n           FROM posts p\n           LEFT JOIN club_memberships m ON m.club_id = p.club_id AND m.user_id = $2\n           WHERE p.id = $1 AND bc_can_see_post($2, p.id)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "post_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "work_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "work_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "author_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "author_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "parent_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "parent_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "club_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "club_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "pick_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "pick_id"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "club_role?: Role",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "club_memberships",
+            "name": "role"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "deleted!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      null
+    ]
+  },
+  "hash": "0d1a266ce2ab9217a3c99d5e079e34b42902d1b7d9309f597e3c9adb3a837132"
+}

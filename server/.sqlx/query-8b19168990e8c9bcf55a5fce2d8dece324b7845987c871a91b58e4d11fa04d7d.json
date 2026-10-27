@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO email_tokens (user_id, purpose, email, token_hash, expires_at)\n           VALUES ($1, $2, $3, $4,\n                   now() + CASE $2 WHEN 'verify_email' THEN interval '48 hours'\n                                   ELSE interval '1 hour' END)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8b19168990e8c9bcf55a5fce2d8dece324b7845987c871a91b58e4d11fa04d7d"
+}

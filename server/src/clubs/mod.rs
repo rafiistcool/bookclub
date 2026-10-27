@@ -2,6 +2,7 @@
 //! (docs/phase1/conventions.md §5.3, endpoint-map §3).
 
 pub mod extract;
+pub mod invites;
 
 use utoipa_axum::router::OpenApiRouter;
 

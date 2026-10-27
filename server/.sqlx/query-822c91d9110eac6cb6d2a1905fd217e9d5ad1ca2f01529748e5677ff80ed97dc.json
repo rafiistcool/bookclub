@@ -1,0 +1,55 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users\n         SET notify_meeting = COALESCE($2, notify_meeting),\n             notify_pick = COALESCE($3, notify_pick),\n             notify_note = COALESCE($4, notify_note)\n         WHERE id = $1\n         RETURNING notify_meeting, notify_pick, notify_note",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "notify_meeting",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "notify_meeting"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "notify_pick",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "notify_pick"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "notify_note",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "notify_note"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bool",
+        "Bool",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "822c91d9110eac6cb6d2a1905fd217e9d5ad1ca2f01529748e5677ff80ed97dc"
+}

@@ -1,0 +1,71 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT c.slug, c.name, m.role, c.timezone,\n                  (SELECT count(*) FROM club_memberships x WHERE x.club_id = c.id) AS \"member_count!\"\n           FROM club_memberships m\n           JOIN clubs c ON c.id = m.club_id\n           WHERE m.user_id = $1\n           ORDER BY m.joined_at DESC, c.id DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "slug",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "clubs",
+            "name": "slug"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "clubs",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "role",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "club_memberships",
+            "name": "role"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "timezone",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "clubs",
+            "name": "timezone"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "member_count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "69d04e932d30b014e219af6f6811d6fe737e6cd2d21ee4e5ae807baf05224071"
+}
