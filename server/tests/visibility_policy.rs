@@ -117,13 +117,17 @@ async fn visible_user_hides_strangers_like_unknown_names(db: PgPool) {
             (404, "No member with that name")
         );
     }
-    let unknown = visibility::visible_user(&mut conn, v.co_member.id(), UNKNOWN)
-        .await
-        .unwrap_err();
-    assert_eq!(
-        (unknown.status.as_u16(), unknown.detail.as_ref()),
-        (404, "No member with that name")
-    );
+    // A NUL character (which Postgres cannot compare) names nobody, also no stranger.
+    for name in [UNKNOWN, "owner\u{0}", "\u{0}"] {
+        let unknown = visibility::visible_user(&mut conn, v.co_member.id(), name)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (unknown.status.as_u16(), unknown.detail.as_ref()),
+            (404, "No member with that name"),
+            "{name:?}"
+        );
+    }
 }
 
 #[sqlx::test]
@@ -381,6 +385,9 @@ async fn visible_owners_and_member_clubs(db: PgPool) {
     }
 }
 
+/// §6.3: a diary reply is visible when its root is visible and the viewer is the reply's
+/// author, the root's author, or in the reply author's audience. The replies by `former` and
+/// `otherclub` (whom the owner does not see) decide the root-author and audience clauses.
 #[sqlx::test]
 async fn diary_roots_and_replies(db: PgPool) {
     let app = TestApp::new(db).await;
@@ -389,20 +396,29 @@ async fn diary_roots_and_replies(db: PgPool) {
     let open = diary_root(&app, work, v.owner.id(), "audience").await;
     let private = diary_root(&app, work, v.owner.id(), "only_me").await;
     let answer = reply(&app, work, open, v.co_member.id()).await;
+    // Stands for a reply written before former left `shared`: the policy reads only today's
+    // memberships.
+    let by_former = reply(&app, work, open, v.former.id()).await;
+    let by_other_club = reply(&app, work, open, v.other_club.id()).await;
+    let all = [open, private, answer, by_former, by_other_club];
 
     let expectations: [(&TestClient, &[i64]); 5] = [
-        (&v.owner, &[open, private, answer]),
-        (&v.co_member, &[open, answer]),
-        // otherclub can see comember, but not the owner's root, so not the reply either.
+        // The root's author sees every reply, also from people outside their audience.
+        (&v.owner, &all),
+        // comember sees otherclub (club `other`), but former is in none of their clubs.
+        (&v.co_member, &[open, answer, by_other_club]),
+        // otherclub can see comember, but not the owner's root, so no reply either, not even
+        // their own.
         (&v.other_club, &[]),
         (&v.stranger, &[]),
         (&v.former, &[]),
     ];
+    let list = all.map(|id| id.to_string()).join(", ");
     for (viewer, expected) in expectations {
         let seen = ids(
             &app,
             format!(
-                "SELECT id FROM bc_visible_posts({}) WHERE id IN ({open}, {private}, {answer})",
+                "SELECT id FROM bc_visible_posts({}) WHERE id IN ({list})",
                 viewer.id()
             ),
         )
@@ -410,7 +426,7 @@ async fn diary_roots_and_replies(db: PgPool) {
         let mut expected = expected.to_vec();
         expected.sort_unstable();
         assert_eq!(seen, expected, "{}", viewer.username());
-        for post in [open, private, answer] {
+        for post in all {
             assert_eq!(
                 flag(
                     &app,

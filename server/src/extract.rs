@@ -6,7 +6,9 @@ use std::fmt;
 
 use axum::body::Bytes;
 use axum::extract::rejection::{BytesRejection, PathRejection};
-use axum::extract::{FromRequest, FromRequestParts, Multipart, Path, Query, Request};
+use axum::extract::{
+    FromRequest, FromRequestParts, Multipart, Path, Query, RawPathParams, Request,
+};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode};
@@ -26,6 +28,8 @@ pub const NOT_A_STRING: &str = "Input should be a valid string";
 pub const NOT_AN_INTEGER: &str = "Input should be a valid integer";
 pub const NOT_A_BOOLEAN: &str = "Input should be a valid boolean";
 pub const NOT_A_LIST: &str = "Input should be a valid list";
+/// Also the answer to a string value with a NUL character (U+0000) in a body, query or path:
+/// Postgres `text` cannot store it.
 pub const INVALID_VALUE: &str = "Invalid value";
 /// A query or path value that should be an integer.
 pub const INTEGER_PARSE: &str =
@@ -151,8 +155,23 @@ fn parse_json_body<T: DeserializeOwned>(is_json: bool, bytes: &[u8]) -> ApiResul
     if !value.is_object() {
         return Err(AppError::bad_request(NOT_AN_OBJECT));
     }
+    if has_nul(&value) {
+        return Err(AppError::bad_request(INVALID_VALUE));
+    }
     serde_path_to_error::deserialize(value)
         .map_err(|error| AppError::bad_request(json_message(&error.into_inner().to_string())))
+}
+
+/// Whether any string value in `value` contains U+0000, which no `text` column accepts (it
+/// would turn the request into a 500).
+fn has_nul(value: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    match value {
+        Value::String(text) => text.contains('\0'),
+        Value::Array(items) => items.iter().any(has_nul),
+        Value::Object(fields) => fields.values().any(has_nul),
+        Value::Null | Value::Bool(_) | Value::Number(_) => false,
+    }
 }
 
 /// Maps serde_json's message for the first deserialisation error to pydantic's wording.
@@ -177,7 +196,8 @@ fn json_message(serde_message: &str) -> &'static str {
 }
 
 /// Query parameters, deserialised like `axum::extract::Query`, rejections mapped to 400, then
-/// validated. Use [`lax_bool`] for boolean parameters.
+/// validated. Use [`lax_bool`] for boolean parameters. A value with a NUL character (`%00`) is
+/// 400 `Invalid value`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ApiQuery<T>(pub T);
 
@@ -189,6 +209,13 @@ where
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        if let Ok(Query(pairs)) = Query::<Vec<(String, String)>>::try_from_uri(&parts.uri)
+            && pairs
+                .iter()
+                .any(|(key, value)| key.contains('\0') || value.contains('\0'))
+        {
+            return Err(AppError::bad_request(INVALID_VALUE));
+        }
         let Query(value) = Query::<T>::try_from_uri(&parts.uri)
             .map_err(|rejection| AppError::bad_request(query_message(&rejection.body_text())))?;
         Ok(ApiQuery(validated(value)?))
@@ -217,7 +244,8 @@ fn query_message(text: &str) -> &'static str {
 }
 
 /// Path parameters. A non-numeric value for an integer parameter is 400; a numeric value that
-/// overflows its type is 404 `Not found` (no such row can exist).
+/// overflows its type is 404 `Not found` (no such row can exist). A value with a NUL character
+/// (`%00`) is 400 `Invalid value`, like one that is not UTF-8.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ApiPath<T>(pub T);
 
@@ -229,10 +257,16 @@ where
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        match Path::<T>::from_request_parts(parts, state).await {
-            Ok(Path(value)) => Ok(ApiPath(value)),
-            Err(rejection) => Err(path_rejection(rejection)),
+        let value = match Path::<T>::from_request_parts(parts, state).await {
+            Ok(Path(value)) => value,
+            Err(rejection) => return Err(path_rejection(rejection)),
+        };
+        if let Ok(raw) = RawPathParams::from_request_parts(parts, state).await
+            && raw.iter().any(|(_, value)| value.contains('\0'))
+        {
+            return Err(AppError::bad_request(INVALID_VALUE));
         }
+        Ok(ApiPath(value))
     }
 }
 
@@ -703,6 +737,37 @@ mod tests {
         assert_eq!(detail(&result), INTEGER_PARSE);
         let (status, _) = get_path("/clubs/book-club/picks/7").await;
         assert_eq!(status, StatusCode::OK);
+    }
+
+    /// Postgres `text` cannot store U+0000, so no extractor lets it reach a query.
+    #[tokio::test]
+    async fn nul_characters_are_invalid_values() {
+        for body in [
+            r#"{"name":"a\u0000b"}"#,
+            r#"{"name":"x","tags":["ok","\u0000"]}"#,
+            r#"{"name":"x","unknown":{"deep":"\u0000"}}"#,
+        ] {
+            let result = post_json(body).await;
+            assert_eq!(result.0, StatusCode::BAD_REQUEST, "{body}");
+            assert_eq!(detail(&result), INVALID_VALUE, "{body}");
+        }
+        for path in [
+            "/needs-q?q=a%00b",
+            "/needs-q?q=x&other=%00",
+            "/needs-q?q=x&%00=1",
+            "/clubs/a%00b/picks/1",
+        ] {
+            let result = get_path(path).await;
+            assert_eq!(result.0, StatusCode::BAD_REQUEST, "{path}");
+            assert_eq!(detail(&result), INVALID_VALUE, "{path}");
+        }
+        // An integer parameter keeps its own message.
+        let result = get_path("/items/%00").await;
+        assert_eq!(detail(&result), INTEGER_PARSE);
+        // Other control characters are fine.
+        let (status, body) = post_json(r#"{"name":"a\u0001b"}"#).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["name"], "a\u{1}b");
     }
 
     #[test]

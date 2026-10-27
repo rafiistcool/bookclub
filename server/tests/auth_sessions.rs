@@ -3,8 +3,14 @@
 
 mod common;
 
+use axum::Router;
 use axum::http::Method;
+use axum::middleware::from_fn_with_state;
+use axum::routing::get;
 use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine};
+use bookclub_server::AppState;
+use bookclub_server::auth::extract::{InstanceAdmin, MaybeUser, VerifiedUser};
+use bookclub_server::auth::session::maintain_cookie;
 use common::*;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -124,7 +130,8 @@ async fn production_cookies_are_secure(db: PgPool) {
 
 /// parity: test_selfhost.py::test_trusted_proxy_denies_forwarded_proto
 ///
-/// `X-Forwarded-Proto` never decides `Secure`; `COOKIE_SECURE=false` wins.
+/// `X-Forwarded-Proto` never decides `Secure`, not even from a trusted proxy;
+/// `COOKIE_SECURE=false` wins. (Python ignored it from an untrusted client only.)
 #[sqlx::test]
 async fn forwarded_proto_does_not_make_cookies_secure(db: PgPool) {
     let mut env = PRODUCTION_ENV.to_vec();
@@ -132,20 +139,23 @@ async fn forwarded_proto_does_not_make_cookies_secure(db: PgPool) {
     env.push(("TRUSTED_PROXIES", "127.0.0.1"));
     let app = TestApp::with_env(db, &env).await;
     app.user("ada").await;
-    let res = app
-        .anon()
-        .with_header("x-forwarded-proto", "https")
-        .post(
-            "/api/auth/login",
-            json!({"username": "ada", "password": PASSWORD}),
-        )
-        .await;
-    res.assert_status(204);
-    let cookie = res.set_cookies().pop().unwrap().to_lowercase();
-    assert!(cookie.contains("bookclub_session="));
-    assert!(!cookie.contains("secure"), "{cookie}");
-    assert!(cookie.contains("httponly"));
-    assert!(cookie.contains("samesite=lax"));
+    let untrusted = app.anon();
+    let proxy = app.anon().with_ip("127.0.0.1".parse().unwrap());
+    for client in [untrusted, proxy] {
+        let res = client
+            .with_header("x-forwarded-proto", "https")
+            .post(
+                "/api/auth/login",
+                json!({"username": "ada", "password": PASSWORD}),
+            )
+            .await;
+        res.assert_status(204);
+        let cookie = res.set_cookies().pop().unwrap().to_lowercase();
+        assert!(cookie.contains("bookclub_session="));
+        assert!(!cookie.contains("secure"), "{cookie}");
+        assert!(cookie.contains("httponly"));
+        assert!(cookie.contains("samesite=lax"));
+    }
 }
 
 /// Idle expiry slides (§5.1): a session used after more than an hour moves its expiry to 30
@@ -327,6 +337,98 @@ async fn the_bearer_token_wins_over_the_cookie(db: PgPool) {
     as_cookie.get("/api/auth/me").await.assert_status(401);
 }
 
+/// Logout with a bearer token deletes that token's session and sends no cookie (§5.1); the
+/// user's cookie session stays.
+#[sqlx::test]
+async fn logout_with_a_bearer_token(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let created = token(&app, "ada", "phone").await;
+    let id = created["session"]["id"].as_i64().unwrap();
+    let phone = app.anon().with_bearer(created["token"].as_str().unwrap());
+    let res = phone.post("/api/auth/logout", json!(null)).await;
+    res.assert_status(204);
+    assert!(res.set_cookies().is_empty());
+    phone.get("/api/auth/me").await.assert_status(401);
+    assert_eq!(
+        app.scalar_i64(&format!("SELECT count(*) FROM sessions WHERE id = {id}"))
+            .await,
+        0
+    );
+    ada.get("/api/auth/me").await.assert_status(200);
+}
+
+/// Token creation is the one session-creating route that leaves the caller's cookie session
+/// alone (§5.1): an app signed in from a browser does not sign the browser out.
+#[sqlx::test]
+async fn creating_a_token_keeps_the_cookie_session(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let cookie = ada.cookie();
+    let res = ada
+        .post(
+            "/api/auth/tokens",
+            json!({"username": "ada", "password": PASSWORD, "label": "phone"}),
+        )
+        .await;
+    res.assert_status(201);
+    assert!(res.set_cookies().is_empty());
+    assert_eq!(ada.cookie(), cookie);
+    ada.get("/api/auth/me").await.assert_status(200);
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM sessions WHERE user_id = {}",
+            ada.id()
+        ))
+        .await,
+        2
+    );
+}
+
+/// A cookie session's label is the browser's User-Agent, cut to 200 characters.
+#[sqlx::test]
+async fn cookie_sessions_are_labelled_with_the_user_agent(db: PgPool) {
+    let app = TestApp::new(db).await;
+    app.user("ada").await;
+    let firefox = app.anon().with_header("user-agent", "Firefox/140");
+    firefox
+        .post(
+            "/api/auth/login",
+            json!({"username": "ada", "password": PASSWORD}),
+        )
+        .await
+        .assert_status(204);
+    let items = firefox.get("/api/auth/sessions").await.json()["items"].clone();
+    let current: Vec<&Value> = items
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["current"] == true)
+        .collect();
+    assert_eq!(current.len(), 1);
+    assert_eq!(current[0]["kind"], "cookie");
+    assert_eq!(current[0]["label"], "Firefox/140");
+
+    let long = app.anon().with_header("user-agent", &"x".repeat(250));
+    long.post(
+        "/api/auth/login",
+        json!({"username": "ada", "password": PASSWORD}),
+    )
+    .await
+    .assert_status(204);
+    let items = long.get("/api/auth/sessions").await.json()["items"].clone();
+    let label = items
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["current"] == true)
+        .unwrap()["label"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(label, "x".repeat(200));
+}
+
 #[sqlx::test]
 async fn the_session_list(db: PgPool) {
     let app = TestApp::new(db).await;
@@ -434,13 +536,129 @@ async fn revoking_sessions(db: PgPool) {
     phone.get("/api/auth/me").await.assert_status(401);
     ada.get("/api/auth/me").await.assert_status(200);
 
-    // Revoking the current cookie session logs out.
+    // Revoking the current cookie session logs out. The session is stale, so the request
+    // slides it first; the handler's clearing cookie wins over the renewal (`maintain_cookie`).
     let own = session_of(&app, &ada).await;
+    app.exec(&format!(
+        "UPDATE sessions SET last_used_at = now() - interval '2 hours' WHERE id = {own}"
+    ))
+    .await;
     let res = ada.delete(&format!("/api/auth/sessions/{own}")).await;
     res.assert_status(204);
-    assert!(res.set_cookies()[0].contains("Max-Age=0"));
+    let cookies = res.set_cookies();
+    assert_eq!(cookies.len(), 1, "{cookies:?}");
+    assert!(cookies[0].starts_with("bookclub_session=;"), "{cookies:?}");
+    assert!(cookies[0].contains("Max-Age=0"));
     assert!(ada.cookie().is_none());
     ada.get("/api/auth/me").await.assert_status(401);
+}
+
+/// A router with one route per optional or restricting extractor (§5.3), behind the cookie
+/// layer as in `lib.rs`. Each route answers the caller's username, or `anonymous`.
+fn extractor_routes(state: AppState) -> Router {
+    Router::new()
+        .route(
+            "/maybe",
+            get(|MaybeUser(user): MaybeUser| async move {
+                user.map_or_else(|| "anonymous".to_owned(), |user| user.username)
+            }),
+        )
+        .route(
+            "/verified",
+            get(|VerifiedUser(user): VerifiedUser| async move { user.username }),
+        )
+        .route(
+            "/admin",
+            get(|InstanceAdmin(user): InstanceAdmin| async move { user.username }),
+        )
+        .layer(from_fn_with_state(state.clone(), maintain_cookie))
+        .with_state(state)
+}
+
+/// `MaybeUser`, `VerifiedUser` and `InstanceAdmin` for every kind of caller. A dead cookie is
+/// cleared only with a 401: `MaybeUser` answers as usual and leaves it (§5.1).
+#[sqlx::test]
+async fn optional_verified_and_admin_extractors(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let grace = app.user_unverified("grace").await;
+    let root = app.admin("root").await;
+    let dead = app.user("dead").await;
+    app.exec(&format!(
+        "UPDATE sessions SET expires_at = now() - interval '1 second' WHERE user_id = {}",
+        dead.id()
+    ))
+    .await;
+    let router = extractor_routes(app.state.clone());
+    let client = |who: Option<&TestClient>| {
+        let client = TestClient::for_router(router.clone());
+        client.set_cookie(who.and_then(TestClient::cookie).as_deref());
+        client
+    };
+    let answer = |res: &TestResponse, expected: &str| {
+        res.assert_status(200);
+        assert_eq!(res.text(), expected);
+        assert!(res.set_cookies().is_empty(), "{:?}", res.set_cookies());
+    };
+
+    let anon = client(None);
+    answer(&anon.get("/maybe").await, "anonymous");
+    anon.get("/verified")
+        .await
+        .assert_detail(401, "Not signed in");
+    anon.get("/admin").await.assert_detail(401, "Not signed in");
+
+    let verified = client(Some(&ada));
+    answer(&verified.get("/maybe").await, "ada");
+    answer(&verified.get("/verified").await, "ada");
+    verified.get("/admin").await.assert_detail(404, "Not found");
+
+    let unverified = client(Some(&grace));
+    answer(&unverified.get("/maybe").await, "grace");
+    unverified
+        .get("/verified")
+        .await
+        .assert_detail(403, "Verify your email address first");
+    unverified
+        .get("/admin")
+        .await
+        .assert_detail(404, "Not found");
+
+    let admin = client(Some(&root));
+    answer(&admin.get("/admin").await, "root");
+    answer(&admin.get("/verified").await, "root");
+
+    let stale = client(Some(&dead));
+    answer(&stale.get("/maybe").await, "anonymous");
+    assert_eq!(stale.cookie(), dead.cookie(), "the dead cookie is kept");
+    for path in ["/verified", "/admin"] {
+        let stale = client(Some(&dead));
+        let res = stale.get(path).await;
+        res.assert_detail(401, "Not signed in");
+        let cleared = res.set_cookies();
+        assert_eq!(cleared.len(), 1, "{path}: {cleared:?}");
+        assert!(cleared[0].starts_with("bookclub_session=;"));
+        assert!(cleared[0].contains("Max-Age=0"));
+        assert!(stale.cookie().is_none());
+    }
+}
+
+/// When the session lookup fails, `MaybeUser` answers 500 instead of treating the caller as
+/// anonymous, and the cookie is kept. A request without a session needs no lookup.
+#[tokio::test]
+async fn maybe_user_does_not_hide_a_failed_lookup() {
+    let router = extractor_routes(test_state(unreachable_db()));
+    let anon = TestClient::for_router(router.clone());
+    let res = anon.get("/maybe").await;
+    res.assert_status(200);
+    assert_eq!(res.text(), "anonymous");
+
+    let signed_in = TestClient::for_router(router);
+    signed_in.set_cookie(Some(&BASE64_URL_SAFE_NO_PAD.encode([7u8; 32])));
+    let res = signed_in.get("/maybe").await;
+    res.assert_detail(500, "Internal Server Error");
+    assert!(res.set_cookies().is_empty());
+    assert!(signed_in.cookie().is_some());
 }
 
 /// The origin check (§5.8) with a real session: a cookie request from a foreign origin is

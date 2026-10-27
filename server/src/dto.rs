@@ -133,7 +133,8 @@ pub struct UserOut {
     pub username: String,
     pub email: Option<String>,
     pub email_verified: bool,
-    /// The address a verification link was last sent to, while it is not verified.
+    /// An email change waiting for confirmation: the address of the newest open verification
+    /// link, only while the account's own address is verified; else null.
     pub pending_email: Option<String>,
     pub needs_email_prompt: bool,
     pub theme: String,

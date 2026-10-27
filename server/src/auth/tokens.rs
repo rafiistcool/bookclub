@@ -11,7 +11,7 @@ use time::OffsetDateTime;
 use utoipa::ToSchema;
 
 use super::extract::CurrentUser;
-use super::login::{authenticate, store_rehash};
+use super::login::{authenticate, confirm};
 use super::rules;
 use super::session::{self, Presented, SessionKind};
 use crate::AppState;
@@ -90,7 +90,7 @@ pub async fn create_token(
 ) -> ApiResult<(StatusCode, Json<TokenOut>)> {
     let account = authenticate(&state, ip, &body.username, &body.password).await?;
     let mut tx = state.db.begin().await?;
-    store_rehash(&mut tx, &account).await?;
+    confirm(&mut tx, &account).await?;
     let new_session =
         session::create(&mut tx, account.user_id, SessionKind::Bearer, &body.label).await?;
     tx.commit().await?;

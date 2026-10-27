@@ -5,6 +5,10 @@ use bookclub_server::app;
 use common::{get, test_state, unreachable_db};
 use sqlx::PgPool;
 
+/// parity: test_auth.py::test_health
+///
+/// Reasoned change: the body is `{"status": "ok"}` instead of `{"ok": true}`, and a database
+/// that does not answer gives 503 (docs/phase1/spec/auth.md §5.4, "Health").
 #[sqlx::test]
 async fn health_is_ok_when_the_database_answers(db: PgPool) {
     let res = get(app(test_state(db)), "/api/health").await;

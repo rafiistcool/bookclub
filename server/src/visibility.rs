@@ -59,13 +59,17 @@ pub async fn relation(conn: &mut PgConnection, viewer: i64, owner: i64) -> sqlx:
 
 /// Resolves `?username=` for personal reads. The name is stripped and lowercased like every
 /// username lookup. 404 `No member with that name` for an unknown name and for a stranger
-/// alike, so the answer never tells them apart. The viewer resolves to themselves.
+/// alike, so the answer never tells them apart; a name with a NUL character is unknown too.
+/// The viewer resolves to themselves.
 pub async fn visible_user(
     conn: &mut PgConnection,
     viewer: i64,
     username: &str,
 ) -> ApiResult<UserSummaryRow> {
     let username = normalize_username(username);
+    if username.contains('\0') {
+        return Err(AppError::not_found(msg::NO_MEMBER));
+    }
     sqlx::query_as!(
         UserSummaryRow,
         r#"SELECT u.id, u.username, m.public_id AS "avatar_public_id?"

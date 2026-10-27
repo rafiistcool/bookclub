@@ -75,7 +75,8 @@ impl FromRequestParts<AppState> for ClubMember {
 }
 
 /// The `{slug}` path parameter. When any parameter of the path is not valid UTF-8, axum reads
-/// none of them: such a path names no club the caller can see, so 404 `No such club`.
+/// none of them: such a path names no club the caller can see, so 404 `No such club`. A slug
+/// with a NUL character (`%00`) names none either (and Postgres could not compare it).
 async fn path_slug(parts: &mut Parts) -> ApiResult<String> {
     let params = match RawPathParams::from_request_parts(parts, &()).await {
         Ok(params) => params,
@@ -84,11 +85,15 @@ async fn path_slug(parts: &mut Parts) -> ApiResult<String> {
         }
         Err(rejection) => return Err(AppError::internal(rejection.body_text())),
     };
-    params
+    let slug = params
         .iter()
         .find(|(key, _)| *key == "slug")
         .map(|(_, value)| value.to_owned())
-        .ok_or_else(|| AppError::internal("club extractor on a route without {slug}"))
+        .ok_or_else(|| AppError::internal("club extractor on a route without {slug}"))?;
+    if slug.contains('\0') {
+        return Err(AppError::not_found(msg::NO_SUCH_CLUB));
+    }
+    Ok(slug)
 }
 
 impl FromRequestParts<AppState> for ClubAdmin {
@@ -200,6 +205,7 @@ mod tests {
         for path in [
             "/api/clubs/%ff/picks/1",
             "/api/clubs/thursday-readers/picks/%ff",
+            "/api/clubs/a%00b/picks/1",
         ] {
             assert_eq!(
                 call(path).await,

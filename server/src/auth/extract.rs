@@ -2,6 +2,7 @@
 //! their argument list, so a signed-out request is 401 before its body is looked at.
 
 use axum::extract::FromRequestParts;
+use axum::http::StatusCode;
 use axum::http::request::Parts;
 use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine};
 
@@ -22,7 +23,9 @@ pub struct CurrentUser {
     pub session_id: i64,
 }
 
-/// The user when signed in, `None` otherwise. Never rejects.
+/// The user when signed in, `None` otherwise (also for a dead cookie, which is then not
+/// cleared: only a 401 clears it). Rejects only when the session lookup itself fails (500), so
+/// a database error never turns a signed-in caller into an anonymous one.
 #[derive(Debug, Clone)]
 pub struct MaybeUser(pub Option<CurrentUser>);
 
@@ -116,9 +119,11 @@ impl FromRequestParts<AppState> for MaybeUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        Ok(MaybeUser(
-            CurrentUser::from_request_parts(parts, state).await.ok(),
-        ))
+        match CurrentUser::from_request_parts(parts, state).await {
+            Ok(user) => Ok(MaybeUser(Some(user))),
+            Err(error) if error.status == StatusCode::UNAUTHORIZED => Ok(MaybeUser(None)),
+            Err(error) => Err(error),
+        }
     }
 }
 

@@ -134,8 +134,24 @@ async fn a_single_use_invite_cannot_be_reused(db: PgPool) {
     let again = client
         .post("/api/auth/register", body("grace", "TESTINVITE"))
         .await;
-    again.assert_status(400);
+    again.assert_detail(400, "That invite code is not valid");
     assert!(again.detail().to_lowercase().contains("invite"));
+    assert!(client.cookie().is_none());
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM users WHERE username = 'grace'")
+            .await,
+        0
+    );
+    assert_eq!(
+        app.scalar_i64("SELECT use_count::bigint FROM club_invites WHERE code = 'TESTINVITE'")
+            .await,
+        1
+    );
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM club_invite_uses")
+            .await,
+        1
+    );
 }
 
 /// parity: test_auth.py::test_invite_cannot_be_used_twice_concurrently
@@ -151,7 +167,19 @@ async fn a_single_use_invite_admits_one_of_two_concurrent_sign_ups(db: PgPool) {
     let mut statuses = vec![a.status.as_u16(), g.status.as_u16()];
     statuses.sort_unstable();
     assert_eq!(statuses, vec![201, 400]);
+    let loser = if a.status == 400 { &a } else { &g };
+    loser.assert_detail(400, "That invite code is not valid");
     assert_eq!(app.scalar_i64("SELECT count(*) FROM users").await, 1);
+    assert_eq!(
+        app.scalar_i64("SELECT use_count::bigint FROM club_invites WHERE code = 'TESTINVITE'")
+            .await,
+        1
+    );
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM club_invite_uses")
+            .await,
+        1
+    );
     let ada_ok = login(&app.anon(), "ada").await.status == 204;
     let grace_ok = login(&app.anon(), "grace").await.status == 204;
     assert!(ada_ok ^ grace_ok);
@@ -488,6 +516,96 @@ async fn sign_ups_are_limited_per_ip(db: PgPool) {
         .post("/api/auth/register", body("user5", "LINK"))
         .await
         .assert_status(201);
+}
+
+/// The order of §5.5: malformed bodies are refused before the limit and cost nothing; every
+/// validated attempt counts, also one refused for a taken name, a missing or an invalid
+/// invite code, so invite codes and names cannot be probed for free.
+#[sqlx::test]
+async fn every_validated_sign_up_attempt_counts_against_the_ip_limit(db: PgPool) {
+    let app = TestApp::new(db).await;
+    signup_invite(&app, "LINK", None).await;
+    app.user("taken").await;
+    let here = app.anon().with_ip(ip(7));
+    for _ in 0..6 {
+        let mut malformed = body("ada", "LINK");
+        malformed["email"] = json!("nope");
+        here.post("/api/auth/register", malformed)
+            .await
+            .assert_detail(400, "Enter a valid email address");
+    }
+    here.post("/api/auth/register", json!({"username": "ada"}))
+        .await
+        .assert_detail(400, "Field required");
+    for code in ["NOPE", "WRONG", "NOTHING"] {
+        here.post("/api/auth/register", body("ada", code))
+            .await
+            .assert_detail(400, "That invite code is not valid");
+    }
+    here.post("/api/auth/register", body("taken", "LINK"))
+        .await
+        .assert_detail(409, "That username is already taken");
+    here.post("/api/auth/register", body("ada", ""))
+        .await
+        .assert_detail(400, "Sign-up needs an invite code right now");
+    let refused = here.post("/api/auth/register", body("ada", "LINK")).await;
+    refused.assert_detail(429, "Too many attempts. Wait a few minutes.");
+    assert!(refused.header("retry-after").is_some());
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM users WHERE username = 'ada'")
+            .await,
+        0
+    );
+    assert!(app.email.sent_to("ada@example.test").is_empty());
+}
+
+/// Only a plain address is accepted (§5.5). Spellings that a mail library delivers to a
+/// verified account's mailbox are refused, so they can neither get a verification link to it
+/// past the "address in use" notice nor bypass the per-address mail limit.
+#[sqlx::test]
+async fn mailbox_spellings_of_an_address_are_refused(db: PgPool) {
+    let app = TestApp::new(db).await;
+    signup_invite(&app, "TESTINVITE", None).await;
+    app.user("grace").await;
+    for spelling in [
+        "<grace@example.test>",
+        "x<grace@example.test>",
+        "Grace <grace@example.test>",
+        "\"grace\"@example.test",
+        "(1)grace@example.test",
+        "grace(1)@example.test",
+        "a,grace@example.test",
+    ] {
+        let mut attempt = body("ada", "TESTINVITE");
+        attempt["email"] = json!(spelling);
+        app.anon()
+            .post("/api/auth/register", attempt)
+            .await
+            .assert_detail(400, "Enter a valid email address");
+    }
+    let mut nul = body("ada", "TESTINVITE");
+    nul["email"] = json!("gr\u{0}ace@example.test");
+    app.anon()
+        .post("/api/auth/register", nul)
+        .await
+        .assert_detail(400, "Invalid value");
+    app.anon()
+        .post("/api/auth/register", body("ada", "TEST\u{0}INVITE"))
+        .await
+        .assert_detail(400, "Invalid value");
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM users").await, 1);
+    assert!(app.sent_emails().is_empty());
+
+    // The plain address itself gets the notice, as before.
+    let mut plain = body("ada", "TESTINVITE");
+    plain["email"] = json!("grace@example.test");
+    app.anon()
+        .post("/api/auth/register", plain)
+        .await
+        .assert_status(201);
+    let to_grace = app.email.sent_to("grace@example.test");
+    assert_eq!(to_grace.len(), 1);
+    assert!(!to_grace[0].text.contains("#token="));
 }
 
 /// Every mail to one address counts against 6 a day; over it the mail is silently dropped and

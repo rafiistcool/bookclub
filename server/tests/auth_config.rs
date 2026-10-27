@@ -55,9 +55,11 @@ async fn config_is_public_branding(db: PgPool) {
 }
 
 /// parity: test_selfhost.py::test_branded_app_config_cors_and_user_agent
+/// parity: test_selfhost.py::test_invalid_theme_warns_and_falls_back
 ///
 /// Reasoned changes: the name comes from `SERVICE_NAME`; the accent colours are fixed (no
-/// `BOOKCLUB_THEME`); the manifest is a static file; the public origin needs no CORS (the SPA
+/// `BOOKCLUB_THEME`, so there is no invalid theme to warn about: `theme` is always the legacy
+/// default `#b44a2a`); the manifest is a static file; the public origin needs no CORS (the SPA
 /// is same-origin).
 #[sqlx::test]
 async fn config_follows_the_service_settings(db: PgPool) {
@@ -140,9 +142,12 @@ async fn dev_mode_cors_keeps_vite(db: PgPool) {
 }
 
 /// parity: test_selfhost.py::test_production_app_registers_and_hides_docs
+/// parity: test_selfhost.py::test_dotenv_only_production_boot
 ///
 /// Reasoned changes: health answers `{"status":"ok"}`; `GET /api/openapi.json` is public
-/// (the API contract); the sign-up needs an email and an invite from the database.
+/// (the API contract); the sign-up needs an email and an invite from the database. The
+/// configuration comes from the environment only (no `.env` file, no generated
+/// `.bootstrap_invite`), so the production boot from the documented variables is this test.
 #[sqlx::test]
 async fn a_production_app_registers(db: PgPool) {
     let app = TestApp::with_env(db, &PRODUCTION_ENV).await;
@@ -183,11 +188,14 @@ async fn a_production_app_registers(db: PgPool) {
 }
 
 /// parity: test_selfhost.py::test_production_refuses_demo_secret_and_invite
+/// parity: test_selfhost.py::test_placeholder_detection
+/// parity: test_selfhost.py::test_production_generates_and_reuses_secrets
 ///
-/// Reasoned change: there are no secrets or bootstrap invites to refuse any more. Startup
-/// refuses the production settings that would be unsafe instead: no `TRUSTED_PROXIES` (one
-/// client could lock everyone behind the proxy out of sign-up), and the log mail transport,
-/// which writes reset links to the log.
+/// Reasoned change: there are no secrets or bootstrap invites to detect, refuse, generate or
+/// reuse any more (sessions and invites are database rows; `Secure` comes from
+/// `COOKIE_SECURE`, not an HTTPS mode). Startup refuses the production settings that would be
+/// unsafe instead: no `TRUSTED_PROXIES` (one client could lock everyone behind the proxy out of
+/// sign-up), and the log mail transport, which writes reset links to the log.
 #[test]
 fn production_startup_refuses_unsafe_settings() {
     let without_proxies: Vec<(&str, &str)> = PRODUCTION_ENV

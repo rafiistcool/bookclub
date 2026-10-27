@@ -223,7 +223,8 @@ pub async fn update_notifications(
 /// Changes the password. It shares the login failure limit (10 wrong current passwords in ten
 /// minutes, then 429); a right current password clears it. Every other session and bearer
 /// token of the user is deleted, and every open reset link is voided; the current session
-/// stays.
+/// stays. A password change or reset that commits while this one verifies wins: this one then
+/// answers `Current password is wrong`.
 #[utoipa::path(
     patch,
     path = "/api/auth/password",
@@ -243,16 +244,16 @@ pub async fn change_password(
     State(state): State<AppState>,
     ApiJson(body): ApiJson<PasswordChangeIn>,
 ) -> ApiResult<StatusCode> {
+    let stored = sqlx::query_scalar!("SELECT password_hash FROM users WHERE id = $1", user.id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(AppError::unauthorized)?;
     let key = format!("u:{}", user.id);
     state
         .limits
         .login_failures
         .check_and_hit(&key)
         .map_err(too_many)?;
-    let stored = sqlx::query_scalar!("SELECT password_hash FROM users WHERE id = $1", user.id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(AppError::unauthorized)?;
     let verdict = state
         .passwords
         .verify(&body.current_password, Some(&stored))
@@ -268,13 +269,20 @@ pub async fn change_password(
     let new_hash = state.passwords.hash(&body.new_password).await?;
 
     let mut tx = state.db.begin().await?;
-    sqlx::query!(
-        "UPDATE users SET password_hash = $2, password_changed_at = now() WHERE id = $1",
+    // Only over the hash that was verified: a change or reset that committed meanwhile wins.
+    let stored_now = sqlx::query!(
+        "UPDATE users SET password_hash = $3, password_changed_at = now()
+         WHERE id = $1 AND password_hash = $2",
         user.id,
+        stored,
         new_hash
     )
     .execute(&mut *tx)
-    .await?;
+    .await?
+    .rows_affected();
+    if stored_now == 0 {
+        return Err(AppError::bad_request(msg::CURRENT_PASSWORD_WRONG));
+    }
     sqlx::query!(
         "DELETE FROM sessions WHERE user_id = $1 AND id <> $2",
         user.id,

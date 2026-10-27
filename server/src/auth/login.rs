@@ -37,9 +37,10 @@ impl Validate for LoginIn {
 /// An account whose password was just verified.
 pub(crate) struct Authenticated {
     pub user_id: i64,
-    /// `(stored, new)` when the stored hash uses old parameters: store `new` in the login
-    /// transaction with [`store_rehash`].
-    pub rehash: Option<(String, String)>,
+    /// The stored hash the password was verified against.
+    pub stored: String,
+    /// A hash with the current parameters when `stored` uses old ones.
+    pub rehash: Option<String>,
 }
 
 /// Signs in with a cookie session. Ten failures per account (or per unknown-name bucket) in
@@ -65,7 +66,7 @@ pub async fn login(
 ) -> ApiResult<Response> {
     let account = authenticate(&state, ip, &body.username, &body.password).await?;
     let mut tx = state.db.begin().await?;
-    store_rehash(&mut tx, &account).await?;
+    confirm(&mut tx, &account).await?;
     let new_session = session::create(
         &mut tx,
         account.user_id,
@@ -110,7 +111,8 @@ pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> ApiRes
 ///    no account) per 10 minutes, counted with `check_and_hit` **before** the password is
 ///    verified, so concurrent guesses cannot pass together; a success clears the key.
 ///
-/// An unknown account verifies against a dummy hash, so it takes as long as a real one.
+/// An unknown account verifies against a dummy hash, so it takes as long as a real one. The
+/// caller creates the session in a transaction that starts with [`confirm`].
 pub(crate) async fn authenticate(
     state: &AppState,
     ip: IpAddr,
@@ -142,26 +144,46 @@ pub(crate) async fn authenticate(
     };
     state.limits.login_failures.clear(&key);
     let rehash = if rehash {
-        Some((stored, state.passwords.hash(password).await?))
+        Some(state.passwords.hash(password).await?)
     } else {
         None
     };
-    Ok(Authenticated { user_id, rehash })
+    Ok(Authenticated {
+        user_id,
+        stored,
+        rehash,
+    })
 }
 
-/// Stores the rehashed password of a login, unless the password changed meanwhile.
-pub(crate) async fn store_rehash(
-    conn: &mut PgConnection,
-    account: &Authenticated,
-) -> sqlx::Result<()> {
-    if let Some((stored, new)) = &account.rehash {
+/// The first step of the transaction that creates the session of an [`authenticate`]d login:
+/// locks the user row and checks that the verified hash is still the stored one, then stores
+/// the rehash.
+///
+/// The password was verified outside any transaction. A password change or reset that
+/// committed since then answers 401 `Wrong username or password` here; one that commits later
+/// waits for this transaction, so its session revocation sees the new session. Either way no
+/// session made with the old password outlives the change. The lock is `FOR NO KEY UPDATE`,
+/// not `FOR SHARE`, so two logins of one account that both rehash cannot deadlock.
+pub(crate) async fn confirm(conn: &mut PgConnection, account: &Authenticated) -> ApiResult<()> {
+    let current = sqlx::query_scalar!(
+        "SELECT password_hash FROM users WHERE id = $1 FOR NO KEY UPDATE",
+        account.user_id
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+    if current.as_deref() != Some(account.stored.as_str()) {
+        return Err(AppError::new(
+            StatusCode::UNAUTHORIZED,
+            msg::WRONG_CREDENTIALS,
+        ));
+    }
+    if let Some(new) = &account.rehash {
         sqlx::query!(
-            "UPDATE users SET password_hash = $3 WHERE id = $1 AND password_hash = $2",
+            "UPDATE users SET password_hash = $2 WHERE id = $1",
             account.user_id,
-            stored,
             new
         )
-        .execute(conn)
+        .execute(&mut *conn)
         .await?;
     }
     Ok(())

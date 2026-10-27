@@ -6,13 +6,14 @@ pub mod templates;
 use anyhow::Context;
 use lettre::message::Mailbox;
 use lettre::message::header::ContentType;
-use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+use lettre::{Address, AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 
 use crate::config::Config;
 
 /// One plain-text message.
 #[derive(Clone, Debug)]
 pub struct Email {
+    /// A plain address (`auth::rules::valid_email`), never a mailbox with a display name.
     pub to: String,
     pub subject: String,
     pub text: String,
@@ -65,9 +66,12 @@ impl SmtpEmail {
 #[async_trait::async_trait]
 impl EmailSender for SmtpEmail {
     async fn send(&self, msg: Email) -> anyhow::Result<()> {
+        // A bare address: a display name or angle brackets in `to` could never pick the
+        // recipient.
+        let to: Address = msg.to.parse().context("invalid recipient address")?;
         let message = Message::builder()
             .from(self.from.clone())
-            .to(msg.to.parse().context("invalid recipient address")?)
+            .to(Mailbox::new(None, to))
             .subject(msg.subject)
             .header(ContentType::TEXT_PLAIN)
             .body(msg.text)
@@ -122,5 +126,28 @@ mod tests {
         assert!(error.to_string().contains("EMAIL_FROM"));
         let error = SmtpEmail::new(&config(&[])).err().unwrap();
         assert!(error.to_string().contains("SMTP_URL"));
+    }
+
+    /// The recipient is parsed as a bare address before anything is sent, so a mailbox
+    /// spelling cannot choose where the mail goes.
+    #[tokio::test]
+    async fn smtp_takes_only_bare_recipient_addresses() {
+        let smtp = SmtpEmail::new(&config(&[
+            ("SMTP_URL", "smtp://127.0.0.1:1"),
+            ("EMAIL_FROM", "Bookclub <noreply@example.com>"),
+        ]))
+        .unwrap();
+        for to in ["x <victim@example.test>", "<victim@example.test>"] {
+            let email = Email {
+                to: to.into(),
+                subject: "Hi".into(),
+                text: "Body".into(),
+            };
+            let error = smtp.send(email).await.unwrap_err();
+            assert!(
+                error.to_string().contains("invalid recipient address"),
+                "{to}: {error:#}"
+            );
+        }
     }
 }

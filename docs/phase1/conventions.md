@@ -272,7 +272,7 @@ The specs list several endpoints where validation runs before a 404. Keep those:
 `ApiJson<T>` is the only JSON body extractor. Never use `axum::Json` for input; `Json` for output is fine.
 
 1. An empty body gives 400 `Field required`, whatever the content type (checked first, parity with FastAPI). A body over the route's `DefaultBodyLimit` gives 413 `Request body is too large`.
-2. The `Content-Type` must be `application/json` (parameters allowed). Otherwise 400 `Input should be a valid dictionary or object to extract fields from`. Unparsable JSON gives 400 `JSON decode error`. A non-object gives 400 `Input should be a valid dictionary or object to extract fields from`.
+2. The `Content-Type` must be `application/json` (parameters allowed). Otherwise 400 `Input should be a valid dictionary or object to extract fields from`. Unparsable JSON gives 400 `JSON decode error`. A non-object gives 400 `Input should be a valid dictionary or object to extract fields from`. A string value anywhere in the body (unknown keys included) that contains U+0000 gives 400 `Invalid value`: Postgres `text` cannot store it, and the statement would fail with a 500.
 3. The value is deserialised with `serde_path_to_error`. The first serde error maps to a pydantic-style message:
 
    | serde error | detail |
@@ -328,6 +328,7 @@ Where the specs say `null` means "unchanged", use a plain `Option<T>`.
 
 - **`ApiQuery<T>`** (`T: DeserializeOwned + Validate`) maps rejections the same way: a missing field is `Field required`, a non-integer `Input should be a valid integer, unable to parse string as an integer`, a bad boolean `Input should be a valid boolean, unable to interpret input`. Boolean query parameters use `#[serde(default, deserialize_with = "crate::extract::lax_bool")]`, which accepts `true/false/1/0/yes/no/on/off/t/f/y/n` in any case (parity for `include_reading`). Integer bounds are checked in `Validate` with the pydantic wording. The message strings are `pub const`s in `extract.rs` (`FIELD_REQUIRED`, `INTEGER_PARSE`, …).
 - **`ApiPath<T>`:** a non-numeric id gives 400 `Input should be a valid integer, unable to parse string as an integer`. A numeric id that does not exist is a 404 from the handler. A numeric id that overflows its type is rejected by `ApiPath` itself with 404 `Not found` (the extractor cannot know the handler's string; no such row can exist).
+- **NUL characters:** a query key or value, or a string path value, that decodes to a string with U+0000 (`%00`) gives 400 `Invalid value` from `ApiQuery`/`ApiPath`, as in a JSON body (§4.3). The club extractors answer a `{slug}` with U+0000 with 404 `No such club`, and `visibility::visible_user` treats such a name as unknown (404 `No member with that name`). Multipart text fields and filenames are not checked: an upload handler that stores one must reject U+0000 itself.
 
 ### 4.6 Multipart and body limits
 
@@ -402,7 +403,8 @@ pub struct CurrentUser {
     pub id: i64, pub username: String, pub is_admin: bool, pub email_verified: bool,
     pub locale: String, pub timezone: String, pub session_id: i64,
 }
-pub struct MaybeUser(pub Option<CurrentUser>);
+pub struct MaybeUser(pub Option<CurrentUser>);  // None when signed out or for a dead cookie (not cleared);
+                                                // a failed session lookup (500) rejects instead of None
 pub struct VerifiedUser(pub CurrentUser);   // 403 "Verify your email address first"
 pub struct InstanceAdmin(pub CurrentUser);  // 404 "Not found" for everyone else
 
@@ -467,8 +469,9 @@ pub async fn club_refs(conn: &mut PgConnection, club_ids: &[i64]) -> sqlx::Resul
       pub async fn verify(&self, password: &str, stored: Option<&str>) -> Verdict;
   }
   ```
-- **Login order** (`auth::login::authenticate`, shared by login and token creation): `login_ip.check_and_hit(ip_key)` → look the account up → `login_failures.check_and_hit(u:<id> | unknown_identifier_key)` → verify → on success `clear` the key and, when `rehash`, hash again and store it in the login transaction (`UPDATE … WHERE password_hash = <old>`, so a concurrent password change wins). Identifiers are stripped and lowercased; one containing `@` is looked up as a **verified** address (`lower(email) = lower($1)`).
-- **Password change**: `login_failures.check_and_hit(u:<id>)` → verify the current password (400 `Current password is wrong`) → `clear` the key → 400 `Pick a different password` when the new one equals it → hash → one transaction: store it, bump `password_changed_at`, delete every other session and token, void every open reset link. A right current password clears the failures even when the answer is `Pick a different password` (reasoned change: the hit was counted before verifying, and Python neither recorded nor cleared there).
+- **Login order** (`auth::login::authenticate`, shared by login and token creation): `login_ip.check_and_hit(ip_key)` → look the account up → `login_failures.check_and_hit(u:<id> | unknown_identifier_key)` → verify → on success `clear` the key and, when `rehash`, hash again. The transaction that creates the session starts with `auth::login::confirm`: it locks the user row (`SELECT password_hash … FOR NO KEY UPDATE`; not `FOR SHARE`, so two rehashing logins of one account cannot deadlock), answers 401 `Wrong username or password` when the hash is no longer the one verified, and stores the rehash. A password change or reset that committed during the verify therefore wins, and one that commits later waits for the login, so its session revocation deletes the new session too. Identifiers are stripped and lowercased; one containing `@` is looked up as a **verified** address (`lower(email) = lower($1)`).
+- **Password change**: read the stored hash → `login_failures.check_and_hit(u:<id>)` → verify the current password (400 `Current password is wrong`) → `clear` the key → 400 `Pick a different password` when the new one equals it → hash → one transaction: store it only over the verified hash (`UPDATE … WHERE id = $1 AND password_hash = <verified>`; 0 rows, i.e. a change or reset committed meanwhile, is 400 `Current password is wrong`), bump `password_changed_at`, delete every other session and token, void every open reset link. A right current password clears the failures even when the answer is `Pick a different password` (reasoned change: the hit was counted before verifying, and Python neither recorded nor cleared there).
+- **Password reset confirm** (Wave 1 step 4) stores the new hash and deletes the sessions in one transaction; `confirm` and the guarded change UPDATE above then keep a racing login or change from outliving it.
 - **Unknown accounts** run a verify against a fixed dummy hash, so their timing matches.
 - **Rules:**
   - Length ≥ 8 is counted in **characters** (`chars().count()`), with no maximum.
@@ -506,6 +509,7 @@ pub async fn club_refs(conn: &mut PgConnection, club_ids: &[i64]) -> sqlx::Resul
   ```
 
 **Addresses and uniqueness.** Only **verified** addresses are unique (`users_verified_email_key`), and only verified addresses are used for login by email and for reset. An unverified address is just what someone typed; it cannot squat anyone's address.
+- **Accepted addresses** (`auth::rules::valid_email`, 400 `Enter a valid email address`): at most 254 characters, a plain `local@domain` with an RFC 5322 dot-atom local part (atext plus non-ASCII letters; no quotes, comments, angle brackets, commas, whitespace, control or format characters) and a domain of at least two labels of letters, digits and inner hyphens, which lettre also parses as an `Address` unchanged. Anything a mail library could read as another mailbox (`"a"@b.de`, `(c)a@b.de`, `x<a@b.de>`) is refused, so `verified_holder`, `users_verified_email_key` and the `email_target` limit always see the address the mail goes to. `SmtpEmail` sends to `Mailbox::new(None, address)`, never to a parsed mailbox string. Provider aliases (`a+tag@`, Gmail dots) remain distinct addresses.
 - `users.email` is the account address. On an account with no verified address, a sign-up or `PUT /api/auth/me/email` writes the new address there at once (unverified). On an account with a verified address, the new address lives only on the open `verify_email` token until it is verified; `UserOut.pending_email` shows it.
 - **No enumeration.** Register and `PUT /api/auth/me/email` never reveal whether an address is in use: they answer exactly as for a free address. When the address already belongs to a **verified** account, no verification link is sent; that address gets the "someone tried to use your address" notice instead (§9). The new account keeps an unverified address it can never verify.
 
@@ -1050,11 +1054,12 @@ Open Library cover rows are created by `ingest::ol_cover_media` with `storage_ke
 ## 9. Email (W1)
 
 ```rust
-#[derive(Clone, Debug)] pub struct Email { pub to: String, pub subject: String, pub text: String }
+#[derive(Clone, Debug)] pub struct Email { pub to: String /* a bare address (§5.5), never "Name <addr>" */, pub subject: String, pub text: String }
 #[async_trait::async_trait]
 pub trait EmailSender: Send + Sync { async fn send(&self, msg: Email) -> anyhow::Result<()>; }
 pub struct LogEmail;        // logs to and subject, plus the full body, at INFO: the dev transport (EMAIL_TRANSPORT=log, DEV_MODE only)
-pub struct SmtpEmail { … }  // lettre AsyncSmtpTransport<Tokio1Executor>, rustls, pooled; from SMTP_URL
+pub struct SmtpEmail { … }  // lettre AsyncSmtpTransport<Tokio1Executor>, rustls, pooled; from SMTP_URL;
+                            // parses `to` as lettre::Address and sends to Mailbox::new(None, address)
 // tests: CapturingEmail (tests/common) keeps every message
 ```
 
@@ -1483,7 +1488,21 @@ impl FakeCatalog {
 // upsert_edition_with_work(WorkGrouping::NewWork, Mode::Refresh), without one with upsert_work.
 ```
 
-**`tests/common/visibility.rs`** is the template for `tests/<pkg>_visibility.rs` (§6.5): `Viewers::new(&app)` creates `owner`, `comember` (shares the club `shared` with the owner, and the club `other` with `otherclub`), `otherclub`, `stranger` and `former` (left `shared`); `audience()` and `strangers()` list them; `assert_hidden_like_unknown(viewer, |name| path, "owner")` asserts that a stranger's answer is a 404 identical to the one for the unknown name `visibility::UNKNOWN`. `tests/harness.rs` tests the harness itself.
+**`tests/common/visibility.rs`** is the template for `tests/<pkg>_visibility.rs` (§6.5). `Viewers::new(&app)` returns
+
+```rust
+pub struct Viewers {
+    pub owner: TestClient,       // user `owner`: the data belongs to them
+    pub co_member: TestClient,   // user `comember`: in `shared` with the owner, and in `other` with `otherclub`
+    pub other_club: TestClient,  // user `otherclub`: owns `other`, a club the owner is not in
+    pub stranger: TestClient,    // user `stranger`: in no club
+    pub former: TestClient,      // user `former`: was in `shared` and left
+    pub shared: TestClub,        // the owner's club ("Shared")
+    pub other: TestClub,         // otherclub's club ("Other")
+}
+```
+
+`audience()` (`[&co_member]`) and `strangers()` (`[&other_club, &stranger, &former]`) list the viewers; `assert_hidden_like_unknown(viewer, |name| path, "owner")` asserts that a stranger's answer is a 404 identical to the one for the unknown name `visibility::UNKNOWN`. Paths use the usernames (`?username=owner`), code uses the fields (`v.co_member`). `tests/harness.rs` tests the harness itself.
 
 ### 17.3 Faking outbound HTTP
 
@@ -1659,7 +1678,7 @@ pub struct SearchPage { pub items: Vec<SearchHit>, pub page: i32, pub has_more: 
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct UserOut {
     pub id: i64, pub username: String, pub email: Option<String>, pub email_verified: bool,
-    pub pending_email: Option<String>,   // the address a verification link was last sent to, when not yet verified
+    pub pending_email: Option<String>,   // an email change waiting for confirmation: the newest open verification link's address, only while the account's own address is verified; else null
     pub needs_email_prompt: bool, pub theme: String, pub color_mode: String, pub locale: String,
     pub timezone: String, pub avatar_url: Option<String>, pub is_admin: bool, pub clubs: Vec<ClubSummary>,
 }

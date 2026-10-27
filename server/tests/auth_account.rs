@@ -4,11 +4,17 @@
 mod common;
 
 use std::net::IpAddr;
+use std::time::Duration;
 
 use common::*;
-use futures::future::join_all;
+use futures::stream::{FuturesUnordered, StreamExt};
 use serde_json::json;
 use sqlx::PgPool;
+use tokio::sync::OwnedSemaphorePermit;
+use tokio::time::timeout;
+
+/// How long a test waits for an answer that must come without verifying a password.
+const WAIT: Duration = Duration::from_secs(10);
 
 async fn login(client: &TestClient, username: &str, password: &str) -> TestResponse {
     client
@@ -21,6 +27,14 @@ async fn login(client: &TestClient, username: &str, password: &str) -> TestRespo
 
 fn change(current: &str, new: &str) -> serde_json::Value {
     json!({"current_password": current, "new_password": new})
+}
+
+/// Takes every permit of the password semaphore: until the guard drops, no password is hashed
+/// or verified, and requests that need one wait.
+async fn hold_passwords(app: &TestApp) -> OwnedSemaphorePermit {
+    let permits = app.state.passwords.permits.clone();
+    let all = u32::try_from(permits.available_permits()).unwrap();
+    permits.acquire_many_owned(all).await.unwrap()
 }
 
 #[sqlx::test]
@@ -464,7 +478,7 @@ async fn wrong_current_passwords_share_the_login_limit(db: PgPool) {
     for _ in 0..10 {
         ada.patch("/api/auth/password", change("nope-nope", "newpassword1"))
             .await
-            .assert_status(400);
+            .assert_detail(400, "Current password is wrong");
     }
     ada.patch("/api/auth/password", change(PASSWORD, "newpassword1"))
         .await
@@ -472,24 +486,162 @@ async fn wrong_current_passwords_share_the_login_limit(db: PgPool) {
     login(&app.anon(), "ada", PASSWORD).await.assert_status(429);
 }
 
-/// Of many concurrent wrong current passwords, at most ten are verified.
+/// Of many concurrent wrong current passwords, at most ten are verified. No password can be
+/// verified while the test holds the semaphore, so twenty refusals must arrive before any
+/// verdict (see auth_login.rs).
 #[sqlx::test]
 async fn concurrent_wrong_current_passwords_verify_at_most_ten(db: PgPool) {
     let app = TestApp::new(db).await;
     let ada = app.user("ada").await;
-    let attempts = (0..30u16).map(|n| {
-        let ip: IpAddr = format!("2001:db8:{n:x}::1").parse().unwrap();
-        let client = ada.clone().with_ip(ip);
+    let held = hold_passwords(&app).await;
+    let mut pending: FuturesUnordered<_> = (0..30u16)
+        .map(|n| {
+            let ip: IpAddr = format!("2001:db8:{n:x}::1").parse().unwrap();
+            let client = ada.clone().with_ip(ip);
+            async move {
+                client
+                    .patch("/api/auth/password", change("nope-nope", "newpassword1"))
+                    .await
+            }
+        })
+        .collect();
+    for n in 0..20 {
+        let res = timeout(WAIT, pending.next())
+            .await
+            .unwrap_or_else(|_| panic!("only {n} attempts were refused before verifying"))
+            .unwrap();
+        res.assert_detail(429, "Too many attempts. Wait a few minutes.");
+    }
+    drop(held);
+    for _ in 0..10 {
+        let res = timeout(WAIT, pending.next()).await.unwrap().unwrap();
+        res.assert_detail(400, "Current password is wrong");
+    }
+    assert!(pending.next().await.is_none());
+}
+
+/// A right current password clears the failures even when the change is refused with `Pick a
+/// different password` (§5.4). Refused changes leave every session, bearer token and reset
+/// link of the user alone.
+#[sqlx::test]
+async fn refused_changes_keep_sessions_and_a_right_password_clears_failures(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let laptop = app.anon();
+    login(&laptop, "ada", PASSWORD).await.assert_status(204);
+    let created = app
+        .anon()
+        .post(
+            "/api/auth/tokens",
+            json!({"username": "ada", "password": PASSWORD, "label": "phone"}),
+        )
+        .await;
+    created.assert_status(201);
+    let phone = app
+        .anon()
+        .with_bearer(created.json()["token"].as_str().unwrap());
+    app.exec(&format!(
+        "INSERT INTO email_tokens (user_id, purpose, email, token_hash, expires_at)
+         VALUES ({}, 'reset_password', 'ada@example.test', sha256('r'), now() + interval '1 hour')",
+        ada.id()
+    ))
+    .await;
+    let stored = || async {
+        sqlx::query_as::<_, (String, bool)>(
+            "SELECT password_hash, password_changed_at < now() - interval '1 hour'
+             FROM users WHERE id = $1",
+        )
+        .bind(ada.id())
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+    };
+    app.exec(&format!(
+        "UPDATE users SET password_changed_at = now() - interval '1 day' WHERE id = {}",
+        ada.id()
+    ))
+    .await;
+    let before = stored().await;
+    assert!(before.1);
+
+    for _ in 0..9 {
+        ada.patch("/api/auth/password", change("nope-nope", "newpassword1"))
+            .await
+            .assert_detail(400, "Current password is wrong");
+    }
+    ada.patch("/api/auth/password", change(PASSWORD, PASSWORD))
+        .await
+        .assert_detail(400, "Pick a different password");
+    ada.patch("/api/auth/password", change(PASSWORD, "short"))
+        .await
+        .assert_detail(400, "New password must be at least 8 characters");
+    // The right password cleared the nine failures: ten more are answered, the eleventh not.
+    for _ in 0..10 {
+        ada.patch("/api/auth/password", change("nope-nope", "newpassword1"))
+            .await
+            .assert_detail(400, "Current password is wrong");
+    }
+    ada.patch("/api/auth/password", change("nope-nope", "newpassword1"))
+        .await
+        .assert_detail(429, "Too many attempts. Wait a few minutes.");
+
+    for client in [&ada, &laptop, &phone] {
+        client.get("/api/auth/me").await.assert_status(200);
+    }
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM email_tokens
+             WHERE user_id = {} AND purpose = 'reset_password' AND used_at IS NULL",
+            ada.id()
+        ))
+        .await,
+        1
+    );
+    assert_eq!(stored().await, before, "nothing was changed");
+}
+
+/// A change verified against a hash that a password reset (or another change) replaced
+/// meanwhile does not overwrite it (§5.4).
+#[sqlx::test]
+async fn a_change_racing_a_reset_does_not_overwrite_it(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let reset = app.state.passwords.hash("resetpassword1").await.unwrap();
+    let key = format!("u:{}", ada.id());
+    // Nine earlier failures: the change's own hit blocks the key, which shows that it has read
+    // the old hash.
+    for _ in 0..9 {
+        app.state.limits.login_failures.hit(&key);
+    }
+    let held = hold_passwords(&app).await;
+    let changing = tokio::spawn({
+        let ada = ada.clone();
         async move {
-            client
-                .patch("/api/auth/password", change("nope-nope", "newpassword1"))
+            ada.patch("/api/auth/password", change(PASSWORD, "newpassword1"))
                 .await
-                .status
-                .as_u16()
         }
     });
-    let statuses = join_all(attempts).await;
-    let verified = statuses.iter().filter(|s| **s == 400).count();
-    let refused = statuses.iter().filter(|s| **s == 429).count();
-    assert_eq!((verified, refused), (10, 20), "{statuses:?}");
+    timeout(WAIT, async {
+        while !app.state.limits.login_failures.is_limited(&key) {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    })
+    .await
+    .expect("the change never reached the password check");
+    app.exec(&format!(
+        "UPDATE users SET password_hash = '{reset}' WHERE id = {}",
+        ada.id()
+    ))
+    .await;
+    drop(held);
+    changing
+        .await
+        .unwrap()
+        .assert_detail(400, "Current password is wrong");
+    login(&app.anon(), "ada", "resetpassword1")
+        .await
+        .assert_status(204);
+    login(&app.anon(), "ada", "newpassword1")
+        .await
+        .assert_status(401);
 }

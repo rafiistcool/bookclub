@@ -4,11 +4,17 @@
 mod common;
 
 use std::net::IpAddr;
+use std::time::Duration;
 
 use common::*;
-use futures::future::join_all;
+use futures::stream::{FuturesUnordered, StreamExt};
 use serde_json::{Value, json};
 use sqlx::PgPool;
+use tokio::sync::OwnedSemaphorePermit;
+use tokio::time::timeout;
+
+/// How long a test waits for an answer that must come without verifying a password.
+const WAIT: Duration = Duration::from_secs(10);
 
 /// Made by the Python app's `argon2.PasswordHasher()` (argon2-cffi 25.1: argon2id, v=19,
 /// m=65536, t=3, p=4) for "correct horse battery staple" (backend/.venv, 2026-10-27).
@@ -28,6 +34,26 @@ async fn login(client: &TestClient, username: &str, password: &str) -> TestRespo
 
 fn ip(n: u16) -> IpAddr {
     format!("2001:db8:{n:x}::1").parse().unwrap()
+}
+
+/// Takes every permit of the password semaphore: until the guard drops, no password is hashed
+/// or verified, and requests that need one wait.
+async fn hold_passwords(app: &TestApp) -> OwnedSemaphorePermit {
+    let permits = app.state.passwords.permits.clone();
+    let all = u32::try_from(permits.available_permits()).unwrap();
+    permits.acquire_many_owned(all).await.unwrap()
+}
+
+/// Waits until the login failure key `key` is blocked, i.e. until the request that made the
+/// tenth hit has looked the account up and waits to verify the password.
+async fn until_limited(app: &TestApp, key: &str) {
+    timeout(WAIT, async {
+        while !app.state.limits.login_failures.is_limited(key) {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    })
+    .await
+    .expect("the request never reached the password check");
 }
 
 /// parity: test_auth.py::test_me_requires_session
@@ -195,19 +221,122 @@ async fn login_attempts_are_limited_per_ip(db: PgPool) {
 }
 
 /// `check_and_hit` before verifying (§10.1): of many concurrent wrong logins for one account,
-/// at most ten get to verify a password.
+/// at most ten get to verify a password. No password can be verified while the test holds the
+/// semaphore, so thirty refusals must arrive before any verdict: a limit that counted only
+/// after a failed verify would let all forty wait for the semaphore.
 #[sqlx::test]
 async fn concurrent_wrong_logins_verify_at_most_ten_passwords(db: PgPool) {
     let app = TestApp::new(db).await;
     app.user("ada").await;
-    let attempts = (0..40).map(|n| {
-        let client = app.anon().with_ip(ip(n));
-        async move { login(&client, "ada", "nope").await.status.as_u16() }
+    let held = hold_passwords(&app).await;
+    let mut pending: FuturesUnordered<_> = (0..40)
+        .map(|n| {
+            let client = app.anon().with_ip(ip(n));
+            async move { login(&client, "ada", "nope").await }
+        })
+        .collect();
+    for n in 0..30 {
+        let res = timeout(WAIT, pending.next())
+            .await
+            .unwrap_or_else(|_| panic!("only {n} attempts were refused before verifying"))
+            .unwrap();
+        res.assert_detail(429, "Too many attempts. Wait a few minutes.");
+    }
+    drop(held);
+    for _ in 0..10 {
+        let res = timeout(WAIT, pending.next()).await.unwrap().unwrap();
+        res.assert_detail(401, "Wrong username or password");
+    }
+    assert!(pending.next().await.is_none());
+}
+
+/// A login (or token creation) whose password was verified while a password change or reset
+/// committed creates no session (§5.4): its transaction sees the new hash and answers 401, so
+/// the change's revocation cannot miss the new session or token.
+#[sqlx::test]
+async fn a_login_racing_a_password_change_creates_no_session(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let changed = app.state.passwords.hash("newpassword1").await.unwrap();
+    let key = format!("u:{}", ada.id());
+    // Eight earlier failures: the two attempts' own hits block the key, which shows that both
+    // have read the old hash.
+    for _ in 0..8 {
+        app.state.limits.login_failures.hit(&key);
+    }
+    let held = hold_passwords(&app).await;
+    let browser = app.anon();
+    let cookie_login = tokio::spawn({
+        let browser = browser.clone();
+        async move { login(&browser, "ada", PASSWORD).await }
     });
-    let statuses = join_all(attempts).await;
-    let verified = statuses.iter().filter(|s| **s == 401).count();
-    let refused = statuses.iter().filter(|s| **s == 429).count();
-    assert_eq!((verified, refused), (10, 30), "{statuses:?}");
+    let app_login = tokio::spawn({
+        let client = app.anon().with_ip(ip(1));
+        async move {
+            client
+                .post(
+                    "/api/auth/tokens",
+                    json!({"username": "ada", "password": PASSWORD, "label": "phone"}),
+                )
+                .await
+        }
+    });
+    until_limited(&app, &key).await;
+    // The change commits while both attempts wait to verify the old password.
+    app.exec(&format!(
+        "UPDATE users SET password_hash = '{changed}', password_changed_at = now() WHERE id = {id};
+         DELETE FROM sessions WHERE user_id = {id};",
+        id = ada.id()
+    ))
+    .await;
+    drop(held);
+    for res in [cookie_login.await.unwrap(), app_login.await.unwrap()] {
+        res.assert_detail(401, "Wrong username or password");
+        assert!(res.set_cookies().is_empty());
+    }
+    assert!(browser.cookie().is_none());
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM sessions WHERE user_id = {}",
+            ada.id()
+        ))
+        .await,
+        0
+    );
+    login(&app.anon(), "ada", "newpassword1")
+        .await
+        .assert_status(204);
+}
+
+/// A NUL character, which Postgres `text` cannot store, is 400 and never a 500.
+#[sqlx::test]
+async fn nul_characters_in_credentials_are_400(db: PgPool) {
+    let app = TestApp::new(db).await;
+    app.user("ada").await;
+    for body in [
+        json!({"username": "ada\u{0}", "password": PASSWORD}),
+        json!({"username": "ada@example.test\u{0}", "password": PASSWORD}),
+        json!({"username": "ada", "password": "pass\u{0}word1"}),
+    ] {
+        app.anon()
+            .post("/api/auth/login", body.clone())
+            .await
+            .assert_detail(400, "Invalid value");
+        let mut token = body;
+        token["label"] = json!("phone");
+        app.anon()
+            .post("/api/auth/tokens", token)
+            .await
+            .assert_detail(400, "Invalid value");
+    }
+    app.anon()
+        .post(
+            "/api/auth/tokens",
+            json!({"username": "ada", "password": PASSWORD, "label": "ph\u{0}one"}),
+        )
+        .await
+        .assert_detail(400, "Invalid value");
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM sessions").await, 1);
 }
 
 /// A legacy argon2-cffi hash (m=65536, t=3, p=4) verifies unchanged and is rehashed with the
