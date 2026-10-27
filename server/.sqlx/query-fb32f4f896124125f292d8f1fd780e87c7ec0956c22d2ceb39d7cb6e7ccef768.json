@@ -1,0 +1,60 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.post_id AS \"post_id!\", r.emoji AS \"emoji!\", r.user_id AS \"user_id!\",\n                  CASE WHEN o.user_id IS NOT NULL THEN u.username END AS \"username?\"\n           FROM post_reactions r\n           JOIN users u ON u.id = r.user_id\n           LEFT JOIN bc_visible_owners($1) AS o ON o.user_id = r.user_id\n           WHERE r.post_id = ANY($2)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "post_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "post_reactions",
+            "name": "post_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "emoji!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "post_reactions",
+            "name": "emoji"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "user_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "post_reactions",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "username?",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      null
+    ]
+  },
+  "hash": "fb32f4f896124125f292d8f1fd780e87c7ec0956c22d2ceb39d7cb6e7ccef768"
+}
