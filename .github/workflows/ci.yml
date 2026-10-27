@@ -47,3 +47,39 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
+
+  server:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: bookclub
+          POSTGRES_PASSWORD: bookclub
+          POSTGRES_DB: bookclub
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bookclub"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      DATABASE_URL: postgres://bookclub:bookclub@localhost:5432/bookclub
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+      - name: Format
+        run: cargo fmt --check
+      - name: Lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --locked

@@ -1,0 +1,22 @@
+# Postgres for local development and tests of the Rust server.
+#   docker compose -f server/compose.yaml up -d
+# Matches DATABASE_URL=postgres://bookclub:bookclub@127.0.0.1:5432/bookclub
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: bookclub
+      POSTGRES_PASSWORD: bookclub
+      POSTGRES_DB: bookclub
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bookclub"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  postgres-data:
