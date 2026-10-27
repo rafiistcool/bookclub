@@ -377,6 +377,13 @@ async fn refused_invites_are_not_used(db: PgPool) {
     accept(&ada, &code).await.assert_detail(400, INVALID);
     assert_eq!(use_count(&app, &code).await, 0);
     assert_eq!(members(&app, &club).await, 2);
+    let listed = owner
+        .get(&format!("/api/clubs/{}/invites", club.slug))
+        .await
+        .json();
+    assert_eq!(listed["items"][0]["code"], code.as_str());
+    assert_eq!(listed["items"][0]["active"], false, "expired");
+    assert_eq!(listed["items"][0]["revoked"], false);
     accept(&app.anon(), &code)
         .await
         .assert_detail(401, "Not signed in");
@@ -635,6 +642,87 @@ async fn a_join_waits_for_the_deletion_of_its_inviter_without_deadlock(db: PgPoo
     assert_eq!(use_count(&app, &code).await, 1);
 }
 
+/// The same for an inviter who created the club, handed it over and left: the deletion also
+/// clears `clubs.created_by`, so it locks the club before the account row (§5.6). Otherwise the
+/// join would hold the club and wait for the account row, and the deletion the other way round.
+#[sqlx::test]
+async fn a_join_through_the_link_of_a_former_creator_takes_turns_with_their_deletion(db: PgPool) {
+    let app = TestApp::new(db).await;
+    for (tag, join_first) in [("a", true), ("b", false)] {
+        let creator = app.user(&format!("creator_{tag}")).await;
+        let heir = app.user(&format!("heir_{tag}")).await;
+        let club = app.club(&creator, "Readers").await;
+        app.join(&club, &heir, "member").await;
+        let code = link(&creator, &club).await;
+        creator
+            .post(
+                &format!("/api/clubs/{}/transfer", club.slug),
+                json!({"username": heir.username()}),
+            )
+            .await
+            .assert_status(200);
+        creator
+            .post(&format!("/api/clubs/{}/leave", club.slug), json!({}))
+            .await
+            .assert_status(204);
+        let ada = app.user(&format!("ada_{tag}")).await;
+        let joining = {
+            let ada = ada.clone();
+            let code = code.clone();
+            async move { accept(&ada, &code).await }
+        };
+        let deleting = {
+            let creator = creator.clone();
+            async move {
+                creator
+                    .delete_json("/api/auth/me", json!({"password": PASSWORD}))
+                    .await
+            }
+        };
+        let (joined, deleted) = if join_first {
+            in_order(&app, &club, joining, deleting).await
+        } else {
+            let (deleted, joined) = in_order(&app, &club, deleting, joining).await;
+            (joined, deleted)
+        };
+        joined.assert_status(200);
+        deleted.assert_status(204);
+        assert_eq!(
+            app.scalar_i64(&format!(
+                "SELECT count(*) FROM club_memberships
+                 WHERE club_id = {} AND user_id = {} AND invited_by IS NULL",
+                club.id,
+                ada.id()
+            ))
+            .await,
+            1
+        );
+        assert_eq!(use_count(&app, &code).await, 1);
+    }
+}
+
+/// Sends `first`, waits until it queues behind a held lock on the club, then `second`, and
+/// releases the lock: the two run in that order.
+async fn in_order(
+    app: &TestApp,
+    club: &TestClub,
+    first: impl Future<Output = TestResponse> + Send + 'static,
+    second: impl Future<Output = TestResponse> + Send + 'static,
+) -> (TestResponse, TestResponse) {
+    let mut hold = app.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM clubs WHERE id = $1 FOR UPDATE")
+        .bind(club.id)
+        .execute(&mut *hold)
+        .await
+        .unwrap();
+    let first = tokio::spawn(first);
+    wait_for_waiters(app, 1).await;
+    let second = tokio::spawn(second);
+    wait_for_waiters(app, 2).await;
+    hold.commit().await.unwrap();
+    (first.await.unwrap(), second.await.unwrap())
+}
+
 async fn wait_for_a_lock(app: &TestApp) {
     wait_for_waiters(app, 1).await;
 }
@@ -796,4 +884,47 @@ async fn the_beta_invite_command_prints_a_link(db: PgPool) {
         Some(2),
         "clap refuses out-of-range flags"
     );
+
+    // The admin list shows no creator for an invite the CLI minted.
+    let app = TestApp::new(db).await;
+    let listed = app.admin("root").await.get("/api/admin/invites").await;
+    listed.assert_status(200);
+    let items = listed.json()["items"].clone();
+    assert_eq!(items.as_array().unwrap().len(), 2);
+    for item in items.as_array().unwrap() {
+        assert_eq!(item["created_by"], Value::Null, "{item}");
+    }
+}
+
+/// An invite outlives the accounts that made and used it: `created_by` becomes null and
+/// `used_by` leaves the deleted account out, while `use_count` keeps counting the use.
+#[sqlx::test]
+async fn invites_name_nobody_once_their_accounts_are_gone(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let owner = app.user("owner").await;
+    let admin = app.user("admin").await;
+    let club = app.club(&owner, "Readers").await;
+    app.join(&club, &admin, "admin").await;
+    let code = link(&admin, &club).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    for who in [&ada, &bob] {
+        accept(who, &code).await.assert_status(200);
+    }
+    for who in [&admin, &ada] {
+        who.delete_json("/api/auth/me", json!({"password": PASSWORD}))
+            .await
+            .assert_status(204);
+    }
+
+    let res = owner
+        .get(&format!("/api/clubs/{}/invites", club.slug))
+        .await;
+    res.assert_status(200);
+    let item = res.json()["items"][0].clone();
+    assert_eq!(item["code"], code.as_str());
+    assert_eq!(item["created_by"], Value::Null);
+    assert_eq!(item["used_by"], json!(["bob"]));
+    assert_eq!(item["use_count"], 2);
+    assert_eq!(item["active"], true);
 }

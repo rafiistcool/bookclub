@@ -83,11 +83,10 @@ pub async fn delete_account(
 /// `verified_hash` is the hash the password was checked against: a password change or reset
 /// that committed since then wins (400 `Current password is wrong`).
 ///
-/// Locks are taken in the order of every membership write (§5.3): the clubs the user belongs to,
-/// then the account, then the user's posts. The cascade below deletes the user's memberships and
-/// removal rows and clears `created_by` on their invites; a removal, a club delete or a join in
-/// one of those clubs holds the club and then needs those rows (or the account's row for a
-/// foreign key), so locking the account first could deadlock with it.
+/// Locks are taken in the order of every membership write (§5.3): every club the deletion writes
+/// in ([`lock_clubs`]), then the account, then the user's posts. A removal, a club delete or a
+/// join holds its club and then needs rows of that club the deletion writes (or the account's
+/// row for a foreign key), so locking the account first could deadlock with it.
 pub async fn delete_user(
     conn: &mut PgConnection,
     user_id: i64,
@@ -126,25 +125,49 @@ pub async fn delete_user(
     Ok(prefixes)
 }
 
-/// Locks the rows of every club the user belongs to, in id order like every membership write,
+/// Locks the row of every club the deletion writes in, in id order like every membership write,
 /// and returns the ids of the ones the user owns.
+///
+/// Those are the clubs that hold a row of the user or a reference to them, which the cascade of
+/// `DELETE FROM users` deletes or clears: memberships (also those the user invited), removals,
+/// `clubs.created_by`, invites and invite uses, picks, milestones, posts, reactions,
+/// nominations, ballots and events. A user who left a club can still have such rows in it. A
+/// new table that references both a club and a user belongs in this list.
 async fn lock_clubs(conn: &mut PgConnection, user_id: i64) -> sqlx::Result<Vec<i64>> {
-    let rows = sqlx::query!(
-        r#"SELECT c.id, m.role = 'owner' AS "owned!"
-           FROM clubs c
-           JOIN club_memberships m ON m.club_id = c.id
-           WHERE m.user_id = $1
-           ORDER BY c.id
-           FOR UPDATE OF c"#,
+    let locked = sqlx::query_scalar!(
+        "SELECT id FROM clubs
+         WHERE created_by = $1
+            OR id IN (
+                SELECT club_id FROM club_memberships WHERE user_id = $1 OR invited_by = $1
+                UNION ALL SELECT club_id FROM club_removals WHERE user_id = $1
+                UNION ALL SELECT club_id FROM club_invites WHERE created_by = $1
+                UNION ALL SELECT i.club_id FROM club_invite_uses u
+                          JOIN club_invites i ON i.id = u.invite_id
+                          WHERE u.user_id = $1
+                UNION ALL SELECT club_id FROM club_picks WHERE set_by = $1
+                UNION ALL SELECT club_id FROM milestones WHERE created_by = $1
+                UNION ALL SELECT club_id FROM posts WHERE author_id = $1
+                UNION ALL SELECT p.club_id FROM post_reactions r
+                          JOIN posts p ON p.id = r.post_id
+                          WHERE r.user_id = $1
+                UNION ALL SELECT club_id FROM next_up_nominations WHERE nominated_by = $1
+                UNION ALL SELECT club_id FROM next_up_ballots WHERE user_id = $1
+                UNION ALL SELECT club_id FROM events WHERE actor_id = $1)
+         ORDER BY id
+         FOR UPDATE",
         user_id
     )
-    .fetch_all(conn)
+    .fetch_all(&mut *conn)
     .await?;
-    Ok(rows
-        .into_iter()
-        .filter(|row| row.owned)
-        .map(|row| row.id)
-        .collect())
+    // A new statement, so it reads the roles as they are now that the clubs are locked.
+    sqlx::query_scalar!(
+        "SELECT club_id FROM club_memberships
+         WHERE user_id = $1 AND role = 'owner' AND club_id = ANY($2)",
+        user_id,
+        &locked
+    )
+    .fetch_all(conn)
+    .await
 }
 
 /// Deletes the clubs the user owns alone; 409 when one has other members. `owned` are already

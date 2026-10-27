@@ -947,3 +947,127 @@ async fn the_current_avatar_goes_even_without_an_uploader(db: PgPool) {
     );
     assert_eq!(stored_under(&app, &bobs_prefix), 1);
 }
+
+/// Every kind of row a user can leave in a club they do not belong to (or belong to), as SQL
+/// with `{c}` the club, `{a}` the user, `{o}` the club's owner and `{w}` a work.
+const CLUB_TRACES: &[(&str, &str)] = &[
+    (
+        "member",
+        "INSERT INTO club_memberships (club_id, user_id, role) VALUES ({c}, {a}, 'member')",
+    ),
+    (
+        "creator",
+        "UPDATE clubs SET created_by = {a} WHERE id = {c}",
+    ),
+    (
+        "inviter of a member",
+        "UPDATE club_memberships SET invited_by = {a} WHERE club_id = {c} AND user_id = {o}",
+    ),
+    (
+        "removed",
+        "INSERT INTO club_removals (club_id, user_id) VALUES ({c}, {a})",
+    ),
+    (
+        "invite",
+        "INSERT INTO club_invites (club_id, code, created_by, max_uses)
+         VALUES ({c}, 'CODE{c}', {a}, 5)",
+    ),
+    (
+        "invite use",
+        "WITH i AS (INSERT INTO club_invites (club_id, code, max_uses) VALUES ({c}, 'USE{c}', 5)
+                    RETURNING id)
+         INSERT INTO club_invite_uses (invite_id, user_id) SELECT id, {a} FROM i",
+    ),
+    (
+        "pick",
+        "INSERT INTO club_picks (club_id, work_id, set_by) VALUES ({c}, {w}, {a})",
+    ),
+    (
+        "milestone",
+        "WITH p AS (INSERT INTO club_picks (club_id, work_id) VALUES ({c}, {w}) RETURNING id)
+         INSERT INTO milestones (club_id, pick_id, title, created_by)
+         SELECT {c}, id, 'Part one', {a} FROM p",
+    ),
+    (
+        "post",
+        "WITH p AS (INSERT INTO club_picks (club_id, work_id) VALUES ({c}, {w}) RETURNING id)
+         INSERT INTO posts (work_id, author_id, club_id, pick_id, body)
+         SELECT {w}, {a}, {c}, id, 'club talk' FROM p",
+    ),
+    (
+        "reaction",
+        "WITH p AS (INSERT INTO club_picks (club_id, work_id) VALUES ({c}, {w}) RETURNING id),
+              q AS (INSERT INTO posts (work_id, author_id, club_id, pick_id, body)
+                    SELECT {w}, {o}, {c}, id, 'club talk' FROM p RETURNING id)
+         INSERT INTO post_reactions (post_id, user_id, emoji) SELECT id, {a}, '🔥' FROM q",
+    ),
+    (
+        "nomination",
+        "WITH v AS (INSERT INTO next_up_votes (club_id) VALUES ({c}) RETURNING id)
+         INSERT INTO next_up_nominations (club_id, vote_id, work_id, nominated_by)
+         SELECT {c}, id, {w}, {a} FROM v",
+    ),
+    (
+        "ballot",
+        "WITH v AS (INSERT INTO next_up_votes (club_id) VALUES ({c}) RETURNING id),
+              n AS (INSERT INTO next_up_nominations (club_id, vote_id, work_id, nominated_by)
+                    SELECT {c}, id, {w}, {o} FROM v RETURNING id, vote_id)
+         INSERT INTO next_up_ballots (club_id, vote_id, user_id, nomination_id)
+         SELECT {c}, vote_id, {a}, id FROM n",
+    ),
+    (
+        "event",
+        "INSERT INTO events (club_id, actor_id, kind) VALUES ({c}, {a}, 'member_joined')",
+    ),
+];
+
+/// §5.6: the deletion locks every club it writes in before the account row, also a club the
+/// user no longer belongs to. A club delete, a join or a removal holds the club and then needs
+/// those rows or the account row; the deletion reaches them through its cascade, so the club
+/// lock must come first or the two could wait for each other. Each case holds the one club the
+/// user left a row in: the deletion waits for it, and the account row is still free meanwhile.
+#[sqlx::test]
+async fn the_deletion_locks_every_club_it_writes_in_first(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let work = app.work("Circe").await;
+    for (n, (trace, sql)) in CLUB_TRACES.iter().enumerate() {
+        let owner = app.user(&format!("owner{n}")).await;
+        let leaver = app.user(&format!("leaver{n}")).await;
+        let club = app.club(&owner, "Readers").await;
+        app.exec(
+            &sql.replace("{c}", &club.id.to_string())
+                .replace("{a}", &leaver.id().to_string())
+                .replace("{o}", &owner.id().to_string())
+                .replace("{w}", &work.id.to_string()),
+        )
+        .await;
+
+        let mut hold = app.db.begin().await.unwrap();
+        sqlx::query("SELECT id FROM clubs WHERE id = $1 FOR UPDATE")
+            .bind(club.id)
+            .execute(&mut *hold)
+            .await
+            .unwrap();
+        let client = leaver.clone();
+        let deleting = tokio::spawn(async move { delete_me(&client, PASSWORD).await });
+        wait_for_a_lock(&app, &format!("the deletion ({trace})")).await;
+        sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE NOWAIT")
+            .bind(leaver.id())
+            .execute(&mut *hold)
+            .await
+            .unwrap_or_else(|error| {
+                panic!("{trace}: the deletion locked the account before the club: {error}")
+            });
+        hold.rollback().await.unwrap();
+        deleting.await.unwrap().assert_status(204);
+        assert_eq!(
+            count(
+                &app,
+                &format!("SELECT count(*) FROM users WHERE id = {}", leaver.id())
+            )
+            .await,
+            0,
+            "{trace}"
+        );
+    }
+}

@@ -9,6 +9,7 @@ use std::time::Duration;
 use common::*;
 use serde_json::{Value, json};
 use sqlx::PgPool;
+use time::OffsetDateTime;
 
 /// Waits until `n` sessions of the test database wait for a lock.
 async fn wait_for_waiters(app: &TestApp, n: i64) {
@@ -667,4 +668,275 @@ async fn a_club_without_an_owner_fails_at_commit(db: PgPool) {
     // Deleting the whole club passes: the club is gone with its memberships.
     app.exec(&format!("DELETE FROM clubs WHERE id = {}", club.id))
         .await;
+}
+
+/// A pick of the club with a post by `author` in its discussion (POSTS arrives in Wave 2, so the
+/// rows are inserted directly).
+async fn club_post(app: &TestApp, club: &TestClub, author: &TestClient) {
+    let work = app.work("Circe").await;
+    app.exec(&format!(
+        "WITH pick AS (
+             INSERT INTO club_picks (club_id, work_id) VALUES ({c}, {w}) RETURNING id
+         )
+         INSERT INTO posts (work_id, author_id, club_id, pick_id, body)
+         SELECT {w}, {a}, {c}, id, 'club talk' FROM pick",
+        c = club.id,
+        w = work.id,
+        a = author.id()
+    ))
+    .await;
+}
+
+/// Deleting a club while its creator, who handed it over and left but still has a post in it,
+/// deletes their account. The deletion clears `clubs.created_by` and deletes the post, so it
+/// locks the club before the account row, like the club delete (§5.6): the two take turns
+/// instead of each waiting for a row the other holds.
+#[sqlx::test]
+async fn a_club_delete_and_the_deletion_of_its_former_creator_take_turns(db: PgPool) {
+    let app = TestApp::new(db).await;
+    for (tag, club_first) in [("a", true), ("b", false)] {
+        let creator = app.user(&format!("creator_{tag}")).await;
+        let heir = app.user(&format!("heir_{tag}")).await;
+        let club = app.club(&creator, "Readers").await;
+        app.join(&club, &heir, "member").await;
+        club_post(&app, &club, &creator).await;
+        creator
+            .post(
+                &format!("/api/clubs/{}/transfer", club.slug),
+                json!({"username": heir.username()}),
+            )
+            .await
+            .assert_status(200);
+        creator
+            .post(&format!("/api/clubs/{}/leave", club.slug), json!({}))
+            .await
+            .assert_status(204);
+        let club_delete = {
+            let heir = heir.clone();
+            let path = format!("/api/clubs/{}", club.slug);
+            async move { heir.delete(&path).await }
+        };
+        let (first, second) = if club_first {
+            in_order(&app, &club, club_delete, delete_account(&creator)).await
+        } else {
+            in_order(&app, &club, delete_account(&creator), club_delete).await
+        };
+        first.assert_status(204);
+        second.assert_status(204);
+        assert_eq!(
+            app.scalar_i64(&format!(
+                "SELECT (SELECT count(*) FROM clubs WHERE id = {0})
+                      + (SELECT count(*) FROM users WHERE id = {1})",
+                club.id,
+                creator.id()
+            ))
+            .await,
+            0
+        );
+    }
+}
+
+/// A role change the old owner sent while the transfer held the club runs on the roles under
+/// the lock (§5.3): the extractor read "owner", but the caller is an admin by then.
+#[sqlx::test]
+async fn a_role_change_by_the_old_owner_after_the_transfer_is_refused(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let s = Succession::new(&app, "a").await;
+    let demote = {
+        let owner = s.owner.clone();
+        let path = format!("/api/clubs/{}/members/{}", s.club.slug, s.admin.username());
+        async move { owner.patch(&path, json!({"role": "member"})).await }
+    };
+    let (transfer, changed) = in_order(&app, &s.club, s.transfer(), demote).await;
+    transfer.assert_status(200);
+    changed.assert_detail(403, "Only the club owner can do that");
+    assert_eq!(
+        role_of(&app, &s.club, &s.admin).await.as_deref(),
+        Some("admin")
+    );
+    assert_eq!(s.owners(&app).await, ["heir_a"]);
+}
+
+/// A club delete the old owner sent while the transfer held the club is refused: the delete
+/// checks the owner role in its statement, under the lock.
+#[sqlx::test]
+async fn a_club_delete_by_the_old_owner_after_the_transfer_is_refused(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let s = Succession::new(&app, "a").await;
+    let delete = {
+        let owner = s.owner.clone();
+        let path = format!("/api/clubs/{}", s.club.slug);
+        async move { owner.delete(&path).await }
+    };
+    let (transfer, deleted) = in_order(&app, &s.club, s.transfer(), delete).await;
+    transfer.assert_status(200);
+    deleted.assert_detail(403, "Only the club owner can do that");
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM clubs WHERE id = {}",
+            s.club.id
+        ))
+        .await,
+        1
+    );
+    assert_eq!(s.owners(&app).await, ["heir_a"]);
+}
+
+/// An admin removed while their own removal of someone else waited for the club is no longer a
+/// member under the lock: 404 `No such club`, and nobody else is removed.
+#[sqlx::test]
+async fn a_write_by_an_admin_removed_meanwhile_is_no_such_club(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let s = Succession::new(&app, "a").await;
+    let (removed, refused) =
+        in_order(&app, &s.club, s.remove_admin(), s.remove_heir(&s.admin)).await;
+    removed.assert_status(204);
+    refused.assert_detail(404, "No such club");
+    assert_eq!(
+        role_of(&app, &s.club, &s.heir).await.as_deref(),
+        Some("member")
+    );
+    assert_eq!(role_of(&app, &s.club, &s.admin).await, None);
+}
+
+impl Succession {
+    fn remove_admin(&self) -> impl Future<Output = TestResponse> + Send + 'static {
+        let owner = self.owner.clone();
+        let path = format!(
+            "/api/clubs/{}/members/{}",
+            self.club.slug,
+            self.admin.username()
+        );
+        async move { owner.delete(&path).await }
+    }
+
+    fn create_link(&self) -> impl Future<Output = TestResponse> + Send + 'static {
+        let admin = self.admin.clone();
+        let path = format!("/api/clubs/{}/invites", self.club.slug);
+        async move { admin.post(&path, json!({"kind": "link"})).await }
+    }
+}
+
+async fn invites_by(app: &TestApp, who: &TestClient) -> i64 {
+    app.scalar_i64(&format!(
+        "SELECT count(*) FROM club_invites WHERE created_by = {}",
+        who.id()
+    ))
+    .await
+}
+
+/// Invite writes lock the club and re-read the caller's role (§5.3): an admin removed while
+/// their request waited gets no invite to walk back in with, and revokes nothing; a demoted
+/// admin gets 403.
+#[sqlx::test]
+async fn an_admin_removed_or_demoted_meanwhile_cannot_create_or_revoke_invites(db: PgPool) {
+    let app = TestApp::new(db).await;
+
+    let s = Succession::new(&app, "a").await;
+    let (removed, created) = in_order(&app, &s.club, s.remove_admin(), s.create_link()).await;
+    removed.assert_status(204);
+    created.assert_detail(404, "No such club");
+    assert_eq!(invites_by(&app, &s.admin).await, 0);
+
+    let s = Succession::new(&app, "b").await;
+    let invite = s
+        .owner
+        .post(
+            &format!("/api/clubs/{}/invites", s.club.slug),
+            json!({"kind": "link"}),
+        )
+        .await
+        .json();
+    let revoke = {
+        let admin = s.admin.clone();
+        let path = format!("/api/clubs/{}/invites/{}", s.club.slug, invite["id"]);
+        async move { admin.delete(&path).await }
+    };
+    let (removed, revoked) = in_order(&app, &s.club, s.remove_admin(), revoke).await;
+    removed.assert_status(204);
+    revoked.assert_detail(404, "No such club");
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM club_invites WHERE revoked_at IS NOT NULL")
+            .await,
+        0
+    );
+
+    let s = Succession::new(&app, "c").await;
+    let demote = {
+        let owner = s.owner.clone();
+        let path = format!("/api/clubs/{}/members/{}", s.club.slug, s.admin.username());
+        async move { owner.patch(&path, json!({"role": "member"})).await }
+    };
+    let (demoted, created) = in_order(&app, &s.club, demote, s.create_link()).await;
+    demoted.assert_status(200);
+    created.assert_detail(403, "Only club admins can do that");
+    assert_eq!(invites_by(&app, &s.admin).await, 0);
+}
+
+/// A removal and a new invite are dated while they hold the club lock, not when their
+/// transaction began, so the order of the two dates is the order of the two writes: an invite
+/// created before the removal is refused to the removed member, one created after it works.
+#[sqlx::test]
+async fn removals_and_invites_are_dated_under_the_club_lock(db: PgPool) {
+    let app = TestApp::new(db).await;
+
+    // The invite first: its creator is removed afterwards and cannot use it.
+    let s = Succession::new(&app, "a").await;
+    let (created, removed) = in_order(&app, &s.club, s.create_link(), s.remove_admin()).await;
+    created.assert_status(201);
+    removed.assert_status(204);
+    s.admin
+        .post(
+            &format!(
+                "/api/invites/{}/accept",
+                created.json()["code"].as_str().unwrap()
+            ),
+            json!({}),
+        )
+        .await
+        .assert_detail(400, "That invite code is not valid");
+
+    // The removal first, and both requests began before the lock was released: the removal is
+    // dated after the release, and the invite (another admin's) after the removal.
+    let s = Succession::new(&app, "b").await;
+    let mut hold = app.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM clubs WHERE id = $1 FOR UPDATE")
+        .bind(s.club.id)
+        .execute(&mut *hold)
+        .await
+        .unwrap();
+    let removal = tokio::spawn(s.remove_heir(&s.owner));
+    wait_for_waiters(&app, 1).await;
+    let invite = tokio::spawn(s.create_link());
+    wait_for_waiters(&app, 2).await;
+    let released: OffsetDateTime = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&mut *hold)
+        .await
+        .unwrap();
+    hold.commit().await.unwrap();
+    removal.await.unwrap().assert_status(204);
+    let invite = invite.await.unwrap();
+    invite.assert_status(201);
+    let (removed_at, created_at): (OffsetDateTime, OffsetDateTime) = sqlx::query_as(
+        "SELECT r.removed_at, i.created_at FROM club_removals r, club_invites i
+         WHERE r.club_id = $1 AND r.user_id = $2 AND i.id = $3",
+    )
+    .bind(s.club.id)
+    .bind(s.heir.id())
+    .bind(invite.json()["id"].as_i64().unwrap())
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert!(released < removed_at, "{released} < {removed_at}");
+    assert!(removed_at < created_at, "{removed_at} < {created_at}");
+    s.heir
+        .post(
+            &format!(
+                "/api/invites/{}/accept",
+                invite.json()["code"].as_str().unwrap()
+            ),
+            json!({}),
+        )
+        .await
+        .assert_status(200);
 }

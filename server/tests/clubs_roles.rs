@@ -1,6 +1,7 @@
 //! The role table of #40 (endpoint-map §3): every club route with an allowed and a denied case.
 //! Each row gets a fresh club, so a destructive allowed case cannot affect the next row, and the
-//! denied case runs first and must change nothing.
+//! denied case runs first and must change nothing. The allowed caller is the least privileged
+//! one: an unverified user may join by invite and use the club (conventions §5.5).
 
 mod common;
 
@@ -14,6 +15,8 @@ use sqlx::PgPool;
 enum Who {
     Anon,
     Unverified,
+    /// A member whose address is not verified.
+    UnverifiedMember,
     /// A verified user in another club.
     Outsider,
     Member,
@@ -45,7 +48,7 @@ fn rows() -> Vec<Row> {
             "GET /api/clubs",
             None,
             Some((Anon, 401, "Not signed in")),
-            (Member, 200),
+            (Unverified, 200),
         ),
         row(
             "POST /api/clubs",
@@ -57,7 +60,7 @@ fn rows() -> Vec<Row> {
             "GET /api/clubs/{slug}",
             None,
             Some((Outsider, 404, "No such club")),
-            (Member, 200),
+            (UnverifiedMember, 200),
         ),
         row(
             "PATCH /api/clubs/{slug}",
@@ -75,7 +78,7 @@ fn rows() -> Vec<Row> {
             "GET /api/clubs/{slug}/members",
             None,
             Some((Outsider, 404, "No such club")),
-            (Member, 200),
+            (UnverifiedMember, 200),
         ),
         row(
             "PATCH /api/clubs/{slug}/members/{target}",
@@ -131,7 +134,7 @@ fn rows() -> Vec<Row> {
             "POST /api/invites/{code}/accept",
             None,
             Some((Anon, 401, "Not signed in")),
-            (Outsider, 200),
+            (Unverified, 200),
         ),
         row(
             "GET /api/admin/invites",
@@ -166,8 +169,10 @@ impl Fixture {
         let member = app.user(&format!("member{n}")).await;
         let target = app.user(&format!("target{n}")).await;
         let outsider = app.user(&format!("outsider{n}")).await;
+        let unverified_member = app.user_unverified(&format!("unverified_member{n}")).await;
         app.club(&outsider, "Elsewhere").await;
         let club = app.club(&owner, "Readers").await;
+        app.join(&club, &unverified_member, "member").await;
         app.join(&club, &admin, "admin").await;
         app.join(&club, &deputy, "admin").await;
         app.join(&club, &member, "member").await;
@@ -185,6 +190,7 @@ impl Fixture {
                 Who::Unverified,
                 app.user_unverified(&format!("unverified{n}")).await,
             ),
+            (Who::UnverifiedMember, unverified_member),
             (Who::Outsider, outsider),
             (Who::Member, member),
             (Who::Admin, admin),

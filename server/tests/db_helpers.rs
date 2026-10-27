@@ -1,10 +1,11 @@
 //! Database helpers outside the request path: `admin::make_admin` (the CLI), the frozen `dto`
-//! loaders (docs/phase1/conventions.md §20), `media::shared::register`/`is_removed_hash` (§8)
-//! and `activity::record` (§15).
+//! loaders (docs/phase1/conventions.md §20), `clubs::extract::club_refs` (§5.3),
+//! `media::shared::register`/`is_removed_hash` (§8) and `activity::record` (§15).
 
 use std::panic::AssertUnwindSafe;
 
 use bookclub_server::activity::{self, EventKind, NewEvent};
+use bookclub_server::clubs::extract::club_refs;
 use bookclub_server::media::shared::{self as media, NewMedia, urls};
 use bookclub_server::{admin, dto};
 use futures::FutureExt;
@@ -91,6 +92,31 @@ async fn insert_club(db: &PgPool, owner: i64, slug: &str) -> i64 {
     .fetch_one(db)
     .await
     .unwrap()
+}
+
+#[sqlx::test]
+async fn club_refs_name_each_existing_club(db: PgPool) {
+    let ada = insert_user(&db, "ada").await;
+    let a = insert_club(&db, ada, "first-abcd").await;
+    let b = insert_club(&db, ada, "second-efgh").await;
+    sqlx::query("UPDATE clubs SET name = 'Second' WHERE id = $1")
+        .bind(b)
+        .execute(&db)
+        .await
+        .unwrap();
+    let mut conn = db.acquire().await.unwrap();
+
+    let refs = club_refs(&mut conn, &[b, a, b + 1000]).await.unwrap();
+    let mut pairs: Vec<(i64, &str, &str)> = refs
+        .iter()
+        .map(|(id, r)| (*id, r.slug.as_str(), r.name.as_str()))
+        .collect();
+    pairs.sort();
+    assert_eq!(
+        pairs,
+        [(a, "first-abcd", "Club"), (b, "second-efgh", "Second")]
+    );
+    assert!(club_refs(&mut conn, &[]).await.unwrap().is_empty());
 }
 
 fn payload(value: Value) -> Map<String, Value> {

@@ -7,8 +7,8 @@
 //! - `redeem`: the join-page preview and `POST /api/invites/{code}/accept`.
 //! - `out`: the response types and their loaders.
 //!
-//! Every membership write locks the club row first ([`lock_club`]) and re-reads the roles it
-//! depends on inside its transaction (§5.3).
+//! Every membership write, and every invite write, locks the club row first ([`lock_club`]) and
+//! re-reads the roles it depends on inside its transaction (§5.3).
 
 pub mod extract;
 pub mod invites;
@@ -22,7 +22,8 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use crate::AppState;
-use extract::Role;
+use crate::error::{ApiResult, AppError, msg};
+use extract::{Role, role_in};
 
 /// At most this many members per club (`This club is full`).
 pub const MAX_MEMBERS: i64 = 20;
@@ -47,13 +48,25 @@ pub fn routes() -> OpenApiRouter<AppState> {
 }
 
 /// Locks the club row (`FOR UPDATE`) for a membership write: every join, removal, role change,
-/// leave, transfer and club delete takes it first, so they run one after the other per club.
-/// False when the club no longer exists.
+/// leave, transfer, club delete and invite create or revoke takes it first, so they run one
+/// after the other per club. False when the club no longer exists.
 pub async fn lock_club(conn: &mut PgConnection, club_id: i64) -> sqlx::Result<bool> {
     let found = sqlx::query_scalar!("SELECT id FROM clubs WHERE id = $1 FOR UPDATE", club_id)
         .fetch_optional(conn)
         .await?;
     Ok(found.is_some())
+}
+
+/// Locks the club and returns the caller's role as it is now; 404 `No such club` when the club is
+/// gone or the caller is no longer a member. The role the extractor read before the lock never
+/// decides a write (§5.3).
+pub async fn locked_role(conn: &mut PgConnection, user_id: i64, club_id: i64) -> ApiResult<Role> {
+    if !lock_club(conn, club_id).await? {
+        return Err(AppError::not_found(msg::NO_SUCH_CLUB));
+    }
+    role_in(conn, user_id, club_id)
+        .await?
+        .ok_or_else(|| AppError::not_found(msg::NO_SUCH_CLUB))
 }
 
 /// The id and current role of the member with this (normalised) username, inside the caller's

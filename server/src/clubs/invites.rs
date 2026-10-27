@@ -9,7 +9,12 @@
 //! membership's `invited_by` foreign key needs it, and an account deletion locks it `FOR UPDATE`
 //! before it clears the invite's `created_by`), then the invite row. [`consume`] takes them in
 //! that order before its atomic `UPDATE`, so a join cannot deadlock with a club delete, a member
-//! write or the inviter's account deletion.
+//! write or the inviter's account deletion (which locks the club first, §5.6).
+//!
+//! Creating and revoking an invite also lock the club and re-read the caller's role, so an admin
+//! removed meanwhile gets no code to walk back in with. Invites and removals are dated with
+//! `clock_timestamp()` under that lock: their dates follow the order of the writes, which the
+//! removal rule of [`join`] compares.
 
 use axum::Json;
 use axum::extract::State;
@@ -20,9 +25,9 @@ use time::OffsetDateTime;
 use utoipa::ToSchema;
 
 use super::MAX_MEMBERS;
-use super::extract::ClubAdmin;
-use super::lock_club;
+use super::extract::{ClubAdmin, ClubMember, Role};
 use super::out::{InviteList, InviteOut, invite_out, invite_outs};
+use super::{lock_club, locked_role};
 use crate::AppState;
 use crate::activity::{self, EventKind, NewEvent};
 use crate::auth::random;
@@ -204,6 +209,9 @@ pub async fn join(
 /// Inserts an invite under a fresh code and returns its id. `club_id` `None` is a sign-up
 /// invite. `expires_in_days` `None` means no expiry, `max_uses` `None` no use limit; the schema
 /// requires at least one of them.
+///
+/// `created_at` is the time of the insert, not of the transaction start: a club invite is
+/// inserted under the club lock, so its date and a removal's follow the order of the two writes.
 pub async fn insert_invite(
     conn: &mut PgConnection,
     club_id: Option<i64>,
@@ -213,8 +221,9 @@ pub async fn insert_invite(
 ) -> sqlx::Result<i64> {
     for _ in 0..CODE_ATTEMPTS {
         let id = sqlx::query_scalar!(
-            "INSERT INTO club_invites (club_id, code, created_by, max_uses, expires_at)
-             VALUES ($1, $2, $3, $4, now() + $5::int4 * interval '1 day')
+            "INSERT INTO club_invites (club_id, code, created_by, max_uses, created_at, expires_at)
+             SELECT $1, $2, $3, $4, at, at + $5::int4 * interval '1 day'
+             FROM clock_timestamp() AS at
              ON CONFLICT (code) DO NOTHING
              RETURNING id",
             club_id,
@@ -312,16 +321,18 @@ pub async fn create_invite(
     };
     // Validated to 1..=30 above.
     let days = body.expires_in_days.unwrap_or(default_days) as i32;
-    let mut conn = state.db.acquire().await?;
+    let mut tx = state.db.begin().await?;
+    lock_as_admin(&mut tx, &member).await?;
     let id = insert_invite(
-        &mut conn,
+        &mut tx,
         Some(member.club.id),
         Some(member.user.id),
         max_uses,
         Some(days),
     )
     .await?;
-    let out = invite_out(&mut conn, &state.config, Some(member.club.id), id).await?;
+    let out = invite_out(&mut tx, &state.config, Some(member.club.id), id).await?;
+    tx.commit().await?;
     Ok((StatusCode::CREATED, Json(out)))
 }
 
@@ -350,6 +361,8 @@ pub async fn revoke_invite(
     ApiPath(path): ApiPath<(String, i64)>,
 ) -> ApiResult<StatusCode> {
     let (_, invite_id) = path;
+    let mut tx = state.db.begin().await?;
+    lock_as_admin(&mut tx, &member).await?;
     let revoked = sqlx::query_scalar!(
         "UPDATE club_invites SET revoked_at = coalesce(revoked_at, now())
          WHERE club_id = $1 AND id = $2
@@ -357,12 +370,23 @@ pub async fn revoke_invite(
         member.club.id,
         invite_id
     )
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *tx)
     .await?;
     if revoked.is_none() {
         return Err(AppError::not_found(NO_SUCH_INVITE));
     }
+    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Locks the club and checks that the caller is still an admin there: 404 `No such club` for
+/// someone removed since the extractor read the role, 403 `Only club admins can do that` for
+/// someone demoted.
+async fn lock_as_admin(conn: &mut PgConnection, member: &ClubMember) -> ApiResult<()> {
+    if locked_role(conn, member.user.id, member.club.id).await? < Role::Admin {
+        return Err(AppError::forbidden(msg::ONLY_ADMINS));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

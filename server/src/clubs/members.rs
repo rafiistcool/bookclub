@@ -14,7 +14,7 @@ use utoipa::ToSchema;
 
 use super::extract::{ClubAdmin, ClubMember, ClubOwner, Role, role_in};
 use super::out::{ClubOut, MemberList, MemberOut, club_out, member_outs};
-use super::{lock_club, member_named};
+use super::{lock_club, locked_role, member_named};
 use crate::AppState;
 use crate::auth::rules::normalize_username;
 use crate::error::{ApiResult, AppError, ErrorBody, msg};
@@ -185,9 +185,11 @@ pub async fn remove_member(
     if removed == 0 {
         return Err(AppError::forbidden(msg::ONLY_OWNER));
     }
+    // Dated under the club lock, not at the start of the transaction, so an invite created
+    // before the removal is never dated after it (`invites::join`).
     sqlx::query!(
-        "INSERT INTO club_removals (club_id, user_id) VALUES ($1, $2)
-         ON CONFLICT (club_id, user_id) DO UPDATE SET removed_at = now()",
+        "INSERT INTO club_removals (club_id, user_id, removed_at) VALUES ($1, $2, clock_timestamp())
+         ON CONFLICT (club_id, user_id) DO UPDATE SET removed_at = excluded.removed_at",
         club_id,
         target
     )
@@ -249,6 +251,7 @@ pub async fn leave(member: ClubMember, State(state): State<AppState>) -> ApiResu
     request_body = TransferIn,
     responses(
         (status = 200, body = ClubOut, description = "The club; the caller is now an admin"),
+        (status = 400, body = ErrorBody, description = "Malformed body"),
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
         (status = 403, body = ErrorBody, description = "`Only the club owner can do that`"),
         (status = 404, body = ErrorBody, description = "`No such club`, `No member with that name`")
@@ -289,17 +292,6 @@ pub async fn transfer(
     let out = club_out(&mut tx, member.user.id, club_id).await?;
     tx.commit().await?;
     Ok(Json(out))
-}
-
-/// Locks the club and returns the caller's current role; 404 `No such club` when the club is
-/// gone or the caller is no longer a member.
-async fn locked_role(conn: &mut PgConnection, user_id: i64, club_id: i64) -> ApiResult<Role> {
-    if !lock_club(conn, club_id).await? {
-        return Err(AppError::not_found(msg::NO_SUCH_CLUB));
-    }
-    role_in(conn, user_id, club_id)
-        .await?
-        .ok_or_else(|| AppError::not_found(msg::NO_SUCH_CLUB))
 }
 
 /// The member a path `{username}` names (normalised like every username lookup); 404 `No member
