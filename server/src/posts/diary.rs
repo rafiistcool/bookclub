@@ -18,7 +18,7 @@ use sqlx::PgConnection;
 use utoipa::{IntoParams, ToSchema};
 
 use super::out::{PostOut, my_position, positions, post_out, post_outs};
-use super::write::{NewPost, insert_post, reply_parent};
+use super::write::{NewPost, insert_post, lock_work, reply_parent};
 use super::{CANNOT_BE_PRIVATE, check_spoiler, checked_body, spoiler};
 use crate::AppState;
 use crate::auth::extract::CurrentUser;
@@ -174,7 +174,9 @@ pub async fn work_thread(
 }
 
 /// Writes a diary entry, or a reply. A reply to a club post is a club post (it needs
-/// membership of that club and records `note_posted`); a diary entry records no event.
+/// membership of that club and records `note_posted`); a diary entry records no event. The
+/// work is locked against a merge first (`write::lock_work`): an entry written while the work
+/// is merged away lands on the work it was merged into.
 #[utoipa::path(
     post,
     path = "/api/books/works/{work_id}/posts",
@@ -200,7 +202,7 @@ pub async fn write_entry(
     let work_id = resolve_work(&mut tx, &work).await?;
     let new = match body.parent_id {
         None => NewPost {
-            work_id,
+            work_id: lock_work(&mut tx, work_id).await?,
             parent_id: None,
             club_id: None,
             pick_id: None,
@@ -210,10 +212,9 @@ pub async fn write_entry(
             spoiler_upto: spoiler(body.spoiler_upto),
         },
         Some(parent_id) => {
-            let parent =
-                reply_parent(&mut tx, user.id, parent_id, |p| p.work_id == work_id).await?;
+            let parent = reply_parent(&mut tx, user.id, parent_id, work_id, |_| true).await?;
             NewPost {
-                work_id,
+                work_id: parent.work_id,
                 parent_id: Some(parent_id),
                 club_id: parent.club_id,
                 pick_id: parent.pick_id,

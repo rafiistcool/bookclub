@@ -11,7 +11,9 @@
 //!   is deleted. Its reactions go either way.
 //! - **React:** a toggle, atomic under races (`DELETE … RETURNING`, then `INSERT … ON CONFLICT
 //!   DO NOTHING`). Turning a reaction on records `reaction` for a club post. A club post's club
-//!   row is locked before the post (`write::access_in_lock_order`).
+//!   row and then the post's work are locked before the post (`write::access_in_lock_order`),
+//!   so a reaction waits for a merge of the work instead of deadlocking with it, and its event
+//!   names the work the post is on after that merge.
 
 use axum::Json;
 use axum::extract::State;

@@ -5,7 +5,8 @@
 //! The club comes only from the `ClubMember` extractor, and the pick and the milestone are
 //! looked up `WHERE club_id = $club AND id = $id`, so another club's ids answer like missing
 //! ones. A write locks the club row `FOR KEY SHARE` first and checks the membership again
-//! under that lock (`write::lock_club_member`).
+//! under that lock (`write::lock_club_member`), then the pick's work (`write::lock_work`),
+//! then the milestone (`FOR KEY SHARE`), then the parent of a reply.
 
 use axum::Json;
 use axum::extract::State;
@@ -15,7 +16,9 @@ use sqlx::PgConnection;
 use utoipa::ToSchema;
 
 use super::out::{PostOut, my_position, post_out, post_outs};
-use super::write::{NewPost, insert_post, lock_club_member, reply_parent};
+use super::write::{
+    NewPost, WORK_LOCK_TRIES, insert_post, lock_club_member, lock_work, reply_parent,
+};
 use super::{
     MILESTONE_NOT_ON_PICK, NO_PICK_WITH_ID, NO_PICK_YET, PICK_CLOSED, check_spoiler, checked_body,
     spoiler,
@@ -131,38 +134,58 @@ async fn thread(
     })
 }
 
+/// Locks the pick's work against a merge (`write::lock_work`) and reads the pick's work again
+/// under that lock: a merge that committed while the request waited has re-pointed the pick to
+/// the work `lock_work` followed to. A pick deleted meanwhile keeps the work read before; the
+/// insert then answers `That pick is closed`.
+async fn lock_pick_work(conn: &mut PgConnection, pick: &mut Pick) -> ApiResult<()> {
+    for _ in 0..WORK_LOCK_TRIES {
+        let locked = lock_work(conn, pick.work_id).await?;
+        let current = sqlx::query_scalar!("SELECT work_id FROM club_picks WHERE id = $1", pick.id)
+            .fetch_optional(&mut *conn)
+            .await?
+            .unwrap_or(locked);
+        pick.work_id = current;
+        if current == locked {
+            return Ok(());
+        }
+    }
+    Err(AppError::internal(format!(
+        "pick {} kept moving to another work",
+        pick.id
+    )))
+}
+
 /// Writes a post on `pick`, in the legacy order of checks: the pick has ended → 400 `That
 /// pick is closed`; a milestone of another pick (or none) → 400 `That milestone is not on this
 /// pick`; then the parent of a reply, which must be a post of this pick.
 async fn write(
     conn: &mut PgConnection,
     member: &ClubMember,
-    pick: Pick,
+    mut pick: Pick,
     body: PickPostIn,
 ) -> ApiResult<PostOut> {
     if !pick.open {
         return Err(AppError::bad_request(PICK_CLOSED));
     }
+    lock_pick_work(conn, &mut pick).await?;
     if let Some(milestone_id) = body.milestone_id {
-        let on_pick = sqlx::query_scalar!(
-            r#"SELECT EXISTS (
-                   SELECT 1 FROM milestones WHERE club_id = $1 AND pick_id = $2 AND id = $3
-               ) AS "on_pick!""#,
+        // FOR KEY SHARE: a delete in flight is waited for and then answers as missing; a delete
+        // that starts later waits for this post and then detaches it (ON DELETE SET NULL).
+        sqlx::query_scalar!(
+            "SELECT id FROM milestones WHERE club_id = $1 AND pick_id = $2 AND id = $3
+             FOR KEY SHARE",
             member.club.id,
             pick.id,
             milestone_id
         )
-        .fetch_one(&mut *conn)
-        .await?;
-        if !on_pick {
-            return Err(AppError::bad_request(MILESTONE_NOT_ON_PICK));
-        }
+        .fetch_optional(&mut *conn)
+        .await?
+        .ok_or_else(|| AppError::bad_request(MILESTONE_NOT_ON_PICK))?;
     }
     if let Some(parent_id) = body.parent_id {
-        reply_parent(conn, member.user.id, parent_id, |parent| {
-            parent.club_id == Some(member.club.id)
-                && parent.pick_id == Some(pick.id)
-                && parent.work_id == pick.work_id
+        reply_parent(conn, member.user.id, parent_id, pick.work_id, |parent| {
+            parent.club_id == Some(member.club.id) && parent.pick_id == Some(pick.id)
         })
         .await?;
     }

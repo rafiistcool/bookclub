@@ -436,6 +436,19 @@ async fn deleting_an_entry_with_replies_leaves_a_tombstone(db: PgPool) {
         json!({"body": "Reply", "parent_id": root["id"]}),
     )
     .await;
+    // A root's PATCH and reaction answers carry its replies (spec R9); a reply's carry none.
+    let patched = ada.patch(&path, json!({"body": "Root"})).await;
+    patched.assert_status(200);
+    assert_eq!(bodies(&patched.json()["replies"]), ["Reply"]);
+    let reacted = ada
+        .post(&format!("{path}/reactions"), json!({"emoji": FIRE}))
+        .await;
+    reacted.assert_status(200);
+    assert_eq!(bodies(&reacted.json()["replies"]), ["Reply"]);
+    let reply_path = format!("/api/posts/{}", reply["id"]);
+    let patched_reply = grace.patch(&reply_path, json!({"body": "Reply"})).await;
+    patched_reply.assert_status(200);
+    assert_eq!(patched_reply.json()["replies"], json!([]));
 
     ada.delete(&path).await.assert_status(204);
     let diary = ada.get(&thread(&circe)).await.json();
@@ -471,14 +484,16 @@ async fn deleting_an_entry_with_replies_leaves_a_tombstone(db: PgPool) {
     ada.delete(&path)
         .await
         .assert_detail(404, "No entry with that id");
-    // Tombstones stay out of the feed; their replies do not.
-    assert_eq!(feed_bodies(&ada.get("/api/diary").await.json()), ["Reply"]);
+    // Tombstones stay out of the feed; their replies do not, and still name the tombstone's
+    // author as `parent_author` (spec R2).
+    for viewer in [&ada, &grace] {
+        let feed = viewer.get("/api/diary").await.json();
+        assert_eq!(feed_bodies(&feed), ["Reply"]);
+        assert_eq!(feed["items"][0]["parent_author"], "ada");
+    }
 
     // Deleting a reply is a hard delete; the tombstone stays as an anchor.
-    grace
-        .delete(&format!("/api/posts/{}", reply["id"]))
-        .await
-        .assert_status(204);
+    grace.delete(&reply_path).await.assert_status(204);
     let diary = ada.get(&thread(&circe)).await.json();
     assert_eq!(diary["items"][0]["deleted"], true);
     assert_eq!(diary["items"][0]["replies"], json!([]));
@@ -629,6 +644,60 @@ async fn the_feed_is_newest_first_across_works_and_pages(db: PgPool) {
             .await
             .assert_detail(400, detail);
     }
+}
+
+/// Threads order roots and replies by `created_at, id`, the feed pages by id (endpoint-map §8,
+/// spec diary R1): an imported post can be older than its id says. Moving the later root and
+/// the later reply back in time reorders both threads, not the feed.
+#[sqlx::test]
+async fn threads_follow_the_time_and_the_feed_the_id(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let (ada, grace, club) = ada_and_grace(&app).await;
+    let circe = app.work("Circe").await;
+    sqlx::query("INSERT INTO club_picks (club_id, work_id) VALUES ($1, $2)")
+        .bind(club.id)
+        .bind(circe.id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let pick_thread = format!("/api/clubs/{}/pick/posts", club.slug);
+    let post = |client: &TestClient, body: Value| {
+        let (client, path) = (client.clone(), pick_thread.clone());
+        async move {
+            let res = client.post(&path, body).await;
+            res.assert_status(201);
+            res.json()["id"].as_i64().unwrap()
+        }
+    };
+    let first = post(&ada, json!({"body": "First root"})).await;
+    let second = post(&grace, json!({"body": "Second root"})).await;
+    let first_reply = post(&grace, json!({"body": "First reply", "parent_id": first})).await;
+    let second_reply = post(&ada, json!({"body": "Second reply", "parent_id": first})).await;
+    assert!(first < second && second < first_reply && first_reply < second_reply);
+    app.exec(&format!(
+        "UPDATE posts SET created_at = now() - interval '1 day'
+         WHERE id IN ({second}, {second_reply})"
+    ))
+    .await;
+
+    for path in [thread(&circe), pick_thread.clone()] {
+        let items = grace.get(&path).await.json()["items"].clone();
+        assert_eq!(bodies(&items), ["Second root", "First root"], "{path}");
+        assert_eq!(
+            bodies(&items[1]["replies"]),
+            ["Second reply", "First reply"],
+            "{path}"
+        );
+    }
+    let page = grace.get("/api/diary?limit=2").await.json();
+    assert_eq!(feed_bodies(&page), ["Second reply", "First reply"]);
+    assert_eq!(page["has_more"], true);
+    let rest = grace
+        .get(&format!("/api/diary?limit=2&before={first_reply}"))
+        .await
+        .json();
+    assert_eq!(feed_bodies(&rest), ["Second root", "First root"]);
+    assert_eq!(rest["has_more"], false);
 }
 
 /// parity: test_diary.py::test_custom_book_has_a_diary_without_open_library
@@ -794,4 +863,35 @@ async fn the_club_feed_shows_one_club(db: PgPool) {
     ada.get("/api/diary?club=nope")
         .await
         .assert_detail(404, "No such club");
+}
+
+/// parity: test_diary.py::test_club_rating_averages_finished_readers
+///
+/// The book page (CAT's `GET /api/books/works/{work_id}`) averages the ratings of the
+/// viewer's audience who finished the book; a reader without a rating is not counted, and a
+/// work nobody rated has no mean. The legacy club is one club of co-members here.
+#[sqlx::test]
+async fn the_club_rating_averages_finished_readers(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let (ada, grace, club) = ada_and_grace(&app).await;
+    let tom = app.user("tom").await;
+    app.join(&club, &tom, "member").await;
+    let circe = app.work("Circe").await;
+    shelve(&ada, &circe, json!({"status": "finished", "rating": 5})).await;
+    shelve(&grace, &circe, json!({"status": "finished", "rating": 4})).await;
+    // Reading with no rating does not count.
+    shelve(&tom, &circe, json!({"status": "currently_reading"})).await;
+
+    let body = tom.get(&format!("/api/books/works/{}", circe.id)).await;
+    body.assert_status(200);
+    assert_eq!(body.json()["club_rating"], 4.5);
+    assert_eq!(body.json()["rating_count"], 2);
+
+    let ivy = app.user("ivy").await;
+    app.join(&club, &ivy, "member").await;
+    let fresh = app.work("The Song of Achilles").await;
+    let body = ivy.get(&format!("/api/books/works/{}", fresh.id)).await;
+    body.assert_status(200);
+    assert_eq!(body.json()["club_rating"], Value::Null);
+    assert_eq!(body.json()["rating_count"], 0);
 }
