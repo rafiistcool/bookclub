@@ -4,7 +4,8 @@
 //!
 //! The club comes only from the `ClubMember` extractor, and the pick and the milestone are
 //! looked up `WHERE club_id = $club AND id = $id`, so another club's ids answer like missing
-//! ones.
+//! ones. A write locks the club row `FOR KEY SHARE` first and checks the membership again
+//! under that lock (`write::lock_club_member`).
 
 use axum::Json;
 use axum::extract::State;
@@ -14,7 +15,7 @@ use sqlx::PgConnection;
 use utoipa::ToSchema;
 
 use super::out::{PostOut, my_position, post_out, post_outs};
-use super::write::{NewPost, insert_post, reply_parent};
+use super::write::{NewPost, insert_post, lock_club_member, reply_parent};
 use super::{
     MILESTONE_NOT_ON_PICK, NO_PICK_WITH_ID, NO_PICK_YET, PICK_CLOSED, check_spoiler, checked_body,
     spoiler,
@@ -228,6 +229,7 @@ pub async fn write_current_pick(
     ApiJson(body): ApiJson<PickPostIn>,
 ) -> ApiResult<(StatusCode, Json<PostOut>)> {
     let mut tx = state.db.begin().await?;
+    lock_club_member(&mut tx, member.club.id, member.user.id).await?;
     let pick = current_pick(&mut tx, member.club.id).await?;
     let post = write(&mut tx, &member, pick, body).await?;
     tx.commit().await?;
@@ -289,6 +291,7 @@ pub async fn write_pick(
     ApiJson(body): ApiJson<PickPostIn>,
 ) -> ApiResult<(StatusCode, Json<PostOut>)> {
     let mut tx = state.db.begin().await?;
+    lock_club_member(&mut tx, member.club.id, member.user.id).await?;
     let pick = club_pick(&mut tx, member.club.id, path.1).await?;
     let post = write(&mut tx, &member, pick, body).await?;
     tx.commit().await?;

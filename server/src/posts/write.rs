@@ -4,6 +4,11 @@
 //! - A reply's parent is checked through `visibility::post_access` (an invisible parent answers
 //!   like a missing one) and then locked `FOR KEY SHARE`, so a concurrent delete either sees the
 //!   reply (and leaves a tombstone) or removes the parent first (and the reply is refused).
+//! - **Lock order:** for a club post the club row comes first (`FOR KEY SHARE`, see
+//!   [`access_in_lock_order`]), then the post. A club delete and an account deletion lock the
+//!   club rows before they reach the posts (conventions §5.3, §5.6); a reply or a reaction that
+//!   locked the post first and then needed the club row for its foreign keys would deadlock with
+//!   them.
 //! - The insert itself refuses a club post on a pick that has ended (`That pick is closed`), so
 //!   a pick that closes while the request runs cannot get a new post.
 //! - Every new club post records `note_posted` `{post_id}`; diary entries record nothing.
@@ -17,8 +22,8 @@ use super::{ENTRY_DELETED, NOT_ON_THIS_BOOK, PICK_CLOSED, REPLY_TO_ENTRY};
 use crate::activity::{EventKind, NewEvent, record};
 use crate::auth::extract::CurrentUser;
 use crate::dto::{ShelfStatus, Visibility};
-use crate::error::{ApiResult, AppError};
-use crate::visibility::post_access;
+use crate::error::{ApiResult, AppError, msg};
+use crate::visibility::{PostAccess, post_access};
 
 /// A post to insert; the caller has checked the work, the pick, the milestone and the parent.
 #[derive(Debug, Clone)]
@@ -42,6 +47,51 @@ pub struct Parent {
     pub pick_id: Option<i64>,
 }
 
+/// Locks the club row `FOR KEY SHARE` for a new club post and checks again, under that lock,
+/// that the caller is still a member: 404 `No such club` when the club was deleted or the caller
+/// removed while the request waited. Without it, a post racing a club delete would fail its
+/// foreign key (a 500), and one racing a removal would land after it.
+pub async fn lock_club_member(
+    conn: &mut PgConnection,
+    club_id: i64,
+    user_id: i64,
+) -> ApiResult<()> {
+    let gone = || AppError::not_found(msg::NO_SUCH_CLUB);
+    sqlx::query_scalar!("SELECT id FROM clubs WHERE id = $1 FOR KEY SHARE", club_id)
+        .fetch_optional(&mut *conn)
+        .await?
+        .ok_or_else(gone)?;
+    // A statement of its own: it sees a removal committed while the lock was awaited (a join in
+    // the locking statement would be re-checked against its old snapshot).
+    let member = sqlx::query_scalar!(
+        r#"SELECT bc_is_member($2, $1) AS "member!""#,
+        club_id,
+        user_id
+    )
+    .fetch_one(conn)
+    .await?;
+    if member { Ok(()) } else { Err(gone()) }
+}
+
+/// `visibility::post_access` in the lock order of club writes: for a club post, the club row is
+/// locked `FOR KEY SHARE` first and the access is read again after that lock (a removal or a
+/// club delete that held it may have changed the answer). Callers lock the post itself next.
+pub async fn access_in_lock_order(
+    conn: &mut PgConnection,
+    viewer: i64,
+    post_id: i64,
+    allow_tombstone: bool,
+) -> ApiResult<PostAccess> {
+    let access = post_access(conn, viewer, post_id, allow_tombstone).await?;
+    let Some(club_id) = access.club_id else {
+        return Ok(access);
+    };
+    sqlx::query_scalar!("SELECT id FROM clubs WHERE id = $1 FOR KEY SHARE", club_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+    post_access(conn, viewer, post_id, allow_tombstone).await
+}
+
 /// Checks the parent of a new reply, in the legacy order: missing, invisible or not on this
 /// thread (`on_thread`) → 400 `That entry is not on this book`; itself a reply → 400 `Reply to
 /// the entry itself, not to a reply`; a tombstone → 400 `That entry was deleted`. A club post
@@ -54,7 +104,7 @@ pub async fn reply_parent(
     on_thread: impl FnOnce(&Parent) -> bool,
 ) -> ApiResult<Parent> {
     let not_here = || AppError::bad_request(NOT_ON_THIS_BOOK);
-    let access = match post_access(conn, viewer, parent_id, true).await {
+    let access = match access_in_lock_order(conn, viewer, parent_id, true).await {
         Ok(access) => access,
         Err(error) if error.status == StatusCode::NOT_FOUND => return Err(not_here()),
         Err(error) => return Err(error),

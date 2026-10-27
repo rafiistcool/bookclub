@@ -10,7 +10,8 @@
 //!   (moderation). The row is locked first; a post with replies becomes a tombstone, any other
 //!   is deleted. Its reactions go either way.
 //! - **React:** a toggle, atomic under races (`DELETE … RETURNING`, then `INSERT … ON CONFLICT
-//!   DO NOTHING`). Turning a reaction on records `reaction` for a club post.
+//!   DO NOTHING`). Turning a reaction on records `reaction` for a club post. A club post's club
+//!   row is locked before the post (`write::access_in_lock_order`).
 
 use axum::Json;
 use axum::extract::State;
@@ -20,7 +21,7 @@ use serde_json::json;
 use utoipa::ToSchema;
 
 use super::out::{PostOut, post_out};
-use super::write::visibility_text;
+use super::write::{access_in_lock_order, visibility_text};
 use super::{
     CANNOT_BE_PRIVATE, DELETE_OWN, EDIT_OWN, NOTHING_TO_UPDATE, PICK_A_REACTION, REACTIONS,
     check_spoiler, checked_body, spoiler,
@@ -236,7 +237,7 @@ pub async fn react(
     ApiJson(body): ApiJson<ReactionIn>,
 ) -> ApiResult<Json<PostOut>> {
     let mut tx = state.db.begin().await?;
-    let access = post_access(&mut tx, user.id, post_id, false).await?;
+    let access = access_in_lock_order(&mut tx, user.id, post_id, false).await?;
     // Held until commit: a concurrent delete waits, and a post deleted meanwhile is a 404.
     let live = sqlx::query_scalar!(
         r#"SELECT deleted_at IS NULL AS "live!" FROM posts WHERE id = $1 FOR KEY SHARE"#,

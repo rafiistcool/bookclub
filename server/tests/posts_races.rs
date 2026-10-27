@@ -280,3 +280,113 @@ async fn replies_racing_a_delete_are_kept_or_refused(db: PgPool) {
         assert_eq!(items[0]["replies"].as_array().unwrap().len(), kept);
     }
 }
+
+/// `ada`'s club `Readers` with `grace` as a member, Circe as the current pick and a post of
+/// ada's on it.
+async fn club_setup(app: &TestApp) -> (TestClient, TestClub, TestWork, i64) {
+    let ada = app.user("ada").await;
+    let grace = app.user("grace").await;
+    let club = app.club(&ada, "Readers").await;
+    app.join(&club, &grace, "member").await;
+    let circe = app.work("Circe").await;
+    sqlx::query("INSERT INTO club_picks (club_id, work_id) VALUES ($1, $2)")
+        .bind(club.id)
+        .bind(circe.id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = ada
+        .post(
+            &format!("/api/clubs/{}/pick/posts", club.slug),
+            json!({"body": "Club post"}),
+        )
+        .await;
+    res.assert_status(201);
+    (grace, club, circe, res.json()["id"].as_i64().unwrap())
+}
+
+/// Holds the club row `FOR UPDATE` (as a club delete, a removal and an account deletion do),
+/// starts `request`, waits until it waits for that lock, runs `then` in the holding
+/// transaction and commits. The request must not have locked a post of the club first: the
+/// held transaction's `then` would deadlock with it.
+async fn under_the_club_lock(
+    app: &TestApp,
+    club: &TestClub,
+    request: impl std::future::Future<Output = TestResponse> + Send + 'static,
+    then: &'static str,
+) -> TestResponse {
+    let mut hold = app.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM clubs WHERE id = $1 FOR UPDATE")
+        .bind(club.id)
+        .execute(&mut *hold)
+        .await
+        .unwrap();
+    let task = tokio::spawn(request);
+    wait_for_waiters(app, 1).await;
+    sqlx::query(then)
+        .bind(club.id)
+        .execute(&mut *hold)
+        .await
+        .unwrap();
+    hold.commit().await.unwrap();
+    task.await.unwrap()
+}
+
+#[sqlx::test]
+async fn a_reaction_on_a_club_post_waits_for_a_club_delete(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let (grace, club, _, post) = club_setup(&app).await;
+    let reaction = async move {
+        grace
+            .post(
+                &format!("/api/posts/{post}/reactions"),
+                json!({"emoji": HEART}),
+            )
+            .await
+    };
+    under_the_club_lock(&app, &club, reaction, "DELETE FROM clubs WHERE id = $1")
+        .await
+        .assert_detail(404, "No entry with that id");
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM posts").await, 0);
+}
+
+#[sqlx::test]
+async fn a_reply_to_a_club_post_waits_for_a_club_delete(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let (grace, club, circe, post) = club_setup(&app).await;
+    let reply = async move {
+        grace
+            .post(&thread(&circe), json!({"body": "Reply", "parent_id": post}))
+            .await
+    };
+    under_the_club_lock(&app, &club, reply, "DELETE FROM clubs WHERE id = $1")
+        .await
+        .assert_detail(400, "That entry is not on this book");
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM posts").await, 0);
+}
+
+#[sqlx::test]
+async fn a_club_post_waits_for_a_club_delete_or_a_removal(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let (grace, club, _, post) = club_setup(&app).await;
+    let path = format!("/api/clubs/{}/pick/posts", club.slug);
+    let removed = {
+        let (grace, path) = (grace.clone(), path.clone());
+        async move {
+            grace
+                .post(&path, json!({"body": "Reply", "parent_id": post}))
+                .await
+        }
+    };
+    // `grace` is the club's only plain member.
+    let removal = "DELETE FROM club_memberships WHERE club_id = $1 AND role = 'member'";
+    under_the_club_lock(&app, &club, removed, removal)
+        .await
+        .assert_detail(404, "No such club");
+    app.join(&club, &grace, "member").await;
+    let deleted = async move { grace.post(&path, json!({"body": "Late"})).await };
+    under_the_club_lock(&app, &club, deleted, "DELETE FROM clubs WHERE id = $1")
+        .await
+        .assert_detail(404, "No such club");
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM posts").await, 0);
+}
