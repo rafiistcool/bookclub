@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT work_id FROM user_favorites WHERE user_id = $1 ORDER BY position, work_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "work_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "user_favorites",
+            "name": "work_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "fcf153d54b8867c75597eb68883b3a393d3a6bd9fb41ccb9594272b2ace9c662"
+}
