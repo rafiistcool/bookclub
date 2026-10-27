@@ -1,0 +1,9 @@
+# Settings for every cargo command in server/, CI included.
+
+[env]
+# sqlx's #[sqlx::test] lends each test a pool of up to 5 connections, all drawn from one
+# master pool of 20 per test binary. The race tests hold several connections while they
+# wait for a lock, so more than 4 tests at once can each wait on a connection another one
+# holds, until the 30 s acquire timeout fails them (seen at 12 threads). 4 x 5 <= 20 rules
+# that out. An explicit RUST_TEST_THREADS or --test-threads still wins.
+RUST_TEST_THREADS = "4"
