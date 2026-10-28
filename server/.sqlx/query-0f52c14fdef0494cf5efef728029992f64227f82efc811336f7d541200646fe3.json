@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET password_hash = $3, password_changed_at = now()\n           WHERE id = $1 AND password_hash = $2\n           RETURNING email_verified_at IS NOT NULL AS \"verified!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "verified!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "0f52c14fdef0494cf5efef728029992f64227f82efc811336f7d541200646fe3"
+}

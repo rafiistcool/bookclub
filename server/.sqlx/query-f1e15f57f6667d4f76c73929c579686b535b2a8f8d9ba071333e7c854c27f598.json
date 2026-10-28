@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE catalog_edit_requests\n         SET status = 'rejected', decided_at = now(), decision_note = $3\n         WHERE status = 'open'\n           AND ((work_id = $1 AND edition_id IS NULL)\n                OR (kind = 'work_merge' AND work_id = $2\n                    AND payload ->> 'into_work_id' = ($2::bigint)::text))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f1e15f57f6667d4f76c73929c579686b535b2a8f8d9ba071333e7c854c27f598"
+}

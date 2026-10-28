@@ -1,0 +1,175 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.work_id AS \"work_id!\", r.edition_id AS \"edition_id?\",\n                  w.ol_work_id, w.title AS \"title!\", w.author_names AS \"author_names!\",\n                  w.first_publish_year, w.pages, w.source AS \"source!: CatalogSource\",\n                  e.title AS \"edition_title?\", e.pages AS \"edition_pages?\",\n                  wm.public_id AS \"work_cover?\", wm.dominant_color AS \"work_color?\",\n                  em.public_id AS \"edition_cover?\", em.dominant_color AS \"edition_color?\"\n           FROM unnest($1::int8[], $2::int8[]) AS r (work_id, edition_id)\n           JOIN works w ON w.id = r.work_id\n           LEFT JOIN editions e ON e.id = r.edition_id AND e.work_id = r.work_id\n           LEFT JOIN media wm ON wm.id = w.cover_media_id AND wm.removed_at IS NULL\n           LEFT JOIN media em ON em.id = e.cover_media_id AND em.removed_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "work_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "edition_id?",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "ol_work_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "ol_work_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "title!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "author_names!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "author_names"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "first_publish_year",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "first_publish_year"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "pages",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "pages"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "source!: CatalogSource",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "source"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "edition_title?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "edition_pages?",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "pages"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "work_cover?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "public_id"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "work_color?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "dominant_color"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "edition_cover?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "public_id"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "edition_color?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "dominant_color"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "a91d9047226440590f5bcd4d39dce6ad04eaf45771a508e84c4709834b9b9fa6"
+}

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM clubs\n         WHERE id = $1\n           AND EXISTS (SELECT 1 FROM club_memberships\n                       WHERE club_id = $1 AND user_id = $2 AND role = 'owner')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0ae714341eedc17f8ee39090c111126b4340c6adc86a40711ad2dca1cc5d1412"
+}

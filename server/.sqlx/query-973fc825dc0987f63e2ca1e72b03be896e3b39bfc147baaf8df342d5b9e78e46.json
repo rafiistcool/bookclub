@@ -1,0 +1,51 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT (SELECT e.work_id FROM editions e WHERE e.cover_media_id = $1\n                   ORDER BY e.id LIMIT 1) AS edition_work,\n                  (SELECT e.id FROM editions e WHERE e.cover_media_id = $1\n                   ORDER BY e.id LIMIT 1) AS edition,\n                  (SELECT w.id FROM works w WHERE w.cover_media_id = $1\n                   ORDER BY w.id LIMIT 1) AS work,\n                  (SELECT r.work_id FROM catalog_edit_requests r WHERE r.media_id = $1\n                   ORDER BY r.id LIMIT 1) AS requested_work,\n                  (SELECT r.edition_id FROM catalog_edit_requests r WHERE r.media_id = $1\n                   ORDER BY r.id LIMIT 1) AS requested_edition",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "edition_work",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "edition",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "work",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "requested_work",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "requested_edition",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "973fc825dc0987f63e2ca1e72b03be896e3b39bfc147baaf8df342d5b9e78e46"
+}

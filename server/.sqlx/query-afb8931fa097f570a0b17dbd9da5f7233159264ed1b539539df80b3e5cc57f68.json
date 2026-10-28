@@ -1,0 +1,59 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT n.id, n.work_id, n.nominated_by,\n                  (SELECT count(*)\n                   FROM next_up_ballots b\n                   JOIN club_memberships m ON m.club_id = b.club_id AND m.user_id = b.user_id\n                   WHERE b.vote_id = n.vote_id AND b.nomination_id = n.id) AS \"votes!\"\n           FROM next_up_nominations n\n           WHERE n.vote_id = $1\n           ORDER BY n.created_at, n.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "next_up_nominations",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "work_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "next_up_nominations",
+            "name": "work_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "nominated_by",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "next_up_nominations",
+            "name": "nominated_by"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "votes!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      null
+    ]
+  },
+  "hash": "afb8931fa097f570a0b17dbd9da5f7233159264ed1b539539df80b3e5cc57f68"
+}

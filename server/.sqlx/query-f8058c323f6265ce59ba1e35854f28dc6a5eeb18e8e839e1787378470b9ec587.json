@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE club_memberships SET role = 'owner'\n         WHERE club_id = $1 AND user_id = (SELECT id FROM users WHERE username = $2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f8058c323f6265ce59ba1e35854f28dc6a5eeb18e8e839e1787378470b9ec587"
+}

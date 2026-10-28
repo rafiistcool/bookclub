@@ -4,27 +4,47 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { api, ApiError } from "../api/client";
-import { workId } from "../constants";
+import type { Visibility } from "../types";
 import type { Status } from "../constants";
 import { countEntries, defaultSpoilerUpto } from "../diary";
 import { draftKey, loadDraft, saveDraft } from "../drafts";
 import { tp } from "../i18n";
+import { isClubGone, useClubs } from "../stores/clubs";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 
 const { t } = useI18n();
-import type { Diary, DiaryBookIn, DiaryEntry as Entry } from "../types";
+import type { DiaryEntry as Entry, PickThreadOut } from "../types";
 import DiaryEntry from "./DiaryEntry.vue";
 import SpoilerControl from "./SpoilerControl.vue";
 
+/** What the thread shows once loaded: a work's diary or a club pick's discussion. */
+type Thread = {
+  my_progress: number | null;
+  my_status: Status | null;
+  items: Entry[];
+  /** False on an ended pick: its discussion is read-only. */
+  can_post: boolean;
+};
+
 const props = defineProps<{
-  /** "/works/OL1W" */
-  workKey: string;
-  /** Enough to create the book row the first time anyone writes about it. */
-  book: DiaryBookIn;
+  /** The work's numeric id: its diary entries, plus the club posts of the viewer's clubs. */
+  workId?: number;
+  /**
+   * A club pick's discussion instead (`pickId` null: the current pick).
+   * `currentPickId` is the club's current pick as `ClubOut.current_pick` has
+   * it: null means there is none, so the current pick's discussion is not
+   * asked for (it would answer 404 `No club pick yet`); left out, it is asked.
+   */
+  club?: { slug: string; pickId?: number | null; currentPickId?: number | null };
   /** Show only the newest N entries until the reader asks for the rest. */
   preview?: number;
   heading?: string;
+}>();
+
+const emit = defineEmits<{
+  /** A new entry or reply was posted (the club page refreshes its feed). */
+  posted: [entry: Entry];
 }>();
 
 const REPLY_PREVIEW = 2;
@@ -32,7 +52,12 @@ const REPLY_PREVIEW = 2;
 const toast = useToast();
 const session = useSession();
 const route = useRoute();
-const diary = ref<Diary | null>(null);
+const clubs = useClubs();
+const diary = ref<Thread | null>(null);
+/** No clubs: no meeting to prepare for, so the prompts leave it out. */
+const solo = computed(() => !props.club && !session.user?.clubs.length);
+/** The club has no current pick, so there is no discussion to show. */
+const noPick = ref(false);
 const loaded = ref(false);
 const error = ref("");
 const showAll = ref(false);
@@ -40,6 +65,8 @@ const busyId = ref<number | null>(null);
 
 const draft = ref("");
 const spoiler = ref<number | null>(null);
+/** Diary entries can be kept to oneself; club posts and replies cannot. */
+const onlyMe = ref(false);
 const spoilerTouched = ref(false);
 const posting = ref(false);
 const composer = ref<HTMLTextAreaElement | null>(null);
@@ -53,8 +80,11 @@ const replyDraft = ref("");
 const replySpoiler = ref<number | null>(null);
 const expandedReplies = ref<Set<number>>(new Set());
 
-const draftId = computed(() => draftKey(session.user?.username, workId(props.workKey)));
-const replyDraftId = (entryId: number) => draftKey(session.user?.username, workId(props.workKey), "reply", entryId);
+const threadKey = computed(() =>
+  props.club ? `club:${props.club.slug}:${props.club.pickId ?? "current"}` : String(props.workId),
+);
+const draftId = computed(() => draftKey(session.user?.username, threadKey.value));
+const replyDraftId = (entryId: number) => draftKey(session.user?.username, threadKey.value, "reply", entryId);
 watch(draft, (text) => saveDraft(draftId.value, text));
 watch(replyDraft, (text) => {
   if (replyTo.value != null) saveDraft(replyDraftId(replyTo.value), text);
@@ -92,17 +122,59 @@ function resetSpoilerDefault() {
   spoiler.value = defaultSpoilerUpto(myProgress.value, myStatus.value);
 }
 
+function fromPickThread(thread: PickThreadOut): Thread {
+  return {
+    my_progress: thread.my_progress,
+    my_status: thread.my_status,
+    items: thread.items,
+    can_post: thread.can_post,
+  };
+}
+
+async function fetchThread(): Promise<Thread> {
+  if (props.club) return fromPickThread(await api.pickThread(props.club.slug, props.club.pickId));
+  return { ...(await api.diary(props.workId!)), can_post: true };
+}
+
+/** The club answer already says there is no current pick: nothing to ask for. */
+const knownNoPick = computed(
+  () => Boolean(props.club && !props.club.pickId && props.club.currentPickId === null),
+);
+
 async function load() {
+  if (knownNoPick.value) {
+    noPick.value = true;
+    diary.value = null;
+    error.value = "";
+    loaded.value = true;
+    return;
+  }
   try {
-    diary.value = await api.diary(workId(props.workKey));
+    diary.value = await fetchThread();
+    noPick.value = false;
     error.value = "";
     resetSpoilerDefault();
     await jumpToAnchor();
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : t("diary.loadFailed");
+    if (props.club && isClubGone(err)) clubs.markGone(props.club.slug);
+    if (props.club && err instanceof ApiError && err.status === 404 && err.detail === "No club pick yet") {
+      noPick.value = true;
+      diary.value = null;
+      error.value = "";
+    } else {
+      error.value = err instanceof ApiError ? err.message : t("diary.loadFailed");
+    }
   } finally {
     loaded.value = true;
   }
+}
+
+function post(body: { body: string; spoiler_upto: number | null; parent_id?: number }) {
+  if (props.club) return api.addPickPost(props.club.slug, props.club.pickId, body);
+  return api.addDiaryEntry(props.workId!, {
+    ...body,
+    ...(body.parent_id == null && onlyMe.value ? { visibility: "only_me" as Visibility } : {}),
+  });
 }
 
 /** Feed links land on `#entry-<id>`; the element only exists once we have data. */
@@ -144,17 +216,14 @@ async function submit() {
   posting.value = true;
   const key = draftId.value;
   try {
-    const created = await api.addDiaryEntry(workId(props.workKey), {
-      body,
-      spoiler_upto: spoiler.value,
-      book: diary.value.book_id ? undefined : props.book,
-    });
+    const created = await post({ body, spoiler_upto: spoiler.value });
     // Posted: forget the draft now, even if the page changes before the field clears.
     saveDraft(key, "");
     diary.value.items = [...diary.value.items, created];
-    if (!diary.value.book_id) await load();
+    emit("posted", created);
     draft.value = "";
     composing.value = false;
+    onlyMe.value = false;
     spoilerTouched.value = false;
     resetSpoilerDefault();
   } catch (err) {
@@ -175,12 +244,9 @@ async function submitReply(parent: Entry) {
   if (!body || posting.value) return;
   posting.value = true;
   try {
-    const created = await api.addDiaryEntry(workId(props.workKey), {
-      body,
-      spoiler_upto: replySpoiler.value,
-      parent_id: parent.id,
-    });
+    const created = await post({ body, spoiler_upto: replySpoiler.value, parent_id: parent.id });
     parent.replies = [...parent.replies, created];
+    emit("posted", created);
     expandReplies(parent.id);
     saveDraft(replyDraftId(parent.id), "");
     replyTo.value = null;
@@ -203,10 +269,16 @@ async function react(entry: Entry, emoji: string) {
   }
 }
 
-async function edit(entry: Entry, body: string, spoilerUpto: number | null) {
+async function edit(entry: Entry, body: string, spoilerUpto: number | null, visibility?: Visibility) {
   busyId.value = entry.id;
   try {
-    replaceEntry(await api.editDiaryEntry(entry.id, { body, spoiler_upto: spoilerUpto }));
+    replaceEntry(
+      await api.editDiaryEntry(entry.id, {
+        body,
+        spoiler_upto: spoilerUpto,
+        ...(visibility ? { visibility } : {}),
+      }),
+    );
     toast.show(t("diary.updated"));
   } catch (err) {
     fail(err, t("diary.saveFailed"));
@@ -258,13 +330,17 @@ onMounted(() => {
 });
 onBeforeUnmount(() => document.removeEventListener("pointerdown", foldComposer));
 watch(
-  () => props.workKey,
-  () => {
+  // The current pick's discussion also follows the club answer: a pick set
+  // since (or the layout's fresh answer) brings its discussion.
+  [threadKey, () => (props.club && !props.club.pickId ? props.club.currentPickId : undefined)],
+  ([key], [before]) => {
     loaded.value = false;
-    showAll.value = false;
-    spoilerTouched.value = false;
-    replyTo.value = null;
-    draft.value = loadDraft(draftId.value);
+    if (key !== before) {
+      showAll.value = false;
+      spoilerTouched.value = false;
+      replyTo.value = null;
+      draft.value = loadDraft(draftId.value);
+    }
     void load();
   },
 );
@@ -281,6 +357,7 @@ watch(
 
     <p v-if="error" class="error">{{ error }}</p>
     <div v-else-if="!loaded" class="skeleton skeleton-block" aria-hidden="true" />
+    <p v-else-if="noPick" class="fine subtle">{{ t("diary.noPick") }}</p>
 
     <template v-else>
       <button v-if="hidden" class="text-btn show-all" type="button" @click="showAll = true">
@@ -293,10 +370,12 @@ watch(
             :entry="entry"
             :my-progress="myProgress"
             :my-status="myStatus"
+            :show-club="!club"
             :busy="busyId === entry.id"
             @react="react(entry, $event)"
+            :no-reply="diary?.can_post === false"
             @reply="startReply(entry)"
-            @edit="(body, upto) => edit(entry, body, upto)"
+            @edit="(body, upto, visibility) => edit(entry, body, upto, visibility)"
             @delete="remove(entry)"
           >
             <div v-if="entry.replies.length || replyTo === entry.id" class="replies">
@@ -322,7 +401,7 @@ watch(
               </button>
 
               <form
-                v-if="replyTo === entry.id"
+                v-if="replyTo === entry.id && diary?.can_post"
                 class="reply-form"
                 @submit.prevent="submitReply(entry)"
               >
@@ -358,14 +437,16 @@ watch(
         </li>
       </ol>
       <div v-else class="diary-empty">
-        <p class="fine subtle">{{ t("diary.empty") }}</p>
-        <button class="btn btn-ghost btn-sm" type="button" @click="focusComposer">
+        <p class="fine subtle">{{ club ? t("diary.emptyClub") : solo ? t("diary.emptySolo") : t("diary.empty") }}</p>
+        <button v-if="diary?.can_post" class="btn btn-ghost btn-sm" type="button" @click="focusComposer">
           {{ t("diary.writeFirst") }}
         </button>
       </div>
+      <p v-if="diary && !diary.can_post" class="fine subtle">{{ t("diary.closed") }}</p>
     </template>
 
     <form
+      v-if="!noPick && (diary?.can_post ?? true)"
       ref="composeForm"
       class="compose"
       :class="{ open: composeOpen }"
@@ -373,14 +454,14 @@ watch(
       @focusin="composing = true"
     >
       <label class="field">
-        <span class="visually-hidden">{{ t("diary.writeAria") }}</span>
+        <span class="visually-hidden">{{ club ? t("discussions.writeAria") : t("diary.writeAria") }}</span>
         <textarea
           v-autosize
           ref="composer"
           v-model="draft"
           :rows="composeOpen ? 3 : 1"
           maxlength="1000"
-          :placeholder="t('diary.placeholder')"
+          :placeholder="solo ? t('diary.placeholderSolo') : t('diary.placeholder')"
         />
       </label>
       <div v-show="composeOpen" class="compose-row">
@@ -393,6 +474,10 @@ watch(
             }
           "
         />
+        <label v-if="!club" class="only-me fine">
+          <input v-model="onlyMe" type="checkbox" />
+          {{ t("diary.onlyMe") }}
+        </label>
         <button
           class="btn btn-primary btn-sm"
           type="submit"
@@ -470,6 +555,14 @@ watch(
 .compose-actions {
   display: flex;
   gap: var(--space-2);
+}
+
+.only-me {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--tap);
+  margin-right: auto;
 }
 
 /* Resting state: one line, however long the placeholder is. */

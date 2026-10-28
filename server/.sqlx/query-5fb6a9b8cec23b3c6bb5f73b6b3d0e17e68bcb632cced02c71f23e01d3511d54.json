@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO user_favorites (user_id, work_id, position)\n         SELECT $1, work_id, position FROM unnest($2::int8[], $3::int4[]) AS f (work_id, position)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array",
+        "Int4Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5fb6a9b8cec23b3c6bb5f73b6b3d0e17e68bcb632cced02c71f23e01d3511d54"
+}

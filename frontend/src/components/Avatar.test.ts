@@ -11,16 +11,16 @@ describe("Avatar", () => {
 
   it("renders the picture when a src is set", () => {
     const wrapper = mount(Avatar, {
-      props: { username: "ada", src: "/api/members/ada/avatar?v=1" },
+      props: { username: "ada", src: "/media/ab2cd3ef/a" },
     });
-    expect(wrapper.find("img").attributes("src")).toBe("/api/members/ada/avatar?v=1");
+    expect(wrapper.find("img").attributes("src")).toBe("/media/ab2cd3ef/a");
     expect(wrapper.find("img").attributes("loading")).toBe("lazy");
     expect(wrapper.text()).toBe("");
   });
 
   it("falls back to the initial when the picture fails to load", async () => {
     const wrapper = mount(Avatar, {
-      props: { username: "ada", src: "/api/members/ada/avatar?v=1" },
+      props: { username: "ada", src: "/media/ab2cd3ef/a" },
     });
     await wrapper.find("img").trigger("error");
     expect(wrapper.find("img").exists()).toBe(false);
@@ -32,8 +32,8 @@ describe("Avatar", () => {
       props: { username: "ada", src: "/broken" },
     });
     await wrapper.find("img").trigger("error");
-    await wrapper.setProps({ src: "/api/members/ada/avatar?v=2" });
-    expect(wrapper.find("img").attributes("src")).toBe("/api/members/ada/avatar?v=2");
+    await wrapper.setProps({ src: "/media/gh4ij5kl/a" });
+    expect(wrapper.find("img").attributes("src")).toBe("/media/gh4ij5kl/a");
     expect(wrapper.text()).toBe("");
   });
 });

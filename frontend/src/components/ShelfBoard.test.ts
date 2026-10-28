@@ -2,12 +2,11 @@ import { mount } from "@vue/test-utils";
 import { describe, expect, it } from "vitest";
 import ShelfBoard from "./ShelfBoard.vue";
 import ShelfGroup from "./ShelfGroup.vue";
+import { shelfItem } from "../test/fixtures";
 import type { ShelfItem } from "../types";
 
-const item = (id: number, status: ShelfItem["status"], finished_at?: string): ShelfItem => ({
-  id, position: id, status, finished_at, updated_at: "", rating: null, take: "", dnf_reason: "", progress: null,
-  book: { id, title: `Book ${id}`, authors: "", cover_id: null, cover_url: null, year: null, ol_work_key: `/works/OL${id}W` },
-});
+const item = (id: number, status: ShelfItem["status"], finished_at?: string): ShelfItem =>
+  shelfItem({ id, position: id, status, finished_at: finished_at ?? null });
 const draggable = {
   name: "VueDraggable", props: ["modelValue", "disabled", "handle", "delay", "delayOnTouchOnly", "group"],
   emits: ["update:modelValue", "update", "add"], template: '<div><slot /></div>',
@@ -21,7 +20,7 @@ function render(extra = {}) {
 
 describe("monthly shelf", () => {
   it("shows active books together and completed months newest first in the all view", () => {
-    const wrapper = render({ clubPickKey: "/works/OL2W" });
+    const wrapper = render({ clubPickIds: [2] });
     expect(wrapper.findAll(".month-heading").map(node => node.text())).toEqual(["September 2026 1", "August 2026 1"]);
     expect(wrapper.findAll(".shelf-status").map(node => node.text())).toEqual(["Want", "Reading", "Done", "Done"]);
     expect(wrapper.find(".club-pick").exists()).toBe(true);

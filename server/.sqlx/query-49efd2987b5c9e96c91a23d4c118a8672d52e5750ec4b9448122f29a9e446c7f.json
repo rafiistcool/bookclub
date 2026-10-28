@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT isbn13 FROM editions ORDER BY isbn13",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "isbn13",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "isbn13"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "49efd2987b5c9e96c91a23d4c118a8672d52e5750ec4b9448122f29a9e446c7f"
+}

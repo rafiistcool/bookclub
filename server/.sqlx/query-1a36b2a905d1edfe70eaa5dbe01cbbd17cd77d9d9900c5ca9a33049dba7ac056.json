@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE works w SET\n               pages = COALESCE(w.pages, e.pages),\n               first_publish_year = COALESCE(w.first_publish_year, e.publication_year,\n                                             e.planned_year),\n               cover_media_id = COALESCE(w.cover_media_id, e.cover_media_id),\n               field_sources = w.field_sources\n                   || CASE WHEN w.pages IS NULL AND e.pages IS NOT NULL\n                           THEN jsonb_build_object('pages',\n                                COALESCE(e.field_sources -> 'pages', to_jsonb(e.source)))\n                           ELSE '{}'::jsonb END\n                   || CASE WHEN w.first_publish_year IS NOT NULL THEN '{}'::jsonb\n                           WHEN e.publication_year IS NOT NULL\n                           THEN jsonb_build_object('first_publish_year',\n                                COALESCE(e.field_sources -> 'publication_year', to_jsonb(e.source)))\n                           WHEN e.planned_year IS NOT NULL\n                           THEN jsonb_build_object('first_publish_year',\n                                COALESCE(e.field_sources -> 'planned_publication_date',\n                                         to_jsonb(e.source)))\n                           ELSE '{}'::jsonb END\n                   || CASE WHEN w.cover_media_id IS NULL AND e.cover_media_id IS NOT NULL\n                           THEN jsonb_build_object('cover_media_id',\n                                COALESCE(e.field_sources -> 'cover_media_id', to_jsonb(e.source)))\n                           ELSE '{}'::jsonb END,\n               updated_at = now()\n           FROM (SELECT e.*,\n                        CASE WHEN EXTRACT(YEAR FROM e.planned_publication_date)\n                                  BETWEEN -5000 AND 3000\n                             THEN EXTRACT(YEAR FROM e.planned_publication_date)::int\n                        END AS planned_year\n                 FROM editions e WHERE e.id = $1) e\n           WHERE w.id = e.work_id\n             AND ((w.pages IS NULL AND e.pages IS NOT NULL)\n                  OR (w.first_publish_year IS NULL\n                      AND (e.publication_year IS NOT NULL OR e.planned_year IS NOT NULL))\n                  OR (w.cover_media_id IS NULL AND e.cover_media_id IS NOT NULL))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1a36b2a905d1edfe70eaa5dbe01cbbd17cd77d9d9900c5ca9a33049dba7ac056"
+}

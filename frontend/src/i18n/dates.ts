@@ -28,3 +28,24 @@ export function formatClubDate(
     return date.toISOString();
   }
 }
+
+/** "12 Mar 2026": a day, without the time, in `timeZone`. */
+export function formatDay(
+  iso: string | null | undefined,
+  timeZone: string,
+  locale: Locale,
+): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  try {
+    return new Intl.DateTimeFormat(BCP47[locale], {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      timeZone: timeZone || "UTC",
+    }).format(date);
+  } catch {
+    return date.toISOString().slice(0, 10);
+  }
+}

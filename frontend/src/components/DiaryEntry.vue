@@ -5,14 +5,16 @@ import { useI18n } from "vue-i18n";
 import type { Status } from "../constants";
 import { REACTIONS, isShielded, positionMarker, spoilerLabel } from "../diary";
 import { formatClubDate } from "../i18n/dates";
-import { useClub } from "../stores/club";
+import { isClubAdmin } from "../stores/clubs";
+import { useSession } from "../stores/session";
+import { postTimeZone } from "../timezone";
 import { useLocale } from "../stores/locale";
-import type { DiaryEntry } from "../types";
+import type { DiaryEntry, Visibility } from "../types";
 import Avatar from "./Avatar.vue";
 import SpoilerControl from "./SpoilerControl.vue";
 
 const { t } = useI18n();
-const club = useClub();
+const session = useSession();
 const locale = useLocale();
 
 const props = defineProps<{
@@ -21,13 +23,17 @@ const props = defineProps<{
   myStatus: Status | null;
   /** Replies render smaller and cannot be replied to. */
   compact?: boolean;
+  /** No reply button (an ended pick's discussion). */
+  noReply?: boolean;
+  /** Name the club of a club post (in a work's diary, where both scopes meet). */
+  showClub?: boolean;
   busy?: boolean;
 }>();
 
 const emit = defineEmits<{
   react: [emoji: string];
   reply: [];
-  edit: [body: string, spoilerUpto: number | null];
+  edit: [body: string, spoilerUpto: number | null, visibility?: Visibility];
   delete: [];
 }>();
 
@@ -36,6 +42,7 @@ const pickerOpen = ref(false);
 const editing = ref(false);
 const editDraft = ref("");
 const editSpoiler = ref<number | null>(null);
+const editOnlyMe = ref(false);
 const confirming = ref(false);
 let confirmTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -45,9 +52,18 @@ const shielded = computed(
 const marker = computed(() => positionMarker(props.entry));
 const when = computed(
   () =>
-    formatClubDate(props.entry.created_at, club.timezone, locale.locale) ||
+    formatClubDate(props.entry.created_at, postTimeZone(props.entry, session.user), locale.locale) ||
     props.entry.created_label,
 );
+/** Only a diary entry (not a reply, not a club post) can be kept to its author. */
+const isDiaryRoot = computed(() => props.entry.club == null && props.entry.parent_id == null);
+/** Admins and the owner of a post's own club may delete it (moderation). */
+const canDelete = computed(() => {
+  if (props.entry.mine) return true;
+  const club = props.entry.club;
+  if (!club) return false;
+  return isClubAdmin(session.user?.clubs.find((row) => row.slug === club.slug)?.role);
+});
 const pickable = computed(() =>
   REACTIONS.filter((emoji) => !props.entry.reactions.some((row) => row.emoji === emoji && row.mine)),
 );
@@ -55,13 +71,19 @@ const pickable = computed(() =>
 function startEdit() {
   editDraft.value = props.entry.body;
   editSpoiler.value = props.entry.spoiler_upto;
+  editOnlyMe.value = props.entry.visibility === "only_me";
   editing.value = true;
 }
 
 function saveEdit() {
   const body = editDraft.value.trim();
   if (!body) return;
-  emit("edit", body, editSpoiler.value);
+  emit(
+    "edit",
+    body,
+    editSpoiler.value,
+    isDiaryRoot.value ? (editOnlyMe.value ? "only_me" : "audience") : undefined,
+  );
   editing.value = false;
 }
 
@@ -99,14 +121,25 @@ watch(
   >
     <header class="entry-meta">
       <Avatar
-        :username="entry.author"
+        :username="entry.author ?? ''"
         :src="entry.author_avatar_url"
         :size="compact ? 'xs' : 'sm'"
       />
-      <strong class="entry-author">{{ entry.author }}</strong>
+      <strong class="entry-author">{{ entry.author ?? t("diary.deletedAccount") }}</strong>
       <span v-if="marker" class="entry-marker" :class="entry.status_at ?? ''">{{ marker }}</span>
       <span class="finer subtle entry-time">{{ when }}</span>
       <span v-if="entry.edited" class="finer subtle">{{ t("diary.edited") }}</span>
+      <RouterLink
+        v-if="showClub && entry.club"
+        class="badge entry-club"
+        :to="`/c/${entry.club.slug}/discussions`"
+        :title="t('diary.clubPostIn', { club: entry.club.name })"
+      >
+        {{ entry.club.name }}
+      </RouterLink>
+      <span v-if="entry.visibility === 'only_me'" class="badge only-me-badge" :title="t('diary.onlyMeHint')">
+        {{ t("diary.onlyMeBadge") }}
+      </span>
       <span
         v-if="!entry.deleted && entry.spoiler_upto != null && !shielded"
         class="finer subtle"
@@ -124,6 +157,10 @@ watch(
       </label>
       <div class="entry-edit-row">
         <SpoilerControl v-model="editSpoiler" />
+        <label v-if="isDiaryRoot" class="entry-only-me fine">
+          <input v-model="editOnlyMe" type="checkbox" />
+          {{ t("diary.onlyMe") }}
+        </label>
         <span class="entry-edit-actions">
           <button class="btn btn-ghost btn-sm" type="button" @click="editing = false">
             {{ t("common.cancel") }}
@@ -192,11 +229,11 @@ watch(
         </span>
       </span>
       <span class="entry-links">
-        <button v-if="!compact" class="text-btn" type="button" @click="emit('reply')">
+        <button v-if="!compact && !noReply" class="text-btn" type="button" @click="emit('reply')">
           {{ t("common.reply") }}
         </button>
-        <template v-if="entry.mine">
-          <button class="text-btn" type="button" @click="startEdit">{{ t("common.edit") }}</button>
+        <button v-if="entry.mine" class="text-btn" type="button" @click="startEdit">{{ t("common.edit") }}</button>
+        <template v-if="canDelete">
           <button
             class="text-btn"
             :class="{ danger: confirming }"
@@ -340,6 +377,21 @@ watch(
 .entry-edit-actions {
   display: flex;
   gap: var(--space-2);
+}
+
+.entry-only-me {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--tap);
+}
+
+.only-me-badge {
+  font-size: var(--text-2xs);
+}
+
+.entry-club {
+  text-decoration: none;
 }
 
 .entry-actions {

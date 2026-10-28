@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT coalesce(jsonb_agg(to_jsonb(h) - 'user_id'\n                  ORDER BY h.last_used_at DESC, h.id DESC), '[]') AS \"rows!\"\n           FROM search_history h WHERE h.user_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "rows!",
+        "type_info": "Jsonb",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "bbef2c71535ca6894682d7d1180613e7b4245b65c8acf91341c658df8aa61247"
+}

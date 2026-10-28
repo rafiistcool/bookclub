@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT bc_can_see_user($1, $2) AS \"sees!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "sees!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "c3a40a9496d22319abd811b0dab9c8511d834477acd60e0e4128f681dc072006"
+}

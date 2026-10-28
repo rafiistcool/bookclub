@@ -1,0 +1,83 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, work_id, isbn13 AS \"isbn13!\", dnb_idn, dnb_record_idn,\n                  withdrawn_at IS NOT NULL AS \"withdrawn!\"\n           FROM editions WHERE isbn13 = ANY($1) ORDER BY isbn13",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "work_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "work_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "isbn13!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "isbn13"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "dnb_idn",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "dnb_idn"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "dnb_record_idn",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "dnb_record_idn"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "withdrawn!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      null
+    ]
+  },
+  "hash": "16b4bf5523591bdf16c68439f6e3ded3b137bb61ee83f55eae5d36adc8685d56"
+}

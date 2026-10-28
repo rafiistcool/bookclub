@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT setval(pg_get_serial_sequence('club_invites', 'id'),\n                           (SELECT max(id) FROM club_invites))",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "setval",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "ee380ac310e316925514ce93466139e408359ee4a866c5411d1b53228c37a29a"
+}

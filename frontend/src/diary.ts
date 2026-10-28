@@ -84,3 +84,4 @@ export function countEntries(items: DiaryEntry[]): number {
     0,
   );
 }
+

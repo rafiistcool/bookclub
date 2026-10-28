@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM user_favorites WHERE user_id = $1 AND work_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "05fbc2cb9ddf115688a49fbc004597364bbb7071015ce6bb35499e88b14a3d83"
+}

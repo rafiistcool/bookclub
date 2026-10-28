@@ -7,7 +7,7 @@ import type { ShelfItem } from "../types";
 import ShelfGroup from "./ShelfGroup.vue";
 
 const props = withDefaults(defineProps<{
-  items: ShelfItem[]; readonly?: boolean; clubPickKey?: string | null;
+  items: ShelfItem[]; readonly?: boolean; clubPickIds?: readonly number[];
   disabled?: boolean; filter?: "all" | Status; timezone?: string;
 }>(), { filter: "all", timezone: "UTC" });
 const emit = defineEmits<{
@@ -55,14 +55,14 @@ function moved(item: ShelfItem, visible: ShelfItem[], month?: string) {
   <div class="shelf-books" :aria-busy="disabled">
     <h2 v-if="active.length" class="shelf-section-heading">{{ t(readonly ? 'shelf.currentMemberBooks' : 'shelf.currentBooks') }}</h2>
     <ShelfGroup v-if="active.length" :items="active" :readonly="readonly" :disabled="disabled"
-      :timezone="timezone" :club-pick-key="clubPickKey" :empty-hint="t('shelf.nothingHere')"
+      :timezone="timezone" :club-pick-ids="clubPickIds" :empty-hint="t('shelf.nothingHere')"
       @moved="moved" @action="(item, action) => emit('action', item, action)" />
     <section v-if="showFinished" class="finished-section" :class="{ 'has-active': active.length }">
       <h2 v-if="months.length" class="shelf-section-heading">{{ t('shelf.finishedBooks') }}</h2>
       <section v-for="group in months" :key="group.month" class="shelf-month" :aria-label="group.month ? readingMonthLabel(group.month, locale) : t('shelf.noReadingDate')">
         <h3 class="month-heading">{{ group.month ? readingMonthLabel(group.month, locale) : t('shelf.noReadingDate') }} <span class="fine subtle nums">{{ group.items.length }}</span></h3>
         <ShelfGroup :items="group.items" :month="group.month" :readonly="readonly" :disabled="disabled"
-          :timezone="timezone" :club-pick-key="clubPickKey" :empty-hint="t('shelf.dropIntoMonth')"
+          :timezone="timezone" :club-pick-ids="clubPickIds" :empty-hint="t('shelf.dropIntoMonth')"
           @moved="moved" @action="(item, action) => emit('action', item, action)" />
       </section>
       <div v-if="!readonly" class="month-picker">

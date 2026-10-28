@@ -1,0 +1,95 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT w.title, w.author_names, w.search_extra, w.match_key,\n                  fa.name AS \"first_name?\", fa.sort_name AS \"first_sort?\",\n                  ARRAY(SELECT e.title FROM editions e\n                        WHERE e.work_id = w.id AND e.title IS NOT NULL ORDER BY e.id)\n                      AS \"edition_titles!: Vec<String>\"\n           FROM works w\n           LEFT JOIN LATERAL (\n               SELECT a.name, a.sort_name FROM work_authors wa JOIN authors a ON a.id = wa.author_id\n               WHERE wa.work_id = w.id ORDER BY wa.position, a.id LIMIT 1\n           ) fa ON true\n           WHERE w.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "title",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "author_names",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "author_names"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "search_extra",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "search_extra"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "match_key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "match_key"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "first_name?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "authors",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "first_sort?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "authors",
+            "name": "sort_name"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "edition_titles!: Vec<String>",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      null
+    ]
+  },
+  "hash": "131441e7795c60c09fd09c5d83f2ac9d2479a92b932ab5f3180dd5575aadd7b8"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE user_favorites f SET position = r.rn\n             FROM (SELECT user_id, work_id,\n                          (row_number() OVER (PARTITION BY user_id ORDER BY position))::int AS rn\n                   FROM user_favorites WHERE user_id = ANY($1)) AS r\n             WHERE f.user_id = r.user_id AND f.work_id = r.work_id AND f.position <> r.rn",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "497e4c93b928bb99e433748e38e198e30185e0d297bf6afb2678f863a2e3ab16"
+}

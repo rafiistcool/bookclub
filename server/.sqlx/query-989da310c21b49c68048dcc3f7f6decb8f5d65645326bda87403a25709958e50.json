@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET email_prompt_dismissed_at = coalesce(email_prompt_dismissed_at, now())\n         WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "989da310c21b49c68048dcc3f7f6decb8f5d65645326bda87403a25709958e50"
+}

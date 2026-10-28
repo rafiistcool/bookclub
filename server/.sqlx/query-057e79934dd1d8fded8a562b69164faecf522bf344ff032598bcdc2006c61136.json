@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT coalesce(jsonb_agg((to_jsonb(s) - 'user_id')\n                      || jsonb_build_object('work_title', w.title, 'work_authors', w.author_names,\n                                            'edition_isbn13', e.isbn13)\n                  ORDER BY s.id), '[]') AS \"rows!\"\n           FROM shelf_entries s\n           JOIN works w ON w.id = s.work_id\n           LEFT JOIN editions e ON e.id = s.edition_id\n           WHERE s.user_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "rows!",
+        "type_info": "Jsonb",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "057e79934dd1d8fded8a562b69164faecf522bf344ff032598bcdc2006c61136"
+}

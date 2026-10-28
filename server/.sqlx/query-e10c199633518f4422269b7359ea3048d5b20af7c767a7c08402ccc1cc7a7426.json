@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users\n         SET theme = COALESCE($2, theme), color_mode = COALESCE($3, color_mode),\n             locale = COALESCE($4, locale), timezone = COALESCE($5, timezone)\n         WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e10c199633518f4422269b7359ea3048d5b20af7c767a7c08402ccc1cc7a7426"
+}

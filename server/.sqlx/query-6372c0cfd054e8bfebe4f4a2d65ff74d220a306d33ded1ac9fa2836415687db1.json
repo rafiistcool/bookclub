@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT coalesce(jsonb_agg(to_jsonb(j) - 'user_id' ORDER BY j.id), '[]') AS \"rows!\"\n           FROM import_jobs j WHERE j.user_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "rows!",
+        "type_info": "Jsonb",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "6372c0cfd054e8bfebe4f4a2d65ff74d220a306d33ded1ac9fa2836415687db1"
+}

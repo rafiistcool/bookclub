@@ -3,13 +3,17 @@ import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { api, ApiError } from "../api/client";
+import AccountSettings from "../components/AccountSettings.vue";
 import Avatar from "../components/Avatar.vue";
+import DeleteAccount from "../components/DeleteAccount.vue";
 import FavoritesEditor from "../components/FavoritesEditor.vue";
+import GoodreadsImport from "../components/GoodreadsImport.vue";
 import LanguageSwitch from "../components/LanguageSwitch.vue";
+import TimeZoneSetting from "../components/TimeZoneSetting.vue";
 import { MODES, THEMES, useTheme } from "../stores/theme";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
-import type { Favorite, GoodreadsImport, Invite } from "../types";
+import type { Favorite } from "../types";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -18,17 +22,8 @@ const session = useSession();
 const toast = useToast();
 const avatarBusy = ref(false);
 
-const invites = ref<Invite[]>([]);
-const invitesError = ref("");
-const invitesLoaded = ref(false);
-const minting = ref(false);
-
-const importFile = ref<File | null>(null);
-const importing = ref(false);
-const importResult = ref<GoodreadsImport | null>(null);
 
 const username = computed(() => session.user?.username ?? "");
-const unusedInvites = computed(() => invites.value.filter((row) => !row.used).length);
 const favorites = ref<Favorite[]>([]);
 const favoritesBusy = ref(false);
 
@@ -40,84 +35,16 @@ async function loadFavorites() {
   }
 }
 
-async function replaceFavorites(bookIds: number[]) {
+async function replaceFavorites(workIds: number[]) {
   if (favoritesBusy.value) return;
   favoritesBusy.value = true;
   try {
-    favorites.value = (await api.replaceFavorites(bookIds)).items;
-    toast.show(bookIds.length ? t("favorites.saved") : t("favorites.cleared"));
+    favorites.value = (await api.replaceFavorites(workIds)).items;
+    toast.show(workIds.length ? t("favorites.saved") : t("favorites.cleared"));
   } catch (err) {
     toast.show(err instanceof ApiError ? err.message : t("favorites.saveFailed"));
   } finally {
     favoritesBusy.value = false;
-  }
-}
-
-async function loadInvites() {
-  try {
-    invites.value = await api.invites();
-    invitesError.value = "";
-  } catch (err) {
-    invitesError.value =
-      err instanceof ApiError ? err.message : t("settings.invitesLoadFailed");
-  } finally {
-    invitesLoaded.value = true;
-  }
-}
-
-async function mint() {
-  minting.value = true;
-  try {
-    const created = await api.createInvite();
-    await loadInvites();
-    await copy(created.code);
-  } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : t("settings.inviteFailed"));
-  } finally {
-    minting.value = false;
-  }
-}
-
-async function copy(code: string) {
-  try {
-    await navigator.clipboard.writeText(code);
-    toast.show(t("settings.inviteCopied"));
-  } catch {
-    toast.show(code);
-  }
-}
-
-function onImportFile(event: Event) {
-  const input = event.target as HTMLInputElement;
-  importFile.value = input.files?.[0] ?? null;
-  importResult.value = null;
-}
-
-async function importCsv() {
-  const file = importFile.value;
-  if (!file || importing.value) return;
-  importing.value = true;
-  try {
-    const result = await api.importGoodreads(file);
-    importResult.value = result;
-    if (result.imported) {
-      toast.show(
-        result.skipped
-          ? t("settings.importedSkipped", {
-              imported: result.imported,
-              skipped: result.skipped,
-            })
-          : t("settings.importedBooks", { n: result.imported }),
-      );
-    } else {
-      toast.show(
-        result.skipped ? t("settings.skippedOnly", { n: result.skipped }) : t("settings.nothingToImport"),
-      );
-    }
-  } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : t("settings.importFailed"));
-  } finally {
-    importing.value = false;
   }
 }
 
@@ -159,8 +86,13 @@ async function logout() {
   await router.push("/login");
 }
 
+/** The session already ended on the server (signed out here, or the account is gone). */
+function toLogin(message?: string) {
+  if (message) toast.show(message);
+  void router.replace("/login");
+}
+
 onMounted(() => {
-  void loadInvites();
   void loadFavorites();
 });
 </script>
@@ -202,6 +134,8 @@ onMounted(() => {
       </div>
     </section>
 
+    <AccountSettings @logged-out="toLogin()" />
+
     <section class="section" aria-labelledby="favorites">
       <div class="section-head">
         <h2 id="favorites">{{ t("favorites.heading") }}</h2>
@@ -219,6 +153,8 @@ onMounted(() => {
         <LanguageSwitch />
       </div>
     </section>
+
+    <TimeZoneSetting />
 
     <section aria-labelledby="appearance">
       <div class="section-head">
@@ -279,50 +215,6 @@ onMounted(() => {
       </div>
     </section>
 
-    <section class="section" aria-labelledby="invites">
-      <div class="section-head">
-        <h2 id="invites">{{ t("settings.invites") }}</h2>
-        <span class="fine subtle nums">{{ t("settings.unusedCount", { n: unusedInvites }) }}</span>
-      </div>
-      <p class="fine muted">
-        {{ t("settings.invitesBlurb") }}
-      </p>
-      <button
-        class="btn btn-primary mint-btn"
-        type="button"
-        :disabled="minting"
-        @click="mint"
-      >
-        {{ minting ? t("settings.creatingInvite") : t("settings.createInvite") }}
-      </button>
-      <p v-if="invitesError" class="error">{{ invitesError }}</p>
-      <ul v-else-if="invites.length" class="invite-list">
-        <li v-for="invite in invites" :key="invite.code" class="invite-row">
-          <span>
-            <code class="invite-code">{{ invite.code }}</code>
-            <span class="fine subtle invite-state">
-              <template v-if="invite.used">{{ t("settings.usedBy", { name: invite.used_by }) }}</template>
-              <template v-else>{{ t("settings.unused") }}</template>
-            </span>
-          </span>
-          <button
-            v-if="!invite.used"
-            class="btn btn-ghost btn-sm"
-            type="button"
-            @click="copy(invite.code)"
-          >
-            {{ t("common.copy") }}
-          </button>
-        </li>
-      </ul>
-      <ul v-else-if="!invitesLoaded" class="invite-list" aria-hidden="true">
-        <li v-for="n in 2" :key="n" class="invite-row">
-          <span class="skeleton skeleton-line" />
-        </li>
-      </ul>
-      <p v-else class="fine subtle">{{ t("settings.noInvites") }}</p>
-    </section>
-
     <section class="section" aria-labelledby="import">
       <div class="section-head">
         <h2 id="import">{{ t("settings.importTitle") }}</h2>
@@ -330,42 +222,28 @@ onMounted(() => {
       <p class="fine muted">
         {{ t("settings.importBlurb") }}
       </p>
-      <label class="import-file">
-        <input type="file" accept=".csv,text/csv" @change="onImportFile" />
-        <span>{{ importFile ? importFile.name : t("settings.chooseCsv") }}</span>
-      </label>
-      <button
-        class="btn btn-ghost"
-        type="button"
-        :disabled="!importFile || importing"
-        @click="importCsv"
-      >
-        {{ importing ? t("settings.importing") : t("settings.importCsv") }}
-      </button>
-      <p v-if="importing" class="fine subtle">
-        {{ t("settings.importWait") }}
-      </p>
-      <template v-if="importResult">
-        <p class="fine muted import-summary">
-          {{ t("settings.importSummary", { imported: importResult.imported, skipped: importResult.skipped }) }}
-        </p>
-        <ul v-if="importResult.skips.length" class="import-skips">
-          <li v-for="(skip, index) in importResult.skips" :key="index">
-            {{ skip.title || "Untitled" }} — {{ skip.reason }}
-          </li>
-        </ul>
-      </template>
+      <GoodreadsImport />
     </section>
 
-    <section class="section" aria-labelledby="backup">
+    <section class="section" aria-labelledby="your-data">
       <div class="section-head">
-        <h2 id="backup">{{ t("settings.backup") }}</h2>
+        <h2 id="your-data">{{ t("settings.yourData") }}</h2>
       </div>
       <p class="fine muted">
-        {{ t("settings.backupBlurb") }}
+        {{ t("settings.exportBlurb") }}
       </p>
-      <a class="btn btn-ghost backup-btn" href="/api/backup">{{ t("settings.downloadDatabase") }}</a>
+      <a class="btn btn-ghost backup-btn" href="/api/auth/me/export" download>{{ t("settings.exportData") }}</a>
     </section>
+
+    <section v-if="session.user?.is_admin" class="section" aria-labelledby="instance-admin">
+      <div class="section-head">
+        <h2 id="instance-admin">{{ t("admin.title") }}</h2>
+      </div>
+      <p class="fine muted">{{ t("admin.settingsBlurb") }}</p>
+      <RouterLink class="btn btn-ghost" to="/admin">{{ t("admin.open") }}</RouterLink>
+    </section>
+
+    <DeleteAccount @deleted="toLogin(t('account.deleted'))" />
 
     <hr class="divider" />
 
@@ -518,84 +396,12 @@ onMounted(() => {
   background: var(--accent);
 }
 
-.mint-btn {
-  margin: var(--space-3) 0;
-}
-
-.invite-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: var(--space-2);
-}
-
-.invite-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-
-.invite-code {
-  font-family: var(--mono);
-  letter-spacing: 0.08em;
-  display: block;
-}
-
-.invite-state {
-  display: block;
-}
-
-.import-file {
-  position: relative;
-  display: block;
-  width: 100%;
-  min-height: var(--tap);
-  padding: var(--space-3);
-  margin: var(--space-3) 0;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-.import-file:hover {
-  border-color: var(--accent);
-}
-
-.import-file input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-}
-
-.import-summary {
-  margin-top: var(--space-3);
-}
-
-.import-skips {
-  margin: var(--space-2) 0 0;
-  padding-left: var(--space-5);
-  color: var(--text-subtle);
-  font-size: var(--text-sm);
-}
-
 .backup-btn {
   margin-top: var(--space-3);
 }
 
 @media (min-width: 720px) {
-  .mint-btn,
-  .backup-btn,
-  .import-file {
+  .backup-btn {
     max-width: 320px;
   }
 }

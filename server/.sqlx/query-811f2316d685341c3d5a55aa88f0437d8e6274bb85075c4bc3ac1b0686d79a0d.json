@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n               SELECT 1 FROM email_tokens\n               WHERE user_id = u.id AND purpose = 'reset_password'\n                 AND used_at IS NULL AND expires_at > now()) AS \"open!\"\n           FROM users u WHERE u.id = $1 FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "open!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "811f2316d685341c3d5a55aa88f0437d8e6274bb85075c4bc3ac1b0686d79a0d"
+}

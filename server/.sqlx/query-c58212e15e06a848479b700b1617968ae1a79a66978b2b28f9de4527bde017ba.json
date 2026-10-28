@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO next_up_ballots (club_id, vote_id, user_id, nomination_id, created_at)\n                 VALUES ($1, $2, $3, $4, $5)\n                 ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c58212e15e06a848479b700b1617968ae1a79a66978b2b28f9de4527bde017ba"
+}

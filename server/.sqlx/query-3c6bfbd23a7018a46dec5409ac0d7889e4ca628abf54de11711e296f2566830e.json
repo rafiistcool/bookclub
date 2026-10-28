@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO club_removals (club_id, user_id, removed_at) VALUES ($1, $2, clock_timestamp())\n         ON CONFLICT (club_id, user_id) DO UPDATE SET removed_at = excluded.removed_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3c6bfbd23a7018a46dec5409ac0d7889e4ca628abf54de11711e296f2566830e"
+}

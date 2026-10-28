@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE works SET merged_into_id = $2, updated_at = now() WHERE merged_into_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "735b6c1036290d84dd8a767e07c897b87aeb4abce9f8568224c126dc0b6d6149"
+}

@@ -1,60 +1,99 @@
-import type { Status } from "./constants";
+// The API's shapes come from the server's OpenAPI document (src/api/generated.ts,
+// written only by `npm run gen:api`). The names below are the app's names for
+// them; new code may import from "./api/generated" directly. Only types the
+// server does not describe (client-side unions, request helpers) are defined here.
+import type {
+  BookDetailOut,
+  BookOut,
+  ClubPickCurrentOut,
+  ClubPickOut,
+  DiaryFeedItemOut,
+  DiaryFeedOut,
+  DiaryOut,
+  FavoriteOut,
+  FavoritesOut,
+  ImportJobOut,
+  ImportSkipOut,
+  InviteOut,
+  MemberOut,
+  OverlapBookOut,
+  OverlapOut,
+  PostOut,
+  ReactionOut,
+  SearchHistoryOut,
+  ServiceConfig,
+  ShelfItemOut,
+  ShelfListOut,
+  UserOut,
+  VoteApplyOut,
+  VoteNominationOut,
+  VoteOut,
+} from "./api/generated";
+
+export type {
+  ActivityItem,
+  ActivityOut,
+  BookReader,
+  ClubOut,
+  ClubPickReader,
+  ClubPickSummary,
+  ClubRef,
+  ClubRole,
+  ClubSummary,
+  InvitePreview,
+  MilestoneOut,
+  MilestoneUnit,
+  PickThreadOut,
+  QuoteOut,
+  VoteReasonOut,
+  VoteSuggestionOut,
+  CustomBookIn,
+  DiaryEntryIn,
+  EditionOut,
+  ImportSkipCode,
+  ImportStatus,
+  OverlapMember,
+  SearchHit,
+  SearchPage,
+  ShelfStatus,
+  UserSummary,
+  Visibility,
+} from "./api/generated";
 
 export type ThemeId = "paper" | "slate" | "forest" | "ink";
 export type ColorMode = "light" | "dark" | "system";
 export type Locale = "en" | "de";
 
-export type User = {
-  id: number;
-  username: string;
-  theme: ThemeId;
-  color_mode: ColorMode;
-  locale: Locale;
-  avatar_url: string | null;
-};
+/** The signed-in user (`GET /api/auth/me`). */
+export type User = UserOut;
+/** A work as every list shows it; edition-aware where the server has an edition context. */
+export type Book = BookOut;
+export type BookDetail = BookDetailOut;
+export type ShelfItem = ShelfItemOut;
+export type ShelfList = ShelfListOut;
+export type Favorite = FavoriteOut;
+export type FavoritesList = FavoritesOut;
+export type SearchHistoryEntry = SearchHistoryOut;
+/** Service branding from `GET /api/config`. */
+export type ServiceBrand = ServiceConfig;
 
-export type Book = {
-  id: number;
-  ol_work_key: string;
-  title: string;
-  authors: string;
-  cover_id: number | null;
-  year: number | null;
-  cover_url: string | null;
-  pages?: number | null;
-  /** Dominant cover colour, once the server has sampled it. */
-  spine_color?: string | null;
-};
+export type GoodreadsImport = ImportJobOut;
+export type GoodreadsSkip = ImportSkipOut;
 
-export type ShelfItem = {
-  started_at?: string | null;
-  finished_at?: string | null;
-  id: number;
-  status: Status;
-  position: number;
-  updated_at: string;
-  shelf_position?: number | null;
-  book: Book;
-  rating: number | null;
-  take: string;
-  dnf_reason: string;
-  progress: number | null;
-};
-
-export type SearchHit = {
-  ol_work_key: string;
-  title: string;
-  authors: string;
-  cover_id: number | null;
-  year: number | null;
-  on_shelf: Status | null;
-  shelf_id: number | null;
-  club_pick?: boolean;
-  cover_edition_key?: string | null;
-  isbn?: string | null;
-  custom?: boolean;
-  cover_url?: string | null;
-};
+export type Member = MemberOut;
+export type Invite = InviteOut;
+export type ClubPick = ClubPickOut;
+export type ClubPickCurrent = ClubPickCurrentOut;
+export type OverlapBook = OverlapBookOut;
+export type OverlapList = OverlapOut;
+export type Reaction = ReactionOut;
+export type DiaryEntry = PostOut;
+export type Diary = DiaryOut;
+export type DiaryFeedItem = DiaryFeedItemOut;
+export type DiaryFeed = DiaryFeedOut;
+export type VoteNomination = VoteNominationOut;
+export type NextUpVote = VoteOut;
+export type VoteApplyResult = VoteApplyOut;
 
 export type SearchSort = "readinglog" | "new" | "title" | "relevance";
 
@@ -64,264 +103,4 @@ export type SearchParams = {
   sort?: SearchSort;
   page?: number;
   limit?: number;
-};
-
-export type SearchPage = {
-  items: SearchHit[];
-  page: number;
-  has_more: boolean;
-};
-
-export type BookReader = {
-  username: string;
-  status: Status;
-  rating: number | null;
-  progress: number | null;
-  avatar_url?: string | null;
-};
-
-export type BookDetail = {
-  id: number;
-  ol_work_key: string;
-  title: string;
-  authors: string;
-  cover_id: number | null;
-  cover_url?: string | null;
-  year: number | null;
-  description: string;
-  subjects: string[];
-  on_shelf: Status | null;
-  shelf_id: number | null;
-  club_pick: boolean;
-  rating: number | null;
-  take: string;
-  dnf_reason: string;
-  progress: number | null;
-  readers: BookReader[];
-  club_rating: number | null;
-  rating_count: number;
-  custom?: boolean;
-  favorite_position: number | null;
-};
-
-export type Favorite = {
-  position: number;
-  book: Book;
-};
-
-export type FavoritesList = {
-  items: Favorite[];
-};
-
-export type SearchHistoryEntry = {
-  id: number;
-  query: string;
-  last_used_at: string;
-};
-
-export type ShelfList = {
-  timezone: string;
-  user: User;
-  items: ShelfItem[];
-  favorites: Favorite[];
-};
-
-export type Member = {
-  username: string;
-  currently_reading_count: number;
-  currently_reading_preview: {
-    title: string;
-    cover_id: number | null;
-      cover_url?: string | null;
-    ol_work_key?: string;
-  }[];
-  avatar_url?: string | null;
-};
-
-export type Invite = {
-  code: string;
-  used: boolean;
-  used_by: string | null;
-  created_at: string;
-};
-
-export type ClubConfig = {
-  name: string;
-  theme: string;
-  theme_dark: string;
-  public_url: string;
-  timezone: string;
-};
-
-export type ClubPickReader = {
-  username: string;
-  status: Status;
-  rating: number | null;
-  take: string;
-  dnf_reason: string;
-  progress: number | null;
-  avatar_url?: string | null;
-};
-
-export type ClubPick = {
-  id: number;
-  book: Book;
-  set_by: string;
-  note: string;
-  started_at: string;
-  ended_at: string | null;
-  meeting_at: string | null;
-  meeting_local: string | null;
-  meeting_label: string | null;
-  on_shelf: Status | null;
-  shelf_id: number | null;
-  readers: ClubPickReader[];
-  reading: string[];
-  finished: string[];
-};
-
-export type ClubPickBook = {
-  ol_work_key: string;
-  title: string;
-  authors: string;
-  cover_id: number | null;
-  cover_url?: string | null;
-  year: number | null;
-  note?: string;
-  meeting_at?: string | null;
-};
-
-export type ClubPickCurrent = {
-  pick: ClubPick | null;
-  timezone: string;
-};
-
-export type OverlapMember = {
-  username: string;
-  status: Status;
-};
-
-export type OverlapBook = {
-  book: Book;
-  count: number;
-  members: OverlapMember[];
-};
-
-export type OverlapList = {
-  items: OverlapBook[];
-  include_reading: boolean;
-};
-
-export type Reaction = {
-  emoji: string;
-  count: number;
-  mine: boolean;
-  users: string[];
-};
-
-export type DiaryEntry = {
-  id: number;
-  author: string;
-  author_avatar_url?: string | null;
-  mine: boolean;
-  body: string;
-  deleted: boolean;
-  spoiler_upto: number | null;
-  progress_at: number | null;
-  status_at: Status | null;
-  author_rating: number | null;
-  parent_id: number | null;
-  created_at: string;
-  created_label: string;
-  edited: boolean;
-  reactions: Reaction[];
-  replies: DiaryEntry[];
-};
-
-export type Diary = {
-  ol_work_key: string;
-  book_id: number | null;
-  my_progress: number | null;
-  my_status: Status | null;
-  items: DiaryEntry[];
-  timezone: string;
-};
-
-export type DiaryBookIn = {
-  title: string;
-  authors: string;
-  cover_id: number | null;
-  cover_url?: string | null;
-  year: number | null;
-};
-
-export type DiaryEntryIn = {
-  body: string;
-  spoiler_upto?: number | null;
-  parent_id?: number | null;
-  book?: DiaryBookIn;
-};
-
-export type DiaryFeedItem = {
-  entry: DiaryEntry;
-  book: Book;
-  parent_author: string | null;
-  my_progress: number | null;
-  my_status: Status | null;
-};
-
-export type DiaryFeed = {
-  items: DiaryFeedItem[];
-  has_more: boolean;
-  timezone: string;
-};
-
-export type VoteBook = {
-  ol_work_key: string;
-  title: string;
-  authors: string;
-  cover_id: number | null;
-  cover_url?: string | null;
-  year: number | null;
-};
-
-export type VoteNomination = {
-  id: number;
-  book: Book;
-  nominated_by: string;
-  votes: number;
-  voters: string[];
-  mine: boolean;
-};
-
-export type NextUpVote = {
-  vote_id: number | null;
-  nominations: VoteNomination[];
-  my_vote_id: number | null;
-  nomination_limit: number;
-  can_nominate: boolean;
-  timezone: string;
-};
-
-export type VoteApplyResult = {
-  pick: ClubPick;
-  vote: NextUpVote;
-};
-
-export type GoodreadsSkip = {
-  title: string;
-  reason: string;
-};
-
-export type GoodreadsImport = {
-  imported: number;
-  skipped: number;
-  skips: GoodreadsSkip[];
-};
-
-export type CustomBookIn = {
-  title: string;
-  authors?: string;
-  year?: number | null;
-  description?: string;
 };

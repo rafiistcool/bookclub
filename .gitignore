@@ -29,6 +29,9 @@ venv/
 uv.lock
 .python-version
 
+# Rust
+server/target/
+
 # Frontend / build output
 node_modules/
 frontend/dist/

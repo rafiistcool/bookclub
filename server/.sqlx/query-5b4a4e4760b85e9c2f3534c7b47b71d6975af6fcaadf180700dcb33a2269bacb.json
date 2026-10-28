@@ -1,0 +1,39 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO shelf_entries (user_id, work_id, edition_id, status, position, rating,\n                                    rating_visibility, take, dnf_reason, progress, updated_at,\n                                    started_at, finished_at)\n         VALUES ($1, $2, $3, $4, 0, $5, $6, $7, $8, $9, $10, $11, $12)\n         ON CONFLICT ON CONSTRAINT shelf_entries_user_work_key DO NOTHING\n         RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "shelf_entries",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Text",
+        "Int4",
+        "Text",
+        "Text",
+        "Text",
+        "Int4",
+        "Timestamptz",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5b4a4e4760b85e9c2f3534c7b47b71d6975af6fcaadf180700dcb33a2269bacb"
+}

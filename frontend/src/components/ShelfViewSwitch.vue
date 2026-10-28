@@ -4,7 +4,7 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import NavIcon from "./NavIcon.vue";
 
-// `base` points the switch at another member's shelves: /club/<name>.
+// `base` points the switch at another reader's shelves: /u/<name>.
 const props = defineProps<{ active: "books" | "physical"; base?: string }>();
 const booksPath = computed(() => props.base ?? "/shelf");
 const shelfPath = computed(() => props.base ? `${props.base}/shelf` : "/shelf/physical");

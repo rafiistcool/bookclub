@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE shelf_entries s SET position = r.rn - 1\n             FROM (SELECT id, (row_number() OVER (PARTITION BY user_id, status\n                                                  ORDER BY position, id))::int AS rn\n                   FROM shelf_entries WHERE user_id = ANY($1)) AS r\n             WHERE s.id = r.id AND s.position <> r.rn - 1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "174c4e1f9e62967cbbf985b5ed76626fa1200cdbb5b5d581d94d7932af826562"
+}

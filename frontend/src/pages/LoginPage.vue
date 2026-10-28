@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { ApiError } from "../api/client";
 import LanguageSwitch from "../components/LanguageSwitch.vue";
-import { useClub } from "../stores/club";
+import { joinCodeFromNext, pendingJoinCode } from "../invites";
+import { safeNextPath } from "../nextPath";
+import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
 
 const { t } = useI18n();
 
-const club = useClub();
+const service = useService();
 const session = useSession();
 const router = useRouter();
 const route = useRoute();
@@ -18,14 +20,11 @@ const password = ref("");
 const show = ref(false);
 const error = ref("");
 const pending = ref(false);
-
-function safeNextPath(raw: unknown): string {
-  if (typeof raw !== "string") return "/";
-  if (!raw.startsWith("/") || raw.startsWith("//") || raw.includes("\\")) {
-    return "/";
-  }
-  return raw;
-}
+/** Coming from an invite link: sign-up keeps the code. */
+const signupLink = computed(() => {
+  const code = joinCodeFromNext(route.query.next) ?? pendingJoinCode();
+  return code ? { path: "/signup", query: { code } } : "/signup";
+});
 
 async function submit() {
   error.value = "";
@@ -43,13 +42,14 @@ async function submit() {
 
 <template>
   <main class="auth-page">
-    <h1 class="wordmark">{{ club.name }}</h1>
+    <h1 class="wordmark">{{ service.name }}</h1>
     <p class="lede">{{ t("auth.signInLede") }}</p>
     <form @submit.prevent="submit">
       <p v-if="error" class="error">{{ error }}</p>
       <label class="field">
         <span>{{ t("auth.username") }}</span>
         <input v-model="username" name="username" autocomplete="username" required />
+        <span class="field-hint">{{ t("auth.usernameOrEmail") }}</span>
       </label>
       <label class="field">
         <span>{{ t("auth.password") }}</span>
@@ -70,9 +70,12 @@ async function submit() {
         {{ pending ? t("auth.signingIn") : t("auth.signIn") }}
       </button>
     </form>
+    <p class="fine auth-forgot">
+      <RouterLink to="/forgot-password">{{ t("auth.forgotPassword") }}</RouterLink>
+    </p>
     <p class="muted fine auth-alt">
-      {{ t("auth.haveInvite") }}
-      <RouterLink to="/register">{{ t("auth.createAccount") }}</RouterLink>
+      {{ service.signup === "open" ? t("auth.newHere") : t("auth.haveInvite") }}
+      <RouterLink :to="signupLink">{{ t("auth.createAccount") }}</RouterLink>
     </p>
     <div class="auth-locale">
       <LanguageSwitch compact />
@@ -83,6 +86,10 @@ async function submit() {
 <style scoped>
 .lede {
   margin: var(--space-2) 0 var(--space-6);
+}
+
+.auth-forgot {
+  margin-top: var(--space-3);
 }
 
 .auth-alt {

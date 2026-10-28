@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT coalesce(jsonb_agg((to_jsonb(q) - 'user_id')\n                      || jsonb_build_object('work_title', w.title)\n                  ORDER BY q.id), '[]') AS \"rows!\"\n           FROM quotes q JOIN works w ON w.id = q.work_id\n           WHERE q.user_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "rows!",
+        "type_info": "Jsonb",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "2b654d5a763ad13fc172e6b7cf1f3496608e504f51439d7a803bf1b6ab6fb465"
+}

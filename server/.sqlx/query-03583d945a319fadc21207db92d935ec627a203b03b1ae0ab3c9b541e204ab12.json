@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO work_authors (work_id, author_id, position)\n         SELECT $1, author_id, position FROM unnest($2::int8[], $3::int4[]) AS t (author_id, position)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array",
+        "Int4Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "03583d945a319fadc21207db92d935ec627a203b03b1ae0ab3c9b541e204ab12"
+}

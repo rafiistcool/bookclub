@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT count(*) AS \"n!\" FROM media\n               WHERE ol_cover_id = ANY($1)\n                 AND (EXISTS (SELECT 1 FROM works w WHERE w.cover_media_id = media.id)\n                      OR EXISTS (SELECT 1 FROM editions e WHERE e.cover_media_id = media.id))",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "n!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "db55884f81c18f2526cb553916d308cfc569e3b77ec5c7053bd4883942dd8b74"
+}

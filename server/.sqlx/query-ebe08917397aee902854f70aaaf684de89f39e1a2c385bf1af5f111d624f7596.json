@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO posts (work_id, author_id, club_id, pick_id, milestone_id, visibility,\n                                    body, spoiler_upto, created_at, updated_at)\n                 VALUES ($1, $2, $3, $4, $5, 'audience', $6, $7, $8, $9)\n                 RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Text",
+        "Int4",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ebe08917397aee902854f70aaaf684de89f39e1a2c385bf1af5f111d624f7596"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE posts\n         SET body = '', spoiler_upto = NULL, progress_at = NULL, status_at = NULL,\n             deleted_at = coalesce(deleted_at, now())\n         WHERE author_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9db73d37e137f37e2775b1dfecb72bd356efe650019856c5cc8231ee36e3f4b0"
+}

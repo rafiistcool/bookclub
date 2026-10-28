@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE import_jobs SET status = 'done', rows = '[]', finished_at = now()\n         WHERE id = $1 AND status = 'running' AND processed >= total",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ca8f5f6a3d0e005cb2159eb9b1bc27cf21654fba0c68d5d21cd863cdba0972d8"
+}

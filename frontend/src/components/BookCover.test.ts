@@ -1,92 +1,81 @@
 import { mount } from "@vue/test-utils";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { nextTick } from "vue";
+import { COVER_RETRY_MS } from "../covers";
 import BookCover from "./BookCover.vue";
 
+const circe = {
+  id: 4,
+  ol_work_key: "/works/OL1W",
+  title: "Circe",
+  cover_url: "/media/abc/l",
+  cover_thumb_url: "/media/abc/s",
+};
+
 describe("BookCover", () => {
-  it("requests a medium tile with default=false, not a large GIF-friendly URL", () => {
-    const wrapper = mount(BookCover, {
-      props: { title: "Circe", coverId: 8739376, size: "tile" },
-    });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("shows the same-origin thumbnail on a tile, lazily", () => {
+    const wrapper = mount(BookCover, { props: { book: circe, size: "tile" } });
     const img = wrapper.get("img");
-    expect(img.attributes("src")).toBe(
-      "https://covers.openlibrary.org/b/id/8739376-M.jpg?default=false",
-    );
+    expect(img.attributes("src")).toBe("/media/abc/s");
     expect(img.attributes("loading")).toBe("lazy");
     expect(img.attributes("alt")).toBe("Cover of Circe");
   });
 
-  it("does not render an image for null or -1 cover ids", () => {
-    const missing = mount(BookCover, { props: { title: "Circe", coverId: -1 } });
-    expect(missing.find("img").exists()).toBe(false);
-    expect(missing.text()).toContain("C");
+  it("shows the large picture full width", () => {
+    const wrapper = mount(BookCover, { props: { book: circe } });
+    expect(wrapper.get("img").attributes("src")).toBe("/media/abc/l");
   });
 
-  it("does not invent an Open Library ISBN CDN URL for Google catalog keys", () => {
+  it("shows the cloth and monogram when the book has no cover", () => {
     const wrapper = mount(BookCover, {
-      props: { title: "Circe", workKey: "/works/ISBN9780316769488", size: "md" },
+      props: { book: { ...circe, cover_url: null, cover_thumb_url: null } },
     });
     expect(wrapper.find("img").exists()).toBe(false);
-    expect(wrapper.text()).toContain("C");
+    expect(wrapper.get(".monogram").text()).toBe("C");
   });
 
-  it("ignores an Open Library CDN imageUrl so xs tiles stay on the S tier", () => {
+  it("never renders a cover from another host", () => {
     const wrapper = mount(BookCover, {
       props: {
-        title: "Circe",
-        coverId: 123,
-        workKey: "/works/OL1W",
-        imageUrl: "https://covers.openlibrary.org/b/id/123-L.jpg?default=false",
-        size: "xs",
+        book: {
+          ...circe,
+          cover_url: "https://covers.openlibrary.org/b/id/8739376-L.jpg",
+          cover_thumb_url: "//books.google.com/x.jpg",
+        },
       },
     });
-    expect(wrapper.get("img").attributes("src")).toBe(
-      "https://covers.openlibrary.org/b/id/123-S.jpg?default=false",
-    );
+    expect(wrapper.find("img").exists()).toBe(false);
   });
 
-  it("renders an https cover URL and skips Open Library sources", () => {
-    const wrapper = mount(BookCover, {
-      props: {
-        title: "Circe",
-        imageUrl:
-          "http://books.google.com/books/content?id=zyTCAlFPjgYC&printsec=frontcover",
-        coverId: 8739376,
-        workKey: "/works/ISBN9780316769488",
-        size: "md",
-      },
-    });
-    expect(wrapper.get("img").attributes("src")).toBe(
-      "https://books.google.com/books/content?id=zyTCAlFPjgYC&printsec=frontcover",
-    );
+  it("retries a failed cover once after a short pause, then tries the other size", async () => {
+    vi.useFakeTimers();
+    const wrapper = mount(BookCover, { props: { book: circe, size: "md" } });
+    await wrapper.get("img").trigger("error");
+    expect(wrapper.find("img").exists()).toBe(false);
+    vi.advanceTimersByTime(COVER_RETRY_MS);
+    await nextTick();
+    expect(wrapper.get("img").attributes("src")).toBe("/media/abc/s");
+    await wrapper.get("img").trigger("error");
+    expect(wrapper.get("img").attributes("src")).toBe("/media/abc/l");
+    await wrapper.get("img").trigger("error");
+    expect(wrapper.find("img").exists()).toBe(false);
+    expect(wrapper.get(".monogram").text()).toBe("C");
   });
 
-  it("uses an ISBN prop for Open Library works when cover_id is missing", () => {
-    const wrapper = mount(BookCover, {
-      props: {
-        title: "Circe",
-        workKey: "/works/OL1W",
-        isbn: "9780316769488",
-        size: "md",
-      },
-    });
-    expect(wrapper.get("img").attributes("src")).toBe(
-      "https://covers.openlibrary.org/b/isbn/9780316769488-M.jpg?default=false",
-    );
-  });
-
-  it("falls back to an edition key when cover_id is missing", () => {
-    const wrapper = mount(BookCover, {
-      props: { title: "Circe", coverId: null, coverEditionKey: "OL1M", size: "md" },
-    });
-    expect(wrapper.get("img").attributes("src")).toBe(
-      "https://covers.openlibrary.org/b/olid/OL1M-M.jpg?default=false",
-    );
+  it("starts over when the book gets another cover", async () => {
+    vi.useFakeTimers();
+    const wrapper = mount(BookCover, { props: { book: circe, size: "md" } });
+    await wrapper.get("img").trigger("error");
+    await wrapper.setProps({ book: { ...circe, cover_thumb_url: "/media/def/s" } });
+    expect(wrapper.get("img").attributes("src")).toBe("/media/def/s");
   });
 
   it("loads the first visible covers eagerly", () => {
-    const wrapper = mount(BookCover, {
-      props: { title: "Circe", coverId: 1, eager: true },
-    });
+    const wrapper = mount(BookCover, { props: { book: circe, eager: true } });
     expect(wrapper.get("img").attributes("loading")).toBe("eager");
   });
 });

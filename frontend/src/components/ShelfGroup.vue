@@ -6,7 +6,7 @@ import BookCard from "./BookCard.vue";
 
 const props = defineProps<{
   items: ShelfItem[]; month?: string; readonly?: boolean; disabled?: boolean;
-  clubPickKey?: string | null; timezone: string; emptyHint: string;
+  clubPickIds?: readonly number[]; timezone: string; emptyHint: string;
 }>();
 const emit = defineEmits<{
   action: [item: ShelfItem, action: "status" | "date" | "previous" | "next"];
@@ -30,7 +30,7 @@ function moved(event: { newDraggableIndex?: number; newIndex?: number }) {
     :prevent-on-filter="false" filter=".no-drag" draggable=".shelf-card"
     ghost-class="card-ghost" chosen-class="card-chosen" @add="moved" @update="moved">
     <BookCard v-for="item in rows" :key="item.id" :data-id="item.id"
-      :timezone="timezone" :item="item" :readonly="readonly" :disabled="disabled" :club-pick-key="clubPickKey"
+      :timezone="timezone" :item="item" :readonly="readonly" :disabled="disabled" :club-pick-ids="clubPickIds"
       @action="emit('action', item, $event)" />
   </VueDraggable>
 </template>

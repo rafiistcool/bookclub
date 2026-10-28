@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { nextTick } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { searchHit } from "../test/fixtures";
 import type { SearchHit, SearchPage } from "../types";
 
 const search = vi.fn();
@@ -11,6 +12,7 @@ const subject = vi.fn();
 const searchHistory = vi.fn();
 const rememberSearch = vi.fn();
 const deleteSearchHistory = vi.fn();
+const newReleases = vi.fn();
 
 vi.mock("../api/client", () => ({
   ApiError: class ApiError extends Error {
@@ -27,6 +29,7 @@ vi.mock("../api/client", () => ({
     search: (...args: unknown[]) => search(...args),
     trending: (...args: unknown[]) => trending(...args),
     subject: (...args: unknown[]) => subject(...args),
+    newReleases: (...args: unknown[]) => newReleases(...args),
   },
 }));
 
@@ -36,16 +39,7 @@ import DiscoverPage from "./DiscoverPage.vue";
 import { resetDiscoverBrowseCache } from "./discoverCache";
 
 function hit(overrides: Partial<SearchHit> = {}): SearchHit {
-  return {
-    ol_work_key: "/works/OL1W",
-    title: "Circe",
-    authors: "Madeline Miller",
-    cover_id: 123,
-    year: 2018,
-    on_shelf: null,
-    shelf_id: null,
-    ...overrides,
-  };
+  return searchHit({ id: 1, title: "Circe", authors: "Madeline Miller", year: 2018, ...overrides });
 }
 
 function page(items: SearchHit[], extras: Partial<SearchPage> = {}): SearchPage {
@@ -63,8 +57,8 @@ function deferred<T>() {
 }
 
 const bookTileStub = {
-  props: ["title"],
-  template: "<div class='tile'>{{ title }}</div>",
+  props: ["book", "note"],
+  template: "<div class='tile'>{{ book.title }}<span v-if='note' class='tile-note'>{{ note }}</span></div>",
 };
 
 async function mountDiscover(initial = "/discover") {
@@ -113,7 +107,8 @@ describe("DiscoverPage", () => {
     deleteSearchHistory.mockReset().mockResolvedValue(undefined);
     trending.mockReset();
     subject.mockReset();
-    trending.mockResolvedValue(page([hit({ ol_work_key: "/works/OL7W", title: "Atomic Habits" })]));
+    newReleases.mockReset().mockResolvedValue(page([]));
+    trending.mockResolvedValue(page([hit({ id: 7, title: "Atomic Habits" })]));
     subject.mockResolvedValue(page([hit()]));
   });
 
@@ -147,6 +142,15 @@ describe("DiscoverPage", () => {
     expect(wrapper.text()).toContain("Circe");
     expect(wrapper.text()).toContain("Couldn't load more");
     expect(wrapper.text()).not.toContain("The library is unavailable");
+  });
+
+  it("drops a later page's hits that are already shown, by work id", async () => {
+    search
+      .mockResolvedValueOnce(page([hit({ id: 1, title: "Circe" })], { has_more: true }))
+      .mockResolvedValueOnce(page([hit({ id: 1, title: "Circe" }), hit({ id: 2, title: "Galatea" })], { page: 2 }));
+    const { wrapper } = await mountDiscover("/discover?q=circe");
+    expect(search).toHaveBeenCalledTimes(2);
+    expect(wrapper.findAll(".tile").map((tile) => tile.text())).toEqual(["Circe", "Galatea"]);
   });
 
   it("distinguishes a rate-limit from a miss", async () => {
@@ -200,7 +204,7 @@ describe("DiscoverPage", () => {
     const { wrapper: again } = await mountDiscover();
     expect(again.text()).toContain("Atomic Habits");
     expect(again.text()).not.toContain("Still loading shelves");
-    refresh.resolve(page([hit({ ol_work_key: "/works/OL7W", title: "Atomic Habits" })]));
+    refresh.resolve(page([hit({ id: 7, title: "Atomic Habits" })]));
     await flushPromises();
     expect(again.text()).toContain("Atomic Habits");
   });
@@ -255,7 +259,7 @@ describe("DiscoverPage search results", () => {
     search.mockReset();
     trending.mockReset();
     subject.mockReset();
-    trending.mockResolvedValue(page([hit({ ol_work_key: "/works/OLT", title: "Trending Book" })]));
+    trending.mockResolvedValue(page([hit({ id: 99, title: "Trending Book" })]));
     subject.mockResolvedValue(page([]));
   });
 
@@ -274,7 +278,7 @@ describe("DiscoverPage search results", () => {
     expect(search).toHaveBeenCalledTimes(1);
     expect(titles()).not.toContain("Dune");
 
-    first.resolve(page([hit({ ol_work_key: "/works/OL1W", title: "Dune" })]));
+    first.resolve(page([hit({ id: 1, title: "Dune" })]));
     await flushPromises();
     await nextTick();
 
@@ -306,7 +310,7 @@ describe("DiscoverPage search results", () => {
 
     const { wrapper } = await mountDiscover();
     await submitQuery(wrapper, "dune");
-    dune.resolve(page([hit({ ol_work_key: "/works/OL1W", title: "Dune" })]));
+    dune.resolve(page([hit({ id: 1, title: "Dune" })]));
     await flushPromises();
     expect(wrapper.text()).toContain("Dune");
 
@@ -315,7 +319,7 @@ describe("DiscoverPage search results", () => {
     expect(wrapper.text()).toContain("Dune");
     expect(wrapper.text()).not.toContain("Nothing matched");
 
-    circe.resolve(page([hit({ ol_work_key: "/works/OL2W", title: "Circe" })]));
+    circe.resolve(page([hit({ id: 2, title: "Circe" })]));
     await flushPromises();
     expect(wrapper.text()).toContain("Circe");
     expect(wrapper.text()).not.toContain("Dune");
@@ -328,7 +332,7 @@ describe("DiscoverPage search results", () => {
 
     const { wrapper } = await mountDiscover();
     await submitQuery(wrapper, "dune");
-    dune.resolve(page([hit({ ol_work_key: "/works/OL1W", title: "Dune" })]));
+    dune.resolve(page([hit({ id: 1, title: "Dune" })]));
     await flushPromises();
     expect(wrapper.text()).toContain("Dune");
 
@@ -341,7 +345,7 @@ describe("DiscoverPage search results", () => {
     expect(wrapper.text()).not.toContain("Dune");
     expect(wrapper.text()).not.toContain("Circe");
 
-    circe.resolve(page([hit({ ol_work_key: "/works/OL2W", title: "Circe" })]));
+    circe.resolve(page([hit({ id: 2, title: "Circe" })]));
     await flushPromises();
     expect(wrapper.text()).toContain("Circe");
   });
@@ -362,7 +366,7 @@ describe("DiscoverPage search results", () => {
 
     const { wrapper } = await mountDiscover();
     await submitQuery(wrapper, "dune");
-    relevance.resolve(page([hit({ ol_work_key: "/works/OL1W", title: "Dune" })]));
+    relevance.resolve(page([hit({ id: 1, title: "Dune" })]));
     await flushPromises();
 
     const popularChip = wrapper.findAll("button.chip").find((chip) => chip.text() === "Popular");
@@ -373,8 +377,8 @@ describe("DiscoverPage search results", () => {
 
     popular.resolve(
       page([
-        hit({ ol_work_key: "/works/OL1W", title: "Dune" }),
-        hit({ ol_work_key: "/works/OL3W", title: "Dune Messiah" }),
+        hit({ id: 1, title: "Dune" }),
+        hit({ id: 3, title: "Dune Messiah" }),
       ]),
     );
     await flushPromises();
@@ -408,11 +412,11 @@ describe("DiscoverPage search results", () => {
     await submitQuery(wrapper, "dune");
     await submitQuery(wrapper, "circe");
 
-    circe.resolve(page([hit({ ol_work_key: "/works/OL2W", title: "Circe" })]));
+    circe.resolve(page([hit({ id: 2, title: "Circe" })]));
     await flushPromises();
     expect(wrapper.text()).toContain("Circe");
 
-    dune.resolve(page([hit({ ol_work_key: "/works/OL1W", title: "Dune" })]));
+    dune.resolve(page([hit({ id: 1, title: "Dune" })]));
     await flushPromises();
     expect(wrapper.text()).toContain("Circe");
     expect(wrapper.text()).not.toContain("Dune");
@@ -535,5 +539,53 @@ describe("DiscoverPage search history", () => {
     expect(deleteSearchHistory).toHaveBeenCalledWith(undefined);
     expect(wrapper.find(".search-history").exists()).toBe(false);
     wrapper.unmount();
+  });
+
+});
+
+describe("DiscoverPage new releases", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    resetDiscoverBrowseCache();
+    searchHistory.mockReset().mockResolvedValue([]);
+    trending.mockReset().mockResolvedValue(page([]));
+    subject.mockReset().mockResolvedValue(page([]));
+    newReleases.mockReset().mockResolvedValue(page([]));
+  });
+
+  it("shows German readers the DNB new releases with their date", async () => {
+    const previousLocale = i18n.global.locale.value;
+    i18n.global.locale.value = "de";
+    newReleases.mockResolvedValue(page([
+      hit({ id: 40, title: "Neu im Herbst", planned_publication_date: "2099-11-12" }),
+    ]));
+    const { wrapper } = await mountDiscover();
+    try {
+      expect(newReleases).toHaveBeenCalledWith(1, 14, expect.anything());
+      expect(wrapper.get("#new-releases").text()).toBe("Neuerscheinungen");
+      expect(wrapper.text()).toContain("Neu im Herbst");
+      expect(wrapper.get(".tile-note").text()).toBe("Erscheint am 12. Nov. 2099");
+    } finally {
+      wrapper.unmount();
+      i18n.global.locale.value = previousLocale;
+    }
+  });
+
+  it("leaves the new-releases row out in English, and while the harvest is empty", async () => {
+    const english = await mountDiscover();
+    expect(newReleases).not.toHaveBeenCalled();
+    expect(english.wrapper.find("#new-releases").exists()).toBe(false);
+    english.wrapper.unmount();
+    resetDiscoverBrowseCache();
+    const previousLocale = i18n.global.locale.value;
+    i18n.global.locale.value = "de";
+    const german = await mountDiscover();
+    try {
+      expect(newReleases).toHaveBeenCalled();
+      expect(german.wrapper.find("#new-releases").exists()).toBe(false);
+    } finally {
+      german.wrapper.unmount();
+      i18n.global.locale.value = previousLocale;
+    }
   });
 });

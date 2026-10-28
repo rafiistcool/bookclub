@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT b.nomination_id, b.user_id, u.username\n         FROM next_up_ballots b\n         JOIN club_memberships m ON m.club_id = b.club_id AND m.user_id = b.user_id\n         JOIN users u ON u.id = b.user_id\n         WHERE b.vote_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "nomination_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "next_up_ballots",
+            "name": "nomination_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "next_up_ballots",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "username",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "username"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "114da27b9b3181ec293571d2bd8ba21f40464604ee3eb8cf5fba1173545b2024"
+}

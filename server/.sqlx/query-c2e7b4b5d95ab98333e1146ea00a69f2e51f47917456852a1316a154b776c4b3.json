@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE sessions\n             SET last_used_at = now(),\n                 expires_at = now() + CASE kind WHEN 'cookie' THEN interval '30 days'\n                                                ELSE interval '90 days' END\n             WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c2e7b4b5d95ab98333e1146ea00a69f2e51f47917456852a1316a154b776c4b3"
+}

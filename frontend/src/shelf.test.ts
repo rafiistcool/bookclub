@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { clubDate, orderedShelf, readingMonth, readingMonthLabel, shelfDropPosition, visibleShelf } from "./shelf";
+import { shelfItem } from "./test/fixtures";
 import type { ShelfItem } from "./types";
-const item = (id: number, status: ShelfItem["status"], position = 0, shelf_position?: number): ShelfItem => ({
-  id, position, shelf_position, status, updated_at: "", rating: null,
-  take: "", dnf_reason: "", progress: null,
-  book: { id, title: `Book ${id}`, authors: "", cover_id: null, cover_url: null, year: null, ol_work_key: `/works/OL${id}W` },
-});
+const item = (id: number, status: ShelfItem["status"], position = 0, shelf_position?: number): ShelfItem =>
+  shelfItem({ id, position, shelf_position: shelf_position ?? null, status });
 
 describe("shelf dates and order", () => {
   it("uses the club timezone for offsetless SQLite timestamps", () => {

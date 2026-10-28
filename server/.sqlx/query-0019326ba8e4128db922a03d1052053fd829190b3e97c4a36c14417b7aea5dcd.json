@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT jsonb_build_object(\n               'works', (SELECT coalesce(jsonb_agg(jsonb_build_object(\n                             'id', w.id, 'title', w.title, 'subtitle', w.subtitle,\n                             'author_names', w.author_names,\n                             'first_publish_year', w.first_publish_year, 'source', w.source,\n                             'created_at', w.created_at) ORDER BY w.id), '[]')\n                         FROM works w WHERE w.created_by = $1),\n               'editions', (SELECT coalesce(jsonb_agg(jsonb_build_object(\n                                'id', e.id, 'work_id', e.work_id, 'isbn13', e.isbn13,\n                                'title', e.title, 'publisher', e.publisher, 'source', e.source,\n                                'created_at', e.created_at) ORDER BY e.id), '[]')\n                            FROM editions e WHERE e.created_by = $1)) AS \"rows!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "rows!",
+        "type_info": "Jsonb",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "0019326ba8e4128db922a03d1052053fd829190b3e97c4a36c14417b7aea5dcd"
+}

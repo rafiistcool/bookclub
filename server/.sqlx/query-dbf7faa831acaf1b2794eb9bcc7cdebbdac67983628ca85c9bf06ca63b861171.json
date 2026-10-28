@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE works SET details_fetched_at = GREATEST(details_fetched_at, $2)\n                 WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dbf7faa831acaf1b2794eb9bcc7cdebbdac67983628ca85c9bf06ca63b861171"
+}

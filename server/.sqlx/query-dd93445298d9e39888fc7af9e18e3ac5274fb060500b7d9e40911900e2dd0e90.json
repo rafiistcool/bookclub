@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE editions SET cover_media_id = NULL,\n                field_sources = field_sources - 'cover_media_id', updated_at = now()\n         WHERE cover_media_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dd93445298d9e39888fc7af9e18e3ac5274fb060500b7d9e40911900e2dd0e90"
+}

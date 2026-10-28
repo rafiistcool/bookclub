@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE harvest_state\n                   SET run_started_at = now(),\n                       run_from = COALESCE(harvested_until, now() - make_interval(days => $2)),\n                       resumption_token = NULL, token_issued_at = NULL, records_seen = 0\n                   WHERE source = $1\n                   RETURNING run_from AS \"run_from!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "run_from!",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "harvest_state",
+            "name": "run_from"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "42adc76b0c0b44265f7ba68b4117b64e2dddc12ae1fb10df9de270bcb048ffc0"
+}

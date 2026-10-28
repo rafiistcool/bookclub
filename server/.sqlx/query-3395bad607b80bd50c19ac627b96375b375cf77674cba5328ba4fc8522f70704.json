@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO club_invites (id, club_id, code, created_by, created_at, expires_at,\n                                           max_uses, use_count, revoked_at)\n                 VALUES ($1, $2, $3, $4, $5, NULL, 1, $6, CASE WHEN $7 THEN NULL ELSE now() END)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Int8",
+        "Timestamptz",
+        "Int4",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3395bad607b80bd50c19ac627b96375b375cf77674cba5328ba4fc8522f70704"
+}

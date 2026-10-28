@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE clubs SET name = coalesce($3, name), timezone = coalesce($4, timezone)\n         WHERE id = $1\n           AND EXISTS (SELECT 1 FROM club_memberships\n                       WHERE club_id = $1 AND user_id = $2 AND role IN ('owner', 'admin'))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "748c6c4ac9f745eaab1be17e810e6563e2a7a0b7ba7a452ab730f4a8e6954fe2"
+}

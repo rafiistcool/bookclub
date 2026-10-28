@@ -2,18 +2,24 @@
 import { vAutosize } from "../autosize";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { api, ApiError } from "../api/client";
 import Avatar from "../components/Avatar.vue";
 import BookCover from "../components/BookCover.vue";
 import BookDiary from "../components/BookDiary.vue";
-import MeetingSheet from "../components/MeetingSheet.vue";
+import QuoteList from "../components/QuoteList.vue";
+import ClubBookActions from "../components/ClubBookActions.vue";
+import ReportCoverSheet from "../components/ReportCoverSheet.vue";
+import EditionPicker from "../components/EditionPicker.vue";
+import CoverPhotoButton from "../components/CoverPhotoButton.vue";
+import MergeRequestSheet from "../components/MergeRequestSheet.vue";
+import EditRequestSheet from "../components/EditRequestSheet.vue";
+import { clubsFor } from "../clubActions";
+import { worthRetrying } from "../retry";
 import {
-  catalogUrl as externalCatalogUrl,
-  isbnFromWorkKey,
-  isClubWorkId,
-  isOpenLibraryWorkId,
+  bookPath,
   openLibraryUrl,
+  parseBookParam,
   STATUSES,
   statusLabel,
   statusShort,
@@ -21,51 +27,76 @@ import {
   type Status,
 } from "../constants";
 import { tp } from "../i18n";
+import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
-import type { BookDetail } from "../types";
+import type { BookOut } from "../api/generated";
+import type { BookDetail, ClubRef, ShelfItem, Visibility } from "../types";
 
 const { t } = useI18n();
 
 const route = useRoute();
+const router = useRouter();
+const session = useSession();
 const toast = useToast();
 
 const book = ref<BookDetail | null>(null);
 const error = ref("");
+/** The failed load may work a second time (network, 5xx); a 404 or a bad id never does. */
+const retryable = ref(false);
 const loaded = ref(false);
 const loadWaitSec = ref(0);
 const busy = ref(false);
 const refreshing = ref(false);
 const expanded = ref(false);
-const settingPick = ref(false);
-const clubTimezone = ref("UTC");
+const reportingCover = ref(false);
+const requestingMerge = ref(false);
+const requestingEdit = ref(false);
 
 const takeDraft = ref("");
 const reasonDraft = ref("");
 const progressDraft = ref(0);
 const diary = ref<InstanceType<typeof BookDiary> | null>(null);
+const clubActions = ref<InstanceType<typeof ClubBookActions> | null>(null);
 
-const workId = computed(() => String(route.params.workId || ""));
+const param = computed(() => String(route.params.id || ""));
 const longDescription = computed(() => (book.value?.description.length ?? 0) > 420);
-const customBook = computed(
-  () => book.value?.custom === true || isClubWorkId(workId.value),
-);
-const catalogUrl = computed(() =>
-  book.value ? externalCatalogUrl(book.value.ol_work_key) : null,
-);
-const catalogLabel = computed(() => {
-  if (!book.value) return "";
-  if (openLibraryUrl(book.value.ol_work_key)) return t("book.viewOpenLibrary");
-  return t("book.viewGoogle");
+const catalogUrl = computed(() => openLibraryUrl(book.value?.ol_work_key));
+const canPick = computed(() => clubsFor("pick", session.user?.clubs).length > 0);
+const canNominate = computed(() => clubsFor("nominate", session.user?.clubs).length > 0);
+/** With one club to pick in, and the book already its pick, there is nothing to set. */
+const pickDone = computed(() => {
+  const clubs = clubsFor("pick", session.user?.clubs);
+  const current = book.value?.club_picks ?? [];
+  return clubs.length > 0 && clubs.every((club) => current.some((row) => row.slug === club.slug));
 });
-const catalogIsbn = computed(() =>
-  book.value ? isbnFromWorkKey(book.value.ol_work_key) : null,
-);
-const fromOpenLibrary = computed(() => isOpenLibraryWorkId(workId.value));
+const pickNames = computed(() => (book.value?.club_picks ?? []).map((club) => club.name).join(", "));
 
 function syncDrafts(detail: BookDetail) {
   takeDraft.value = detail.take;
   reasonDraft.value = detail.dnf_reason;
   progressDraft.value = detail.progress ?? 0;
+}
+
+/** A photo became the cover: show it without reloading the page. */
+function adoptCover(updated: BookOut) {
+  const detail = book.value;
+  if (!detail) return;
+  detail.cover_url = updated.cover_url;
+  detail.cover_thumb_url = updated.cover_thumb_url;
+  detail.cover_public_id = updated.cover_public_id;
+}
+
+/** Copy the viewer's shelf entry onto the page after a write. */
+function adoptEntry(detail: BookDetail, item: ShelfItem) {
+  detail.shelf_id = item.id;
+  detail.on_shelf = item.status;
+  detail.edition_id = item.edition?.id ?? null;
+  detail.rating = item.rating;
+  detail.rating_visibility = item.rating_visibility;
+  detail.take = item.take;
+  detail.dnf_reason = item.dnf_reason;
+  detail.progress = item.progress;
+  syncDrafts(detail);
 }
 
 let loadClock: ReturnType<typeof setInterval> | null = null;
@@ -86,18 +117,35 @@ function startLoadClock() {
 }
 
 async function load() {
+  const target = parseBookParam(param.value);
+  // The legacy key or merged id we just resolved now reads /book/<id>: same book, no second fetch.
+  if (target.kind === "id" && book.value?.id === target.id && loaded.value && !error.value) return;
   loaded.value = false;
   error.value = "";
+  retryable.value = false;
   expanded.value = false;
   loadAbort?.abort();
+  if (target.kind === "invalid") {
+    book.value = null;
+    error.value = t("book.notFound");
+    loaded.value = true;
+    return;
+  }
   const controller = new AbortController();
   loadAbort = controller;
   startLoadClock();
   try {
-    const detail = await api.book(workId.value, { signal: controller.signal });
+    const detail = await api.book(target.kind === "id" ? target.id : target.key, {
+      signal: controller.signal,
+    });
     if (controller.signal.aborted) return;
     book.value = detail;
     syncDrafts(detail);
+    // Old links (/book/OL…W, BC…, ISBN…, GB…) and merged works land on the work's
+    // own id; the #entry- hash of a diary link comes along.
+    if (target.kind === "legacy" || target.id !== detail.id) {
+      void router.replace({ path: bookPath(detail), query: route.query, hash: route.hash });
+    }
   } catch (err) {
     if (
       (err instanceof DOMException && err.name === "AbortError") ||
@@ -107,16 +155,12 @@ async function load() {
     }
     book.value = null;
     error.value = err instanceof ApiError ? err.message : t("book.loadFailed");
+    retryable.value = worthRetrying(err);
   } finally {
     if (!controller.signal.aborted) {
       loaded.value = true;
       stopLoadClock();
     }
-  }
-  try {
-    clubTimezone.value = (await api.clubPick()).timezone;
-  } catch {
-    /* The timezone is only a label on the meeting field. */
   }
 }
 
@@ -125,27 +169,15 @@ async function setStatus(status: Status) {
   if (!detail || busy.value) return;
   busy.value = true;
   try {
-    if (detail.shelf_id) {
-      await api.patchShelf(detail.shelf_id, { status, position: 0 });
-    } else {
-      const created = await api.addToShelf({
-        ol_work_key: detail.ol_work_key,
-        title: detail.title,
-        authors: detail.authors,
-        cover_id: detail.cover_id,
-        cover_url: detail.cover_url,
-        year: detail.year,
-        status,
-      });
-      detail.shelf_id = created.id;
-    }
-    detail.on_shelf = status;
+    const item = detail.shelf_id
+      ? await api.patchShelf(detail.shelf_id, { status, position: 0 })
+      : await api.addToShelf({ work_id: detail.id, status });
+    adoptEntry(detail, item);
     toast.show(t("book.movedTo", { status: statusLabel(status) }));
   } catch (err) {
     // Another tab or the importer may have shelved it since this page loaded.
     if (err instanceof ApiError && err.status === 409 && err.item) {
-      detail.shelf_id = err.item.id;
-      detail.on_shelf = err.item.status;
+      adoptEntry(detail, err.item);
       busy.value = false;
       await setStatus(status);
       return;
@@ -165,14 +197,9 @@ async function patch(
   if (!detail?.shelf_id || busy.value) return;
   busy.value = true;
   try {
-    const item = await api.patchShelf(detail.shelf_id, body);
-    detail.rating = item.rating;
-    detail.take = item.take;
-    detail.dnf_reason = item.dnf_reason;
-    detail.progress = item.progress;
-    syncDrafts(detail);
+    adoptEntry(detail, await api.patchShelf(detail.shelf_id, body));
     toast.show(message, action);
-    if ("rating" in body) void refreshClubRating();
+    if ("rating" in body || "rating_visibility" in body) void refreshClubRating();
   } catch (err) {
     toast.show(err instanceof ApiError ? err.message : t("book.saveFailed"));
   } finally {
@@ -180,12 +207,12 @@ async function patch(
   }
 }
 
-/** The club average moved with my stars; pull it without disturbing the page. */
+/** The average moved with my stars; pull it without disturbing the page. */
 async function refreshClubRating() {
   const detail = book.value;
   if (!detail) return;
   try {
-    const fresh = await api.book(workId.value);
+    const fresh = await api.book(detail.id);
     detail.club_rating = fresh.club_rating;
     detail.rating_count = fresh.rating_count;
     detail.readers = fresh.readers;
@@ -207,12 +234,23 @@ function rate(value: number) {
   });
 }
 
+async function setRatingVisibility(event: Event) {
+  const box = event.target as HTMLInputElement;
+  const visibility: Visibility = box.checked ? "only_me" : "audience";
+  await patch({ rating_visibility: visibility }, t("book.ratingVisibilitySaved"));
+  // The box shows what the server stored: after a failed save the click is undone.
+  box.checked = book.value?.rating_visibility === "only_me";
+}
+
 async function remove() {
   const detail = book.value;
   if (!detail?.shelf_id) return;
   const previous = {
+    work_id: detail.id,
+    edition_id: detail.edition_id,
     status: detail.on_shelf as Status,
     rating: detail.rating,
+    rating_visibility: detail.rating_visibility,
     take: detail.take,
     dnf_reason: detail.dnf_reason,
     progress: detail.progress,
@@ -222,7 +260,9 @@ async function remove() {
     await api.removeFromShelf(detail.shelf_id);
     detail.shelf_id = null;
     detail.on_shelf = null;
+    detail.edition_id = null;
     detail.rating = null;
+    detail.rating_visibility = null;
     detail.take = "";
     detail.dnf_reason = "";
     detail.progress = null;
@@ -230,22 +270,7 @@ async function remove() {
     toast.show(t("book.removed"), {
       label: t("common.undo"),
       run: async () => {
-        const created = await api.addToShelf({
-          ol_work_key: detail.ol_work_key,
-          title: detail.title,
-          authors: detail.authors,
-          cover_id: detail.cover_id,
-          cover_url: detail.cover_url,
-          year: detail.year,
-          ...previous,
-        });
-        detail.shelf_id = created.id;
-        detail.on_shelf = created.status;
-        detail.rating = created.rating;
-        detail.take = created.take;
-        detail.dnf_reason = created.dnf_reason;
-        detail.progress = created.progress;
-        syncDrafts(detail);
+        adoptEntry(detail, await api.addToShelf(previous));
       },
     });
   } catch (err) {
@@ -255,34 +280,27 @@ async function remove() {
   }
 }
 
-async function confirmClubPick(meetingAt: string | null) {
+function startClubAction(action: "pick" | "nominate") {
   const detail = book.value;
-  settingPick.value = false;
   if (!detail) return;
-  try {
-    await api.setClubPick({
-      ol_work_key: detail.ol_work_key,
-      title: detail.title,
-      authors: detail.authors,
-      cover_id: detail.cover_id,
-      cover_url: detail.cover_url,
-      year: detail.year,
-      meeting_at: meetingAt,
-    });
-    detail.club_pick = true;
-    toast.show(t("book.setPick"));
-  } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : t("book.setPickFailed"));
+  clubActions.value?.start(action, { id: detail.id, title: detail.title, currentIn: detail.club_picks });
+}
+
+function onPicked(club: ClubRef) {
+  const detail = book.value;
+  if (detail && !detail.club_picks.some((row) => row.slug === club.slug)) {
+    detail.club_picks = [...detail.club_picks, club];
   }
 }
 
 async function refreshDetails() {
-  if (refreshing.value) return;
+  const detail = book.value;
+  if (!detail || refreshing.value) return;
   refreshing.value = true;
   try {
-    const detail = await api.refreshBook(workId.value);
-    book.value = detail;
-    syncDrafts(detail);
+    const fresh = await api.refreshBook(detail.id);
+    book.value = fresh;
+    syncDrafts(fresh);
     toast.show(t("book.detailsUpdated"));
   } catch (err) {
     toast.show(err instanceof ApiError ? err.message : t("book.refreshFailed"));
@@ -317,30 +335,12 @@ async function toggleFavorite() {
   }
 }
 
-async function nominate() {
-  const detail = book.value;
-  if (!detail) return;
-  try {
-    await api.nominate({
-      ol_work_key: detail.ol_work_key,
-      title: detail.title,
-      authors: detail.authors,
-      cover_id: detail.cover_id,
-      cover_url: detail.cover_url,
-      year: detail.year,
-    });
-    toast.show(t("book.nominated"));
-  } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : t("book.nominateFailed"));
-  }
-}
-
 onMounted(load);
 onUnmounted(() => {
   loadAbort?.abort();
   stopLoadClock();
 });
-watch(workId, load);
+watch(param, load);
 </script>
 
 <template>
@@ -366,7 +366,9 @@ watch(workId, load);
       <h3>{{ t("book.loadFailedTitle") }}</h3>
       <p>{{ error }}</p>
       <div class="btn-row">
-        <button class="btn btn-ghost" type="button" @click="load">{{ t("common.tryAgain") }}</button>
+        <button v-if="retryable" class="btn btn-ghost" type="button" @click="load">
+          {{ t("common.tryAgain") }}
+        </button>
         <RouterLink class="btn btn-ghost" to="/discover">{{ t("book.backToDiscover") }}</RouterLink>
       </div>
     </div>
@@ -374,19 +376,27 @@ watch(workId, load);
     <template v-else-if="book">
       <div class="detail-hero">
         <div class="hero-cover">
-          <BookCover
-            :title="book.title"
-            :cover-id="book.cover_id"
-            :isbn="catalogIsbn"
-            :work-key="book.ol_work_key"
-            :image-url="book.cover_url"
-            eager
+          <BookCover :book="book" eager />
+          <button
+            v-if="book.cover_public_id"
+            class="text-btn finer report-cover"
+            type="button"
+            @click="reportingCover = true"
+          >
+            {{ t("cover.report") }}
+          </button>
+          <CoverPhotoButton
+            :work-id="book.id"
+            :edition-id="book.edition_id"
+            :has-cover="Boolean(book.cover_url || book.cover_thumb_url)"
+            @covered="adoptCover"
           />
         </div>
         <div class="detail-side">
           <div class="detail-intro">
-            <p v-if="book.club_pick" class="kicker">{{ t("book.currentPick") }}</p>
+            <p v-if="book.club_picks.length" class="kicker">{{ t("book.currentPickIn", { clubs: pickNames }) }}</p>
             <h1 class="display">{{ book.title }}</h1>
+            <p v-if="book.subtitle" class="detail-subtitle">{{ book.subtitle }}</p>
             <p v-if="book.authors" class="detail-authors">{{ book.authors }}</p>
             <p v-if="book.rating_count" class="club-rating">
               <span class="stars" aria-hidden="true">★</span>
@@ -396,20 +406,21 @@ watch(workId, load);
               </span>
             </p>
             <p v-if="book.year" class="fine subtle nums">{{ t("book.firstPublished", { year: book.year }) }}</p>
-            <p v-if="customBook" class="fine subtle">
-              {{ t("book.addedByClub") }}
+            <p v-if="book.custom" class="fine subtle">
+              {{ t("book.addedByReader") }}
             </p>
-            <p v-else class="fine">
+            <p v-else-if="catalogUrl || book.can_refresh" class="fine">
               <a
                 v-if="catalogUrl"
                 :href="catalogUrl"
                 target="_blank"
                 rel="noreferrer"
               >
-                {{ catalogLabel }}
+                {{ t("book.viewOpenLibrary") }}
               </a>
-              <span v-if="catalogUrl" class="subtle"> · </span>
+              <span v-if="catalogUrl && book.can_refresh" class="subtle"> · </span>
               <button
+                v-if="book.can_refresh"
                 class="text-btn"
                 type="button"
                 :disabled="refreshing"
@@ -418,16 +429,10 @@ watch(workId, load);
                 {{ refreshing ? t("book.refreshing") : t("book.refreshDetails") }}
               </button>
             </p>
-            <p v-if="!book.cover_id && !book.cover_url && !customBook && fromOpenLibrary" class="fine">
-              {{ t("book.noCover") }}
-              <button
-                class="text-btn"
-                type="button"
-                :disabled="refreshing"
-                @click="refreshDetails"
-              >
-                {{ t("book.refreshFromOl") }}
-              </button>
+            <p class="fine catalog-requests">
+              <button class="text-btn" type="button" @click="requestingEdit = true">{{ t("editRequest.openBook") }}</button>
+              <span class="subtle" aria-hidden="true"> · </span>
+              <button class="text-btn" type="button" @click="requestingMerge = true">{{ t("merge.open") }}</button>
             </p>
           </div>
 
@@ -483,6 +488,15 @@ watch(workId, load);
                   {{ book.rating && book.rating >= value ? "★" : "☆" }}
                 </button>
               </div>
+              <label class="check-row">
+                <input
+                  type="checkbox"
+                  :checked="book.rating_visibility === 'only_me'"
+                  :disabled="busy"
+                  @change="setRatingVisibility"
+                />
+                <span class="fine">{{ t("book.ratingOnlyMe") }}</span>
+              </label>
               <label class="field">
                 <span class="field-head">{{ t("book.oneLineTake") }}<span class="finer subtle nums">{{ takeDraft.length }}/140</span></span>
                 <textarea
@@ -526,6 +540,14 @@ watch(workId, load);
               </button>
             </div>
 
+            <EditionPicker
+              v-if="book.shelf_id"
+              :work-id="book.id"
+              :edition-id="book.edition_id"
+              :disabled="busy"
+              @choose="(editionId) => patch({ edition_id: editionId }, t('editions.saved'))"
+            />
+
             <div class="btn-row panel-actions">
               <button
                 class="btn btn-ghost btn-sm"
@@ -541,14 +563,20 @@ watch(workId, load);
                 }}
               </button>
               <button
+                v-if="canPick"
                 class="btn btn-ghost btn-sm"
                 type="button"
-                :disabled="book.club_pick"
-                @click="settingPick = true"
+                :disabled="pickDone"
+                @click="startClubAction('pick')"
               >
-                {{ book.club_pick ? t("book.alreadyPick") : t("book.setAsPick") }}
+                {{ pickDone ? t("book.alreadyPick") : t("book.setAsPick") }}
               </button>
-              <button class="btn btn-ghost btn-sm" type="button" @click="nominate">
+              <button
+                v-if="canNominate"
+                class="btn btn-ghost btn-sm"
+                type="button"
+                @click="startClubAction('nominate')"
+              >
                 {{ t("book.nominate") }}
               </button>
               <button
@@ -583,17 +611,11 @@ watch(workId, load);
       </section>
 
       <section class="section">
-        <BookDiary
-          ref="diary"
-          :work-key="book.ol_work_key"
-          :book="{
-            title: book.title,
-            authors: book.authors,
-            cover_id: book.cover_id,
-            cover_url: book.cover_url,
-            year: book.year,
-          }"
-        />
+        <BookDiary ref="diary" :work-id="book.id" />
+      </section>
+
+      <section class="section">
+        <QuoteList :work-id="book.id" :empty-text="t('quotes.emptyBook')" />
       </section>
 
       <section v-if="book.subjects.length" class="section">
@@ -619,7 +641,7 @@ watch(workId, load);
         <ul v-if="book.readers.length" class="reader-list">
           <li v-for="reader in book.readers" :key="reader.username">
             <Avatar :username="reader.username" :src="reader.avatar_url" size="sm" />
-            <RouterLink :to="`/club/${reader.username}`">{{ reader.username }}</RouterLink>
+            <RouterLink :to="`/u/${reader.username}`">{{ reader.username }}</RouterLink>
             <span class="badge" :class="reader.status">
               {{ statusShort(reader.status) }}
             </span>
@@ -635,14 +657,19 @@ watch(workId, load);
       </section>
     </template>
 
-    <MeetingSheet
-      v-if="settingPick && book"
-      :title="t('book.setAsPick')"
-      :book-title="book.title"
-      :timezone="clubTimezone"
-      :blurb="t('book.pickBlurb')"
-      @confirm="confirmClubPick"
-      @close="settingPick = false"
+    <ClubBookActions ref="clubActions" @picked="onPicked" />
+    <MergeRequestSheet
+      v-if="requestingMerge && book"
+      :work-id="book.id"
+      :title="book.title"
+      @close="requestingMerge = false"
+    />
+    <EditRequestSheet v-if="requestingEdit && book" :book="book" @close="requestingEdit = false" />
+    <ReportCoverSheet
+      v-if="reportingCover && book?.cover_public_id"
+      :public-id="book.cover_public_id"
+      :title="book.title"
+      @close="reportingCover = false"
     />
   </section>
 </template>
@@ -675,6 +702,20 @@ watch(workId, load);
   border-radius: var(--radius-md);
 }
 
+.report-cover,
+.hero-cover :deep(.cover-photo) {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-subtle);
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--tap);
+}
+
 .detail-intro {
   min-width: 0;
   display: grid;
@@ -684,6 +725,12 @@ watch(workId, load);
 
 .detail-intro .display {
   font-size: var(--text-2xl);
+}
+
+.detail-subtitle {
+  margin-top: calc(-1 * var(--space-1));
+  font-family: var(--serif);
+  font-size: var(--text-lg);
 }
 
 .detail-authors {

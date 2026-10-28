@@ -1,0 +1,70 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n                    setval(pg_get_serial_sequence('shelf_entries', 'id'), (SELECT max(id) FROM shelf_entries)) AS shelf_entries,\n                    setval(pg_get_serial_sequence('club_picks', 'id'), (SELECT max(id) FROM club_picks)) AS club_picks,\n                    setval(pg_get_serial_sequence('milestones', 'id'), (SELECT max(id) FROM milestones)) AS milestones,\n                    setval(pg_get_serial_sequence('quotes', 'id'), (SELECT max(id) FROM quotes)) AS quotes,\n                    setval(pg_get_serial_sequence('next_up_votes', 'id'), (SELECT max(id) FROM next_up_votes)) AS next_up_votes,\n                    setval(pg_get_serial_sequence('next_up_nominations', 'id'), (SELECT max(id) FROM next_up_nominations)) AS next_up_nominations,\n                    setval(pg_get_serial_sequence('events', 'id'), (SELECT max(id) FROM events)) AS events,\n                    setval(pg_get_serial_sequence('search_history', 'id'), (SELECT max(id) FROM search_history)) AS search_history",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "shelf_entries",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "club_picks",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "milestones",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "quotes",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "next_up_votes",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "next_up_nominations",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "events",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "search_history",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "ad2e2db84d5e4d15024a53170ae619bffbfe24a7898ced0b61aadb870693d14f"
+}

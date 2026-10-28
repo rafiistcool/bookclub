@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE email_tokens SET used_at = now()\n         WHERE user_id = $1 AND used_at IS NULL AND expires_at > now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8da0744b4a28e0071781ace20746b4ae14996d3357e8c74bcf82b7a77b8d079e"
+}

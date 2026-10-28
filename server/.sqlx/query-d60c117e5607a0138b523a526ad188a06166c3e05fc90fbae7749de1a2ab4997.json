@@ -1,0 +1,100 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.id, p.work_id, u.username AS \"set_by?\", p.note, p.started_at, p.ended_at,\n                  p.meeting_at\n           FROM club_picks p\n           LEFT JOIN users u ON u.id = p.set_by\n           WHERE p.club_id = $1 AND p.ended_at IS NOT NULL\n           ORDER BY p.ended_at DESC, p.id DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "club_picks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "work_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "club_picks",
+            "name": "work_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "set_by?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "username"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "note",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "club_picks",
+            "name": "note"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "started_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "club_picks",
+            "name": "started_at"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "ended_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "club_picks",
+            "name": "ended_at"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "meeting_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "club_picks",
+            "name": "meeting_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "d60c117e5607a0138b523a526ad188a06166c3e05fc90fbae7749de1a2ab4997"
+}

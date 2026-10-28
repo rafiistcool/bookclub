@@ -1,0 +1,73 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.id AS \"id!\", s.user_id AS \"user_id!\", s.work_id AS \"work_id!\",\n                      s.edition_id, s.status AS \"status!: ShelfStatus\", s.rating,\n                      coalesce(e.pages, w.pages, 0)::int8 AS \"pages!\",\n                      coalesce(s.finished_at, s.updated_at) AS \"stamp!\"\n               FROM bc_visible_shelf($1) AS s\n               JOIN works w ON w.id = s.work_id\n               LEFT JOIN editions e ON e.id = s.edition_id AND e.work_id = s.work_id\n               WHERE s.user_id = ANY($2) AND s.status IN ('finished', 'did_not_finish')\n               ORDER BY s.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "work_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "edition_id",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "status!: ShelfStatus",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "rating",
+        "type_info": "Int4",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "pages!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "stamp!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "18aee9321302cc919076dc442f4a9eefe886e67417c37874bd54d54aa7d660a3"
+}

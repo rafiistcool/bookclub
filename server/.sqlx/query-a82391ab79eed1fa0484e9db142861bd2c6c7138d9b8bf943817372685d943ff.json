@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT coalesce(jsonb_agg((to_jsonb(p) - 'author_id' - 'scope_key')\n                      || jsonb_build_object('work_title', w.title, 'club_name', c.name)\n                  ORDER BY p.id), '[]') AS \"rows!\"\n           FROM posts p\n           JOIN works w ON w.id = p.work_id\n           LEFT JOIN clubs c ON c.id = p.club_id\n           WHERE p.author_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "rows!",
+        "type_info": "Jsonb",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "a82391ab79eed1fa0484e9db142861bd2c6c7138d9b8bf943817372685d943ff"
+}

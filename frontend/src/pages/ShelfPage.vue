@@ -5,17 +5,18 @@ import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
 import Avatar from "../components/Avatar.vue";
 import BottomSheet from "../components/BottomSheet.vue";
+import ClubBookActions from "../components/ClubBookActions.vue";
 import FavoritePortrait from "../components/FavoritePortrait.vue";
-import MeetingSheet from "../components/MeetingSheet.vue";
 import ShelfBoard from "../components/ShelfBoard.vue";
 import ShelfViewSwitch from "../components/ShelfViewSwitch.vue";
 import TileSkeleton from "../components/TileSkeleton.vue";
+import { clubsFor } from "../clubActions";
 import { STATUSES, statusLabel, statusShort, type Status } from "../constants";
 import { tp } from "../i18n";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import { clubDate, orderedShelf, readingMonth, shelfDropPosition, visibleShelf } from "../shelf";
-import type { ClubPick, Favorite, ShelfItem } from "../types";
+import type { ClubRef, Favorite, ShelfItem } from "../types";
 
 type Filter = "all" | Status;
 
@@ -30,14 +31,19 @@ const error = ref("");
 const loaded = ref(false);
 const filter = ref<Filter>("all");
 const removing = ref<ShelfItem | null>(null);
-const settingPick = ref<ShelfItem | null>(null);
-const clubPick = ref<ClubPick | null>(null);
-const clubTimezone = ref("UTC");
+/** The current pick of each of the viewer's clubs, for the "Club" badge. */
+const clubPicks = ref<{ workId: number; club: ClubRef }[]>([]);
+const clubPickIds = computed(() => clubPicks.value.map((row) => row.workId));
+const clubActions = ref<InstanceType<typeof ClubBookActions> | null>(null);
+const canPick = computed(() => clubsFor("pick", session.user?.clubs).length > 0);
+const canNominate = computed(() => clubsFor("nominate", session.user?.clubs).length > 0);
+/** Reading dates are days in the owner's zone. */
+const shelfTimezone = ref("UTC");
 const saving = ref(false);
 const editing = ref<{ item: ShelfItem; action: "status" | "date" } | null>(null);
 const dateValue = ref("");
 const datePrecision = ref<"month" | "day">("month");
-const today = computed(() => clubDate(new Date().toISOString(), clubTimezone.value));
+const today = computed(() => clubDate(new Date().toISOString(), shelfTimezone.value));
 
 const counts = computed(() => {
   const tally: Record<Filter, number> = {
@@ -56,24 +62,35 @@ async function load() {
     const shelf = await api.myShelf();
     items.value = shelf.items;
     favorites.value = shelf.favorites;
-    clubTimezone.value = shelf.timezone || "UTC";
+    shelfTimezone.value = shelf.timezone || "UTC";
     error.value = "";
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : t("shelf.loadFailed");
   } finally {
     loaded.value = true;
   }
+  await loadClubPicks();
+}
+
+/** Without clubs there is no club call at all (solo mode). */
+async function loadClubPicks() {
+  if (!session.user?.clubs.length) {
+    clubPicks.value = [];
+    return;
+  }
   try {
-    const current = await api.clubPick();
-    clubPick.value = current.pick;
+    const { items: clubs } = await api.clubs();
+    clubPicks.value = clubs.flatMap((club) =>
+      club.current_pick ? [{ workId: club.current_pick.book.id, club: { slug: club.slug, name: club.name } }] : [],
+    );
   } catch {
-    clubPick.value = null;
+    clubPicks.value = [];
   }
 }
 
 async function onReordered(item: ShelfItem, position: number, month?: string) {
   if (saving.value) return;
-  const changedMonth = month !== undefined && month !== readingMonth(item, clubTimezone.value);
+  const changedMonth = month !== undefined && month !== readingMonth(item, shelfTimezone.value);
   if (changedMonth && item.status !== "finished") return;
   const finishedOn = month ? `${month}-01` : null;
   const snapshot = items.value;
@@ -99,12 +116,12 @@ function onAction(item: ShelfItem, action: "status" | "date" | "previous" | "nex
   if (action === "status" || action === "date") {
     editing.value = { item, action };
     datePrecision.value = "month";
-    dateValue.value = clubDate(item.finished_at, clubTimezone.value).slice(0, 7);
+    dateValue.value = clubDate(item.finished_at, shelfTimezone.value).slice(0, 7);
     return;
   }
-  const rows = visibleShelf(items.value, filter.value, clubTimezone.value).filter(row =>
+  const rows = visibleShelf(items.value, filter.value, shelfTimezone.value).filter(row =>
     item.status === "finished"
-      ? row.status === "finished" && readingMonth(row, clubTimezone.value) === readingMonth(item, clubTimezone.value)
+      ? row.status === "finished" && readingMonth(row, shelfTimezone.value) === readingMonth(item, shelfTimezone.value)
       : row.status !== "finished");
   const index = rows.findIndex((row) => row.id === item.id);
   const target = index + (action === "previous" ? -1 : 1);
@@ -142,9 +159,15 @@ function bookAction(action: "remove" | "pick" | "nominate") {
   const item = editing.value?.item;
   if (!item || saving.value) return;
   editing.value = null;
-  if (action === "remove") removing.value = item;
-  else if (action === "pick") settingPick.value = item;
-  else void nominate(item);
+  if (action === "remove") {
+    removing.value = item;
+    return;
+  }
+  clubActions.value?.start(action, {
+    id: item.book.id,
+    title: item.book.title,
+    currentIn: clubPicks.value.filter((row) => row.workId === item.book.id).map((row) => row.club),
+  });
 }
 
 function changeDatePrecision() {
@@ -181,14 +204,11 @@ async function confirmRemove() {
       label: t("common.undo"),
       run: async () => {
         await api.addToShelf({
-          ol_work_key: item.book.ol_work_key,
-          title: item.book.title,
-          authors: item.book.authors,
-          cover_id: item.book.cover_id,
-          cover_url: item.book.cover_url,
-          year: item.book.year,
+          work_id: item.book.id,
+          edition_id: item.edition?.id ?? null,
           status: item.status,
           rating: item.rating,
+          rating_visibility: item.rating_visibility,
           take: item.take,
           dnf_reason: item.dnf_reason,
           progress: item.progress,
@@ -200,42 +220,6 @@ async function confirmRemove() {
     });
   } catch (err) {
     toast.show(err instanceof ApiError ? err.message : t("shelf.removeFailed"));
-  }
-}
-
-async function nominate(item: ShelfItem) {
-  try {
-    await api.nominate({
-      ol_work_key: item.book.ol_work_key,
-      title: item.book.title,
-      authors: item.book.authors,
-      cover_id: item.book.cover_id,
-      cover_url: item.book.cover_url,
-      year: item.book.year,
-    });
-    toast.show(t("shelf.nominated"));
-  } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : t("shelf.nominateFailed"));
-  }
-}
-
-async function confirmClubPick(meetingAt: string | null) {
-  const item = settingPick.value;
-  settingPick.value = null;
-  if (!item) return;
-  try {
-    clubPick.value = await api.setClubPick({
-      ol_work_key: item.book.ol_work_key,
-      title: item.book.title,
-      authors: item.book.authors,
-      cover_id: item.book.cover_id,
-      cover_url: item.book.cover_url,
-      year: item.book.year,
-      meeting_at: meetingAt,
-    });
-    toast.show(t("shelf.setPick"));
-  } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : t("shelf.setPickFailed"));
   }
 }
 
@@ -264,7 +248,14 @@ onMounted(load);
 
     <p v-if="error" class="error">{{ error }}</p>
 
-    <div v-if="loaded && !error" class="shelf-view-toolbar"><ShelfViewSwitch active="books" /></div>
+    <div v-if="loaded && !error" class="shelf-view-toolbar">
+      <ShelfViewSwitch active="books" />
+      <span class="shelf-extra-links">
+        <RouterLink class="btn btn-ghost btn-sm" to="/diary">{{ t("diaryPage.title") }}</RouterLink>
+        <RouterLink class="btn btn-ghost btn-sm" to="/quotes">{{ t("quotes.title") }}</RouterLink>
+        <RouterLink class="btn btn-ghost btn-sm" to="/stats">{{ t("stats.short") }}</RouterLink>
+      </span>
+    </div>
 
     <div v-if="!loaded" class="book-grid" aria-hidden="true">
       <TileSkeleton :count="9" />
@@ -302,8 +293,8 @@ onMounted(load);
 
       <p class="visually-hidden shelf-drag-hint">{{ t(filter === 'finished' || filter === 'all' ? 'shelf.chronologicalHint' : 'shelf.directDragHint') }}</p>
       <ShelfBoard
-        :items="items" :filter="filter" :disabled="saving" :timezone="clubTimezone"
-        :club-pick-key="clubPick?.book.ol_work_key"
+        :items="items" :filter="filter" :disabled="saving" :timezone="shelfTimezone"
+        :club-pick-ids="clubPickIds"
         @reordered="onReordered" @action="onAction"
       />
     </template>
@@ -323,8 +314,8 @@ onMounted(load);
               @click="onAction(editing.item, 'previous')">{{ t('shelf.movePrevious') }}</button>
             <button type="button" class="btn btn-ghost btn-block"
               @click="onAction(editing.item, 'next')">{{ t('shelf.moveNext') }}</button>
-            <button type="button" class="btn btn-ghost btn-block" @click="bookAction('pick')">{{ t('card.setPick') }}</button>
-            <button type="button" class="btn btn-ghost btn-block" @click="bookAction('nominate')">{{ t('card.nominate') }}</button>
+            <button v-if="canPick" type="button" class="btn btn-ghost btn-block" @click="bookAction('pick')">{{ t('card.setPick') }}</button>
+            <button v-if="canNominate" type="button" class="btn btn-ghost btn-block" @click="bookAction('nominate')">{{ t('card.nominate') }}</button>
             <button type="button" class="btn btn-ghost btn-block" @click="bookAction('remove')">{{ t('common.remove') }}</button>
           </div>
         </details>
@@ -345,15 +336,8 @@ onMounted(load);
       </form>
     </BottomSheet>
 
-    <MeetingSheet
-      v-if="settingPick"
-      :title="t('shelf.setAsPick')"
-      :book-title="settingPick.book.title"
-      :timezone="clubTimezone"
-      :blurb="t('shelf.pickBlurb')"
-      @confirm="confirmClubPick"
-      @close="settingPick = null"
-    />
+    <!-- A new pick changes the "Club" badges. -->
+    <ClubBookActions ref="clubActions" @picked="loadClubPicks" />
 
     <BottomSheet
       v-if="removing"
@@ -376,7 +360,7 @@ onMounted(load);
 </template>
 
 <style scoped>
-.shelf-view-toolbar { margin-bottom: var(--space-5); }
+.shelf-view-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-5); }
 .shelf-head { position: relative; padding-right: 42px; margin-bottom: var(--space-6); }
 .shelf-head > div { min-width: 0; }
 .shelf-head h1 { font-size: clamp(1.5rem, 6.7vw, 2rem); }

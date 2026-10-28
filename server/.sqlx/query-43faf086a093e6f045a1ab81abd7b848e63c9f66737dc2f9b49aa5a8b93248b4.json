@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (SELECT 1 FROM editions WHERE id = $1 AND work_id = $2) AS \"belongs!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "belongs!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "43faf086a093e6f045a1ab81abd7b848e63c9f66737dc2f9b49aa5a8b93248b4"
+}

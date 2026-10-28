@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE editions SET dnb_idn = NULL, updated_at = now() WHERE dnb_idn = $1 AND id <> $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b285de71817b75b5ae3f78da74f37518a5fbc57fa279a5c294be12ff1494a7b6"
+}

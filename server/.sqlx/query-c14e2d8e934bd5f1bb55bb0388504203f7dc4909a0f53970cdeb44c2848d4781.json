@@ -1,0 +1,71 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT w.title, w.author_names,\n                  fa.name AS \"first_name?\", fa.sort_name AS \"first_sort?\",\n                  ARRAY(SELECT e.title FROM editions e\n                        WHERE e.work_id = w.id AND e.title IS NOT NULL ORDER BY e.id)\n                      AS \"edition_titles!: Vec<String>\"\n           FROM works w\n           LEFT JOIN LATERAL (\n               SELECT a.name, a.sort_name FROM work_authors wa JOIN authors a ON a.id = wa.author_id\n               WHERE wa.work_id = w.id ORDER BY wa.position, a.id LIMIT 1\n           ) fa ON true\n           WHERE w.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "title",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "author_names",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "author_names"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "first_name?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "authors",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "first_sort?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "authors",
+            "name": "sort_name"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "edition_titles!: Vec<String>",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      null
+    ]
+  },
+  "hash": "c14e2d8e934bd5f1bb55bb0388504203f7dc4909a0f53970cdeb44c2848d4781"
+}
