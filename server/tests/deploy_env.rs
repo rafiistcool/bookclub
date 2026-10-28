@@ -2,6 +2,7 @@
 //! - `deploy/hosted/env.example` names every variable the server reads, nothing it does not
 //!   know, and every variable `deploy/hosted/compose.yaml` uses; filled in, it is a valid
 //!   production configuration.
+//! - `deploy/hosted/ci.env`, which CI's image smoke test boots, is one as it stands.
 //! - The image's commands, through the real binary: `healthcheck` succeeds only on a 200 from
 //!   `/api/health`, `send-test-mail` delivers one message with a `Message-ID` on the sender's
 //!   domain and fails on an SMTP error, and `serve` and `import-legacy` refuse a `MEDIA_DIR`
@@ -93,12 +94,12 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// `env.example` as `NAME → (set, value)`: `NAME=value` is set, `#NAME=value` (no space after
+/// An env file as `NAME → (set, value)`: `NAME=value` is set, `#NAME=value` (no space after
 /// the `#`) is shown commented out. Prose comments start with `# `.
-fn env_example() -> BTreeMap<String, (bool, String)> {
+fn env_file(relative: &str) -> BTreeMap<String, (bool, String)> {
     let line = Regex::new(r"^(#?)([A-Z][A-Z0-9_]*)=(.*)$").unwrap();
     let mut entries = BTreeMap::new();
-    for text in read("deploy/hosted/env.example").lines() {
+    for text in read(relative).lines() {
         let Some(captures) = line.captures(text) else {
             continue;
         };
@@ -106,15 +107,22 @@ fn env_example() -> BTreeMap<String, (bool, String)> {
         let entry = (captures[1].is_empty(), captures[3].to_owned());
         assert!(
             entries.insert(name.clone(), entry).is_none(),
-            "env.example names {name} twice"
+            "{relative} names {name} twice"
         );
     }
     entries
 }
 
-/// The set values, with `${NAME}` replaced from the same file as compose does.
+fn env_example() -> BTreeMap<String, (bool, String)> {
+    env_file("deploy/hosted/env.example")
+}
+
 fn env_example_values() -> BTreeMap<String, String> {
-    let entries = env_example();
+    values(&env_example())
+}
+
+/// The set values of an env file, with `${NAME}` replaced from the same file as compose does.
+fn values(entries: &BTreeMap<String, (bool, String)>) -> BTreeMap<String, String> {
     let reference = Regex::new(r"\$\{([A-Z][A-Z0-9_]*)\}").unwrap();
     entries
         .iter()
@@ -223,6 +231,47 @@ fn env_example_filled_in_is_a_production_configuration() {
     assert_eq!(config.email_transport, EmailTransport::Smtp);
     assert!(!config.dnb_harvest);
     assert_eq!(config.service_name, "Bookclub");
+}
+
+/// `ci.env` boots compose.yaml in CI's image smoke test (`deploy/hosted/smoke-test.sh`). It
+/// names nothing env.example does not (apart from compose's own project name), points compose
+/// at itself, sets what production needs, and the server accepts it as it stands: no DEV_MODE,
+/// so the smoke test boots the production code paths.
+#[test]
+fn ci_env_is_a_production_configuration() {
+    let documented = env_example();
+    let ci = env_file("deploy/hosted/ci.env");
+    let unknown: Vec<_> = ci
+        .keys()
+        .filter(|name| !documented.contains_key(*name) && *name != "COMPOSE_PROJECT_NAME")
+        .collect();
+    assert!(
+        unknown.is_empty(),
+        "ci.env names {unknown:?}, which env.example does not"
+    );
+    assert!(ci.values().all(|(set, _)| *set), "ci.env only sets values");
+
+    let values = values(&ci);
+    assert_eq!(values["BOOKCLUB_ENV_FILE"], "ci.env");
+    assert_ne!(
+        values["COMPOSE_PROJECT_NAME"], "bookclub",
+        "the production project may run on the same daemon"
+    );
+    assert!(
+        values["BOOKCLUB_DATA_DIR"].starts_with('/'),
+        "a path on the daemon's host, not one compose resolves on the job's file system"
+    );
+    for name in compose_variables() {
+        assert!(values.contains_key(&name), "ci.env does not set {name}");
+    }
+    for name in SET_IN_ENV_EXAMPLE {
+        assert!(values.contains_key(*name), "ci.env does not set {name}");
+    }
+
+    let config = Config::from_lookup(|key| values.get(key).cloned()).unwrap();
+    assert!(!config.dev_mode);
+    assert_eq!(config.email_transport, EmailTransport::Smtp);
+    assert!(!config.dnb_harvest);
 }
 
 // ---- The binary -----------------------------------------------------------------------------

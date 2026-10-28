@@ -1,6 +1,6 @@
 # DEP (#51): production image, compose, release and backups
 
-Owner: DEP. These notes record what DEP built, the decisions behind it, the contract changes the integrator moves into `conventions.md`, `CLAUDE.md` and `README.md`, and what is left. DEP runs in two parts; this file covers part 1 (the image and its runtime). Part 2 (release and CI workflows, backups, the rest of the runbook) adds its own section.
+Owner: DEP. These notes record what DEP built, the decisions behind it, the contract changes the integrator moves into `conventions.md`, `CLAUDE.md` and `README.md`, and what is left. DEP ran in two parts: part 1 is the image and its runtime, part 2 the release and CI workflows, the backups and the rest of the runbook.
 
 ## Part 1: the image and its runtime
 
@@ -146,10 +146,210 @@ No routes, DTOs, `error::msg` strings, migrations or frontend files changed. `ge
 - `[::]` as `BIND_ADDR` inside a container (unit-tested only)
 - the Compose and Engine versions on the production VM
 
-## Left for part 2
+## Part 2: workflows, backups and the runbook
 
-- The release workflow rewrite (`.forgejo/workflows/release.yml`, mirrored to `.github/`): image `git.tillhome.de/rafiistcool/bookclub-server`, tags `X.Y.Z`, `X.Y` and `stable` (not for prereleases), `flavor: latest=false`, the registry build cache, no Python job, and the stale GHCR comment. Until then, a `v*` tag runs the old workflow against the new Dockerfile.
-- The CI image smoke job with `deploy/hosted/ci.env` (it sets `BOOKCLUB_ENV_FILE=ci.env`, `BOOKCLUB_DATA_DIR` and `BOOKCLUB_TAG`).
-- `backup.sh`, `restore-test.sh`, `backup.env.example`, and the systemd units and timers.
-- The README sections on the import, backup and restore, and the `SIGNUP_MODE=open` switch, plus GATE's Caddy section (amendment 16).
-- shellcheck and actionlint runs; "every command in the README runs as written against `bookclub-staging`" once the README is complete.
+### Files
+
+| File | What |
+|---|---|
+| `.forgejo/workflows/release.yml` | Rewritten: the hosted image, `bookclub-server`. |
+| `.github/workflows/release.yml` | Its GitHub copy (disabled on GitHub): the same jobs, `ghcr.io/<owner>/bookclub-server`, a `gha` cache. |
+| `.forgejo/workflows/ci.yml`, `.github/workflows/ci.yml` | A new `image` job, identical in both. The Python `backend` job stays. |
+| `deploy/hosted/smoke-test.sh` | The `image` job's steps, runnable locally. |
+| `deploy/hosted/ci.env` | The settings the smoke test boots `compose.yaml` with. |
+| `deploy/hosted/backup.sh`, `restore-test.sh`, `backup-lib.sh` | The nightly backup, the weekly restore test, and what both share. |
+| `deploy/hosted/backup.env.example` | Their settings. |
+| `deploy/hosted/systemd/bookclub-{backup,restore-test}.{service,timer}` | The units and timers. |
+| `deploy/hosted/README.md` | Completed: releases, the reverse proxy (pointer), the legacy import, backups, restore, open sign-up. |
+| `server/tests/deploy_env.rs` | `ci_env_is_a_production_configuration`; the env-file parser now takes a path (14 tests). |
+
+### The release workflow (`.forgejo/workflows/release.yml`)
+
+- **Jobs:**
+  - `frontend` is unchanged.
+  - `server` is a byte-for-byte copy of `ci.yml`'s server job (`diff` against `ci.yml` is empty in both directories).
+  - `publish` needs both. The `backend` (pytest) job is gone, and line 4's GHCR comment now names the Forgejo registry.
+- **`publish`:**
+  1. The tag must match `^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`, else the run fails. metadata-action only warns about a tag it cannot parse, such as `v1.2`, and would then push `stable` alone.
+  2. `docker/setup-buildx-action@v4`: the docker-container driver. The default `docker` driver cannot export a registry cache.
+  3. `docker/login-action@v4` to `git.tillhome.de` with `${{ github.repository_owner }}` and `secrets.REGISTRY_TOKEN`, as before.
+  4. `docker/metadata-action@v6` for `git.tillhome.de/rafiistcool/bookclub-server` (the workflow-level `env.IMAGE`), with `flavor: latest=false` and these tags:
+     - `type=semver,pattern={{version}}`
+     - `type=semver,pattern={{major}}.{{minor}}`, which metadata-action skips for a pre-release
+     - `type=raw,value=stable,enable=${{ !contains(github.ref_name, '-') }}`
+
+     There is no `{{major}}` tag. Its labels set `title`, `description` and `documentation` to the Dockerfile's values; metadata-action adds `version`, `revision`, `created`, `source` and `url`.
+  5. `docker/build-push-action@v7`: `linux/amd64`, `provenance: false` and `sbom: false`, so each tag is one plain image manifest without an attestation index next to it. The cache is `cache-from: type=registry,ref=…:buildcache`, and `cache-to` the same with `mode=max,image-manifest=true,oci-mediatypes=true`.
+     - `mode=max` keeps the stages' layers, including the Rust dependency layer that part 1 split out.
+     - The two OCI options store the cache as a plain OCI image, which registries without BuildKit's cache manifest type accept.
+     - The cache appears as the tag `buildcache` of `bookclub-server` in the Forgejo package list.
+- **The GitHub copy** pushes to `ghcr.io/${{ github.repository_owner }}/bookclub-server` with `GITHUB_TOKEN`, caches with `type=gha`, and runs `server` against `localhost`, as `ci.yml` there does. It is amd64 only now (it was amd64 and arm64 through QEMU, which a Rust release build would make very slow).
+- **Before the first release:** item 23 still holds. The repo has no `REGISTRY_TOKEN` action secret. It needs a token of `rafiistcool` with `write:package`. Without it, `publish` fails at the login, after the tests.
+
+### The CI image smoke job (`image` in `ci.yml`)
+
+- **What it runs:** `deploy/hosted/smoke-test.sh`:
+  1. `docker build --pull` of the root `Dockerfile`, tagged with the image of `compose.yaml` (`git.tillhome.de/rafiistcool/bookclub-server:$BOOKCLUB_TAG`, read from `docker compose config --images`). Nothing is pushed.
+  2. The data directory with `media/` and `legal/` for uid 1000.
+  3. `docker compose -f deploy/hosted/compose.yaml --env-file deploy/hosted/ci.env up -d --wait --wait-timeout 180`.
+  4. From a `curlimages/curl:8.11.1` container on `<project>_default`:
+     - `/api/health` must answer exactly `{"status":"ok"}`.
+     - `/` must be `text/html` with `Cache-Control: no-store`.
+     - The first `/assets/*.js` the shell names must be `immutable`.
+  5. `docker compose exec -T app bookclub-server healthcheck`.
+  6. On a failure: `compose ps -a` and the last 200 log lines. Always: `down -v --remove-orphans`, the data directory removed, and the built image removed.
+- **Why everything goes through the daemon:** the Forgejo runner runs jobs in a container (`catthehacker/ubuntu:act-24.04`, oapi notes). With the host's Docker socket, bind-mount sources and published ports belong to the daemon's host, not to the job container.
+  - A `busybox:1.37.0` helper container therefore creates (`install -d -o 1000 -g 1000 -m 0750`) and removes the data directory, which must be an absolute path on the daemon's host.
+  - The requests come from the compose network, as the work plan asked.
+- **Per-run names:** the job sets `COMPOSE_PROJECT_NAME=bookclub-ci-<run_id>`, `BOOKCLUB_TAG=ci-<run_id>` and `BOOKCLUB_DATA_DIR=/tmp/bookclub-ci-<run_id>`. Compose gives the environment precedence over `--env-file`, and the script does the same. `ci.env` publishes on `127.0.0.1` port `0`, a free port, so parallel runs on one daemon never collide.
+- **A cancelled run:** a last step with `if: cancelled()` runs `smoke-test.sh --down`. The stack's `restart: unless-stopped` would otherwise keep a half-finished run's containers alive on the runner's daemon. Whether Forgejo's runner runs `cancelled()` steps is not known; the script's own trap covers every other end.
+- **`ci.env`:**
+  - `COMPOSE_PROJECT_NAME=bookclub-ci` (never `bookclub`), `BOOKCLUB_TAG=ci`, `BOOKCLUB_LISTEN=127.0.0.1`, `BOOKCLUB_PORT=0`, `BOOKCLUB_DATA_DIR=/tmp/bookclub-ci` and `BOOKCLUB_ENV_FILE=ci.env`.
+  - A production configuration without `DEV_MODE`: `TRUSTED_PROXIES=none`, `SMTP_URL=smtp://localhost:2525` (loopback, accepted without TLS; nothing listens and no mail is sent), and `.invalid` addresses.
+  - Compose reads `COMPOSE_PROJECT_NAME` from an `--env-file` too (checked with Compose v5.6.1), so a local `docker compose --env-file deploy/hosted/ci.env …` never touches a `bookclub` project.
+- **`ci_env_is_a_production_configuration`** (`deploy_env.rs`):
+  - `ci.env` names only what `env.example` names, plus `COMPOSE_PROJECT_NAME`, and only sets values.
+  - It points compose at itself, is not the `bookclub` project, and has an absolute data directory.
+  - It sets every compose variable and everything `env.example` must set.
+  - `Config::from_lookup` accepts it, without DEV_MODE, with SMTP and no harvest.
+  - Mutations that each fail it: a non-loopback plain `SMTP_URL`, `BOOKCLUB_ENV_FILE=.env`, `COMPOSE_PROJECT_NAME=bookclub`, an added `DEV_MODE=true`, and an unknown name.
+- **The runner (item 24):** the job needs a Docker daemon it can reach, with Compose 2.24 or newer. If the first run fails at `docker version`, the runner's `config.yml` must hand job containers the daemon, in its `container` section: `docker_host`, or `valid_volumes` and `options` for `/var/run/docker.sock`. Every run builds the image without a registry cache; only the daemon's own build cache helps. The run time on the runner is not known. Locally, the build took about 2 minutes with the dependency layer cached and about 4 minutes cold (part 1).
+
+### Backups
+
+- **`backup.sh`:**
+  1. **The dump.** One `psql` session in the postgres container (`docker compose exec -T postgres`):
+     - It opens `BEGIN ISOLATION LEVEL REPEATABLE READ, READ ONLY`, exports its snapshot (`pg_export_snapshot()`, `\setenv`), and runs `pg_dump --format=custom --no-owner --snapshot=…` through `\!`. The dump is psql's stdout, streamed to the host.
+     - In the same transaction it writes the counts through `\o` to a file in the container, which the script copies out and removes.
+     - `\if :SHELL_ERROR` (psql 16 and newer) turns a failed `pg_dump` into an SQL error, and `ON_ERROR_STOP` into exit 3.
+     - The dump and its counts therefore always describe the same moment. A plain `pg_dump` followed by a count would make the restore test fail at random whenever anyone wrote in between.
+     - The pair goes to `BACKUP_DIR/db.new`, is checked (non-empty dump, a `(migration)` line, `pg_restore --list` reads it back), and then replaces `BACKUP_DIR/db`.
+  2. **`counts.tsv`** is `table<TAB>rows` for every table in `public`, ordered by name, then `(migration)<TAB><max successful _sqlx_migrations.version>`. `counts_sql` in `backup-lib.sh` writes the query for both scripts.
+  3. **`restic backup --tag bookclub BACKUP_DIR/db MEDIA_DIR`**, excluding the media store's temporary files (`.*.tmp`, `.write-probe.*`). The dump comes first, so the media are read after it.
+  4. **`restic forget --host BACKUP_HOST --tag bookclub --keep-daily 7 --keep-weekly 4 --keep-monthly 12 --prune`.** While the history is shorter than the policy, restic also keeps the oldest snapshot (documented restic behaviour; seen as 2 snapshots on one day).
+  5. **`restic check --read-data-subset=5%`** on `CHECK_WEEKDAY` (7, Sunday), or with `--check`.
+  6. **Before it starts,** `MEDIA_DIR` must exist and equal the `/data/media` mount source of the app container (`docker inspect`). Without an app container, as during a restore, it only warns.
+- **`restore-test.sh`:**
+  1. `restic restore latest --host BACKUP_HOST --tag bookclub --verify` into `BACKUP_DIR/restore-test/files`.
+  2. `RESTORE_POSTGRES_IMAGE` (`postgres:17`) runs with `--network none`. The script waits for `pg_isready -h 127.0.0.1`, because the image's first start runs a temporary server on the socket only. Then `pg_restore --exit-on-error --no-owner`.
+  3. `diff -u` of `counts_sql` on the copy against the snapshot's `counts.tsv`.
+  4. Every `media.storage_key/<variant>` of the rows that are not taken down must be in the restored `MEDIA_DIR` and not empty. It checks **every** key, not a sample: the restore has all files anyway, and a sample could miss the one deleted file.
+  5. An EXIT trap removes the container and the scratch directory, whatever the outcome.
+- **Shared (`backup-lib.sh`):**
+  - `load_config` reads `backup.env` next to the scripts, or `BACKUP_ENV`.
+  - `restic_` runs `restic/restic:0.17.3` with the caller's uid. Its host name is `BACKUP_HOST`, which keeps snapshots, `forget` and `latest` in one group. `BACKUP_DIR` is mounted read-write and `MEDIA_DIR` read-only, at their own paths, so snapshot paths are host paths. The container also gets the password file, a local repository path, and for `sftp:` repositories `RESTIC_SSH_DIR` at `/root/.ssh` (read-only). It adds `--retry-lock 10m`.
+  - The heartbeat follows healthchecks.io's URL scheme: `GET <url>/start`, then `POST <url>/<exit status>` with the last 50 lines of the log. An empty URL means no ping.
+  - `supervise` holds the lock (`flock` on `BACKUP_DIR/.lock`), which both scripts share; a second run waits up to 3 h. It writes the log to the journal and to `BACKUP_DIR/<name>.log`.
+- **`backup.sh restic ARGS…`** runs restic with this setup: `init`, `snapshots`, `stats`, `check`, and a `restore` into `BACKUP_DIR`. The README's restore uses it.
+- **Decisions:**
+  - **restic from its image, not the host.** It is pinned at 0.17.3 like the tests, and nothing needs installing. The host needs only Docker, `curl` and util-linux's `flock`. Running a host `restic` instead would change only `restic_`.
+  - **The scripts write with `umask 077`.** The dump and the restored files hold personal data.
+  - **A snapshot records `BACKUP_DIR/db` and `MEDIA_DIR` under their paths, and the restore test looks there.** After either changes, run `backup.sh` once before the next restore test (stated in `backup.env.example`).
+  - **For S3,** `restic_` passes `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_DEFAULT_REGION` (Q9's alternative). sftp needs uid 0 in the container, as under systemd: ssh refuses a uid without a passwd entry.
+- **Units:**
+  - `bookclub-backup.timer` runs daily at 03:30 with `RandomizedDelaySec=30m`. `bookclub-restore-test.timer` runs on Sundays at 05:30, with the same delay. Both are `Persistent=true`.
+  - The services are `Type=oneshot`, `Requires=` and `After=docker.service`, with `Nice=10`, best-effort I/O priority 7, `PrivateTmp`, `ProtectSystem=full` and `NoNewPrivileges`. Their start timeouts are 4 h and 6 h; the restore test may first wait for a running backup.
+  - No path that a container mounts lies under `/tmp`, so `PrivateTmp` does not hide anything the Docker daemon needs.
+
+### The runbook (`deploy/hosted/README.md`)
+
+New sections: "Releases", "Reverse proxy", "The legacy import", "Backups" (setting up, by hand), "Restore" (the test, restoring for real) and "Open sign-up". Existing sections were extended: "First boot" step 6, the host table, "Requirements" (`curl`), "Staging" (a second stack on one host), and "Updates" (back up first).
+
+Parts that rest on other Wave 1 packages, for the integrator to check after their merges:
+- **CUT:** the import directory, `-T`, and the paragraph on the importer's private copy in `$TMPDIR` (the 64 MB `/tmp` tmpfs, and `-e TMPDIR=/import-tmp -v …`). It follows `docs/phase2/notes/cut.md` "For the docs"; on this branch the importer still opens the file in place. The README points at `docs/phase2/cutover.md`, which CUT adds.
+- **LEG:** "Outside DEV_MODE the server refuses SIGNUP_MODE=open while one of the files is missing, and names the missing ones" (from `docs/phase2/notes/leg.md`). On this branch open sign-up starts without them.
+- **GATE (amendment 16):** "Reverse proxy" is a short pointer to `Caddyfile.example` and `verify-limits.sh`. The integrator moves GATE's two README sections from `docs/phase2/notes/gate.md` there.
+
+### Contract changes for the integrator (part 2)
+
+No routes, DTOs, `error::msg` strings, migrations, server code or frontend files changed. `generated.ts` and `server/.sqlx/` are unchanged. There are no new server variables; `ci.env` and `backup.env.example` are not server settings.
+
+- **`CLAUDE.md`, "CI and releases":**
+  - The `image` job builds the root `Dockerfile` and boots it with `deploy/hosted/compose.yaml` and `ci.env`. Locally: `deploy/hosted/smoke-test.sh`; on the agents VM `CARGO_JOBS=3 deploy/hosted/smoke-test.sh`, then `docker builder prune -f`.
+  - The job needs the Docker daemon in the runner's job containers.
+  - A `vX.Y.Z` tag publishes `git.tillhome.de/rafiistcool/bookclub-server` with `X.Y.Z`, `X.Y` and `stable` (`X.Y.Z-rc.N`: only the exact tag), never `latest`. The secret is `REGISTRY_TOKEN`.
+  - "Older releases are still on GHCR" stays true for the Python image.
+- **`CLAUDE.md`, "Request flow":** replace "Do not cut a Python release from `phase-1`…" with: a `v*` tag now publishes the Rust image `bookclub-server`, and the Python image `bookclub` gets no new versions.
+- **`CLAUDE.md`, deployment pointer:** `deploy/hosted/README.md` is the operator runbook (backups, restore, import, open sign-up); the scripts are shellcheck-clean (`koalaman/shellcheck:v0.10.0 -x deploy/hosted/*.sh`), the workflows actionlint-clean (`rhysd/actionlint:1.7.7`).
+- **`SELFHOST.md` §7 "Releases"** describes the Python image's tags (`1.2.3`, `1.2`, `1`, `latest` on `rafiistcool/bookclub`). That is no longer what a tag publishes. CUT-R deletes `SELFHOST.md`; until then, a pointer to `deploy/hosted/README.md`, "Releases".
+- **`docs/phase2/cutover.md` (CUT):** its compose directory and paths agree with the README's (`/opt/bookclub`, `/srv/bookclub/import`). Its checklist item "Backups run, and `restore-test.sh` has passed once (`deploy/hosted/README.md`)" now has the commands behind it.
+
+### Verified by hand (part 2, on the agents VM)
+
+**Lint**
+- `koalaman/shellcheck:v0.10.0 -x` on `backup.sh`, `restore-test.sh`, `backup-lib.sh` and `smoke-test.sh`: clean, run both from the repo root and from `deploy/hosted/` (`source=SCRIPTDIR/…`).
+- `rhysd/actionlint:1.7.7` on all four workflow files: clean.
+- `systemd-analyze verify` (systemd 257) on the four units, with `ExecStart` pointed at the worktree's scripts: clean. `systemd-analyze calendar` gives the next runs as Thu 03:30 and Sun 05:30.
+
+**The smoke test, locally** (Docker 29.9.2, Compose v5.6.1, per-run names as in CI, `CARGO_JOBS=3`)
+- A full build, then a green run: both services healthy, `/api/health`, `/`, `/assets/index-….js` and the healthcheck passed. Afterwards no container, volume, network, data directory or image of the run was left.
+- **Red on a broken Dockerfile:** a copy of the tree with `CMD ["bookclub-server", "no-such-command"]` built from cache, and `up --wait` failed. The script printed `app-1 | error: unrecognized subcommand 'no-such-command'` from the logs, exited 1, and tore everything down.
+- `--no-build` against an already tagged image: green, and the image was kept.
+- `--down` against a stack left running, as after a cancelled run: it removed the containers, the volume, the data directory and the image.
+- Compose takes the project name from `.env` or `--env-file` (it overrides `name: bookclub`), and host port `0` published a free port (32768 and 32769).
+
+**Staging** (`bookclub-staging`, app on 8081)
+- The setup:
+  - every README command ran as written, from the staging directory, with `/opt/bookclub`, `/srv/bookclub` and `/var/lib/bookclub-backup` replaced by directories outside the repo
+  - `COMPOSE_PROJECT_NAME=bookclub-staging` in its `.env`, as "Staging" describes
+  - the image built from this branch as `…/bookclub-server:dep-local`
+  - Mailpit running in the app container's network namespace, so that `smtp://localhost:1025` reached it
+- **First boot:**
+  - `up -d --wait`, `ps` and the healthcheck passed (`GET http://127.0.0.1:8080/api/health answered 200 OK`).
+  - `send-test-mail you@example.com` arrived in Mailpit with `Message-ID: <uuid@staging.example.com>`.
+- **The legacy import:**
+  - `bookclub.db` was built from the synthetic `fresh.sql` with Python's sqlite3.
+  - Step 1's `install`, `cp`, `chown` and `chmod` ran, then `docker compose stop app`.
+  - The dry run exited 0 (38 report lines, no CR), and so did the real run. `diff <(tail -n +2 dry-run.txt) import.txt` was empty.
+  - `up -d --wait` worked. The two legacy avatars landed in the media directory.
+  - Both `rematch-legacy` commands exited 0: 1 unmatched ISBN, as the fixture intends.
+  - `df -h /tmp` showed the 64 MB tmpfs.
+  - `DNB_HARVEST=true` and back reached the container.
+- **The first account:**
+  - `beta-invite` printed exactly 2 lines.
+  - A sign-up with its code through `POST /api/auth/register` returned 201, an avatar upload 200.
+  - `make-admin grace` worked.
+- **Updates:** `docker compose pull app` failed with `unauthorized` (see below). Pinning `BOOKCLUB_TAG` to a second local tag and back, each time with `up -d --wait app`, worked, and `docker compose images app` showed the tag.
+- **Backups:**
+  - The repository was a local directory outside the repo. A local HTTP listener stood in for healthchecks.io.
+  - `cp` of the scripts, `install` of `backup.env`, and the `umask 077` password ran as written, then `backup.sh restic init`.
+  - `backup.sh` exited 0: `dump 176K, 34 tables, 207 rows, migration 1900`, then the snapshot and `forget`.
+  - The listener saw `GET /ping/backup/start`, then `POST /ping/backup/0` with the log's last lines.
+  - The dump and counts were mode 0600 after the `umask` fix (0664 before; the directory was 0700).
+  - `backup.sh restic snapshots`, `stats` and `check`, and `backup.sh --check` (`no errors were found`), all exited 0.
+- **Restore test, green:** exit 0, `restore test passed: 34 tables, 207 rows, migration 1900, 3 media files`, and `POST /ping/restore-test/0`. No container and no scratch directory were left.
+- **Restore test, red:**
+  - **A truncated dump** (halved, then backed up through `backup.sh restic backup` with the same paths) gave exit 1: `pg_restore: error: could not read from input file: end of file`, and `/ping/restore-test/1`.
+  - **A deleted media file** (an avatar removed before `backup.sh`) gave exit 1: `missing or empty: avatars/lr/…/a` and `1 of 3 media files are missing or empty`. With the file back and a new backup, the test was green again.
+  - **A changed count** in `counts.tsv` gave exit 1 with the diff `-users 999` / `+users 6`.
+- **`backup.sh` guards:**
+  - A `MEDIA_DIR` other than the app's mount gave exit 1 with `MEDIA_DIR is …/legal, but the app container mounts …/media at /data/media`, and `/ping/backup/1`.
+  - With the lock held by another process, a run logged `waiting for the other backup or restore test to finish` and went on 6 s later, when the lock was released.
+- **The dump and its counts under writes:**
+  - A procedure committed one row every 10 ms into a probe table during `backup.sh`. The table grew from 55 to 259 rows over the run.
+  - The snapshot's `counts.tsv` said 63, and the restore test matched it exactly.
+- **Restoring for real** (steps 1 to 5, as written):
+  - `restore latest --host bookclub --tag bookclub` into the backup directory, then `down -v`, `up -d --wait postgres`, and `pg_restore` from stdin (exit 0).
+  - The media replaced with `find`, `cp -a` and `chown`.
+  - `backup.sh`, with the expected warning that there is no app container, then `diff` of the two `counts.tsv`: empty.
+  - `up -d --wait` and the `rm`.
+  - After the restore, the new account and an imported one (`demo`, with its legacy password) could log in (204), and the avatar URL served `image/webp`.
+- **Open sign-up:** the `sed`, `up -d --wait app` and `curl …/api/config` showed `"signup":"open"`, and the same commands with `invite` switched it back.
+- **The sftp path, as root:**
+  - Set up:
+    - a local `atmoz/sftp` server on `172.17.0.1:2323`
+    - the README's `Host bookclub-backup` block, with that address and port
+    - a key and the scanned host key, all root-owned 0600 in a directory used as `RESTIC_SSH_DIR`
+  - Under `sudo`, `backup.sh restic init`, `backup.sh` and `restore-test.sh` all exited 0. The dump was `0600 root`, and restic logged the snapshot as `by root@bookclub`. This covers the mount of `/root/.ssh`, the ssh config alias, a non-standard port and `known_hosts`.
+- **The units' sandbox:** `sudo systemd-run --wait` with the service's properties (`Type=oneshot`, `Nice`, I/O priority, `PrivateTmp`, `ProtectSystem=full`, `NoNewPrivileges`, `Requires=` and `After=docker.service`) ran `backup.sh` and `restore-test.sh` as root. Both exited 0. `BindPaths=` exposed the staging directories, which lie under `/tmp` only on this VM.
+- **Teardown:** the README's staging wipe (`down -v`, then `find … -mindepth 1 -delete`). Then the repositories, staging directories, the sftp server, the listener and the test images were removed, and `docker builder prune -f` ran.
+
+**Not verified:**
+- **`docker compose pull` from `git.tillhome.de`:** no `bookclub-server` tag is published yet, and this VM has no `docker login` there (`unauthorized`).
+- **The release workflow:** it has never run, because no tag was pushed. Also untested: metadata-action and the registry cache against Forgejo's registry, and the `REGISTRY_TOKEN` secret.
+- **The `image` job on the Forgejo runner:** its first run is the Wave 1 PR (amendment 4; item 24).
+- **The README commands that need the production VM or accounts:**
+  - `systemctl` and `journalctl` (the units were not installed into this VM's `/etc/systemd`)
+  - the Storage Box key upload and its host-key fingerprints
+  - healthchecks.io
+  - `git tag` and `git push` of a release

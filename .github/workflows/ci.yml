@@ -48,6 +48,26 @@ jobs:
       - name: Build
         run: npm run build
 
+  # The production image (#51): build the root Dockerfile without pushing, boot it with
+  # deploy/hosted/compose.yaml and ci.env, and ask /api/health, / and a script from a container on
+  # the compose network (deploy/hosted/smoke-test.sh). The job needs the Docker daemon, and the
+  # names below are unique per run, so runs that share a daemon do not collide.
+  image:
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_PROJECT_NAME: bookclub-ci-${{ github.run_id }}
+      BOOKCLUB_TAG: ci-${{ github.run_id }}
+      BOOKCLUB_DATA_DIR: /tmp/bookclub-ci-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build, boot and probe the image
+        run: deploy/hosted/smoke-test.sh
+      # The script tears the stack down itself; a cancelled run may not get that far, and the
+      # stack's `restart: unless-stopped` would keep it running on the daemon.
+      - name: Tear down after a cancelled run
+        if: cancelled()
+        run: deploy/hosted/smoke-test.sh --down
+
   server:
     runs-on: ubuntu-latest
     defaults:

@@ -1,0 +1,21 @@
+# The weekly restore test (deploy/hosted/README.md, "Backups"), started by
+# bookclub-restore-test.timer. By hand: systemctl start bookclub-restore-test; the log:
+# journalctl -u bookclub-restore-test.
+[Unit]
+Description=Bookclub restore test: the latest backup into a throwaway database
+Documentation=https://git.tillhome.de/rafiistcool/bookclub/src/branch/main/deploy/hosted/README.md
+Requires=docker.service
+Wants=network-online.target
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/bookclub/restore-test.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+# It waits up to 3 h for a running backup, then restores everything.
+TimeoutStartSec=6h
+PrivateTmp=true
+ProtectSystem=full
+NoNewPrivileges=true
