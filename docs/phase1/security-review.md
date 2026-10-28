@@ -11,7 +11,7 @@ Abbreviations: C = `conventions.md`, E = `endpoint-map.md`.
 | # | Severity | Finding | Outcome |
 |---|---|---|---|
 | 1 | medium | A right current password cleared its own limit, so one account could run argon2 without limit and starve every login | Fixed in `3700d01` |
-| 2 | medium | The activity feeds showed an old only-me rating, take or quote text once the current entry or quote was audience | Fixed in `4ef65a5`, refined in `SEALCOMMIT` |
+| 2 | medium | The activity feeds showed an old only-me rating, take or quote text once the current entry or quote was audience | Fixed in `4ef65a5`, refined in `d12fe29` |
 | 3 | medium | An anonymous attacker could block a signed-in user's password change, email change and account deletion | Fixed in `3700d01` (the login half is a product decision, see below) |
 | 4 | medium | Unlimited avatar uploads let one user take over the picture pipeline | Fixed in `c86e689` |
 | 5 | medium | One user could use up the shared Open Library budget (3 requests a second) | Fixed in `c86e689` |
@@ -60,7 +60,7 @@ C §5.4, §5.5, §10.1; E §2.
 - The feeds serve a `quote_added` item's `excerpt` and `page` from the quote as it is now.
 - The read-time redaction stays as a backstop, and the seal itself is never served.
 
-The first version (`4ef65a5`) removed the rating and take from the stored payload. That also took them from the actor's own feed, which `parity_visibility.rs` pins ("myself" sees their own only-me rating). `SEALCOMMIT` seals them instead.
+The first version (`4ef65a5`) removed the rating and take from the stored payload. That also took them from the actor's own feed, which `parity_visibility.rs` pins ("myself" sees their own only-me rating). `d12fe29` seals them instead.
 
 C §6.4; E §9; legacy-mapping §12.
 
