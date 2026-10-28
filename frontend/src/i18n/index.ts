@@ -61,3 +61,8 @@ export function t(key: string, named?: Record<string, unknown>): string {
 export function tp(key: string, n: number, named?: Record<string, unknown>): string {
   return String(i18n.global.t(key, { n, ...named }, n));
 }
+
+/** Whether the current locale (or the fallback) has `key`. */
+export function te(key: string): boolean {
+  return i18n.global.te(key) || i18n.global.te(key, DEFAULT_LOCALE);
+}

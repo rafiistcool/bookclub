@@ -3,13 +3,14 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import Avatar from "../components/Avatar.vue";
+import EmailPrompt from "../components/EmailPrompt.vue";
 import NavIcon from "../components/NavIcon.vue";
 import { NAV_ITEMS, isActive } from "../nav";
-import { useClub } from "../stores/club";
+import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
 
 const { t } = useI18n();
-const club = useClub();
+const service = useService();
 const session = useSession();
 const route = useRoute();
 
@@ -21,7 +22,7 @@ const avatarUrl = computed(() => session.user?.avatar_url ?? null);
 <template>
   <div class="shell">
     <header class="topbar">
-      <RouterLink class="wordmark" to="/">{{ club.name }}</RouterLink>
+      <RouterLink class="wordmark" to="/">{{ service.name }}</RouterLink>
       <RouterLink
         class="avatar-link"
         to="/settings"
@@ -32,14 +33,14 @@ const avatarUrl = computed(() => session.user?.avatar_url ?? null);
     </header>
 
     <aside class="sidebar">
-      <RouterLink class="wordmark sidebar-mark" to="/">{{ club.name }}</RouterLink>
-      <nav class="sidebar-nav" aria-label="Main">
+      <RouterLink class="wordmark sidebar-mark" to="/">{{ service.name }}</RouterLink>
+      <nav class="sidebar-nav" :aria-label="t('nav.main')">
         <RouterLink
           v-for="item in NAV_ITEMS"
           :key="item.to"
           class="side-link"
-          :class="{ active: isActive(route.path, item.to) }"
-          :aria-current="isActive(route.path, item.to) ? 'page' : undefined"
+          :class="{ active: isActive(route.path, item) }"
+          :aria-current="isActive(route.path, item) ? 'page' : undefined"
           :to="item.to"
         >
           <NavIcon :name="item.icon" :size="20" />
@@ -56,16 +57,17 @@ const avatarUrl = computed(() => session.user?.avatar_url ?? null);
     </aside>
 
     <main class="main">
+      <EmailPrompt />
       <RouterView />
     </main>
 
-    <nav class="bottom-nav" aria-label="Main">
+    <nav class="bottom-nav" :aria-label="t('nav.main')">
       <RouterLink
         v-for="item in bottomItems"
         :key="item.to"
         :to="item.to"
-        :class="{ active: isActive(route.path, item.to) }"
-        :aria-current="isActive(route.path, item.to) ? 'page' : undefined"
+        :class="{ active: isActive(route.path, item) }"
+        :aria-current="isActive(route.path, item) ? 'page' : undefined"
       >
         <NavIcon :name="item.icon" />
         {{ t(item.shortLabelKey ?? item.labelKey) }}

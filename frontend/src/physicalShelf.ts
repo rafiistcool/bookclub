@@ -1,3 +1,4 @@
+import { bookColorKey } from "./covers";
 import { orderedShelf } from "./shelf";
 import type { ShelfItem } from "./types";
 
@@ -70,7 +71,7 @@ export function spineInk(color: string): string {
 
 /** Edition-independent fallback when a catalogue does not supply a real spine. */
 export function defaultSpine(item: ShelfItem): { color: string; width: number; height: number; ink: string; variant: number } {
-  const hash = stableHash(item.book.ol_work_key || `${item.book.title}:${item.book.authors}`);
+  const hash = stableHash(bookColorKey(item.book));
   // A colour sampled from the real cover beats the palette.
   const color = item.book.spine_color || PALETTE[hash % PALETTE.length]!;
   const pages = item.book.pages;

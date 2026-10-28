@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { api, ApiError } from "../api/client";
 import Avatar from "../components/Avatar.vue";
+import BackLink from "../components/BackLink.vue";
 import ShelfBoard from "../components/ShelfBoard.vue";
 import ShelfViewSwitch from "../components/ShelfViewSwitch.vue";
 import FavoritePortrait from "../components/FavoritePortrait.vue";
@@ -64,7 +65,7 @@ watch(() => route.params.username, load);
 
 <template>
   <section>
-    <p class="fine back-link"><RouterLink to="/club">{{ t("memberShelf.back") }}</RouterLink></p>
+    <BackLink :label="t('memberShelf.back')" fallback="/" />
     <div class="page-head member-head">
       <Avatar :username="username" :src="avatarUrl" size="lg" />
       <div>
@@ -76,7 +77,8 @@ watch(() => route.params.username, load);
     </div>
     <FavoritePortrait v-if="loaded && !error" :items="favorites" />
     <div v-if="loaded && !error && items.length" class="member-shelf-switch">
-      <ShelfViewSwitch active="books" :base="`/club/${username}`" />
+      <ShelfViewSwitch active="books" :base="`/u/${username}`" />
+      <RouterLink class="btn btn-ghost btn-sm" :to="`/u/${username}/stats`">{{ t("stats.short") }}</RouterLink>
     </div>
 
     <p v-if="error" class="error">{{ error }}</p>
@@ -124,6 +126,11 @@ watch(() => route.params.username, load);
 }
 
 .member-shelf-switch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
   margin-bottom: var(--space-3);
 }
 

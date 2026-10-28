@@ -1,15 +1,16 @@
-import type { ClubConfig, ThemeId } from "./types";
+import type { ServiceBrand, ThemeId } from "./types";
 
-const DEFAULTS: ClubConfig = {
+export const BRAND_DEFAULTS: ServiceBrand = {
   name: "Bookclub",
   theme: "#b44a2a",
   theme_dark: "#8e361c",
   public_url: "",
-  timezone: "UTC",
+  signup: "invite",
 };
+const DEFAULTS = BRAND_DEFAULTS;
 
 /** Name, title, manifest, and icons. Colour is applied separately. */
-export function applyBrand(config: ClubConfig): void {
+export function applyBrand(config: ServiceBrand): void {
   const name = config.name || DEFAULTS.name;
   document.title = name;
   const apple = document.querySelector('meta[name="apple-mobile-web-app-title"]');
@@ -30,10 +31,10 @@ export function applyBrand(config: ClubConfig): void {
   manifest.setAttribute("href", URL.createObjectURL(blob));
 }
 
-/** The club's configured accent, applied inline, wins over every palette
+/** The service's accent, applied inline, wins over every palette
     block. Only Paper is built around it — the other three define their own
     accent and would render an off-palette colour, so they clear it. */
-export function applyClubAccent(config: ClubConfig, theme: ThemeId): void {
+export function applyClubAccent(config: ServiceBrand, theme: ThemeId): void {
   const root = document.documentElement;
   if (theme !== "paper") {
     root.style.removeProperty("--accent");

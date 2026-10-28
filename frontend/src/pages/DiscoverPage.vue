@@ -7,6 +7,7 @@ import AddBookSheet from "../components/AddBookSheet.vue";
 import BookTile from "../components/BookTile.vue";
 import TileSkeleton from "../components/TileSkeleton.vue";
 import { extractIsbn } from "../constants";
+import { releaseNote } from "../releases";
 import {
   readBrowseSnapshot,
   writeBrowseSnapshot,
@@ -57,7 +58,7 @@ type Row = {
   error: string;
 };
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const route = useRoute();
 const router = useRouter();
 const toast = useToast();
@@ -177,6 +178,12 @@ const sentinel = ref<HTMLElement | null>(null);
 
 const trending = ref<SearchHit[]>([]);
 const rows = ref<Row[]>([]);
+// German readers also get the DNB's upcoming and recent titles. The list is
+// local and stays empty until the harvester has run, so an empty row hides.
+const releases = ref<SearchHit[]>([]);
+const releasesError = ref("");
+const releasesLoaded = ref(false);
+const showReleases = computed(() => locale.value === "de");
 const browsePending = ref(false);
 const browseError = ref("");
 const browseStarted = ref(false);
@@ -298,6 +305,7 @@ function emptyRows(): Row[] {
 function persistBrowse() {
   writeBrowseSnapshot({
     trending: trending.value,
+    releases: releasesLoaded.value ? releases.value : null,
     browseError: browseError.value,
     rows: rows.value.map((row) => ({
       subject: row.subject,
@@ -312,6 +320,10 @@ function hydrateBrowse(): boolean {
   const snap = readBrowseSnapshot();
   if (!snap) return false;
   trending.value = [...snap.trending];
+  if (snap.releases) {
+    releases.value = [...snap.releases];
+    releasesLoaded.value = true;
+  }
   browseError.value = snap.browseError;
   rows.value = BROWSE_ROWS.map((value) => {
     const cached = snap.rows.find((row) => row.subject === value);
@@ -336,6 +348,27 @@ async function mapPool<T>(items: T[], limit: number, worker: (item: T) => Promis
     if (executing.size >= limit) await Promise.race(executing);
   }
   await Promise.all(executing);
+}
+
+async function loadReleases(signal?: AbortSignal, quiet = false) {
+  if (!showReleases.value) return;
+  try {
+    const result = await api.newReleases(1, 14, { signal });
+    if (signal?.aborted) return;
+    releases.value = result.items;
+    releasesError.value = "";
+    releasesLoaded.value = true;
+  } catch (err) {
+    if (isAbortError(err) || signal?.aborted) return;
+    if (quiet && releases.value.length) return;
+    releases.value = [];
+    releasesError.value = err instanceof ApiError ? err.message : t("discover.shelfLoadFailed");
+  }
+}
+
+function retryReleases() {
+  releasesError.value = "";
+  void loadReleases().then(persistBrowse);
 }
 
 async function loadShelfRow(row: Row, signal: AbortSignal, quiet: boolean) {
@@ -391,6 +424,7 @@ async function loadBrowse(quiet = false) {
         if (!signal.aborted) browsePending.value = false;
       }
     })(),
+    loadReleases(signal, quiet),
     mapPool(rows.value, SHELF_CONCURRENCY, (row) => loadShelfRow(row, signal, quiet)),
   ]);
   if (!signal.aborted) {
@@ -501,11 +535,11 @@ async function loadPage(nextPage: number, reset: boolean) {
     if (reset) {
       items.value = result.items;
     } else {
-      const seen = new Set(items.value.map((hit) => hit.ol_work_key));
+      const seen = new Set(items.value.map((hit) => hit.id));
       for (const hit of result.items) {
-        if (seen.has(hit.ol_work_key)) continue;
+        if (seen.has(hit.id)) continue;
         items.value.push(hit);
-        seen.add(hit.ol_work_key);
+        seen.add(hit.id);
       }
     }
     page.value = result.page;
@@ -621,6 +655,11 @@ watch([submittedQuery, subject, sortPick], () => {
     return;
   }
   void loadPage(1, true);
+});
+
+// Switching to German while browsing brings the new-releases row in.
+watch(showReleases, (shown) => {
+  if (shown && browseStarted.value && !releasesLoaded.value) void loadReleases().then(persistBrowse);
 });
 
 watch(sentinel, (el, previous) => {
@@ -764,16 +803,10 @@ defineExpose({ loadPage });
           <BookTile
             v-for="(hit, index) in trending"
             v-else
-            :key="hit.ol_work_key"
-            :ol-work-key="hit.ol_work_key"
-            :title="hit.title"
-            :authors="hit.authors"
-            :cover-id="hit.cover_id"
-            :cover-edition-key="hit.cover_edition_key"
-            :isbn="hit.isbn"
-            :image-url="hit.cover_url"
-            :status="hit.on_shelf"
-            :club-pick="hit.club_pick"
+            :key="hit.id"
+            :book="hit"
+            :on-shelf="hit.on_shelf"
+            :club-pick="hit.club_picks.length > 0"
             :eager="index < 4"
             show-authors
           />
@@ -783,6 +816,27 @@ defineExpose({ loadPage });
           <button class="text-btn" type="button" @click="retryTrending">{{ t("common.tryAgain") }}</button>
         </p>
         <p v-else class="fine subtle">{{ t("discover.nothingTrending") }}</p>
+      </section>
+
+      <section v-if="showReleases && (releases.length || releasesError)" class="section" aria-labelledby="new-releases">
+        <div class="section-head">
+          <h2 id="new-releases">{{ t("discover.newReleases") }}</h2>
+        </div>
+        <div v-if="releases.length" class="rail">
+          <BookTile
+            v-for="hit in releases"
+            :key="hit.id"
+            :book="hit"
+            :on-shelf="hit.on_shelf"
+            :club-pick="hit.club_picks.length > 0"
+            :note="releaseNote(hit.planned_publication_date, locale)"
+            show-authors
+          />
+        </div>
+        <p v-else class="fine subtle release-fallback">
+          {{ releasesError }}
+          <button class="text-btn" type="button" @click="retryReleases">{{ t("common.tryAgain") }}</button>
+        </p>
       </section>
 
       <section v-for="row in rows" :key="row.subject" class="section">
@@ -797,16 +851,10 @@ defineExpose({ loadPage });
           <BookTile
             v-for="(hit, index) in row.items"
             v-else
-            :key="hit.ol_work_key"
-            :ol-work-key="hit.ol_work_key"
-            :title="hit.title"
-            :authors="hit.authors"
-            :cover-id="hit.cover_id"
-            :cover-edition-key="hit.cover_edition_key"
-            :isbn="hit.isbn"
-            :image-url="hit.cover_url"
-            :status="hit.on_shelf"
-            :club-pick="hit.club_pick"
+            :key="hit.id"
+            :book="hit"
+            :on-shelf="hit.on_shelf"
+            :club-pick="hit.club_picks.length > 0"
             :eager="row.subject === BROWSE_ROWS[0] && index < 2"
             show-authors
           />
@@ -904,16 +952,10 @@ defineExpose({ loadPage });
         <div v-else-if="visibleItems.length || pending" class="book-grid">
           <BookTile
             v-for="(hit, index) in visibleItems"
-            :key="hit.ol_work_key"
-            :ol-work-key="hit.ol_work_key"
-            :title="hit.title"
-            :authors="hit.authors"
-            :cover-id="hit.cover_id"
-            :cover-edition-key="hit.cover_edition_key"
-            :isbn="hit.isbn"
-            :image-url="hit.cover_url"
-            :status="hit.on_shelf"
-            :club-pick="hit.club_pick"
+            :key="hit.id"
+            :book="hit"
+            :on-shelf="hit.on_shelf"
+            :club-pick="hit.club_picks.length > 0"
             :eager="index < 6"
             show-authors
           />
@@ -1071,6 +1113,7 @@ defineExpose({ loadPage });
 }
 
 .row-fallback,
+.release-fallback,
 .more-error {
   display: flex;
   flex-wrap: wrap;

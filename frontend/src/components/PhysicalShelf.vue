@@ -182,7 +182,7 @@ function compartment(row: ShelfObjectId[], index: number) {
             :aria-label="objectLabel(id)" :title="typeof id === 'number' ? byId.get(id)?.book.title : t(`physicalShelf.${decorations[id].kind}`)"
             @click="select(id)">
             <template v-if="typeof id === 'number' && bookViews.get(id)?.display === 'cover'">
-              <BookCover v-if="byId.get(id)" :title="byId.get(id)!.book.title" :cover-id="byId.get(id)!.book.cover_id" :image-url="byId.get(id)!.book.cover_url" :work-key="byId.get(id)!.book.ol_work_key" size="fluid" />
+              <BookCover v-if="byId.get(id)" :book="byId.get(id)!.book" size="fluid" />
             </template>
             <template v-else-if="typeof id === 'number'">
             <span class="spine-cap" aria-hidden="true"></span>

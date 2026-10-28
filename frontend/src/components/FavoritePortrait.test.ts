@@ -1,22 +1,18 @@
 import { mount } from "@vue/test-utils";
 import { describe, expect, it } from "vitest";
+import { favorite as favoriteRow } from "../test/fixtures";
 import type { Favorite } from "../types";
 import FavoritePortrait from "./FavoritePortrait.vue";
 
 function favorite(overrides: Partial<Favorite["book"]> & { position?: number } = {}): Favorite {
   const { position = 1, ...book } = overrides;
-  return {
-    position,
-    book: {
-      id: book.id ?? position,
-      ol_work_key: book.ol_work_key ?? `/works/OL${position}W`,
-      title: book.title ?? "Circe",
-      authors: book.authors ?? "Madeline Miller",
-      cover_id: book.cover_id ?? 123,
-      year: book.year ?? 2018,
-      cover_url: book.cover_url ?? null,
-    },
-  };
+  return favoriteRow(position, {
+    title: "Circe",
+    authors: "Madeline Miller",
+    cover_url: `/media/c${position}/l`,
+    cover_thumb_url: `/media/c${position}/s`,
+    ...book,
+  });
 }
 
 describe("FavoritePortrait", () => {
@@ -39,7 +35,7 @@ describe("FavoritePortrait", () => {
       props: {
         items: [
           favorite({ position: 1, title: "Circe", id: 1 }),
-          favorite({ position: 2, title: "Galatea", id: 2, cover_id: 9 }),
+          favorite({ position: 2, title: "Galatea", id: 2 }),
         ],
       },
     });
@@ -49,7 +45,7 @@ describe("FavoritePortrait", () => {
     expect(portrait.findAll("li")).toHaveLength(2);
     const links = portrait.findAll("a");
     expect(links).toHaveLength(2);
-    expect(links[0].attributes("href")).toBe("/book/OL1W");
+    expect(links[0].attributes("href")).toBe("/book/1");
     expect(links[0].attributes("aria-label")).toBe("1. Circe");
     expect(links[0].attributes("role")).toBeUndefined();
     expect(links[1].attributes("aria-label")).toBe("2. Galatea");

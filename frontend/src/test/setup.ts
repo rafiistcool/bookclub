@@ -36,3 +36,6 @@ if (!("IntersectionObserver" in window)) {
   }
   Object.defineProperty(window, "IntersectionObserver", { writable: true, value: FakeObserver });
 }
+
+// jsdom has no layout: the router's scroll restoration would only log "not implemented".
+Object.defineProperty(window, "scrollTo", { writable: true, value: () => undefined });

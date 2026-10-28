@@ -11,7 +11,8 @@ const props = withDefaults(defineProps<{
   item: ShelfItem;
   readonly?: boolean;
   disabled?: boolean;
-  clubPickKey?: string | null;
+  /** Works that are a current pick in one of the viewer's clubs. */
+  clubPickIds?: readonly number[];
   timezone?: string;
 }>(), { timezone: "UTC" });
 const emit = defineEmits<{
@@ -24,10 +25,8 @@ const monthLabel = computed(() => readingMonthLabel(month.value, locale.value));
 
 <template>
   <article class="shelf-card" :class="{ 'readonly-card': readonly }">
-    <BookTile :ol-work-key="item.book.ol_work_key" :title="item.book.title"
-      :authors="item.book.authors" :cover-id="item.book.cover_id"
-      :image-url="item.book.cover_url" :status="item.status" :rating="item.rating" hide-status
-      :club-pick="item.book.ol_work_key === clubPickKey" show-authors />
+    <BookTile :book="item.book" :status="item.status" :rating="item.rating" hide-status
+      :club-pick="clubPickIds?.includes(item.book.id)" show-authors />
     <span v-if="readonly" class="shelf-status">
       <span class="status-label">{{ statusShort(item.status) }}<span v-if="item.status === 'currently_reading' && item.progress != null" class="nums"> {{ item.progress }}%</span></span>
     </span>

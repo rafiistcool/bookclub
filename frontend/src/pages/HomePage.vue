@@ -1,631 +1,296 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
-import Avatar from "../components/Avatar.vue";
+import ActivityFeed from "../components/ActivityFeed.vue";
 import BookCover from "../components/BookCover.vue";
-import BookDiary from "../components/BookDiary.vue";
-import MeetingSheet from "../components/MeetingSheet.vue";
-import {
-  bookPath,
-  relativeDay,
-  starLabel,
-  statusLabel,
-  statusShort,
-} from "../constants";
-import { formatClubDate } from "../i18n/dates";
-import { tp } from "../i18n";
-import { useLocale } from "../stores/locale";
+import ClubCard from "../components/ClubCard.vue";
+import DiaryFeed from "../components/DiaryFeed.vue";
+import { bookPath } from "../constants";
+import { useClubs } from "../stores/clubs";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
-import type { ClubPick, NextUpVote } from "../types";
+import type { Favorite, ShelfItem } from "../types";
 
+/**
+ * Home: the viewer's clubs and what moves in them (the combined activity
+ * feed and diary across every club), plus what they are reading. With no
+ * club (solo mode) it is a personal page that makes no club call, with a way
+ * to create or join a club.
+ */
 const { t } = useI18n();
-const locale = useLocale();
-
 const session = useSession();
+const clubs = useClubs();
 const toast = useToast();
 
-const pick = ref<ClubPick | null>(null);
-const history = ref<ClubPick[]>([]);
-const vote = ref<NextUpVote | null>(null);
-const timezone = ref("UTC");
-const error = ref("");
-const loaded = ref(false);
-const editingMeeting = ref(false);
-const busy = ref(false);
-const diary = ref<InstanceType<typeof BookDiary> | null>(null);
-const progressDraft = ref(0);
+const clubsLoaded = ref(false);
+const clubsError = ref("");
+const reading = ref<ShelfItem[]>([]);
+const favorites = ref<Favorite[]>([]);
+const shelfLoaded = ref(false);
+const shelfError = ref("");
+const progress = ref<Record<number, number>>({});
+const savingId = ref<number | null>(null);
 
-// My own row among the readers carries my progress for the club pick.
-const me = computed(
-  () => pick.value?.readers.find((row) => row.username === session.user?.username) ?? null,
-);
-watch(
-  () => me.value?.progress,
-  (progress) => {
-    progressDraft.value = progress ?? 0;
-  },
-  { immediate: true },
-);
+const hasClubs = computed(() => clubs.hasClubs);
 
-const readers = computed(() =>
-  [...(pick.value?.readers ?? [])].sort((a, b) => {
-    const rank = { currently_reading: 0, finished: 1, want_to_read: 2, did_not_finish: 3 };
-    return rank[a.status] - rank[b.status] || a.username.localeCompare(b.username);
-  }),
-);
+async function loadClubs() {
+  if (!clubs.hasClubs) {
+    clubsLoaded.value = true;
+    return;
+  }
+  try {
+    await clubs.loadList();
+    clubsError.value = "";
+  } catch (err) {
+    clubsError.value = err instanceof ApiError ? err.message : t("clubs.loadFailed");
+  } finally {
+    clubsLoaded.value = true;
+  }
+}
 
-const finishedCount = computed(
-  () => readers.value.filter((row) => row.status === "finished").length,
-);
+async function loadShelf() {
+  try {
+    const shelf = await api.myShelf();
+    reading.value = shelf.items
+      .filter((item) => item.status === "currently_reading")
+      .sort((a, b) => a.position - b.position);
+    favorites.value = shelf.favorites;
+    progress.value = Object.fromEntries(reading.value.map((item) => [item.id, item.progress ?? 0]));
+    shelfError.value = "";
+  } catch (err) {
+    shelfError.value = err instanceof ApiError ? err.message : t("shelf.loadFailed");
+  } finally {
+    shelfLoaded.value = true;
+  }
+}
 
-const meetingCountdown = computed(() => relativeDay(pick.value?.meeting_at));
+async function saveProgress(item: ShelfItem) {
+  const value = progress.value[item.id] ?? 0;
+  savingId.value = item.id;
+  try {
+    const updated = await api.patchShelf(item.id, { progress: value });
+    reading.value = reading.value.map((row) => (row.id === item.id ? updated : row));
+    toast.show(t("book.progressSaved", { n: value }));
+  } catch (err) {
+    progress.value = { ...progress.value, [item.id]: item.progress ?? 0 };
+    toast.show(err instanceof ApiError ? err.message : t("book.saveFailed"));
+  } finally {
+    savingId.value = null;
+  }
+}
 
-const leader = computed(() => {
-  const nominations = vote.value?.nominations ?? [];
-  if (nominations.length === 0) return null;
-  return [...nominations].sort((a, b) => b.votes - a.votes)[0];
+onMounted(() => {
+  void loadClubs();
+  void loadShelf();
 });
-
-async function load() {
-  try {
-    const [current, past] = await Promise.all([api.clubPick(), api.clubPickHistory()]);
-    pick.value = current.pick;
-    timezone.value = current.timezone;
-    history.value = past.items;
-    error.value = "";
-  } catch (err) {
-    error.value = err instanceof ApiError ? err.message : t("home.loadFailed");
-  } finally {
-    loaded.value = true;
-  }
-  try {
-    vote.value = await api.nextUp();
-  } catch {
-    vote.value = null;
-  }
-}
-
-async function startReading() {
-  const current = pick.value;
-  if (!current || busy.value) return;
-  busy.value = true;
-  try {
-    const created = await api.addToShelf({
-      ol_work_key: current.book.ol_work_key,
-      title: current.book.title,
-      authors: current.book.authors,
-      cover_id: current.book.cover_id,
-      cover_url: current.book.cover_url,
-      year: current.book.year,
-      status: "currently_reading",
-    });
-    current.on_shelf = created.status;
-    current.shelf_id = created.id;
-    toast.show(t("home.addedToReading"));
-    await load();
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 409 && err.item) {
-      current.on_shelf = err.item.status;
-      current.shelf_id = err.item.id;
-      toast.show(t("home.alreadyOnShelf", { status: statusLabel(err.item.status) }));
-    } else {
-      toast.show(err instanceof ApiError ? err.message : t("home.addFailed"));
-    }
-  } finally {
-    busy.value = false;
-  }
-}
-
-async function saveProgress() {
-  const current = pick.value;
-  if (!current?.shelf_id || busy.value) return;
-  busy.value = true;
-  try {
-    const item = await api.patchShelf(current.shelf_id, { progress: progressDraft.value });
-    if (me.value) me.value.progress = item.progress;
-    toast.show(t("book.progressSaved", { n: progressDraft.value }));
-    // Spoiler shields in the diary depend on how far I am.
-    void diary.value?.reload();
-  } catch (err) {
-    progressDraft.value = me.value?.progress ?? 0;
-    toast.show(err instanceof ApiError ? err.message : t("book.saveFailed"));
-  } finally {
-    busy.value = false;
-  }
-}
-
-async function beginReading() {
-  const current = pick.value;
-  if (!current?.shelf_id || busy.value) return;
-  busy.value = true;
-  try {
-    const item = await api.patchShelf(current.shelf_id, { status: "currently_reading", position: 0 });
-    current.on_shelf = item.status;
-    toast.show(t("home.addedToReading"));
-    await load();
-  } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : t("book.saveFailed"));
-  } finally {
-    busy.value = false;
-  }
-}
-
-async function saveMeeting(meetingAt: string | null) {
-  const current = pick.value;
-  editingMeeting.value = false;
-  if (!current) return;
-  try {
-    await api.setClubPick({
-      ol_work_key: current.book.ol_work_key,
-      title: current.book.title,
-      authors: current.book.authors,
-      cover_id: current.book.cover_id,
-      cover_url: current.book.cover_url,
-      year: current.book.year,
-      meeting_at: meetingAt,
-    });
-    toast.show(meetingAt ? t("home.meetingSaved") : t("home.meetingCleared"));
-    await load();
-  } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : t("home.meetingFailed"));
-  }
-}
-
-onMounted(load);
 </script>
 
 <template>
-  <section class="home">
+  <section class="home" :class="{ solo: !hasClubs }">
     <div class="page-head">
       <h1>{{ session.user?.username ? t("home.hello", { name: session.user.username }) : t("home.title") }}</h1>
-      <p class="lede">{{ t("home.lede") }}</p>
+      <p class="lede">{{ hasClubs ? t("home.lede") : t("home.soloLede") }}</p>
     </div>
 
-    <p v-if="error" class="error">{{ error }}</p>
-
-    <div v-if="!loaded" class="hero hero-skeleton" aria-hidden="true">
-      <span class="skeleton hero-cover-skeleton" />
-      <div class="hero-body">
-        <span class="skeleton skeleton-line" />
-        <span class="skeleton skeleton-line short" />
+    <section v-if="hasClubs" class="home-clubs" aria-labelledby="your-clubs">
+      <div class="section-head">
+        <h2 id="your-clubs">{{ t("home.yourClubs") }}</h2>
+        <RouterLink to="/clubs">{{ t("home.allClubs") }}</RouterLink>
       </div>
-    </div>
+      <p v-if="clubsError" class="error">{{ clubsError }}</p>
+      <div v-else-if="!clubsLoaded" class="skeleton clubs-skeleton" aria-hidden="true" />
+      <ul v-else class="club-grid">
+        <li v-for="club in clubs.list" :key="club.slug">
+          <ClubCard :club="club" />
+        </li>
+      </ul>
+    </section>
 
-    <template v-else-if="pick">
-      <article class="hero">
-        <RouterLink class="hero-cover" :to="bookPath(pick.book.ol_work_key)">
-          <BookCover
-            :title="pick.book.title"
-            :cover-id="pick.book.cover_id"
-            :work-key="pick.book.ol_work_key"
-            :image-url="pick.book.cover_url"
-            eager
-          />
-        </RouterLink>
-        <div class="hero-body">
-          <p class="kicker">{{ t("home.readingNow") }}</p>
-          <RouterLink class="hero-title" :to="bookPath(pick.book.ol_work_key)">
-            <h2 class="display">{{ pick.book.title }}</h2>
+    <section v-else class="panel solo-prompt" aria-labelledby="solo-prompt">
+      <h2 id="solo-prompt">{{ t("home.soloTitle") }}</h2>
+      <p class="fine muted">{{ t("home.soloBody") }}</p>
+      <div class="btn-row">
+        <RouterLink class="btn btn-primary btn-sm" to="/clubs/new">{{ t("clubs.create") }}</RouterLink>
+        <RouterLink class="btn btn-ghost btn-sm" to="/clubs">{{ t("home.joinWithCode") }}</RouterLink>
+      </div>
+    </section>
+
+    <section class="section home-reading" aria-labelledby="reading-now">
+      <div class="section-head">
+        <h2 id="reading-now">{{ t("home.currentlyReading") }}</h2>
+        <RouterLink to="/shelf">{{ t("home.toShelf") }}</RouterLink>
+      </div>
+      <p v-if="shelfError" class="error">{{ shelfError }}</p>
+      <div v-else-if="!shelfLoaded" class="skeleton reading-skeleton" aria-hidden="true" />
+      <div v-else-if="reading.length === 0" class="reading-empty">
+        <p class="fine subtle">{{ t("home.nothingReading") }}</p>
+        <RouterLink class="btn btn-ghost btn-sm" to="/discover">{{ t("home.findBook") }}</RouterLink>
+      </div>
+      <ul v-else class="reading-list">
+        <li v-for="item in reading" :key="item.id" class="reading-row">
+          <RouterLink class="reading-cover" :to="bookPath(item.book)" tabindex="-1" aria-hidden="true">
+            <BookCover :book="item.book" size="sm" />
           </RouterLink>
-          <p v-if="pick.book.authors" class="hero-authors">{{ pick.book.authors }}</p>
-          <p class="fine subtle">
-            {{ t("home.chosenBy", { name: pick.set_by }) }}
-            <template v-if="pick.book.year"> · {{ pick.book.year }}</template>
-          </p>
-
-          <p v-if="pick.meeting_at" class="meeting">
-            <strong>{{ formatClubDate(pick.meeting_at, timezone, locale.locale) || pick.meeting_label }}</strong>
-            <span v-if="meetingCountdown" class="subtle">{{ meetingCountdown }}</span>
-          </p>
-          <p v-else class="fine subtle">{{ t("home.noMeeting") }}</p>
-
-          <p v-if="pick.note" class="note">{{ pick.note }}</p>
-
-          <div v-if="pick.on_shelf === 'currently_reading' && pick.shelf_id" class="hero-progress">
-            <label class="progress-label" for="home-progress">
-              <span>{{ t("home.yourProgress") }}</span>
-              <strong class="nums">{{ progressDraft }}%</strong>
+          <span class="reading-meta">
+            <RouterLink class="reading-title" :to="bookPath(item.book)">{{ item.book.title }}</RouterLink>
+            <span v-if="item.book.authors" class="finer subtle">{{ item.book.authors }}</span>
+            <label class="progress-label" :for="`progress-${item.id}`">
+              <span class="finer subtle">{{ t("home.yourProgress") }}</span>
+              <strong class="nums fine">{{ progress[item.id] ?? 0 }}%</strong>
             </label>
             <input
-              id="home-progress"
-              v-model.number="progressDraft"
+              :id="`progress-${item.id}`"
+              v-model.number="progress[item.id]"
               type="range"
               min="0"
               max="100"
               step="5"
-              :disabled="busy"
-              @change="saveProgress"
+              :disabled="savingId === item.id"
+              @change="saveProgress(item)"
             />
-          </div>
-
-          <div class="btn-row hero-actions">
-            <RouterLink
-              class="btn btn-primary"
-              :to="bookPath(pick.book.ol_work_key)"
-            >
-              {{ pick.on_shelf ? t("home.openBook") : t("home.seeDetails") }}
-            </RouterLink>
-            <button
-              v-if="!pick.on_shelf"
-              class="btn btn-ghost"
-              type="button"
-              :disabled="busy"
-              @click="startReading"
-            >
-              {{ t("home.startReading") }}
-            </button>
-            <button
-              v-else-if="pick.on_shelf === 'want_to_read' && pick.shelf_id"
-              class="btn btn-ghost"
-              type="button"
-              :disabled="busy"
-              @click="beginReading"
-            >
-              {{ t("home.startReading") }}
-            </button>
-            <span v-else class="badge" :class="pick.on_shelf">
-              {{ statusShort(pick.on_shelf) }}
-            </span>
-            <button
-              class="btn btn-ghost"
-              type="button"
-              @click="editingMeeting = true"
-            >
-              {{ pick.meeting_at ? t("home.changeMeeting") : t("home.addMeeting") }}
-            </button>
-          </div>
-        </div>
-      </article>
-
-      <section class="section progress-section" aria-labelledby="progress">
-        <div class="section-head">
-          <h2 id="progress">{{ t("home.whereEveryone") }}</h2>
-          <span class="fine subtle nums">
-            {{ t("home.finishedOf", { finished: finishedCount, total: readers.length || 0 }) }}
           </span>
+        </li>
+      </ul>
+    </section>
+
+    <div class="home-feeds">
+      <section class="section">
+        <DiaryFeed
+          :heading="hasClubs ? t('home.recentlyWritten') : t('home.yourNotes')"
+          :empty-text="hasClubs ? t('home.nothingWritten') : t('home.noNotes')"
+        >
+          <template #head>
+            <RouterLink to="/diary">{{ t("home.toDiary") }}</RouterLink>
+          </template>
+        </DiaryFeed>
+      </section>
+      <section v-if="hasClubs" class="section">
+        <ActivityFeed :heading="t('activity.heading')" />
+      </section>
+      <section v-else-if="favorites.length" class="section" aria-labelledby="favourites">
+        <div class="section-head">
+          <h2 id="favourites">{{ t("home.favourites") }}</h2>
         </div>
-        <template v-if="readers.length">
-        <div class="rail reader-rail">
+        <div class="rail">
           <RouterLink
-            v-for="row in readers"
-            :key="row.username"
-            class="reader-chip"
-            :to="`/club/${row.username}`"
+            v-for="row in favorites"
+            :key="row.position"
+            class="book-tile favourite-tile"
+            :to="bookPath(row.book)"
           >
-            <Avatar :username="row.username" :src="row.avatar_url" size="sm" />
-            <span class="reader-name">{{ row.username }}</span>
-            <span class="badge" :class="row.status">{{ statusShort(row.status) }}</span>
-            <span v-if="row.progress != null" class="progress-track" aria-hidden="true">
-              <span class="progress-fill" :style="{ width: `${row.progress}%` }" />
-            </span>
-            <span v-if="row.progress != null" class="finer subtle nums">
-              {{ row.progress }}%
-            </span>
-            <span v-else-if="row.rating" class="finer stars">
-              {{ starLabel(row.rating) }}
-            </span>
+            <BookCover :book="row.book" />
+            <span class="book-tile-title">{{ row.book.title }}</span>
           </RouterLink>
         </div>
-        <ul v-if="readers.some((row) => row.take)" class="reader-takes">
-          <li v-for="row in readers.filter((reader) => reader.take)" :key="row.username">
-            <strong>{{ row.username }}</strong>
-            <span v-if="row.rating" class="finer stars">{{ starLabel(row.rating) }}</span>
-            <p>{{ row.take }}</p>
-          </li>
-        </ul>
-        </template>
-        <p v-else class="fine subtle">
-          {{ t("home.nobodyAdded") }}
-        </p>
       </section>
-
-      <section class="section thread-section">
-        <BookDiary
-          ref="diary"
-          :work-key="pick.book.ol_work_key"
-          :book="pick.book"
-          :preview="3"
-          :heading="t('home.diary')"
-        />
-      </section>
-    </template>
-
-    <div v-else class="empty">
-      <h3>{{ t("home.noPickTitle") }}</h3>
-      <p>{{ t("home.noPickBody") }}</p>
-      <div class="btn-row">
-        <RouterLink class="btn btn-primary" to="/discover">{{ t("home.findBook") }}</RouterLink>
-        <RouterLink class="btn btn-ghost" to="/shelf">{{ t("home.pickFromShelf") }}</RouterLink>
-      </div>
     </div>
-
-    <section class="section next-up-section" aria-labelledby="next-up">
-      <div class="section-head">
-        <h2 id="next-up">{{ t("home.nextUp") }}</h2>
-        <RouterLink to="/club">{{ t("home.voteInClub") }}</RouterLink>
-      </div>
-      <RouterLink v-if="leader" class="book-row next-up-card" to="/club">
-        <BookCover
-          :title="leader.book.title"
-          :cover-id="leader.book.cover_id"
-          :work-key="leader.book.ol_work_key"
-          :image-url="leader.book.cover_url"
-          size="sm"
-        />
-        <span class="book-row-meta">
-          <h3>{{ leader.book.title }}</h3>
-          <p class="fine">
-            {{ tp("home.leadingVotes", leader.votes) }}
-            <span class="subtle">
-              · {{ t("home.nominatedCount", { n: vote?.nominations.length ?? 0 }) }}
-            </span>
-          </p>
-        </span>
-        <span class="fine">{{ t("home.voteArrow") }}</span>
-      </RouterLink>
-      <div v-else class="next-up-empty">
-        <p class="fine subtle">{{ t("home.noNominations") }}</p>
-        <div class="btn-row">
-          <RouterLink class="btn btn-ghost btn-sm" to="/shelf">{{ t("home.pickFromShelf") }}</RouterLink>
-          <RouterLink class="btn btn-ghost btn-sm" to="/discover">{{ t("home.findBook") }}</RouterLink>
-        </div>
-      </div>
-    </section>
-
-    <section v-if="history.length" class="section past-section" aria-labelledby="past">
-      <div class="section-head">
-        <h2 id="past">{{ t("home.pastPicks") }}</h2>
-        <span class="fine subtle nums">{{ history.length }}</span>
-      </div>
-      <div class="rail">
-        <RouterLink
-          v-for="row in history"
-          :key="row.id"
-          class="book-tile past-tile"
-          :to="bookPath(row.book.ol_work_key)"
-        >
-          <BookCover
-            :title="row.book.title"
-            :cover-id="row.book.cover_id"
-            :work-key="row.book.ol_work_key"
-            :image-url="row.book.cover_url"
-          />
-          <span class="book-tile-title">{{ row.book.title }}</span>
-          <span class="book-tile-sub">{{ formatClubDate(row.meeting_at, timezone, locale.locale) || row.meeting_label || row.set_by }}</span>
-        </RouterLink>
-      </div>
-    </section>
-
-    <MeetingSheet
-      v-if="editingMeeting && pick"
-      :title="t('home.meetingTitle')"
-      :book-title="pick.book.title"
-      :timezone="timezone"
-      :meeting-local="pick.meeting_local"
-      :confirm-label="t('home.saveMeeting')"
-      @confirm="saveMeeting"
-      @close="editingMeeting = false"
-    />
   </section>
 </template>
 
 <style scoped>
-.hero {
+.clubs-skeleton,
+.reading-skeleton {
+  height: 110px;
+}
+
+.club-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: grid;
-  grid-template-columns: 128px 1fr;
-  gap: var(--space-4);
-  align-items: start;
+  gap: var(--space-2);
 }
 
-.hero-skeleton {
-  min-height: 200px;
+.solo-prompt {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
 }
 
-.hero-cover-skeleton {
-  aspect-ratio: 2 / 3;
-  border-radius: var(--radius-md);
+.solo-prompt h2 {
+  font-size: var(--text-lg);
 }
 
-.hero-cover {
-  display: block;
-  border-radius: var(--radius-sm);
+.reading-empty {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
 }
 
-.hero-body {
+.reading-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.reading-row {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.reading-cover {
+  flex: 0 0 auto;
+}
+
+.reading-meta {
+  flex: 1;
   min-width: 0;
   display: grid;
-  gap: var(--space-1);
+  gap: 2px;
   align-content: start;
 }
 
-.hero-title {
+.reading-title {
   color: inherit;
   text-decoration: none;
-}
-
-.hero-body .display {
-  font-size: var(--text-2xl);
-}
-
-.hero-progress {
-  display: grid;
-  gap: var(--space-1);
-  margin-top: var(--space-3);
-  max-width: 420px;
+  font-family: var(--serif);
+  font-size: var(--text-md);
+  font-weight: 650;
+  line-height: var(--leading-snug);
 }
 
 .progress-label {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: var(--space-3);
-  font-size: var(--text-sm);
-  font-weight: 600;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
 }
 
-.hero-progress input[type="range"] {
+.reading-meta input[type="range"] {
   width: 100%;
   min-height: var(--tap);
   accent-color: var(--accent);
 }
 
-.next-up-empty {
-  display: grid;
-  gap: var(--space-2);
-}
-
-.hero-authors {
-  color: var(--text-muted);
-  font-size: var(--text-lg);
-}
-
-.meeting {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-1) var(--space-2);
-  margin-top: var(--space-2);
-}
-
-.hero-actions {
-  align-items: center;
-  margin-top: var(--space-3);
-}
-
-.reader-rail {
-  align-items: stretch;
-}
-
-.reader-chip {
-  width: 150px;
-  display: grid;
-  gap: var(--space-1);
-  align-content: start;
-  padding: var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  color: inherit;
-  text-decoration: none;
-}
-
-.reader-chip:hover {
-  border-color: var(--border-strong);
-}
-
-/* Takes are shown in full: the chips are too narrow for a whole sentence. */
-.reader-takes {
-  display: grid;
-  gap: var(--space-2);
-  margin: var(--space-3) 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.reader-takes li {
-  padding: var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-
-.reader-takes strong {
-  margin-right: var(--space-2);
-}
-
-.reader-takes p {
-  margin-top: var(--space-1);
-  color: var(--text-muted);
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-
-.reader-name {
-  font-weight: 650;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.reader-chip :deep(.avatar) {
-  margin-bottom: var(--space-1);
-}
-
-.reader-chip .badge {
-  justify-self: start;
-}
-
-.progress-track {
-  height: 5px;
-  border-radius: var(--radius-pill);
-  background: var(--surface-3);
-  overflow: hidden;
-  margin-top: var(--space-1);
-}
-
-.progress-fill {
-  display: block;
-  height: 100%;
-  background: var(--accent);
-}
-
-.next-up-card:hover {
-  border-color: var(--border-strong);
-}
-
-.past-tile {
+.favourite-tile {
   width: 92px;
 }
 
 @media (min-width: 720px) {
-  .hero {
-    grid-template-columns: 208px 1fr;
-    gap: var(--space-6);
-  }
-
-  .hero-body .display {
-    font-size: var(--text-3xl);
+  .club-grid,
+  .reading-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (min-width: 1024px) {
-  .hero {
-    grid-template-columns: 244px 1fr;
-    align-items: center;
-    padding: var(--space-6);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-xl);
-  }
-
-  /* Discussion is the long column; the vote card rides alongside it. Dense
-     packing pulls the vote up beside the progress rail instead of leaving a
-     hole where the hero's full-width row ends. */
-  .home {
+  .home-feeds {
     display: grid;
-    grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
-    grid-auto-flow: row dense;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
     column-gap: var(--space-6);
     align-items: start;
   }
 
-  .home > .page-head,
-  .home > .error,
-  .home > .hero,
-  .home > .empty,
-  .home > .past-section {
-    grid-column: 1 / -1;
-  }
-
-  .home > .progress-section,
-  .home > .thread-section {
-    grid-column: 1;
-  }
-
-  .home > .next-up-section {
-    grid-column: 2;
+  .home.solo .home-feeds {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 }
 </style>

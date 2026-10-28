@@ -56,14 +56,8 @@ function clearAll() {
     <li v-for="slot in slots" :key="slot.position" class="fav-row">
       <span class="fav-rank nums">{{ t("favorites.position", { n: slot.position }) }}</span>
       <template v-if="slot.row">
-        <RouterLink class="fav-book" :to="bookPath(slot.row.book.ol_work_key)">
-          <BookCover
-            :title="slot.row.book.title"
-            :cover-id="slot.row.book.cover_id"
-            :work-key="slot.row.book.ol_work_key"
-            :image-url="slot.row.book.cover_url"
-            size="sm"
-          />
+        <RouterLink class="fav-book" :to="bookPath(slot.row.book)">
+          <BookCover :book="slot.row.book" size="sm" />
           <span class="fav-title">{{ slot.row.book.title }}</span>
         </RouterLink>
         <div class="fav-actions">

@@ -4,7 +4,7 @@ import App from "./App.vue";
 import { installAssetRecovery } from "./assetRecovery";
 import { i18n } from "./i18n";
 import router from "./router";
-import { useClub } from "./stores/club";
+import { useService } from "./stores/service";
 import { useLocale } from "./stores/locale";
 import { useTheme } from "./stores/theme";
 import "./styles/index.css";
@@ -16,7 +16,7 @@ app.use(i18n);
 
 // The club config carries the accent Paper is built around, so it has to land
 // before the theme store decides whether to apply that inline override.
-await useClub().load();
+await useService().load();
 useTheme().init();
 useLocale().init();
 

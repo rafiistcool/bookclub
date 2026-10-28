@@ -3,9 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
-/// Mapped strings whose endpoints are gone or renamed (endpoint-map §11.2). #48 removes them from
-/// apiErrors.ts and empties this list.
-const LEGACY_ONLY: &[&str] = &["No profile picture", "That book is not in the club yet"];
+/// Mapped strings whose endpoints are gone or renamed (endpoint-map §11.2). #48 removed the last
+/// ones from apiErrors.ts; a string listed here must still be mapped there.
+const LEGACY_ONLY: &[&str] = &[];
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
