@@ -1,11 +1,13 @@
 //! The admin notification job (#54, D1): `admin::notify::run`, which `jobs::spawn_all` runs
-//! every five minutes under `jobs::lock_ids::ADMIN_NOTIFY`. New reports are mailed at most
+//! every five minutes under `jobs::lock_ids::ADMIN_NOTIFY` (the last test goes through
+//! `spawn_all`; the others call the job directly). New reports are mailed at most
 //! hourly, new catalog requests as a daily digest, to every instance admin with a verified
 //! address, in their locale.
 
 mod common;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use bookclub_server::admin::notify::{self, NotifyRun};
 use bookclub_server::catalog::shared::ingest::{CoverTarget, Source, ol_cover_media, set_cover};
@@ -14,6 +16,8 @@ use bookclub_server::{AppState, jobs};
 use common::*;
 use serde_json::json;
 use sqlx::PgPool;
+use tokio::sync::{Semaphore, mpsc};
+use tokio_util::sync::CancellationToken;
 
 /// A work showing the Open Library cover `ol_cover_id`; returns the picture's public id.
 async fn picture(app: &TestApp, title: &str, ol_cover_id: i64) -> String {
@@ -251,44 +255,91 @@ async fn news_waits_until_a_mail_goes_out(db: PgPool) {
     );
 }
 
-/// The job takes its own advisory lock, so a second instance skips the run.
-#[sqlx::test]
-async fn the_job_runs_under_its_own_lock(db: PgPool) {
-    let app = TestApp::new(db).await;
-    assert_eq!(jobs::lock_ids::ADMIN_NOTIFY, 0x6263_0003);
-    let state = app.state.clone();
-    let ran = jobs::run_locked(
-        &app.db,
-        jobs::lock_ids::ADMIN_NOTIFY,
-        "admin notify",
-        |conn| {
-            Box::pin(async move {
-                notify::run(&state, conn).await?;
-                Ok(())
-            })
-        },
-    )
-    .await;
-    assert!(ran);
+/// A transport that holds every mail until the test lets it go, and says when one waits.
+struct Held {
+    waiting: mpsc::UnboundedSender<()>,
+    go: Semaphore,
+    sent: CapturingEmail,
+}
 
-    let mut holder = app.db.acquire().await.unwrap();
-    sqlx::query("SELECT pg_advisory_lock($1)")
-        .bind(jobs::lock_ids::ADMIN_NOTIFY)
-        .execute(&mut *holder)
-        .await
-        .unwrap();
-    let state = app.state.clone();
-    let ran = jobs::run_locked(
-        &app.db,
-        jobs::lock_ids::ADMIN_NOTIFY,
-        "admin notify",
-        |conn| {
-            Box::pin(async move {
-                notify::run(&state, conn).await?;
-                Ok(())
-            })
-        },
+#[async_trait::async_trait]
+impl EmailSender for Held {
+    async fn send(&self, msg: Email) -> anyhow::Result<()> {
+        let _ = self.waiting.send(());
+        self.go.acquire().await?.forget();
+        self.sent.send(msg).await
+    }
+}
+
+/// Advisory locks on `key` (the one-key form) held in this test's database.
+async fn advisory_locks_held(db: &PgPool, key: i64) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM pg_locks
+         WHERE locktype = 'advisory' AND granted AND objsubid = 1
+           AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+           AND classid::int8 = $1 >> 32 AND objid::int8 = $1 & 4294967295",
     )
-    .await;
-    assert!(!ran, "another session holds the lock");
+    .bind(key)
+    .fetch_one(db)
+    .await
+    .unwrap()
+}
+
+/// The server runs the job: `jobs::spawn_all` runs it once at startup, and while its mail goes
+/// out the job's session holds the `ADMIN_NOTIFY` advisory lock (so a second instance skips the
+/// run, `jobs::run_locked`). Nothing here calls the job itself.
+#[sqlx::test]
+async fn the_server_runs_the_job_at_startup_under_its_lock(db: PgPool) {
+    let app = TestApp::new(db).await;
+    app.admin("root").await;
+    let ada = app.user("ada").await;
+    let public_id = picture(&app, "Circe", 101).await;
+    report(&ada, &public_id).await;
+
+    let (waiting, mut mail_waits) = mpsc::unbounded_channel();
+    let held = Arc::new(Held {
+        waiting,
+        go: Semaphore::new(0),
+        sent: CapturingEmail::default(),
+    });
+    let mut state = app.state.clone();
+    state.email = held.clone();
+    let shutdown = CancellationToken::new();
+    let mut background = jobs::spawn_all(state, shutdown.clone());
+
+    tokio::time::timeout(Duration::from_secs(10), mail_waits.recv())
+        .await
+        .expect("no admin mail within 10 s of startup")
+        .expect("the transport is gone");
+    assert_eq!(
+        advisory_locks_held(&app.db, jobs::lock_ids::ADMIN_NOTIFY).await,
+        1,
+        "the mail goes out under ADMIN_NOTIFY"
+    );
+    held.go.add_permits(1);
+    let mut mails = Vec::new();
+    for _ in 0..100 {
+        mails = held.sent.sent();
+        if !mails.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(recipients(&mails), ["root@example.test"]);
+    assert_eq!(mails[0].subject, "1 new report on Bookclub");
+
+    shutdown.cancel();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(result) = background.join_next().await {
+            result.expect("a background job failed");
+        }
+    })
+    .await
+    .expect("background jobs did not stop within 5 s");
+    assert_eq!(
+        advisory_locks_held(&app.db, jobs::lock_ids::ADMIN_NOTIFY).await,
+        0,
+        "released after the run"
+    );
+    assert_eq!(held.sent.sent().len(), 1, "one run at startup");
 }

@@ -1306,6 +1306,9 @@
       "noCover": "Dieses Buch zeigt kein Bild.",
       "future": "Die Meldung kann nicht in der Zukunft eingegangen sein.",
       "done": "Bild entfernt und die Meldung festgehalten",
+      "coversOnly": "Das ist kein Buchcover (etwa ein Profilbild). Eine Meldung dazu kann noch nicht festgehalten werden, deshalb wurde nichts entfernt. Du kannst das Bild ohne Eintrag entfernen.",
+      "withoutRecord": "Ohne Eintrag entfernen",
+      "doneWithoutRecord": "Bild entfernt. Die Meldung wurde nicht festgehalten.",
       "failed": "Das Bild konnte nicht entfernt werden"
     }
   },

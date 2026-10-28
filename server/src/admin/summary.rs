@@ -49,9 +49,10 @@ pub struct AdminOldestItem {
     pub created_at: OffsetDateTime,
 }
 
-/// Time to a decision of the reports an admin resolved in the last `days` days (by
-/// `resolved_at`). A report of a picture that was down already is closed on arrival without an
-/// admin (`resolved_by` null) and is not counted.
+/// Time to a decision of the reports resolved in the last `days` days (by `resolved_at`). A
+/// report closed on arrival (the picture was down already, so no admin decided it:
+/// `ReportOut.closed_on_arrival`) is not counted; a decision whose admin has since deleted the
+/// account is.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct AdminReportStats {
     /// The window: 90.
@@ -117,7 +118,11 @@ pub async fn admin_summary(conn: &mut PgConnection) -> sqlx::Result<AdminSummary
         r#"WITH decided AS (
                SELECT extract(epoch FROM resolved_at - created_at)::float8 / 3600 AS hours
                FROM reports
-               WHERE status <> 'open' AND resolved_by IS NOT NULL
+               -- Not closed on arrival (see `media::reports::report_outs`). `resolved_by` alone
+               -- cannot tell: account deletion sets it to null on an admin's decisions too.
+               WHERE status <> 'open'
+                 AND NOT (status = 'removed' AND resolved_by IS NULL
+                          AND resolved_at = created_at)
                  AND resolved_at >= now() - make_interval(days => $1)
            )
            SELECT count(*) AS "resolved!",

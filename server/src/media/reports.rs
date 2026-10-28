@@ -22,6 +22,13 @@
 //! **A direct takedown with a body** (`TakeDownIn`, D2) also records the notice it answers, an
 //! email from someone without an account: one resolved `removed` report of the picture that
 //! arrived at `received_at`, so the history and the response-time statistics include it.
+//!
+//! **Closed on arrival:** a report or notice that arrives when the picture is down already is
+//! recorded as `removed` with no `resolved_by` and `resolved_at = created_at` (both writers set
+//! that). The three together mark it, not `resolved_by` alone: deleting an admin's account sets
+//! `resolved_by` to null on their decisions too. One case stays ambiguous: a notice recorded as
+//! arriving at the instant of its own takedown (no `received_at`, or one clamped to now) whose
+//! admin later deletes the account reads as closed on arrival (0 hours either way).
 
 use std::collections::HashMap;
 
@@ -65,6 +72,9 @@ pub const REPORT_RESOLVED: &str = "This report was already resolved";
 pub const TAKEN_DOWN_NOTE: &str = "The picture was taken down";
 /// 400 for a notice `received_at` in the future (pydantic's `PastDatetime` message).
 pub const RECEIVED_IN_FUTURE: &str = "Input should be in the past";
+/// 400 for a notice about a picture that is not a cover: `reports.target_kind` knows only covers
+/// until ADM2 widens it, so the notice could not be recorded.
+pub const NOTICE_COVERS_ONLY: &str = "Only notices about covers can be recorded";
 /// How far a `received_at` may lie ahead of the server's clock (the admin's clock may run fast).
 const RECEIVED_AT_SLACK: time::Duration = time::Duration::minutes(5);
 
@@ -127,6 +137,10 @@ pub struct ReportOut {
     pub resolved_by: Option<UserSummary>,
     #[serde(with = "time::serde::rfc3339::option")]
     pub resolved_at: Option<OffsetDateTime>,
+    /// The picture was down already when the report arrived, so it was closed at once and no
+    /// admin decided it. A decided report whose admin deleted the account has no `resolved_by`
+    /// either, but is not closed on arrival.
+    pub closed_on_arrival: bool,
 }
 
 /// A page of the report queue: the open reports oldest first, or the resolved ones newest
@@ -188,8 +202,8 @@ impl Validate for TakeDownIn {
     }
 }
 
-/// A JSON body that may be left out: no body at all is `None`; anything else goes through
-/// [`ApiJson`], with its 400s.
+/// A JSON body that may be left out: no body at all, or the JSON `null`, is `None`; anything
+/// else goes through [`ApiJson`], with its 400s.
 pub struct OptionalJson<T>(pub Option<T>);
 
 impl<T, S> FromRequest<S> for OptionalJson<T>
@@ -210,7 +224,9 @@ where
                     AppError::bad_request(FIELD_REQUIRED)
                 }
             })?;
-        if bytes.is_empty() {
+        if bytes.is_empty()
+            || serde_json::from_slice::<serde_json::Value>(&bytes).is_ok_and(|v| v.is_null())
+        {
             return Ok(OptionalJson(None));
         }
         let ApiJson(value) =
@@ -354,7 +370,7 @@ fn created(id: i64, status: &str) -> (StatusCode, Json<ReportCreated>) {
 
 /// A page of the report queue: `?status=open` (the default) lists the open reports oldest
 /// first, `?status=resolved` the removed and dismissed ones, the newest decision first (a report
-/// closed on arrival, of a picture already taken down, has no `resolved_by`). 50 a page.
+/// of a picture already taken down is `closed_on_arrival`, with no `resolved_by`). 50 a page.
 #[utoipa::path(
     get,
     path = "/api/admin/reports",
@@ -500,7 +516,8 @@ pub async fn resolve_report(
 /// `created_at` is when the notice arrived, `created_by` is null (the sender has no account
 /// here), `resolved_by` the admin. A picture that was down already gets the record too, closed
 /// when it came down (or on arrival, with no `resolved_by`, when it was down before the notice
-/// arrived). Avatars are taken down without a record (`reports.target_kind` knows only covers).
+/// arrived). A notice about an avatar is refused before anything changes (400, as
+/// `reports.target_kind` knows only covers until ADM2); without a body an avatar is taken down.
 #[utoipa::path(
     delete,
     path = "/api/admin/media/{public_id}",
@@ -510,11 +527,11 @@ pub async fn resolve_report(
     params(("public_id" = String, Path, description = "The picture's public id")),
     request_body(
         content = Option<TakeDownIn>,
-        description = "Optional: the notice this takedown answers, recorded as a resolved report"
+        description = "Optional: the notice this takedown answers, recorded as a resolved report. No body, or `null`, takes the picture down without a record"
     ),
     responses(
         (status = 204, description = "The picture is removed (and the notice recorded)"),
-        (status = 400, body = ErrorBody, description = "`Input should be 'copyright', 'wrong_book', 'offensive' or 'other'`, `Input should be in the past` (`received_at`), `Invalid value`"),
+        (status = 400, body = ErrorBody, description = "`Input should be 'copyright', 'wrong_book', 'offensive' or 'other'`, `Input should be in the past` (`received_at`), `Invalid value`; `Only notices about covers can be recorded` (a notice about an avatar: nothing is taken down)"),
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
         (status = 404, body = ErrorBody, description = "`Not found`")
     )
@@ -539,9 +556,13 @@ pub async fn take_down(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::not_found(msg::NOT_FOUND))?;
+    // The record would be lost: refuse before anything changes (the rollback drops the lock).
+    if notice.is_some() && picture.kind != "cover" {
+        return Err(AppError::bad_request(NOTICE_COVERS_ONLY));
+    }
     let shown = shown_on(&mut tx, media_id).await?;
     let prefixes = take_down_locked(&mut tx, state.media.as_ref(), media_id, admin.id).await?;
-    if let Some(notice) = notice.filter(|_| picture.kind == "cover") {
+    if let Some(notice) = notice {
         record_notice(
             &mut tx,
             media_id,
@@ -711,6 +732,8 @@ pub async fn report_outs(conn: &mut PgConnection, ids: &[i64]) -> sqlx::Result<V
         r#"SELECT r.id AS "id!", r.reason AS "reason!", r.details AS "details!",
                   r.status AS "status!", r.work_id, r.edition_id, r.created_by,
                   r.created_at AS "created_at!", r.resolved_by, r.resolved_at,
+                  COALESCE(r.status = 'removed' AND r.resolved_by IS NULL
+                           AND r.resolved_at = r.created_at, false) AS "closed_on_arrival!",
                   m.public_id AS "public_id?", m.removed_at IS NOT NULL AS "removed?"
            FROM reports r
            LEFT JOIN media m ON m.id = r.media_id
@@ -763,6 +786,7 @@ pub async fn report_outs(conn: &mut PgConnection, ids: &[i64]) -> sqlx::Result<V
                 created_at: row.created_at,
                 resolved_by: row.resolved_by.and_then(|id| users.get(&id).cloned()),
                 resolved_at: row.resolved_at,
+                closed_on_arrival: row.closed_on_arrival,
             };
             (row.id, out)
         })

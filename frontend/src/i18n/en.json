@@ -1306,6 +1306,9 @@
       "noCover": "That book shows no picture.",
       "future": "The notice cannot have arrived in the future.",
       "done": "Picture taken down and the notice recorded",
+      "coversOnly": "This is not a book cover (a profile picture, say). A notice about it cannot be recorded yet, so nothing was taken down. You can take it down without a record.",
+      "withoutRecord": "Take down without a record",
+      "doneWithoutRecord": "Picture taken down. The notice was not recorded.",
       "failed": "Could not take the picture down"
     }
   },

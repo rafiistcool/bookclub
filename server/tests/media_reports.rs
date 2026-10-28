@@ -9,6 +9,7 @@ use bookclub_server::catalog::shared::books::{BookRef, book_out};
 use bookclub_server::catalog::shared::ingest::{
     self, CoverTarget, Mode, Source, WorkRecord, ol_cover_media, set_cover,
 };
+use bookclub_server::media::reports::take_down_locked;
 use bookclub_server::media::service::{CoverOutcome, PREFETCH_POLICY};
 use common::*;
 use image::codecs::jpeg::JpegEncoder;
@@ -551,6 +552,20 @@ async fn a_notice_about_a_removed_picture_is_recorded_too(db: PgPool) {
             Some(after.unix_timestamp())
         )
     );
+    // The history tells the two apart: only the later one was closed on arrival.
+    let history = root.get("/api/admin/reports?status=resolved").await.json();
+    let closed: Vec<(i64, bool)> = history["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| {
+            (
+                item["resolved_by"]["id"].as_i64().unwrap_or(0),
+                item["closed_on_arrival"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(closed, [(0, true), (root.id(), false)]);
 }
 
 /// A notice must name a known reason and must not arrive in the future; a refused body takes
@@ -590,6 +605,56 @@ async fn a_takedown_notice_is_checked(db: PgPool) {
         .await
         .assert_status(204);
     assert_eq!(notice_rows(&app).await[0].1.chars().count(), 2000);
+
+    // The document declares the body nullable: `null` is no notice, like no body.
+    let (third_work, third) = third_picture(&app).await;
+    root.delete_json(&format!("/api/admin/media/{third}"), Value::Null)
+        .await
+        .assert_status(204);
+    assert_eq!(
+        cover_of(&app, third_work).await,
+        None,
+        "the picture is down"
+    );
+    assert_eq!(notice_rows(&app).await.len(), 1, "and nothing recorded");
+}
+
+/// Until ADM2 widens `reports.target_kind`, a notice about an avatar cannot be recorded: the
+/// takedown is refused before anything changes, so the admin is never told a notice is on
+/// record when it is not. Without a notice (no body, or `null`) the avatar comes down.
+#[sqlx::test]
+async fn a_notice_about_an_avatar_is_refused(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let root = app.admin("root").await;
+    let avatar = "avataravataravataravatar22";
+    app.exec(&format!(
+        "INSERT INTO media (public_id, kind, source, uploaded_by)
+         VALUES ('{avatar}', 'avatar', 'upload', {})",
+        ada.id()
+    ))
+    .await;
+    let removed = format!(
+        "SELECT count(*) FROM media WHERE public_id = '{avatar}' AND removed_at IS NOT NULL"
+    );
+    let path = format!("/api/admin/media/{avatar}");
+    for body in [
+        json!({}),
+        json!({"details": "Mail: an offensive profile picture."}),
+    ] {
+        root.delete_json(&path, body)
+            .await
+            .assert_detail(400, "Only notices about covers can be recorded");
+    }
+    assert_eq!(app.scalar_i64(&removed).await, 0, "nothing was taken down");
+    assert!(notice_rows(&app).await.is_empty());
+
+    root.delete_json(&path, Value::Null)
+        .await
+        .assert_status(204);
+    assert_eq!(app.scalar_i64(&removed).await, 1);
+    root.delete(&path).await.assert_status(204);
+    assert!(notice_rows(&app).await.is_empty());
 }
 
 /// Acceptance (#54): a repeat report of a picture by the same reader answers with the open
@@ -699,6 +764,20 @@ async fn reports_of_a_removed_picture_never_enter_the_queue(db: PgPool) {
     .unwrap();
     assert_eq!(row, ("removed".into(), None, true, "Gone?".into()));
     assert_eq!(app.scalar_i64("SELECT count(*) FROM reports").await, 2);
+    // Lin's was closed on arrival; Ada's was decided by root.
+    let history = root.get("/api/admin/reports?status=resolved").await.json();
+    let closed: Vec<(i64, bool)> = history["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| {
+            (
+                item["id"].as_i64().unwrap(),
+                item["closed_on_arrival"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(closed, [(late_id, true), (ada_report, false)]);
 }
 
 /// Acceptance (#54): "dismiss" closes every open report of the picture, not only the one the
@@ -961,6 +1040,21 @@ async fn a_report_of_a_proposed_cover_names_its_book(db: PgPool) {
 
 /// Waits until a session of this test's database waits for a lock.
 async fn until_a_lock_wait(db: &PgPool) {
+    until_lock_waits(db, 1).await;
+}
+
+/// Waits until `sessions` sessions of this test's database wait for a lock at once.
+async fn until_lock_waits(db: &PgPool, sessions: i64) {
+    assert!(
+        lock_waits(db, sessions).await,
+        "fewer than {sessions} sessions waited for a lock"
+    );
+}
+
+/// Polls for up to 10 s until `sessions` sessions of this test's database wait for a lock at
+/// once; whether they did. A test that releases a lock after this asserts the outcome itself,
+/// so a missing lock shows as a wrong result rather than a timeout.
+async fn lock_waits(db: &PgPool, sessions: i64) -> bool {
     for _ in 0..500 {
         let waiting: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM pg_stat_activity
@@ -969,12 +1063,163 @@ async fn until_a_lock_wait(db: &PgPool) {
         .fetch_one(db)
         .await
         .unwrap();
-        if waiting > 0 {
-            return;
+        if waiting >= sessions {
+            return true;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    panic!("nothing waited for a lock");
+    false
+}
+
+async fn media_id(app: &TestApp, public_id: &str) -> i64 {
+    app.scalar_i64(&format!(
+        "SELECT id FROM media WHERE public_id = '{public_id}'"
+    ))
+    .await
+}
+
+/// The lock order (conventions §7.2): a report locks the picture `FOR SHARE` before it reads
+/// whether the picture is down, so a report filed while a takedown runs waits for it and is
+/// recorded as closed. Without that lock it would read the picture as live and leave an open
+/// report of a removed picture in the queue.
+#[sqlx::test]
+async fn a_report_filed_during_a_takedown_sees_the_removal(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let root = app.admin("root").await;
+    let (work, public_id) = second_picture(&app).await;
+    let media = media_id(&app, &public_id).await;
+
+    // A takedown that holds the picture while the report starts.
+    let mut takedown = app.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM media WHERE id = $1 FOR UPDATE")
+        .bind(media)
+        .execute(&mut *takedown)
+        .await
+        .unwrap();
+    let finish_takedown = async {
+        until_a_lock_wait(&app.db).await;
+        take_down_locked(&mut takedown, app.media.as_ref(), media, root.id())
+            .await
+            .unwrap();
+        takedown.commit().await.unwrap();
+    };
+    let filing = report(&ada, &public_id, json!({"reason": "offensive"}));
+    let (res, ()) = tokio::join!(filing, finish_takedown);
+    res.assert_status(201);
+    let id = res.json()["id"].as_i64().unwrap();
+    assert_eq!(res.json(), json!({"id": id, "status": "removed"}));
+    assert_eq!(
+        root.get("/api/admin/reports").await.json(),
+        json!({"items": [], "page": 1, "has_more": false})
+    );
+    let row = sqlx::query_as::<_, (String, Option<i64>, bool)>(
+        "SELECT status, resolved_by, resolved_at = created_at FROM reports WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(row, ("removed".into(), None, true), "closed on arrival");
+    assert_eq!(cover_of(&app, work).await, None);
+}
+
+/// The lock order (conventions §7.2): a dismissal locks the picture before it closes the
+/// picture's open reports. A report that is being filed holds the picture `FOR SHARE`, so the
+/// dismissal waits for it and then closes it with the others. Here something else holds the
+/// picture first, so the report and then the dismissal queue behind it in that order.
+#[sqlx::test]
+async fn a_dismissal_waits_for_a_report_being_filed_and_closes_it_too(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let grace = app.user("grace").await;
+    let root = app.admin("root").await;
+    let (work, public_id) = second_picture(&app).await;
+    let media = media_id(&app, &public_id).await;
+    let graces = report(&grace, &public_id, json!({"reason": "wrong_book"}))
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+
+    let mut holder = app.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM media WHERE id = $1 FOR UPDATE")
+        .bind(media)
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let filing = report(&ada, &public_id, json!({"reason": "offensive"}));
+    let dismissing = async {
+        until_lock_waits(&app.db, 1).await;
+        root.post(
+            &format!("/api/admin/reports/{graces}/resolve"),
+            json!({"action": "dismiss"}),
+        )
+        .await
+    };
+    let release = async {
+        lock_waits(&app.db, 2).await;
+        holder.commit().await.unwrap();
+    };
+    let (filed, dismissed, ()) = tokio::join!(filing, dismissing, release);
+    filed.assert_status(201);
+    assert_eq!(filed.json()["status"], "open");
+    dismissed.assert_status(200);
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM reports WHERE status = 'dismissed' AND resolved_by = {}",
+            root.id()
+        ))
+        .await,
+        2,
+        "Ada's report, filed while the dismissal waited, was dismissed too"
+    );
+    assert_eq!(
+        root.get("/api/admin/reports").await.json()["items"],
+        json!([])
+    );
+    assert!(cover_of(&app, work).await.is_some(), "the picture stays");
+}
+
+/// Two identical reports by one reader at once are one report: the advisory lock on (reader,
+/// picture) makes the second wait until the first is committed, and then it finds that one.
+/// Without the lock both would find no earlier report and both would insert.
+#[sqlx::test]
+async fn two_reports_at_once_by_one_reader_are_one_report(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let (_, public_id) = second_picture(&app).await;
+    let media = media_id(&app, &public_id).await;
+
+    // The server's lock: space 0x6263_0200, key hashtext('<user id>:<media id>').
+    let key = format!("{}:{media}", ada.id());
+    let mut holder = app.db.acquire().await.unwrap();
+    sqlx::query("SELECT pg_advisory_lock($1, hashtext($2))")
+        .bind(0x6263_0200_i32)
+        .bind(&key)
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let release = async {
+        lock_waits(&app.db, 2).await;
+        sqlx::query("SELECT pg_advisory_unlock($1, hashtext($2))")
+            .bind(0x6263_0200_i32)
+            .bind(&key)
+            .execute(&mut *holder)
+            .await
+            .unwrap();
+    };
+    let body = json!({"reason": "offensive"});
+    let (first, second, ()) = tokio::join!(
+        report(&ada, &public_id, body.clone()),
+        report(&ada, &public_id, body.clone()),
+        release
+    );
+    first.assert_status(201);
+    second.assert_status(201);
+    assert_eq!(first.json()["status"], "open");
+    assert_eq!(first.json(), second.json(), "the same report");
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM reports").await, 1);
 }
 
 /// A takedown that meets an ingest attaching the picture waits for it, then clears the new

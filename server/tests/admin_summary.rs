@@ -94,7 +94,8 @@ async fn an_empty_instance_has_nothing_waiting(db: PgPool) {
 
 /// Acceptance (#54): a report resolved after 50 h gives a median of 50 and nothing over the
 /// 72 h target. Reports closed on arrival (no admin decided them) and reports resolved more
-/// than 90 days ago are not counted; a direct takedown's notice is.
+/// than 90 days ago are not counted; one filed earlier but resolved within the 90 days is (the
+/// window goes by `resolved_at`), and so is a direct takedown's notice.
 #[sqlx::test]
 async fn report_stats_count_what_admins_resolved_in_90_days(db: PgPool) {
     let app = TestApp::new(db).await;
@@ -149,6 +150,21 @@ async fn report_stats_count_what_admins_resolved_in_90_days(db: PgPool) {
         stats,
         json!({"days": 90, "resolved": 2, "median_hours": 65.0, "max_hours": 80.0, "over_target": 1})
     );
+    // Filed 95 days ago, resolved 80 days ago (360 hours later): inside the window.
+    app.exec(&format!(
+        "INSERT INTO reports (target_kind, reason, status, created_by, created_at, resolved_by,
+                              resolved_at)
+         VALUES ('cover', 'other', 'dismissed', {ada}, now() - interval '2280 hours', {root},
+                 now() - interval '1920 hours')",
+        ada = ada.id(),
+        root = root.id()
+    ))
+    .await;
+    let stats = summary(&root).await["report_stats"].clone();
+    assert_eq!(
+        stats,
+        json!({"days": 90, "resolved": 3, "median_hours": 80.0, "max_hours": 360.0, "over_target": 2})
+    );
 
     // A notice that arrived by email 10 hours ago, answered with a direct takedown now.
     let received = time::OffsetDateTime::now_utc() - time::Duration::hours(10);
@@ -161,7 +177,72 @@ async fn report_stats_count_what_admins_resolved_in_90_days(db: PgPool) {
     let stats = summary(&root).await["report_stats"].clone();
     assert_eq!(
         stats,
-        json!({"days": 90, "resolved": 3, "median_hours": 50.0, "max_hours": 80.0, "over_target": 1})
+        json!({"days": 90, "resolved": 4, "median_hours": 65.0, "max_hours": 360.0, "over_target": 2})
+    );
+}
+
+/// A decision outlives the admin who made it. Deleting `grace`'s account sets `resolved_by` to
+/// null on her decisions, but they still count, and the history does not call them closed on
+/// arrival. What was closed on arrival (a reader's report of a removed picture, a notice that
+/// arrived after the takedown) stays out of the figures.
+#[sqlx::test]
+async fn a_decision_counts_after_its_admin_deleted_the_account(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let root = app.admin("root").await;
+    let grace = app.admin("grace").await;
+    let (_, first) = picture(&app, "Circe", 101).await;
+    let (_, second) = picture(&app, "Ich bin Circe", 102).await;
+
+    let kept = report(&ada, &first).await;
+    age_report(&app, kept, 50).await;
+    grace
+        .post(
+            &format!("/api/admin/reports/{kept}/resolve"),
+            json!({"action": "dismiss"}),
+        )
+        .await
+        .assert_status(200);
+    root.delete(&format!("/api/admin/media/{second}"))
+        .await
+        .assert_status(204);
+    let late = report(&ada, &second).await;
+    root.delete_json(&format!("/api/admin/media/{second}"), json!({}))
+        .await
+        .assert_status(204);
+    let decided = json!({"days": 90, "resolved": 1, "median_hours": 50.0, "max_hours": 50.0, "over_target": 0});
+    assert_eq!(summary(&root).await["report_stats"], decided);
+
+    app.exec(&format!("DELETE FROM users WHERE id = {}", grace.id()))
+        .await;
+    assert_eq!(
+        summary(&root).await["report_stats"],
+        decided,
+        "the decision still counts"
+    );
+    let history = root.get("/api/admin/reports?status=resolved").await.json();
+    let rows: Vec<(i64, Value, bool)> = history["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| {
+            (
+                item["id"].as_i64().unwrap(),
+                item["resolved_by"].clone(),
+                item["closed_on_arrival"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    let notice = app
+        .scalar_i64("SELECT id FROM reports WHERE created_by IS NULL")
+        .await;
+    assert_eq!(
+        rows,
+        [
+            (notice, Value::Null, true),
+            (late, Value::Null, true),
+            (kept, Value::Null, false)
+        ]
     );
 }
 
@@ -236,12 +317,15 @@ async fn resolved_reports_list_newest_first_with_paging(db: PgPool) {
     let ada = app.user("ada").await;
     let root = app.admin("root").await;
     let (_, public_id) = picture(&app, "Circe", 101).await;
-    // 52 decided reports, the first decided longest ago, and one open report.
+    // 52 decided reports and one open report. The decision times, the arrival times and the
+    // ids are in three different orders (37 and 19 are prime to 52, so each is a permutation),
+    // so only an order by decision passes.
     app.exec(&format!(
         "INSERT INTO reports (target_kind, reason, status, created_by, created_at, resolved_by,
                               resolved_at)
          SELECT 'cover', 'other', CASE WHEN i % 2 = 0 THEN 'dismissed' ELSE 'removed' END,
-                {ada}, now() - interval '10 days', {root}, now() - make_interval(mins => 100 - i)
+                {ada}, now() - interval '10 days' - make_interval(mins => (i * 19) % 52),
+                {root}, now() - make_interval(mins => (i * 37) % 52)
          FROM generate_series(1, 52) AS i",
         ada = ada.id(),
         root = root.id()
@@ -255,6 +339,9 @@ async fn resolved_reports_list_newest_first_with_paging(db: PgPool) {
     .await
     .unwrap();
     assert_eq!(decided.len(), 52);
+    let mut by_id = decided.clone();
+    by_id.sort_unstable_by(|a, b| b.cmp(a));
+    assert_ne!(decided, by_id, "the decision order is not the id order");
 
     let first = root.get("/api/admin/reports?status=resolved").await;
     first.assert_status(200);
@@ -298,12 +385,14 @@ async fn decided_requests_list_newest_first_with_paging(db: PgPool) {
     let ada = app.user("ada").await;
     let root = app.admin("root").await;
     let work = app.work("Circe").await;
+    // Decision, arrival and id orders differ, as for reports.
     app.exec(&format!(
         "INSERT INTO catalog_edit_requests (kind, work_id, payload, status, created_by,
                                             created_at, decided_by, decided_at)
          SELECT 'work_edit', {work}, jsonb_build_object('pages', i),
                 CASE WHEN i % 2 = 0 THEN 'approved' ELSE 'rejected' END, {ada},
-                now() - interval '10 days', {root}, now() - make_interval(mins => 100 - i)
+                now() - interval '10 days' - make_interval(mins => (i * 19) % 52), {root},
+                now() - make_interval(mins => (i * 37) % 52)
          FROM generate_series(1, 51) AS i",
         work = work.id,
         ada = ada.id(),
@@ -332,8 +421,10 @@ async fn decided_requests_list_newest_first_with_paging(db: PgPool) {
         .json();
     assert_eq!(ids(&first), decided[..50]);
     assert_eq!(first["has_more"], true);
-    assert_eq!(first["items"][0]["payload"], json!({"pages": 51}));
+    // 45 * 37 % 52 = 1: decided a minute ago, the newest; then 38 (two minutes).
+    assert_eq!(first["items"][0]["payload"], json!({"pages": 45}));
     assert_eq!(first["items"][0]["status"], "rejected");
+    assert_eq!(first["items"][1]["payload"], json!({"pages": 38}));
     assert_eq!(first["items"][1]["status"], "approved");
     assert_eq!(first["items"][0]["decided_by"]["username"], "root");
     let second = root

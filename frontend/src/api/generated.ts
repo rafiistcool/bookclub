@@ -138,7 +138,8 @@ export interface paths {
          *     `created_at` is when the notice arrived, `created_by` is null (the sender has no account
          *     here), `resolved_by` the admin. A picture that was down already gets the record too, closed
          *     when it came down (or on arrival, with no `resolved_by`, when it was down before the notice
-         *     arrived). Avatars are taken down without a record (`reports.target_kind` knows only covers).
+         *     arrived). A notice about an avatar is refused before anything changes (400, as
+         *     `reports.target_kind` knows only covers until ADM2); without a body an avatar is taken down.
          */
         delete: operations["media_admin_take_down"];
         options?: never;
@@ -156,7 +157,7 @@ export interface paths {
         /**
          * A page of the report queue: `?status=open` (the default) lists the open reports oldest
          *     first, `?status=resolved` the removed and dismissed ones, the newest decision first (a report
-         *     closed on arrival, of a picture already taken down, has no `resolved_by`). 50 a page.
+         *     of a picture already taken down is `closed_on_arrival`, with no `resolved_by`). 50 a page.
          */
         get: operations["media_admin_list_reports"];
         put?: never;
@@ -2021,9 +2022,10 @@ export interface components {
             oldest: components["schemas"]["AdminOldestItem"] | null;
         };
         /**
-         * @description Time to a decision of the reports an admin resolved in the last `days` days (by
-         *     `resolved_at`). A report of a picture that was down already is closed on arrival without an
-         *     admin (`resolved_by` null) and is not counted.
+         * @description Time to a decision of the reports resolved in the last `days` days (by `resolved_at`). A
+         *     report closed on arrival (the picture was down already, so no admin decided it:
+         *     `ReportOut.closed_on_arrival`) is not counted; a decision whose admin has since deleted the
+         *     account is.
          */
         AdminReportStats: {
             /**
@@ -3369,6 +3371,12 @@ export interface components {
             resolved_by: components["schemas"]["UserSummary"] | null;
             /** Format: date-time */
             resolved_at: string | null;
+            /**
+             * @description The picture was down already when the report arrived, so it was closed at once and no
+             *     admin decided it. A decided report whose admin deleted the account has no `resolved_by`
+             *     either, but is not closed on arrival.
+             */
+            closed_on_arrival: boolean;
         };
         /** @description What the admin decided. */
         ReportResolveIn: {
@@ -4412,7 +4420,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        /** @description Optional: the notice this takedown answers, recorded as a resolved report */
+        /** @description Optional: the notice this takedown answers, recorded as a resolved report. No body, or `null`, takes the picture down without a record */
         requestBody?: {
             content: {
                 "application/json": components["schemas"]["TakeDownIn"] | null;
@@ -4426,7 +4434,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description `Input should be 'copyright', 'wrong_book', 'offensive' or 'other'`, `Input should be in the past` (`received_at`), `Invalid value` */
+            /** @description `Input should be 'copyright', 'wrong_book', 'offensive' or 'other'`, `Input should be in the past` (`received_at`), `Invalid value`; `Only notices about covers can be recorded` (a notice about an avatar: nothing is taken down) */
             400: {
                 headers: {
                     [name: string]: unknown;

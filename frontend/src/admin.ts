@@ -182,6 +182,19 @@ export function toLocalInput(date: Date): string {
   );
 }
 
+/**
+ * Two 400s of `DELETE /api/admin/media/{public_id}` with a notice, byte for
+ * byte as `media::reports` sends them. The takedown form answers them with
+ * its own copy: `apiErrors.ts` maps only to `errors.*` keys, which this
+ * package does not add (docs/phase2/notes/adm.md hands that to the integrator).
+ */
+export const TAKEDOWN_DETAILS = {
+  /** `received_at` is more than 5 minutes ahead of the server's clock. */
+  receivedInFuture: "Input should be in the past",
+  /** The picture is not a cover: the notice cannot be recorded, and nothing was taken down. */
+  coversOnly: "Only notices about covers can be recorded",
+} as const;
+
 /** A `datetime-local` value as an RFC 3339 instant; null when empty or invalid. */
 export function fromLocalInput(value: string): string | null {
   if (!value) return null;

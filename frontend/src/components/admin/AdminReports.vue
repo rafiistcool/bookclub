@@ -113,17 +113,20 @@ function overdue(report: ReportOut): boolean {
   return isOverdue(report.created_at, props.targetHours, now.value);
 }
 
-/** "Taken down by root · …" or "Kept by root · …"; a report closed on arrival names nobody. */
+/**
+ * "Taken down by root · …" or "Kept by root · …", "someone" when that admin
+ * has deleted the account; a report closed on arrival names nobody.
+ */
 function decision(report: ReportOut): string {
-  if (!report.resolved_by) return t("admin.closedOnArrival");
-  const name = report.resolved_by.username;
+  if (report.closed_on_arrival) return t("admin.closedOnArrival");
+  const name = report.resolved_by?.username ?? t("admin.someone");
   const at = report.resolved_at ? when(report.resolved_at) : "";
   return report.status === "removed" ? t("admin.takenDownBy", { name, when: at }) : t("admin.keptBy", { name, when: at });
 }
 
 /** "after 5 hours", for a report an admin decided. */
 function took(report: ReportOut): string {
-  if (!report.resolved_by || !report.resolved_at) return "";
+  if (report.closed_on_arrival || !report.resolved_at) return "";
   return t("admin.decidedAfter", { age: formatAge(hoursBetween(report.created_at, report.resolved_at)) });
 }
 

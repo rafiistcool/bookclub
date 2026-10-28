@@ -24,9 +24,11 @@ const api: Record<string, ReturnType<typeof vi.fn>> = {
 vi.mock("../api/client", () => {
   class ApiError extends Error {
     status: number;
-    constructor(message: string, status: number) {
+    detail: unknown;
+    constructor(message: string, status: number, detail: unknown = null) {
       super(message);
       this.status = status;
+      this.detail = detail;
     }
   }
   return { ApiError, api: new Proxy({}, { get: (_target, key: string) => api[key] }) };
@@ -78,6 +80,7 @@ function report(overrides: Partial<ReportOut> = {}): ReportOut {
     created_at: "2026-10-27T10:00:00Z",
     resolved_by: null,
     resolved_at: null,
+    closed_on_arrival: false,
     ...overrides,
   };
 }
@@ -417,6 +420,18 @@ describe("AdminPage", () => {
       created_at: "2026-10-26T10:00:00Z",
       resolved_by: null,
       resolved_at: "2026-10-26T10:00:00Z",
+      closed_on_arrival: true,
+    });
+    // Decided by an admin who has since deleted the account: no `resolved_by`, but not closed on arrival.
+    decided[3] = report({
+      id: 103,
+      status: "removed",
+      removed: true,
+      cover_url: null,
+      cover_thumb_url: null,
+      created_at: "2026-10-20T10:00:00Z",
+      resolved_by: null,
+      resolved_at: "2026-10-22T12:00:00Z",
     });
     api.adminSummary.mockResolvedValue(
       summary({ report_stats: { days: 90, resolved: 49, median_hours: 50, max_hours: 80.5, over_target: 1 } }),
@@ -438,6 +453,7 @@ describe("AdminPage", () => {
     expect(items[0]!.text()).toContain("Mail from the publisher.");
     expect(items[1]!.get(".decision").text()).toBe("Closed on arrival: the picture was already taken down");
     expect(items[2]!.get(".decision").text()).toMatch(/^Kept by root · .+ · after 50 hours$/);
+    expect(items[3]!.get(".decision").text()).toMatch(/^Taken down by someone · .+ · after 50 hours$/);
     expect(items[2]!.findAll("button").map((node) => node.text())).toEqual([]);
 
     api.adminReportPage.mockResolvedValueOnce(page([report({ id: 150, status: "dismissed", resolved_by: root })], false, 2));
@@ -551,6 +567,71 @@ describe("AdminPage", () => {
     await form.trigger("submit");
     await flushPromises();
     expect(form.get("[role=alert]").text()).toBe("That book shows no picture.");
+  });
+
+  it("shows more open reports from the page a decision shortened, listing none twice", async () => {
+    const first = Array.from({ length: 50 }, (_, index) =>
+      report({ id: 200 + index, media_public_id: `pic${index}`, details: `Report ${200 + index}` }),
+    );
+    api.adminReportPage.mockResolvedValueOnce(page(first, true));
+    const { wrapper } = await mountAdmin("/admin?tab=reports");
+    expect(wrapper.findAll(".report-item")).toHaveLength(50);
+    api.resolveReport.mockResolvedValue(report({ id: 200, status: "dismissed" }));
+    await buttonIn(wrapper.findAll(".report-item")[0]!, "Keep it").trigger("click");
+    await flushPromises();
+    expect(wrapper.findAll(".report-item")).toHaveLength(49);
+
+    // The decision moved everything up by one: the server's page 1 is now the 49 still shown and
+    // one more. Page 2 would skip that one.
+    const next = report({ id: 250, media_public_id: "pic50", details: "Report 250" });
+    api.adminReportPage.mockResolvedValueOnce(page([...first.slice(1), next], true));
+    await buttonIn(wrapper.get(".admin-queue"), "Show more").trigger("click");
+    await flushPromises();
+    expect(api.adminReportPage).toHaveBeenLastCalledWith("open", 1);
+    const shown = wrapper.findAll(".report-item .report-details").map((node) => node.text());
+    expect(shown).toEqual([...first.slice(1).map((item) => item.details), "Report 250"]);
+    expect(new Set(shown).size).toBe(50);
+  });
+
+  it("offers the takedown without a record when the server cannot record the notice", async () => {
+    const { wrapper } = await mountAdmin("/admin?tab=reports");
+    const form = wrapper.get("details.takedown form");
+    const id = "avataravataravataravatar22";
+    await form.get("input[name=takedown-url]").setValue(`/media/${id}/a`);
+    await form.trigger("submit");
+    await flushPromises();
+    const refusal = "Only notices about covers can be recorded";
+    api.adminTakeDown.mockRejectedValueOnce(new ApiError(refusal, 400, refusal));
+    await form.trigger("submit");
+    await flushPromises();
+    expect(api.adminTakeDown).toHaveBeenCalledTimes(1);
+    expect(api.adminTakeDown.mock.calls[0]![1]).toMatchObject({ reason: "copyright" });
+    expect(form.get("[role=alert]").text()).toContain("A notice about it cannot be recorded yet, so nothing was taken down.");
+    expect(useToast().items.map((item) => item.message)).not.toContain("Picture taken down and the notice recorded");
+
+    api.adminTakeDown.mockResolvedValueOnce(undefined);
+    expect(buttonIn(form, "Take down without a record").attributes("type")).toBe("submit");
+    await form.trigger("submit");
+    await flushPromises();
+    expect(api.adminTakeDown).toHaveBeenLastCalledWith(id);
+    expect(useToast().items.at(-1)?.message).toBe("Picture taken down. The notice was not recorded.");
+    expect((form.get("input[name=takedown-url]").element as HTMLInputElement).value).toBe("");
+  });
+
+  it("words the server's refusal of an arrival time ahead of its clock", async () => {
+    const { wrapper } = await mountAdmin("/admin?tab=reports");
+    i18n.global.locale.value = "de";
+    const form = wrapper.get("details.takedown form");
+    await form.get("input[name=takedown-url]").setValue("abcdefghijklmnopqrstuvwxyz");
+    await form.trigger("submit");
+    await flushPromises();
+    // This device's clock is behind the server's, so its own check passed.
+    const refusal = "Input should be in the past";
+    api.adminTakeDown.mockRejectedValueOnce(new ApiError(refusal, 400, refusal));
+    await form.trigger("submit");
+    await flushPromises();
+    expect(form.get("[role=alert]").text()).toBe("Die Meldung kann nicht in der Zukunft eingegangen sein.");
+    expect(buttonIn(form, "Endgültig entfernen")).toBeTruthy();
   });
 
   it("creates a sign-up invite with the limits given, and lists the others", async () => {
