@@ -54,8 +54,14 @@ pub fn canonical_zone_name(name: &str) -> Result<String, InvalidZone> {
 /// The zone for a stored name: the host's tzdb first (`TimeZone::get`), else the bundled one,
 /// which knows every name [`parse_zone`] accepts; a corrupt value falls back to UTC.
 pub fn zone_or_utc(name: &str) -> TimeZone {
-    TimeZone::get(name)
-        .or_else(|_| TimeZoneDatabase::bundled().get(name))
+    zone_or_utc_with(name, |name| TimeZone::get(name).ok())
+}
+
+/// [`zone_or_utc`] with the host's lookup passed in, so its fallback is testable on a host
+/// whose tzdata has every old name (`tzdata-legacy`).
+fn zone_or_utc_with(name: &str, host: impl FnOnce(&str) -> Option<TimeZone>) -> TimeZone {
+    host(name)
+        .or_else(|| TimeZoneDatabase::bundled().get(name).ok())
         .unwrap_or(TimeZone::UTC)
 }
 
@@ -80,7 +86,14 @@ fn link_target(name: &str) -> Option<&'static str> {
 ///
 /// The build with `backzone` keeps every `zone.tab` name a zone, so `Pacific/Truk` resolves to
 /// `Pacific/Chuuk` (as the SPA's `currentZoneName` maps it), not to `Pacific/Port_Moresby`, and
-/// `Europe/Oslo` stays. After a jiff-tzdb update, compare this list with the new `tzdata.zi`.
+/// `Europe/Oslo` stays.
+///
+/// - After a jiff-tzdb update, compare this list with the new `tzdata.zi`:
+///   `the_bundled_tzdb_is_the_release_the_link_table_was_built_from` fails until then.
+/// - Every old name here that ICU browsers report (`Asia/Calcutta`, `America/Coral_Harbour`,
+///   `CST6CDT`, …) must also be in the SPA's `currentZoneName` table
+///   (`frontend/src/timezone.ts`, whose test checks it against this list), or Settings offers
+///   "use this device's zone" for good.
 static LINKS: &[(&str, &str)] = &[
     ("Africa/Asmera", "Africa/Asmara"),
     ("Africa/Timbuktu", "Africa/Bamako"),
@@ -536,16 +549,34 @@ mod tests {
     }
 
     /// A stored name the host's tzdb lacks (Debian 13 installs no old names without
-    /// `tzdata-legacy`) still reads as that zone, not as UTC.
+    /// `tzdata-legacy`) still reads as that zone, not as UTC. The host lookup is passed in, so
+    /// this holds whatever tzdata the machine running the test has.
     #[test]
     fn stored_names_fall_back_to_the_bundled_tzdb() {
+        let no_host = |_: &str| None;
+        for (stored, read) in [
+            ("Asia/Calcutta", "Asia/Calcutta"),
+            ("Europe/Kiev", "Europe/Kiev"),
+            ("Asia/Kolkata", "Asia/Kolkata"),
+            ("asia/kolkata", "Asia/Kolkata"),
+        ] {
+            assert_eq!(
+                zone_or_utc_with(stored, no_host).iana_name(),
+                Some(read),
+                "{stored}"
+            );
+        }
+        assert_eq!(zone_or_utc_with("Not/AZone", no_host), TimeZone::UTC);
+        // The host's tzdb wins when it knows the name.
+        let host = |_: &str| Some(TimeZone::fixed(Offset::constant(3)));
+        assert_eq!(
+            zone_or_utc_with("Asia/Kolkata", host),
+            TimeZone::fixed(Offset::constant(3))
+        );
+        // The real host lookup reads the bundled tzdb for what the host lacks.
         assert_eq!(
             zone_or_utc("Asia/Calcutta").iana_name(),
             Some("Asia/Calcutta")
-        );
-        assert_eq!(
-            zone_or_utc("asia/kolkata").iana_name(),
-            Some("Asia/Kolkata")
         );
     }
 
@@ -579,6 +610,34 @@ mod tests {
             }
         }
         assert_eq!(LINKS.len(), 150);
+    }
+
+    /// The bundled tzdb is the release [`LINKS`] was built from (2026e, 598 names). A
+    /// jiff-tzdb update that adds, drops or renames a name fails here: tzdb marks a renamed
+    /// zone's old name only as a `Link`, which jiff cannot tell from a zone, so without this a
+    /// new old name would be accepted and stored as sent. Compare `LINKS` with the new
+    /// release's `tzdata.zi` (see its doc comment), then update the count and the hash.
+    #[test]
+    fn the_bundled_tzdb_is_the_release_the_link_table_was_built_from() {
+        let mut names: Vec<String> = TimeZoneDatabase::bundled()
+            .available()
+            .map(|name| name.as_str().to_owned())
+            .collect();
+        names.sort();
+        // FNV-1a (64 bit) over the sorted names, each followed by a newline.
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for byte in names
+            .iter()
+            .flat_map(|name| name.bytes().chain(std::iter::once(b'\n')))
+        {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        assert_eq!(
+            (names.len(), format!("{hash:016x}")),
+            (598, "b3abd19f04a249e2".to_owned()),
+            "the bundled tzdb changed: compare LINKS with its tzdata.zi"
+        );
     }
 
     #[test]

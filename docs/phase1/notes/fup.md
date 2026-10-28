@@ -1,6 +1,6 @@
 # FUP (after Wave 3, #36 #48 #49): small follow-ups
 
-Owner: FUP. FUP takes five items the Wave 3 packages found and left for the integrator (`notes/fe.md` "For the integrator" and "Server issues found by the smoke test", `notes/int.md`). These notes record what changed, the decisions behind it, and what is left. Other packages' notes are unchanged, apart from the "fixed" marks in `notes/fe.md` and two pointers in `notes/har.md`. Where those notes still describe the old behaviour, this file is the record.
+Owner: FUP. FUP takes five items the Wave 3 packages found and left for the integrator (`notes/fe.md` "For the integrator" and "Server issues found by the smoke test", `notes/int.md`). These notes record what changed, the decisions behind it, and what is left. Other packages' notes are unchanged, apart from the "fixed" marks in `notes/fe.md`, two pointers in `notes/har.md`, and "Changed by FUP" pointers in `notes/posts.md` and `notes/shelf.md`. Where those notes still describe the old behaviour, this file is the record.
 
 ## What was built
 
@@ -25,31 +25,32 @@ Owner: FUP. FUP takes five items the Wave 3 packages found and left for the inte
     - `PreferencesIn` (`PATCH /api/auth/me/preferences`)
     - `clubs::manage::validate_zone` (club create and `PATCH /api/clubs/{slug}`)
     - the importer's `check_args`, which now writes the current name back into `args.timezone` (`run` takes `mut args`)
-  - `zone_or_utc` falls back to the bundled tzdb when the host's lacks a name. A stored name that `parse_zone` accepted, for example a zone newer than the host's tzdata, then never reads as UTC.
+  - `zone_or_utc` falls back to the bundled tzdb when the host's lacks a name. A stored name that `parse_zone` accepted, for example a zone newer than the host's tzdata, then never reads as UTC. The lookup is `zone_or_utc_with(name, host)`, which takes the host lookup as a closure so the fallback can be tested on any host.
   - The DTO doc comments of the three zone fields (OpenAPI, so `generated.ts`) and the importer's `--timezone` help say that an old name is stored as the current one.
 - **Tests:**
   - Unit tests in `tz`:
     - `old_names_resolve_to_the_current_name`: links resolve; current names, `zone.tab` names and `UTC` stay as sent; wrong-case, made-up names and `Etc/Unknown` stay refused.
-    - `stored_names_fall_back_to_the_bundled_tzdb`.
+    - `stored_names_fall_back_to_the_bundled_tzdb`: through `zone_or_utc_with` with a host that knows nothing, so it fails without the fallback whatever tzdata the test machine has (seen failing). A host that knows the name wins.
     - `the_link_table_matches_the_bundled_tzdb`: sorted; every old name and target is known by its exact spelling; no chains; the same UTC offsets on 1 January and 1 July of every year 1970–2039; 150 entries.
+    - `the_bundled_tzdb_is_the_release_the_link_table_was_built_from`: the bundled tzdb's names, sorted, have count 598 and FNV-1a hash `b3abd19f04a249e2`. Any jiff-tzdb update that adds, drops or renames a name fails it until `LINKS` is compared with the new `tzdata.zi` (decision 2).
   - New integration tests, each of which failed before the callers changed (the link was accepted and stored as sent):
     - `tests/auth_register.rs::an_old_zone_name_is_stored_as_the_current_one`: `Asia/Calcutta` → `Asia/Kolkata` in the answer and the row; `asia/calcutta` and `Asia/Atlantis` are 400 and create no user.
     - `tests/auth_account.rs::an_old_zone_name_is_stored_as_the_current_one`: the same through the preferences PATCH; the bad names change nothing.
     - `tests/clubs_manage.rs::an_old_zone_name_is_stored_as_the_current_one`: create with `Asia/Calcutta`, then PATCH with `America/Buenos_Aires` → `America/Argentina/Buenos_Aires`; wrong-case and made-up names are 400 and change nothing.
     - `tests/importer_run.rs::an_old_zone_name_is_imported_as_the_current_one`: `--timezone europe/kiev` is refused before anything is written; `Europe/Kiev` imports the club and every user as `Europe/Kyiv`.
-- The SPA's `currentZoneName` table and its sign-up retry without the zone are unchanged. All 18 of its names map to the same current name as `LINKS`.
+- **SPA (`frontend/src/timezone.ts`):** the sign-up retry without the zone is unchanged. The `currentZoneName` table gained five names that ICU browsers report and `LINKS` resolves: `America/Coral_Harbour` → `America/Atikokan`, and `CST6CDT`, `EST5EDT`, `MST7MDT`, `PST8PDT` → `America/Chicago`, `America/New_York`, `America/Denver`, `America/Los_Angeles` (decision 9). Its 18 earlier names map to the same current name as `LINKS`. The header comment no longer says that the server refuses old names.
+  - `timezone.test.ts` reads `LINKS` from `server/src/tz.rs` and checks that every name the running Node's ICU reports (its `supportedValuesOf("timeZone")` and its name for every `LINKS` entry) maps to the name the server stores. It failed on the five names before they were added.
 
 ### C. A visibility-only PATCH is no edit
 
 - **Bug:** `posts::edit::update_post` set `updated_at = now()` on every PATCH. Turning a diary entry "Only me" and back marked it "edited" for every reader (`notes/fe.md` "Server issues found by the smoke test").
 - **Fix:** `updated_at = CASE WHEN $7 THEN now() ELSE updated_at END`, where `$7` is "`body` or `spoiler_upto` was sent". Content edits move it exactly as before, including a PATCH that sends unchanged text (R8). A PATCH with only `visibility` leaves it alone, and one with `body` and `visibility` moves it.
 - **Quotes** have the same PATCH shape (`{body?, page?, visibility?}`). `QuoteOut` has no `edited` flag, but `quotes.updated_at` is in the account export. `shelf::quotes::update_quote` now follows the same rule: `body` or `page` moves it, `visibility` alone does not.
-- **Shelf entries** (`PATCH /api/shelf/{id}` with `rating_visibility`) were checked and left as they are:
-  - Their `updated_at` is the entry's "last change", which stats use (spec/diary.md: "bumped by almost every shelf PATCH, through `place_item`"). It is not an edited flag.
-  - `shelf/entries.rs` is not FUP's file.
+- **Shelf entries** (`PATCH /api/shelf/{id}` with only `rating_visibility`) no longer move `updated_at` either (decision 8, added after review).
 - **Docs:**
   - The module comment and the operation description of `posts/edit.rs` (OpenAPI, so `generated.ts`).
-  - endpoint-map §7 (`PATCH /api/quotes/{quote_id}`) and §8 (`PATCH /api/posts/{post_id}`).
+  - endpoint-map §7 (`PATCH /api/quotes/{quote_id}`, `PATCH /api/shelf/{entry_id}`) and §8 (`PATCH /api/posts/{post_id}`).
+  - After review: spec/diary.md §1.3 step 4 and R8 (each with a "Phase 1" line: `visibility` alone no longer moves `updated_at`; R8 holds for `body` and `spoiler_upto`), `notes/posts.md` (the PATCH line and deviation 1) and `notes/shelf.md` decision 10, each with a "Changed by FUP" pointer.
 - **Tests:**
   - `tests/posts_diary.rs::a_visibility_change_alone_is_no_edit`:
     - `only_me` and back leave `edited` false and `updated_at` NULL, also as another member sees the entry.
@@ -58,6 +59,7 @@ Owner: FUP. FUP takes five items the Wave 3 packages found and left for the inte
     - `body` with `visibility` moves it on.
   - `tests/posts_diary.rs::edits_mark_the_entry_and_change_its_visibility` now also checks that `"audience"` on a reply answers `edited: false`.
   - `tests/shelf_quotes.rs::a_visibility_change_alone_is_no_edit`: the same for `quotes.updated_at`, with a page change as the edit.
+  - `tests/shelf_entries.rs::a_rating_visibility_change_alone_is_no_change` (decision 8).
   - The new tests failed before the fix.
 
 ### D. The importer slugs its club with club creation's helpers
@@ -77,6 +79,7 @@ Owner: FUP. FUP takes five items the Wave 3 packages found and left for the inte
   - The build-path sentence says what a release does (`backend/app/static/`) and what this branch does (`frontend/dist/` for the Rust server).
   - A short "In transition" note opens "Develop".
   - The one-process run says it works from a release tag.
+  - After review: "Building from source" (the Docker overlay) says it works from a release tag, as the root `Dockerfile` fails on this branch on purpose, and the Troubleshooting entry "Vite loads but login/search fails" says that on this branch Vite proxies `/api` and `/media` to the Rust server on `:8080`. Both sit outside the "In transition" note.
   - Nothing unreleased is described as released.
 - **`notes/har.md`:** one "Fixed by INT" line under the "Open points" item and one under decision 15's deleted-record bullet, each pointing to `notes/int.md` decisions 1–3.
 - **`notes/fe.md`:** the fixed items are marked "Fixed by FUP":
@@ -97,22 +100,22 @@ Owner: FUP. FUP takes five items the Wave 3 packages found and left for the inte
    - That leaves 150 entries.
    - The `backzone` build keeps every `zone.tab` name a zone. So `Pacific/Truk` → `Pacific/Chuuk` (as the SPA maps it), not `Pacific/Port_Moresby`, and `Europe/Oslo`, `Atlantic/Reykjavik` and `America/Curacao` stay as they are.
    - Other UTC aliases (`Etc/Zulu`, `Universal`, `UCT`, …) resolve to `Etc/UTC` and the GMT aliases to `Etc/GMT`, as tzdb links them. Only the plain `UTC` is kept.
-   - **After a jiff-tzdb update**, compare `LINKS` with that release's `tzdata.zi`. `the_link_table_matches_the_bundled_tzdb` fails if an entry stops existing or stops matching its target, but not if tzdb adds a new link.
+   - **After a jiff-tzdb update**, compare `LINKS` with that release's `tzdata.zi`. `the_link_table_matches_the_bundled_tzdb` fails if an entry stops existing or stops matching its target. `the_bundled_tzdb_is_the_release_the_link_table_was_built_from` fails on any change to the bundled names, a new link included, because jiff cannot tell a link from a zone; update its count and hash once `LINKS` is checked.
 3. **Validation reads the bundled tzdb, labels the host's first.** Writes must not depend on the host's tzdata: the old behaviour differed between Debian, a host without tzdata, and one with `tzdata-legacy`. Reads keep `TimeZone::get`, so a newer host tzdata still corrects rules, and only fall back to the bundled tzdb for a name the host lacks. conventions §12 said the slim image "needs no tzdata". That stays true, but its claim that the server ran "on top of" the bundled tzdb was not: jiff prefers the host's. §12 now says so.
 4. **Python parity for zones.** Python's `ZoneInfo` accepted links and the app stored the name as given. The server stores the current name instead, so every stored name is one that any tzdata has (a reasoned change, now in `parity-checklist.md`). Python on Linux was case-sensitive, and so is the server.
 5. **Quotes follow the posts rule (item C)**, although `QuoteOut` shows no edit. Python's quotes had no `updated_at` (spec/diary.md §1.9), so no parity rule binds it. Keeping one rule for both PATCH shapes is simpler to explain, and the export no longer dates a visibility switch as an edit.
 6. **`slug_suffix` is shared too (item D).** The item named `slug_base`, but the importer's `slug_suffix` was the same kind of identical copy, in the same two files.
 7. **`CLAUDE.md` beyond the named lines.** The checks block lacked `npm run check:api`, which CI has run since OAPI, so "CI runs all of them" was stale too. It got that one command and one sentence about `gen:api`.
+8. **A shelf entry's `rating_visibility` alone is no change either** (after review, in `shelf/entries.rs`, SHELF's file). `PATCH /api/shelf/{id}` with only `rating_visibility` used to run `place_item` like a rating-only PATCH (`notes/shelf.md` decision 2), which renumbers the column and moves `updated_at`. That `updated_at` is no edited flag, but it is the year an abandoned book counts in (`MemberYear.dnf`: "counted in the year of their last change"), so hiding the rating of a book dropped in 2025 moved it into this year's stats. `ShelfPatchIn::places_item` now skips `place_item` for that PATCH, as spec/shelf.md §1.7 step 8 already does for a `shelf_position`-only one. Every other field sent with it (rating, take, `dnf_reason`, progress, `finished_on`, `edition_id`, status, position) still moves `updated_at`, so the legacy rule stands for every field Python had. Python had no `rating_visibility`, so no parity rule binds it. spec/shelf.md (step 8 and port risk 2), spec/diary.md (the stats note), endpoint-map §7, the field's OpenAPI description and `notes/shelf.md` decision 2 say so.
+9. **ICU's old names are mapped in the SPA, not kept out of `LINKS`.** ICU still reports `America/Coral_Harbour` for Atikokan and `CST6CDT`, `EST5EDT`, `MST7MDT`, `PST8PDT` as they are (Node 26, ICU 78.3, tz 2026e). The server now stores the current name, so a device on one of them saw "use this device's zone" in Settings for good. For `America/Coral_Harbour` that was a regression of item B, since Debian's tzdata has the name and the server stored it as sent before. The fix is in the SPA's `currentZoneName` table, like the 18 names that were already there. Keeping these five names out of `LINKS`, as the 11 `zone.tab` names are, would have stored names that are not current. The `zone.tab` names stay because they are a country's own name, not an old spelling. **Rule:** every name in `LINKS` that ICU browsers report must be in the SPA's table. `timezone.test.ts` checks this against the ICU of the Node that runs it, so a newer ICU in CI can add a name to the list.
 
 ## For the integrator
 
 - **No migration and no new crate.** `.sqlx/`: two query files were replaced, for the `UPDATE posts` in `posts/edit.rs` and the `UPDATE quotes` in `shelf/quotes.rs`.
-- **`generated.ts` changed** (committed, from `npm run gen:api`): the descriptions of `RegisterIn.timezone`, `PreferencesIn.timezone`, `ClubIn.timezone` and the `posts_update` operation. No type changed.
-- **Specs not in FUP's files, now stale:**
-  - `docs/phase1/spec/diary.md` §1.3 step 4 ("Set `updated_at = now` **unconditionally**") and R8 ("PATCH entry bumps `updated_at` unconditionally"): they still hold for `body` and `spoiler_upto`, but `visibility` (new in Phase 1) alone no longer moves it.
-  - `notes/posts.md` "PATCH" (`updated_at = now()` always) and its deviation 1 (`"audience"` on a reply "still bumps `edited`").
-  - `notes/shelf.md` decision 10 ("`updated_at` is set on every PATCH" of a quote).
-- **`tz::LINKS`** needs a look whenever `jiff-tzdb` is bumped (decision 2).
+- **`generated.ts` changed** (committed, from `npm run gen:api`): the descriptions of `RegisterIn.timezone`, `PreferencesIn.timezone`, `ClubIn.timezone` and the `posts_update` operation. No type changed. (The new description of `ShelfPatchIn.rating_visibility`, decision 8, sits inside a `oneOf`, which openapi-typescript does not print, so it left `generated.ts` as it was.)
+- **Files outside FUP's list, changed after review** (the review asked to finish these): `server/src/shelf/entries.rs` and `server/tests/shelf_entries.rs` (decision 8); `docs/phase1/spec/diary.md` and `docs/phase1/spec/shelf.md` ("Phase 1" lines only); `notes/posts.md` and `notes/shelf.md` ("Changed by FUP" pointers only).
+- **`tz::LINKS`** needs a look whenever `jiff-tzdb` is bumped (decision 2). `cargo update` that brings a new jiff-tzdb fails `the_bundled_tzdb_is_the_release_the_link_table_was_built_from` until then.
+- **Frontend test reads server source:** `timezone.test.ts` reads `server/src/tz.rs` through `node:fs` (Vite serves nothing outside `frontend/`), as `server/tests/api_error_copy.rs` reads `frontend/src/i18n/apiErrors.ts`. It needs the whole repository checked out, which CI has.
 - **Root `Dockerfile`:** still fails at `COPY --from=frontend /src/backend/app/static`, on purpose (`notes/fe.md`). FUP did not touch it.
 
 ## For PAR (#49)
@@ -121,5 +124,5 @@ Owner: FUP. FUP takes five items the Wave 3 packages found and left for the inte
 
 ## Tests
 
-- Server: 10 new tests (3 unit tests in `tz`, 7 integration tests: `catalog_requests.rs`, `auth_register.rs`, `auth_account.rs`, `clubs_manage.rs`, `importer_run.rs`, `posts_diary.rs`, `shelf_quotes.rs`), and one extended (`posts_diary.rs::edits_mark_the_entry_and_change_its_visibility`).
-- Frontend: one test rewritten (`pages/AdminPage.test.ts`), none added.
+- Server: 12 new tests (4 unit tests in `tz`, 8 integration tests: `catalog_requests.rs`, `auth_register.rs`, `auth_account.rs`, `clubs_manage.rs`, `importer_run.rs`, `posts_diary.rs`, `shelf_quotes.rs`, `shelf_entries.rs`), and one extended (`posts_diary.rs::edits_mark_the_entry_and_change_its_visibility`).
+- Frontend: one test rewritten (`pages/AdminPage.test.ts`) and one added (`timezone.test.ts`, decision 9).

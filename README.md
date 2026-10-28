@@ -48,7 +48,7 @@ Put your own reverse proxy (Caddy, nginx, Tailscale Serve, Cloudflare Tunnel) on
 
 Proxy, LAN, NAS `PUID`/`PGID`, bare metal, backup, systemd, and release tags: **[SELFHOST.md](SELFHOST.md)**.
 
-Building from source (contributors; turns on debug docs and invite `DEV-ONLY` — not for a shared host):
+Building from source, from a release tag (contributors; turns on debug docs and invite `DEV-ONLY` — not for a shared host). On this branch the root `Dockerfile` fails on purpose until the Rust server replaces it (#52):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
@@ -231,7 +231,7 @@ Cookie session: `bookclub_session` (`credentials: include`). While `DEBUG=1`, th
 
 **`DEV-ONLY` is not valid** — someone already registered on this database, or you are on `DEBUG=0` (that code is refused). Mint a new invite (UI, `python -m app.create_invite`, or `data/.bootstrap_invite` on a fresh DB).
 
-**Vite loads but login/search fails** — backend isn’t running on `:8000`. Start uvicorn first. Vite only proxies `/api`. If that port is already taken, stop the leftover process or point Vite’s `server.proxy` at the new one.
+**Vite loads but login/search fails** — backend isn’t running on `:8000`. Start uvicorn first. Vite only proxies `/api`. If that port is already taken, stop the leftover process or point Vite’s `server.proxy` at the new one. On this branch Vite proxies `/api` and `/media` to the Rust server on `:8080` instead: start that (see [Develop](#develop)).
 
 **`SECRET_KEY must be a long random string` / `BOOTSTRAP_INVITE cannot be DEV-ONLY`** — `DEBUG=0` refuses demo values. Paste a long random secret, or leave both empty so files are generated under `./data`.
 
