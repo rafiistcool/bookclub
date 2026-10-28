@@ -22,6 +22,8 @@
 # Each 429 must carry Retry-After and the app's detail. Search is limited per account inside
 # the app, not per address, so it is not checked here.
 #
+# Needs bash (3.2 or later, so macOS's /bin/bash will do) and curl.
+#
 # Exit status: 0 when every check passes, 1 when one fails, 2 on a usage error.
 
 set -euo pipefail
@@ -57,7 +59,9 @@ request() {
     if [[ -n $json ]]; then
         args+=(--header 'Content-Type: application/json' --data "$json")
     fi
-    status=$(curl "${args[@]}" "${extra_flags[@]}" "$base$path") || status=000
+    # ${a[@]+"${a[@]}"}: bash before 4.4 (macOS /bin/bash is 3.2) calls an empty array unbound
+    # under `set -u`, which would turn every request into a failure.
+    status=$(curl "${args[@]}" ${extra_flags[@]+"${extra_flags[@]}"} "$base$path") || status=000
     retry_after=$(tr -d '\r' <"$work/headers" 2>/dev/null |
         awk 'tolower($1) == "retry-after:" { print $2 }' | tail -n 1)
     body=$(cat "$work/body" 2>/dev/null || true)

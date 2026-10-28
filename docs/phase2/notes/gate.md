@@ -18,12 +18,14 @@ Owner: GATE. These notes record what the hardening package built, the contract c
 - **`frontend/src/thirdParty.test.ts`** (sources only, §0 item 14). It scans `index.html`, every `.js`, `.svg`, `.html` and `.css` file in `public/`, the manifest's strings, and `src/**/*.{css,vue,ts}` without the tests and `src/test/`. A load from another origin fails the test: `url(…)`, `@import`, `<link>`, `<script>`, the media elements' `src`, `srcset` and `poster`, `<use href>`, and `fetch`, `WebSocket`, `EventSource`, workers, beacons and dynamic `import()` with an absolute or protocol-relative URL. A link the reader clicks (`<a href>`, the Open Library page) is not a load. A self-test pins what the scanner finds. Two more checks guard the CSP: `index.html` has no inline script, no `on…` attribute and no `javascript:` URL, and the theme script is a synchronous classic script in `<head>` that reads the keys the stores write. 8 tests.
 - **`server/tests/proxy_client_ip.rs`**: 6 tests through the router with a `ConnectInfo` peer.
   - `sign_ups_count_per_forwarded_client`, `logins_count_per_forwarded_client`, `reset_requests_count_per_forwarded_client`: behind a trusted proxy, client A gets 429 and client B, behind the same proxy, does not.
-  - `forwarded_for_from_an_untrusted_peer_counts_against_the_peer`, `without_trusted_proxies_forwarded_for_is_ignored`: a fresh `X-Forwarded-For` per request from an untrusted peer buys no fresh budget.
-  - `two_trusted_hops_name_the_right_most_untrusted_address`: forged left-hand entries are ignored, the inner proxy is skipped, and the chain may come in several headers.
-  - Mutation checks, each reverted (`server/src/client_ip.rs` is unchanged in the commit):
+  - `forwarded_for_from_an_untrusted_peer_counts_against_the_peer`, `without_trusted_proxies_forwarded_for_is_ignored`: a fresh `X-Forwarded-For` per request from an untrusted peer buys no fresh budget. The first also has a second untrusted peer forge B's address until its own budget is gone; B, behind the proxy, still signs up.
+  - `two_trusted_hops_name_the_right_most_untrusted_address`: forged left-hand entries are ignored, the inner proxy is skipped, and the chain may come in several headers, split before the inner proxy or after the forged entry.
+  - Mutation checks, each reverted (`server/src/client_ip.rs` and `server/src/auth/signup.rs` are unchanged in the commits):
     - `ClientIp` = the raw `ConnectInfo` peer: 4 of 6 fail (the sign-up, login, reset and two-hop tests). The two untrusted-peer tests pass, as they should: for them the peer is the right answer.
     - every peer trusted: 3 fail (both untrusted-peer tests and the two-hop test).
     - left-most hop instead of right-most untrusted: the two-hop test fails.
+    - only the first `X-Forwarded-For` header read (`headers.get`): the two-hop test fails at the split after the forged entry; only the last header: it fails at the split before the inner proxy.
+    - the sign-up handler also charging the right-most forwarded address of an untrusted peer: the untrusted-peer test fails at B's sign-up.
 - **`server/tests/platform.rs`**: `the_spa_carries_the_shell_policy` (new) checks exactly one `Content-Security-Policy` header with the shell policy on `/`, `/index.html`, a client route, a nested `index.html`, a file, an asset, a missing asset and a HEAD, and the framing-only policy on `/api/health`, an unknown API path, `/media/…` and the 405. `assert_security_headers` now also requires a single policy header. With the lib.rs layer back on `overriding` the new test fails (the shell gets `frame-ancestors 'none'` only), and with `appending` too (two headers). 14 tests.
 - **`deploy/hosted/Caddyfile.example`** and **`deploy/hosted/verify-limits.sh`**: see the instructions below.
 - **`docs/phase1/security-review.md`**: the Q17 record in §3 (open, recommendation A, waiting for Rafael) and a line under §10 "Not taken" saying that Phase 2 adds the shell CSP.
@@ -42,6 +44,7 @@ Owner: GATE. These notes record what the hardening package built, the contract c
 - **`frontend/src/stores/theme.ts:70`** says "the boot script in index.html": now `public/theme-init.js`, loaded by `index.html`. Not GATE's file; a one-word fix for whoever touches it next.
 - **`docs/phase1/spec/frontend.md:571`** describes the inline script of the Python-era app. It is a spec of the old behaviour; leave it, or add "(now `public/theme-init.js`)".
 - **`deploy/hosted/README.md`** (DEP's): add the two sections below.
+- **`docs/legal/privacy-facts.md`** (LEG's, on `phase2/leg` at `:73`) says the Caddy log holds the "request line". It holds the request path without the query string, with invite codes replaced, and a daily logrotate deletes each line after at most 7 days (6 days plus the timer's delay). The same goes for "a 7-day access log" in `docs/legal/processors.md:68` there.
 - **#51 / Q16 amendment** (§0 item 15): `verify-limits.sh` checks sign-up, login and reset per address. Search is limited per account in the app (`catalog_user`, 60 a minute, `server/src/catalog/search.rs`), so the script does not cover it.
 
 ## Caddy (for `deploy/hosted/README.md`)
@@ -52,8 +55,10 @@ Owner: GATE. These notes record what the hardening package built, the contract c
    - `BOOKCLUB_HOST`: the public host name.
    - `BOOKCLUB_UPSTREAM`: the app VM's address and published port, e.g. `10.0.20.5:8080`. Without it the block proxies to `127.0.0.1:8080`.
 2. In the app's env file, set `TRUSTED_PROXIES` to this Caddy's address as the app VM sees it, with `/32` (Q7). If it is wrong, every user lands in Caddy's one rate-limit bucket, and one client can lock everyone out of sign-up and reset.
-3. Check and load: `caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`, then `caddy reload`.
-4. From home, run `verify-limits.sh` (next section), then make one sign-up attempt from a second network, such as a phone on mobile data. That attempt must not get 429.
+3. Install the logrotate rule from the comment above the block's `log` as `/etc/logrotate.d/bookclub-access` (root-owned, mode 0644; logrotate ignores a group- or world-writable file), on the host that holds `/var/log/caddy`. If Caddy runs in a container, bind-mount that directory from the host. Check it with `logrotate -d /etc/logrotate.d/bookclub-access`. If logrotate refuses the directory's permissions, add `su <caddy user> <caddy group>` to the rule.
+4. Check and load: `caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`, then `caddy reload`.
+5. From home, run `verify-limits.sh` (next section), then make one sign-up attempt from a second network, such as a phone on mobile data. That attempt must not get 429.
+6. Open `https://<host>/login?next=/join/TEST` and `https://<host>/join/TEST` in a browser, then check that `grep -c TEST /var/log/caddy/bookclub-access.log` prints 0.
 
 What the block does:
 - `request_body max_size 51MiB` (53,477,376 bytes). The app answers 413 itself, from `Content-Length` and before reading the body, above 52,432,896 bytes, so a client always gets the app's JSON 413. Caddy's limit is the backstop for bodies it has to read, such as chunked ones. Caddy's `50MB` (50,000,000 bytes) would cut off uploads the app accepts.
@@ -61,7 +66,11 @@ What the block does:
 - It does not repeat the headers the app sets: CSP, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Cache-Control`.
 - zstd and gzip for `/assets/*` only. API answers mix personal data with text a client sent, the pattern compression side channels need.
 - `reverse_proxy` with an active health check on `/api/health` every 15 s. While the app is down or restarting, Caddy answers 503 for up to one interval after the app is back.
-- An access log in `/var/log/caddy/bookclub-access.log`, rolled at 50 MiB and kept 7 days (`roll_keep_for 168h`). It holds client addresses, which the privacy text must state. Caddy leaves out `Cookie` and `Authorization`. The filter replaces invite codes in the URI with `{code}` (`/join/{code}`, `/api/invites/{code}/…`, `?code={code}` on `/signup` and `/register`) and drops `Referer`, which repeats such URLs. The app's own log already leaves codes out.
+- An access log in `/var/log/caddy/bookclub-access.log`, kept at most 7 days. It holds client addresses, which the privacy text must state.
+  - Caddy 2.10 rolls a log file only by size (it has no `roll_interval`), and `roll_keep_for` counts from the roll, not from the oldest line. At beta traffic a 50 MiB file would hold lines for weeks. So the block sets `roll_disabled`, and logrotate on the host rolls the file every day, empty or not (`daily`, `rotate 5`, `maxage 7`, `copytruncate`). The live file holds at most a day, the 5 old files the 5 days before, so no line is older than 6 days plus the timer's delay.
+  - `copytruncate`, because Caddy keeps the file open. Caddy opens it in append mode, so after the truncate it writes at the start of the empty file (checked: no NUL bytes). Lines written between the copy and the truncate can be lost.
+  - The URI keeps only the path, as in the app's own log, which logs the path without the query. A query becomes `?{redacted}`: search terms, `/signup?code=…`, and `/login?next=/join/<code>`, which the SPA sends a signed-out reader to from an invite. Invite codes in the path become `/join/{redacted}` and `/api/invites/{redacted}/…`.
+  - `Referer`, which repeats such URLs, is dropped. Caddy leaves out `Cookie` and `Authorization` by default.
 - A commented `rate_limit` block for Q16 option B. It needs a Caddy built with `github.com/mholt/caddy-ratelimit` (xcaddy) and `order rate_limit before basicauth` in the global options.
 - Caddy replaces any `X-Forwarded-For` an untrusted client sends with the client's address. The app reads it only from `TRUSTED_PROXIES` and takes the right-most untrusted address.
 - For a local test, uncomment `tls internal`, or put `local_certs` in the global options.
@@ -74,7 +83,7 @@ deploy/hosted/verify-limits.sh https://<host>
 VERIFY_LIMITS_CURL_FLAGS=--insecure deploy/hosted/verify-limits.sh https://<host>
 ```
 
-- It needs bash and curl, and creates nothing:
+- It needs bash (3.2 or later, so macOS's `/bin/bash` will do) and curl, and creates nothing:
   - the sign-ups carry an invite code that does not exist, so each answers 400 and rolls back;
   - the logins use made-up names;
   - the reset asks for an `example.invalid` address that no account holds.
@@ -108,7 +117,15 @@ Recorded in `docs/phase1/security-review.md` §3 as open, with recommendation A 
 - **Compression:** the JS bundle zstd-encoded, `/api/config` not.
 - **413:** bodies of 52,500,000 and 53,500,000 bytes to `PUT /api/auth/me/avatar` both got the app's JSON 413 `That picture is too large (50 MB max)`.
 - **`verify-limits.sh`:** exit 0 through Caddy. Afterwards a second client, a container on the docker bridge, still got 400 for sign-up, 204 for reset and 204 for login, while the first client got 429.
-- **Access log:** `/join/{code}`, `/api/invites/{code}…`, `/signup?code={code}&lang=de`, no `Referer`, `?q=barcode=1` untouched.
+- **Access log:** checked with the first commit's filter, which the review replaced (next paragraph).
+
+**Access log after the review** (`caddy:2.10`, the example imported, `logrotate` 3.22 from Debian trixie in a second container on the same directory):
+- `/join/AB12CD34`, `/login?next=/join/AB12CD34`, `/login?next=%2Fjoin%2FAB12CD34`, `/api/invites/AB12CD34/accept?x=1`, `/signup?code=SECRET&lang=de` and `/api/books/search?q=barcode=1`, each with a `Referer` holding a code, logged as `/join/{redacted}`, `/login?{redacted}`, `/login?{redacted}`, `/api/invites/{redacted}/accept?{redacted}`, `/signup?{redacted}` and `/api/books/search?{redacted}`; `grep` found neither code nor `Referer`.
+- Seven forced rotations with a request before and after each: 5 old files kept, the requests of the first one and a half rounds gone, each request in exactly one file, no NUL bytes (Caddy writes on at the start of the truncated file). Two more rotations without requests still shifted the files.
+- `roll_interval` does not exist in Caddy 2.10.2 (`caddy adapt`: "unrecognized subdirective 'roll_interval'"), nor does the `multi_regexp` filter, hence the single regexp.
+- logrotate ignores a rule file that is group- or world-writable.
+
+**`verify-limits.sh` under bash 3.2** (`bash:3.2`, 3.2.57, with curl): before the fix it stopped at the first request (`extra_flags[@]: unbound variable`), exit 1; after it, exit 0 against this worktree's server with every check passing, and exit 1 with "health … answered 000" against a closed port, with and without `VERIFY_LIMITS_CURL_FLAGS`.
 
 **`verify-limits.sh` against other servers:**
 - the server directly: exit 0;

@@ -53,17 +53,34 @@
 		health_timeout 5s
 	}
 
-	# Access log with the client addresses, kept 7 days (the privacy text states this).
-	# Caddy leaves out Cookie and Authorization. Invite codes are credentials, as in the app's
-	# own log: the URI keeps only their place (`/join/{code}`, `/api/invites/{code}/…`,
-	# `/signup?code={code}`), and the Referer, which repeats such URLs, is dropped.
+	# Access log with the client addresses, which the privacy text states, kept at most 7 days.
+	# Caddy 2.10 rolls a file only by size, and roll_keep_for counts from the roll, so a quiet
+	# site would keep lines for weeks. Caddy therefore never rolls this file. logrotate on the
+	# host rolls it every day, empty or not, and keeps 5 old files, so no line is older than
+	# 6 days plus the timer's delay. /etc/logrotate.d/bookclub-access, on the host that holds
+	# the file (a bind mount if Caddy runs in a container):
+	#
+	#   /var/log/caddy/bookclub-access.log {
+	#   	daily
+	#   	rotate 5
+	#   	maxage 7
+	#   	missingok
+	#   	copytruncate
+	#   }
+	#
+	# copytruncate, because Caddy keeps the file open. It writes in append mode, so it goes on
+	# at the start of the emptied file. Lines written during the copy can be lost.
+	#
+	# Caddy leaves out Cookie and Authorization. The URI keeps only the path, as in the app's own
+	# log: the query (search terms, `?code=`, `/login?next=/join/<code>`) becomes `?{redacted}`,
+	# and invite codes in the path become `/join/{redacted}` and `/api/invites/{redacted}/…`.
+	# The Referer, which repeats such URLs, is dropped.
 	log {
 		output file /var/log/caddy/bookclub-access.log {
-			roll_size 50MiB
-			roll_keep_for 168h
+			roll_disabled
 		}
 		format filter {
-			request>uri regexp "^(/(?:api/invites|join)/)[^/?#]+|([?&]code=)[^&#]*" "${1}${2}{code}"
+			request>uri regexp "^(/(?:api/invites|join)/)[^/?]+|([?]).*$" "${1}${2}{redacted}"
 			request>headers>Referer delete
 		}
 	}

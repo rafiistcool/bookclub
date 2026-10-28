@@ -149,6 +149,17 @@ async fn forwarded_for_from_an_untrusted_peer_counts_against_the_peer(db: PgPool
     sign_up(&via(&app, "192.0.2.11", "203.0.113.99"), "e0")
         .await
         .assert_status(201);
+    // A peer that forges B's address until its own budget is gone leaves B's untouched.
+    let forger = "192.0.2.12";
+    for n in 0..5 {
+        sign_up(&via(&app, forger, B), &format!("f{n}"))
+            .await
+            .assert_status(201);
+    }
+    sign_up(&via(&app, forger, B), "f5")
+        .await
+        .assert_detail(429, TOO_MANY);
+    sign_up(&via(&app, PROXY, B), "b0").await.assert_status(201);
 }
 
 /// With `TRUSTED_PROXIES=none` (clients connect directly) the header never counts.
@@ -180,13 +191,25 @@ async fn two_trusted_hops_name_the_right_most_untrusted_address(db: PgPool) {
             .await
             .assert_status(201);
     }
-    // The chain may also come as several headers.
-    let refused = app
+    // The chain may also come as several headers, split anywhere: a resolver that read only the
+    // last header would see the inner proxy alone, one that read only the first the forged
+    // address alone, and either would find a fresh budget.
+    let split_before_proxy = app
         .anon()
         .with_ip(ip(PROXY))
         .with_header("x-forwarded-for", &format!("192.0.2.99, {A}"))
         .with_header("x-forwarded-for", INNER_PROXY);
-    sign_up(&refused, "a5").await.assert_detail(429, TOO_MANY);
+    sign_up(&split_before_proxy, "a5")
+        .await
+        .assert_detail(429, TOO_MANY);
+    let split_after_forged = app
+        .anon()
+        .with_ip(ip(PROXY))
+        .with_header("x-forwarded-for", "192.0.2.98")
+        .with_header("x-forwarded-for", &format!("{A}, {INNER_PROXY}"));
+    sign_up(&split_after_forged, "a6")
+        .await
+        .assert_detail(429, TOO_MANY);
     sign_up(&via(&app, PROXY, &format!("{A}, {B}, {INNER_PROXY}")), "b0")
         .await
         .assert_status(201);
