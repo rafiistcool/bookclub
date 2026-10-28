@@ -229,3 +229,7 @@ Every test of `test_auth.py`, `test_selfhost.py` and the in-scope `test_notes_an
 14. **[minor] The NUL check in `ApiJson` skips object keys.** Fixed: keys are checked too (C §4.3). Two cases added to `nul_characters_are_invalid_values`.
 15. **[minor] No header, body or request timeouts.** Fixed. `serve::run` replaces `axum::serve`: the same accept loop with `ConnectInfo` and graceful shutdown, plus a timer, so hyper's 30 s header read timeout applies. `serve::deadline` gives every request 10 minutes from its headers to its response, body included (408 `The request took too long`, new string in E §11.3); 10 minutes, not 30 s, because uploads may be 50 MB. Per-IP connection caps stay with the reverse proxy (C §3). New direct dependencies `hyper` and `hyper-util` (already locked through axum, no new crate; C §18). Tests: `requests_are_served_with_the_peer_address_and_slow_headers_are_cut_off` (a real socket: a request is served with the peer address, headers that never end are closed, shutdown completes) and `a_request_past_its_deadline_is_a_json_408`.
 16. **[minor] Invite codes are written to the INFO access log.** Fixed. The span's `path` replaces the code in `/api/invites/{code}…` and `/join/{code}` with `{code}` (C §19). Unit test `invite_codes_stay_out_of_the_log`.
+
+## Security review 2026-10-28: the whole phase
+
+14 confirmed findings (6 medium, 8 low), all fixed; the login lockout by failed logins (the login half of #3) stays a product decision. The findings, their fixes, tests and commits are in [`security-review.md`](security-review.md).
