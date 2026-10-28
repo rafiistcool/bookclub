@@ -261,8 +261,9 @@ pub struct LegacyDb {
     pub push_subscriptions: u64,
 }
 
-/// Copies `path` (with its `-wal` and `-journal`) into a private temporary directory, opens the
-/// copy read-only and reads every table the importer maps.
+/// Copies `path` (with its `-wal` and `-journal`, found next to the file a symlink points to)
+/// into a private temporary directory, opens the copy read-only and reads every table the
+/// importer maps.
 ///
 /// The legacy app runs SQLite in WAL mode, and a copy made with `app.backup` keeps WAL mode in
 /// its header. SQLite opens such a file only where it can create the `-wal` and `-shm` files
@@ -313,7 +314,15 @@ struct PrivateCopy {
 
 impl PrivateCopy {
     /// Copies `source` and those of its [`SIDECARS`] that exist.
+    ///
+    /// A symlink is resolved first: SQLite looks for the sidecars of a linked database next to
+    /// the file the link points to (`snap/2026-11-01.db-wal` for `bookclub.db ->
+    /// snap/2026-11-01.db`), so the copy takes them from there too. Next to the link, the
+    /// `-wal` would be missing and its rows silently lost.
     fn of(source: &Path) -> Result<PrivateCopy, ImportError> {
+        let resolved = fs::canonicalize(source)
+            .map_err(|e| ImportError::Source(format!("cannot open {}: {e}", source.display())))?;
+        let source = resolved.as_path();
         let copy = PrivateCopy {
             dir: private_dir().map_err(|e| {
                 ImportError::Source(format!(
@@ -1243,6 +1252,10 @@ mod tests {
     /// is refused with the reason instead of being read.
     #[test]
     fn a_hot_journal_is_refused_with_its_reason() {
+        /// The first bytes of a rollback journal whose header SQLite has synced. A journal
+        /// without them (zeros: nothing was written to the database file yet) is not hot.
+        const JOURNAL_MAGIC: [u8; 8] = [0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7];
+
         let live = tempfile::tempdir().unwrap();
         let path = live.path().join("bookclub.db");
         let conn = Connection::open(&path).unwrap();
@@ -1250,13 +1263,17 @@ mod tests {
             "CREATE TABLE users (id INTEGER PRIMARY KEY, username VARCHAR, password_hash VARCHAR,
                                  created_at DATETIME);
              WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000)
-             INSERT INTO users SELECT i, 'user' || i, hex(randomblob(64)), '2024-01-01' FROM n;
-             PRAGMA cache_size = 2;
-             BEGIN;
-             UPDATE users SET password_hash = hex(randomblob(64));",
+             INSERT INTO users SELECT i, 'user' || i, hex(randomblob(64)), '2024-01-01' FROM n;",
         )
         .unwrap();
-        // The write spilled pages into the database file while its journal holds the originals.
+        let committed = fs::read(&path).unwrap();
+        conn.execute_batch("BEGIN; UPDATE users SET password_hash = hex(randomblob(64));")
+            .unwrap();
+        // Write the changed pages into the database file while the transaction is open: SQLite
+        // first syncs the journal, which holds the original pages. Cache pressure does not do
+        // this reliably: next to other SQLite connections in the process, the write sometimes
+        // stays in the cache.
+        conn.cache_flush().unwrap();
         let copied = tempfile::tempdir().unwrap();
         let copy = copied.path().join("bookclub.db");
         fs::copy(&path, &copy).unwrap();
@@ -1266,6 +1283,17 @@ mod tests {
         )
         .unwrap();
         drop(conn);
+        // The premise: the copy is half-written, and its journal is hot.
+        assert!(
+            fs::read(&copy).unwrap() != committed,
+            "no changed page reached the database file"
+        );
+        let journal = fs::read(with_suffix(&copy, "-journal")).unwrap();
+        assert_eq!(
+            journal.get(..8),
+            Some(&JOURNAL_MAGIC[..]),
+            "the journal header was not synced, so the journal is not hot"
+        );
 
         let error = read(&copy).unwrap_err().to_string();
         assert!(error.contains("has a hot journal"), "{error}");
@@ -1300,6 +1328,55 @@ mod tests {
         let missing = dir.path().join("nope.db");
         let error = read(&missing).unwrap_err().to_string();
         assert!(error.contains("nope.db"), "{error}");
+    }
+
+    /// A database reached through a symlink keeps the committed rows of the `-wal` next to the
+    /// file the link points to, where SQLite itself looks for them.
+    #[test]
+    fn a_symlinked_database_is_read_with_the_wal_next_to_its_target() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("snap")).unwrap();
+        let target = dir.path().join("snap/2026-11-01.db");
+        {
+            let conn = Connection::open(&target).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE users (id INTEGER PRIMARY KEY, username VARCHAR,
+                                     password_hash VARCHAR, created_at DATETIME);
+                 INSERT INTO users VALUES (1, 'ada', 'x', '2024-01-01 00:00:00');",
+            )
+            .unwrap();
+            let mode: String = conn
+                .query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(mode, "wal");
+            // Leave the second user in the WAL: no automatic checkpoint, none on close.
+            conn.set_db_config(
+                rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE,
+                true,
+            )
+            .unwrap();
+            conn.execute_batch(
+                "PRAGMA wal_autocheckpoint = 0;
+                 INSERT INTO users VALUES (2, 'wally', 'x', '2024-01-02 00:00:00');",
+            )
+            .unwrap();
+        }
+        let _ = fs::remove_file(with_suffix(&target, "-shm"));
+        let link = dir.path().join("bookclub.db");
+        std::os::unix::fs::symlink("snap/2026-11-01.db", &link).unwrap();
+        assert!(fs::metadata(with_suffix(&target, "-wal")).unwrap().len() > 0);
+        assert!(!with_suffix(&link, "-wal").exists());
+
+        let db = read(&link).unwrap();
+        let names: Vec<&str> = db.users.iter().map(|u| u.username.as_str()).collect();
+        assert_eq!(names, ["ada", "wally"]);
+
+        // SQLite, opening the link in place, finds the same rows.
+        let conn = Connection::open_with_flags(&link, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let users: i64 = conn
+            .query_row("SELECT count(*) FROM users", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(users, 2);
     }
 
     #[test]

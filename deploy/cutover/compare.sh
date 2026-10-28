@@ -2,14 +2,16 @@
 # Checks an import-legacy run with counts the importer did not make (#52, #38).
 #
 # Runs legacy-counts.sql (sqlite3) on a private copy of the legacy database and
-# target-counts.sql (psql) on the target, prints the counts side by side and per user, and
-# compares id|username|password_hash of every account.
+# target-counts.sql (psql) on the target, prints the counts side by side and per user, checks
+# the rows the report has no line for (club memberships, invite redemptions), and compares
+# id|username|password_hash of every account.
 #
 # Usage:
 #   compare.sh [--report REPORT] LEGACY_DB [-- PSQL_COMMAND...]
 #
 #   LEGACY_DB      the bookclub.db that import-legacy read. It is copied with its -wal and
-#                  -journal files into a private temporary directory; the file is never opened.
+#                  -journal files (next to the file a symlink points to, where SQLite looks for
+#                  them) into a private temporary directory; the file is never opened.
 #   --report FILE  the report of the real import-legacy run (real.txt). Every legacy count must
 #                  equal its source column and every target count its target column.
 #   PSQL_COMMAND   a psql that connects to the target and reads SQL on stdin. Default:
@@ -20,8 +22,9 @@
 # hash, and that account then differs. Password hashes are never printed, only ids and names.
 # Without --report, the counts are only printed: merges and skips make legacy and target differ.
 #
-# Exit status: 0 when the accounts match and, with --report, every count matches the report;
-# 1 on a difference; 2 on a usage error or a failed query.
+# Exit status: 0 when the accounts and the rows without a report line match and, with
+# --report, every count matches the report; 1 on a difference; 2 on a usage error or a failed
+# query.
 #
 # Needs bash, awk and sqlite3 (Debian: apt-get install sqlite3); SQLITE3 names another binary.
 
@@ -71,6 +74,9 @@ done
 
 [[ -n $legacy ]] || fail "name the legacy database (see --help)"
 [[ -f $legacy ]] || fail "$legacy is not a file"
+# SQLite looks for the -wal and -journal of a symlinked database next to the file the link
+# points to, and so does the importer: copy them from there.
+legacy=$(readlink -f -- "$legacy")
 if [[ -n $report ]]; then
 	[[ -f $report ]] || fail "$report is not a file"
 	if head -n 1 -- "$report" | grep -q '^DRY RUN'; then
@@ -117,6 +123,8 @@ awk -F '|' '
 	file == "target" && $1 == "count" { target[$2] = $3; add($2); next }
 	file == "legacy" && $1 == "user" { lu[$2, $4] = $5; name[$2] = $3; user($2); what($4); next }
 	file == "target" && $1 == "user" { tu[$2, $4] = $5; name[$2] = $3; user($2); what($4); next }
+	file == "legacy" && $1 == "same" { lsame[$2] = $3; same($2); next }
+	file == "target" && $1 == "same" { tsame[$2] = $3; same($2); next }
 	file == "report" {
 		# Entity lines: "<name>   <source|-> → <target|DROPPED> [detail]". A report saved through
 		# a terminal (docker compose run without -T) ends its lines with CR.
@@ -131,6 +139,7 @@ awk -F '|' '
 	}
 	function user(id) { if (!(id in users)) { users[id] = 1; ids[++nids] = id } }
 	function what(w) { if (!(w in whats)) { whats[w] = 1; cols[++ncols] = w } }
+	function same(key) { if (!(key in sames)) { sames[key] = 1; sameorder[++nsames] = key } }
 
 	END {
 		bad = 0
@@ -168,6 +177,17 @@ awk -F '|' '
 			}
 			if (check != "" && check != "ok") bad = 1
 			printf "%-38s %8s %8s  %-18s %s\n", key, cell(key, legacy), cell(key, target), (reported ? shown : ""), check
+		}
+
+		# Rows import-legacy creates without a report line: legacy and target always agree.
+		printf "\n%-38s %8s %8s  %s\n", "without a report line", "legacy", "target", "check"
+		for (i = 1; i <= nsames; i++) {
+			key = sameorder[i]
+			l = cell(key, lsame)
+			t = cell(key, tsame)
+			check = (l != "-" && l == t) ? "ok" : "MISMATCH"
+			if (check != "ok") bad = 1
+			printf "%-38s %8s %8s  %s\n", key, l, t, check
 		}
 
 		printf "\nper user (legacy->target where they differ)\n"
@@ -208,7 +228,7 @@ fi
 
 if [[ -n $report ]]; then
 	if [[ $status -eq 0 ]]; then
-		printf 'result: every count matches %s, and every account matches\n' "$report"
+		printf 'result: every count matches %s; the members, redemptions and accounts match\n' "$report"
 	else
 		printf 'result: DIFFERENCES (see MISMATCH and accounts above)\n'
 	fi

@@ -9,6 +9,9 @@
 -- Every output line is one value, |-separated:
 --   count|<entity>|<rows>               the source column of the import report, by its entity
 --                                       names (import-legacy reads the same rows)
+--   same|<name>|<rows>                  rows import-legacy creates from the legacy rows without
+--                                       a report line of their own: target-counts.sql must print
+--                                       the same number
 --   user|<id>|<username>|<what>|<rows>  per-user counts, the same names as target-counts.sql
 --   hash|<id>|<username>|<password_hash> every account (compare.sh compares them and prints
 --                                       only ids and usernames)
@@ -45,6 +48,11 @@ SELECT 'count|next_up_ballots|' || count(*) FROM next_up_ballots;
 SELECT 'count|events|' || count(*) FROM events;
 SELECT 'count|search_history|' || count(*) FROM search_history;
 SELECT 'count|push_subscriptions|' || count(*) FROM push_subscriptions;
+
+-- What the target must hold besides the report's lines. Every user becomes a member of the
+-- imported club, and every redeemed invite keeps its redemption.
+SELECT 'same|club_memberships|' || count(*) FROM users;
+SELECT 'same|club_invite_uses|' || count(*) FROM invites WHERE used_by_id IS NOT NULL;
 
 -- Per user. A pick note that was mirrored into the diary (a book_posts row with its id in
 -- legacy_post_id) is one post with its copy, so posts and reactions count the copy only.
@@ -84,6 +92,8 @@ FROM users u ORDER BY u.id;
 SELECT 'user|' || u.id || '|' || u.username || '|avatar|'
        || (CASE WHEN u.avatar IS NOT NULL AND length(u.avatar) > 0 THEN 1 ELSE 0 END)
 FROM users u ORDER BY u.id;
+-- Every user is a member of the imported club.
+SELECT 'user|' || u.id || '|' || u.username || '|membership|1' FROM users u ORDER BY u.id;
 
 -- The accounts. import-legacy copies the hashes byte for byte; a login re-hashes them.
 SELECT 'hash|' || id || '|' || username || '|' || password_hash FROM users ORDER BY id;

@@ -1,7 +1,8 @@
 //! The independent count check of the cutover (#52, #38): deploy/cutover/legacy-counts.sql and
 //! target-counts.sql run around the import of the legacy fixtures, so their queries cannot go
 //! stale against either schema, and every count they print must agree with the importer's
-//! report, as `deploy/cutover/compare.sh --report` checks it.
+//! report, and every `same` line with the other side, as `deploy/cutover/compare.sh --report`
+//! checks them.
 
 mod common;
 #[path = "fixtures/legacy/harness.rs"]
@@ -63,16 +64,28 @@ async fn target_lines(app: &TestApp) -> Vec<String> {
         .collect()
 }
 
-/// The `count|<entity>|<rows>` lines.
-fn counts(lines: &[String]) -> BTreeMap<String, u64> {
+/// The `<kind>|<name>|<rows>` lines of one kind.
+fn numbers(lines: &[String], kind: &str) -> BTreeMap<String, u64> {
+    let prefix = format!("{kind}|");
     lines
         .iter()
-        .filter_map(|line| line.strip_prefix("count|"))
+        .filter_map(|line| line.strip_prefix(&prefix))
         .map(|rest| {
             let (name, rows) = rest.rsplit_once('|').unwrap();
             (name.to_owned(), rows.parse().unwrap())
         })
         .collect()
+}
+
+/// The `count|<entity>|<rows>` lines.
+fn counts(lines: &[String]) -> BTreeMap<String, u64> {
+    numbers(lines, "count")
+}
+
+/// The `same|<name>|<rows>` lines: rows the importer creates without a report line of their
+/// own, which compare.sh requires to be equal on both sides.
+fn same(lines: &[String]) -> BTreeMap<String, u64> {
+    numbers(lines, "same")
 }
 
 /// The `user|<id>|<username>|<what>|<rows>` lines: (id, username, what) → rows.
@@ -172,12 +185,23 @@ async fn the_counts_agree_with_the_report_of_the_fresh_fixture(db: PgPool) {
     assert_eq!((legacy_counts["books"], target_counts["books"]), (17, 16));
     assert_eq!(target_counts["book_posts+club_pick_posts"], 13);
 
+    // Every user is a member of the club, and the three redeemed invites keep their redemption.
+    let legacy_same = same(&before);
+    assert_eq!(
+        legacy_same,
+        BTreeMap::from([
+            ("club_invite_uses".to_owned(), 3),
+            ("club_memberships".to_owned(), 5)
+        ])
+    );
+    assert_eq!(same(&after), legacy_same);
+
     let (legacy_users, target_users) = (per_user(&before), per_user(&after));
     assert_eq!(
         legacy_users.keys().collect::<Vec<_>>(),
         target_users.keys().collect::<Vec<_>>()
     );
-    assert_eq!(legacy_users.len(), 5 * 10);
+    assert_eq!(legacy_users.len(), 5 * 11);
     let differences: Vec<String> = legacy_users
         .iter()
         .filter(|(key, rows)| target_users[*key] != **rows)
@@ -216,6 +240,16 @@ async fn the_counts_agree_with_the_report_of_the_fresh_fixture(db: PgPool) {
         .collect();
     assert_eq!(changed.len(), 1);
     assert!(changed[0].starts_with("hash|4|lena|"), "{changed:?}");
+
+    // A user the import left without a membership can sign in but not see the club: both the
+    // totals and the user's own line show it.
+    app.exec("DELETE FROM club_memberships WHERE user_id = 4")
+        .await;
+    let broken = target_lines(&app).await;
+    assert_eq!(same(&broken)["club_memberships"], 4);
+    assert_ne!(same(&broken), legacy_same);
+    let lena = (4, "lena".to_owned(), "membership".to_owned());
+    assert_eq!((legacy_users[&lena], per_user(&broken)[&lena]), (1, 0));
 }
 
 /// migrated.sql (the ALTER TABLE shape): both files run on it, and every count agrees with the
@@ -230,6 +264,8 @@ async fn the_counts_agree_with_the_report_of_a_migrated_database(db: PgPool) {
 
     assert_counts_match(&counts(&before), &counts(&after), &report);
     assert_eq!(counts(&after)["users"], 2);
+    assert_eq!(same(&before), same(&after));
+    assert_eq!(same(&after)["club_memberships"], 2);
     assert_eq!(accounts(&before), accounts(&after));
     assert_eq!(per_user(&before).len(), per_user(&after).len());
 }

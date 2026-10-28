@@ -11,6 +11,8 @@
 --   count|<entity>|<rows>               the target column of the import report, by its entity
 --                                       names; a+b is the sum of a's and b's target columns
 --                                       (both land in one table)
+--   same|<name>|<rows>                  rows import-legacy creates without a report line of
+--                                       their own: legacy-counts.sql prints how many it must be
 --   user|<id>|<username>|<what>|<rows>  per-user counts, the same names as legacy-counts.sql
 --   hash|<id>|<username>|<password_hash> every account (compare.sh compares them and prints
 --                                       only ids and usernames)
@@ -50,6 +52,10 @@ SELECT 'count|next_up_ballots|' || count(*) FROM next_up_ballots;
 SELECT 'count|events|' || count(*) FROM events;
 SELECT 'count|search_history|' || count(*) FROM search_history;
 
+-- The club's members and the redemptions of the imported invites.
+SELECT 'same|club_memberships|' || count(*) FROM club_memberships;
+SELECT 'same|club_invite_uses|' || count(*) FROM club_invite_uses;
+
 -- Per user.
 SELECT 'user|' || u.id || '|' || u.username || '|shelf|'
        || (SELECT count(*) FROM shelf_entries s WHERE s.user_id = u.id)
@@ -80,6 +86,9 @@ SELECT 'user|' || u.id || '|' || u.username || '|layout|'
 FROM users u ORDER BY u.id;
 SELECT 'user|' || u.id || '|' || u.username || '|avatar|'
        || (CASE WHEN u.avatar_media_id IS NOT NULL THEN 1 ELSE 0 END)
+FROM users u ORDER BY u.id;
+SELECT 'user|' || u.id || '|' || u.username || '|membership|'
+       || (SELECT count(*) FROM club_memberships m WHERE m.user_id = u.id)
 FROM users u ORDER BY u.id;
 
 -- The accounts.

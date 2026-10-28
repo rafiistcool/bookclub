@@ -72,6 +72,13 @@ Everything here is done before the announcement goes out, and checked again the 
       with both host names filled in, and `sw.js` is copied to
       `/srv/bookclub-legacy-origin/sw.js` on the Caddy host. It is not active yet.
 - [ ] `caddy validate --config <the Caddyfile with the new block> --adapter caddyfile` passes.
+- [ ] You know the address the Caddy host sees for the browser you check with on cutover day
+      (the gate in 3.5 lets only that address through). Open `https://<NEW_HOST>/api/health` in
+      that browser, then on the Caddy host read the last line of the new host's access log
+      (`/var/log/caddy/bookclub-access.log` in `deploy/hosted/Caddyfile.example`):
+      `tail -n 1 /var/log/caddy/bookclub-access.log | grep -o '"client_ip":"[^"]*"'`. For an
+      IPv6 address, note its /64 (`2001:db8:1:2::/64`): the browser's temporary addresses
+      change.
 
 **People**
 
@@ -90,7 +97,8 @@ address.
 > Unser Bookclub bekommt ein neues Zuhause. Während des Umzugs ist die App für etwa \<Dauer\>
 > nicht erreichbar. Danach gilt:
 >
-> - **Neue Adresse:** https://\<neue Adresse\>. Die alte Adresse leitet dorthin weiter.
+> - **Neue Adresse:** https://\<neue Adresse\>. Sie funktioniert ab der Nachricht „Der Umzug ist
+>   fertig“; dann leitet auch die alte Adresse dorthin weiter.
 > - **Gleiche Anmeldung:** Benutzername und Passwort bleiben, alle Regale, Notizen, Zitate,
 >   Abstimmungen und das Club-Archiv ziehen mit.
 > - **E-Mail-Adresse eintragen:** Nach der ersten Anmeldung fragt die App nach einer
@@ -114,7 +122,8 @@ address.
 > Our Bookclub is getting a new home. During the move the app is offline for about \<duration\>.
 > Afterwards:
 >
-> - **New address:** https://\<new address\>. The old address redirects there.
+> - **New address:** https://\<new address\>. It works from the "the move is done" message on;
+>   then the old address redirects there too.
 > - **Same login:** your username and password stay the same, and all shelves, notes, quotes,
 >   votes and the club history move with you.
 > - **Add an email address:** after your first sign-in, the app asks for an email address. Please
@@ -152,14 +161,20 @@ Then, in the old compose directory:
 ```bash
 docker compose stop bookclub            # stop, never down: the container stays for a rollback
 ls -l data/                             # after a clean stop, normally no bookclub.db-wal is left
+```
+
+If `ls` shows a `bookclub.db-journal`, the app did not stop cleanly: start it once
+(`docker compose start bookclub`), wait until it is healthy, stop it again and list again. Then
+copy the files, never the `-shm`, into an empty directory, and write their checksums with names
+relative to it, so that `sha256sum -c` checks the copies on the app VM (3.2):
+
+```bash
+rm -rf /root/bookclub-final             # a leftover of an earlier attempt
 install -d -m 700 /root/bookclub-final
 cp data/bookclub.db /root/bookclub-final/
 [ -e data/bookclub.db-wal ] && cp data/bookclub.db-wal /root/bookclub-final/
-sha256sum /root/bookclub-final/* | tee /root/bookclub-final/SHA256SUMS
+(cd /root/bookclub-final && sha256sum bookclub.db* > SHA256SUMS && cat SHA256SUMS)
 ```
-
-Copy the files, never the `-shm`. If a `bookclub.db-journal` exists, the app did not stop cleanly:
-start it once (`docker compose start bookclub`), wait until it is healthy, and stop it again.
 
 Keep an encrypted copy of the final snapshot for the retention period (Q14: 30 days), outside
 the repo, with the passphrase in the password manager:
@@ -172,10 +187,13 @@ tar -C /root -cf - bookclub-final | gpg --symmetric --cipher-algo AES256 \
 ### 3.2 Transfer the snapshot (to the app VM)
 
 ```bash
+# On the app VM: empty the import directory. A -wal left from an earlier attempt would be read
+# with the new copy.
+rm -f "$IMPORT"/bookclub.db* "$IMPORT"/SHA256SUMS
 # On the old host. The import directory is owned by uid 1000 (section 1).
 scp /root/bookclub-final/* <app-vm>:/srv/bookclub/import/
 # On the app VM:
-cd "$IMPORT" && sha256sum -c SHA256SUMS
+(cd "$IMPORT" && sha256sum -c SHA256SUMS)          # every file: OK
 chown 1000:1000 "$IMPORT"/bookclub.db* && chmod 600 "$IMPORT"/bookclub.db*
 ```
 
@@ -239,22 +257,47 @@ every count against the report, prints the per-user counts, and compares
 
 Post only counts to #38: no usernames, no report lines with titles.
 
-### 3.5 Start the server and check it
+### 3.5 Start the server behind the gate and check it
+
+Until the redirect in 3.6, only you may reach the new instance. The announcement gave everyone
+the new address, and a member who signs in there writes to it: the login re-hashes the legacy
+password hash, and the email prompt stores an address. A rollback would lose those writes
+(section 4). So close the new host first. On the Caddy host, add these lines to the new host's
+site block, with the address from the checklist (section 1):
+
+```caddyfile
+	# Cutover gate (docs/phase2/cutover.md 3.5): only Rafael until the redirect in 3.6.
+	@cutover_closed not client_ip <your address>
+	respond @cutover_closed "Bookclub zieht gerade um und ist bald zurück. / Bookclub is moving and will be back soon." 503
+```
+
+In the block of `deploy/hosted/Caddyfile.example`, `respond` runs before `reverse_proxy` wherever
+it stands. Then:
 
 ```bash
-docker compose up -d --wait app
-curl -fsS https://$NEW_HOST/api/health                     # {"status":"ok"}
+caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile   # or: systemctl reload caddy
+```
+
+On the app VM, in the compose directory:
+
+```bash
+docker compose up -d --wait app                       # returns once the app is healthy
+docker compose exec app bookclub-server healthcheck   # ... answered 200 OK
 docker compose exec app bookclub-server make-admin "$OWNER"
 ```
 
-Rafael, in the browser on `https://<NEW_HOST>`:
+From a device that is not on your address, such as a phone on mobile data, `https://<NEW_HOST>`
+shows the "moving" message: the gate holds. The uptime monitor reports this 503 until 3.6.
+
+Rafael, in the browser on `https://<NEW_HOST>` (on the allowed address):
 
 1. Sign in with the old password. Add an email address and verify it (the admin mails and password
-   resets need a verified address).
+   resets need a verified address). Open the verification link in this browser: the gate answers
+   every other address with 503.
 2. The club, the shelves, the physical shelf layouts, the pick and its notes, the votes, the
    quotes and the activity feed are there.
 3. Old links resolve: open a `/works/OL…W` link from an old chat.
-4. A second member (or a test sign-in by a member who agreed) gets the email prompt.
 
 If `isbn unmatched` or `isbn error` in `real.txt` is not 0, rematch now or later (it commits per
 edition and is safe on the live server):
@@ -264,14 +307,16 @@ docker compose exec -T app bookclub-server rematch-legacy --dry-run
 docker compose exec -T app bookclub-server rematch-legacy
 ```
 
-### 3.6 Redirect the old host (Caddy host)
+### 3.6 Open the new host and redirect the old one (Caddy host)
 
-Replace the old host's site block (or the maintenance block) with the prepared block from
-`deploy/legacy-origin/Caddyfile.example`, then:
+This step ends the rollback window (section 4): decide to go first. Take the gate lines (3.5) out
+of the new host's site block, and replace the old host's site block (or the maintenance block)
+with the prepared block from `deploy/legacy-origin/Caddyfile.example`. Then:
 
 ```bash
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile   # or: systemctl reload caddy
+curl -fsS "https://$NEW_HOST/api/health"                         # from any address now
 curl -sI "https://$OLD_HOST/shelf?x=1" | grep -iE '^(HTTP|location)'
 #   HTTP/2 301 / location: https://<NEW_HOST>/shelf?x=1
 curl -sI "https://$OLD_HOST/sw.js" | grep -iE '^(HTTP|content-type|cache-control)'
@@ -283,22 +328,40 @@ and a browser does not follow a redirect when it checks that worker for updates.
 `sw.js` deletes the old caches, unregisters itself and reloads the page, which then follows the
 redirect (risk R22, `docs/phase1/spec/platform.md`).
 
-Then send the "it is live" message (section 2). This is the end of the rollback window.
+Then send the "it is live" message (section 2). Once a member has signed in, check that their
+first sign-in brought up the email prompt (ask one to tell you).
 
 ## 4. Rollback window
 
-Rolling back is possible until members write to the new instance: until the redirect goes live in
-3.6 and the "it is live" message is sent. Until then, the old app's data is untouched (it was
-stopped, and the importer read a copy), so a rollback loses nothing. Rafael's own checks on the
-new instance (3.5) are the only writes there, and they may be lost.
+Rolling back is possible until members write to the new instance. The gate (3.5) keeps them out
+until 3.6 opens the new host and redirects the old one. Until then, the old app's data is
+untouched (it was stopped, and the importer read a copy), and the only writes on the new
+instance are your own checks, which a rollback discards.
+
+Before rolling back, check who signed in on the new instance. On the app VM, in the compose
+directory:
+
+```bash
+docker compose exec -T postgres psql -U bookclub -d bookclub -c \
+    "SELECT u.username, s.created_at FROM sessions s JOIN users u ON u.id = s.user_id
+     ORDER BY s.created_at"
+```
+
+Every name besides yours got through the gate, for example from a device that shares your
+address at home. What they wrote on the new instance is lost with the rollback. A sign-out
+deletes its session, so also run `compare.sh` again (3.4): every account it lists under
+`accounts: DIFFERENT` has signed in since the import.
 
 To roll back:
 
-1. Caddy host: restore the old host's original site block and `caddy reload`.
+1. Caddy host: restore the old host's original site block and `caddy reload`. Leave the gate in
+   the new host's block until the next attempt.
 2. Old host: `docker compose start bookclub`, wait for healthy, and sign in once.
 3. App VM: `docker compose down -v` and empty `/srv/bookclub/media`, so the next attempt starts
-   from an empty target. Keep `$IMPORT` until the next attempt replaces it.
-4. Tell the club the move is postponed, and record why in #52.
+   from an empty target. Keep `$IMPORT` until the next attempt; 3.2 empties it before the new
+   copy arrives.
+4. Tell the club the move is postponed, and anyone the check above found that what they did on
+   the new instance is gone. Record why in #52.
 
 After the window closes, there is no rollback: members' writes exist only on the new instance.
 Problems are fixed forward. The backup timer of `deploy/hosted/` covers the new data from the
