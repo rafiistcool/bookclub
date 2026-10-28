@@ -1238,5 +1238,11 @@
     "forPeople": "For one person | For {n} people",
     "noExpiry": "does not expire",
     "pastInvites": "{n} used or ended invite | {n} used or ended invites"
+  },
+  "notFound": {
+    "title": "Page not found",
+    "body": "There is nothing at this address. The link may be old or mistyped.",
+    "toHome": "Home",
+    "toDiscover": "Discover"
   }
 }

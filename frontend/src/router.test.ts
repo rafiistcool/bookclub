@@ -107,3 +107,35 @@ describe("old paths and the sign-in guard", () => {
     expect(await landing("/signup?code=AB12", [])).toBe("/");
   });
 });
+
+describe("unknown paths", () => {
+  beforeEach(() => {
+    me.mockReset();
+    vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("shows the not-found page in the app shell, at the address that was asked for", async () => {
+    for (const path of ["/nonexistent/path", "/c/readers-ab12/nope", "/u/grace/nope", "/book"]) {
+      expect(await landing(path, [READERS])).toBe(path);
+      const matched = router.currentRoute.value.matched;
+      expect(router.currentRoute.value.name).toBe("not-found");
+      // The shell (navigation, account) stays around the message.
+      expect(matched[0]?.path).toBe("/");
+    }
+  });
+
+  it("leaves every known page to its own route", async () => {
+    for (const path of ["/", "/discover", "/c/readers-ab12/members", "/u/grace", "/book/4"]) {
+      expect(await landing(path, [READERS])).toBe(path);
+      expect(router.currentRoute.value.name).not.toBe("not-found");
+    }
+  });
+
+  it("asks a signed-out visitor to sign in first", async () => {
+    const route = await guestLanding("/nonexistent/path");
+    expect(route.path).toBe("/login");
+    expect(route.query).toEqual({ next: "/nonexistent/path" });
+  });
+});

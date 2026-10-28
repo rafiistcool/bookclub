@@ -145,6 +145,33 @@ describe("BookDetailPage", () => {
     const { wrapper } = await mountBook("/book/not-a-book");
     expect(book).not.toHaveBeenCalled();
     expect(wrapper.text()).toContain("That book is not in the catalog.");
+    // Another try asks nothing new: only the way back.
+    expect(button(wrapper, "Try again")).toBeUndefined();
+    expect(wrapper.find('a[href="/discover"].btn').text()).toBe("Back to Discover");
+  });
+
+  it("offers no second try when the server has no such book", async () => {
+    book.mockRejectedValue(new ApiError("That book is not in the catalog.", 404, "No such book."));
+    const { wrapper } = await mountBook("/book/999999");
+    expect(wrapper.text()).toContain("That book is not in the catalog.");
+    expect(button(wrapper, "Try again")).toBeUndefined();
+    expect(wrapper.find('a[href="/discover"].btn').exists()).toBe(true);
+  });
+
+  it("offers a second try after a network or server failure, and it can succeed", async () => {
+    book.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const { wrapper } = await mountBook("/book/4");
+    expect(wrapper.text()).toContain("Could not load that book");
+    const retry = button(wrapper, "Try again");
+    expect(retry).toBeTruthy();
+    await retry!.trigger("click");
+    await flushPromises();
+    expect(book).toHaveBeenCalledTimes(2);
+    expect(wrapper.text()).toContain("The Witch of Portobello");
+
+    book.mockRejectedValueOnce(new ApiError("Could not load the library right now.", 502, "down"));
+    const second = await mountBook("/book/4");
+    expect(button(second.wrapper, "Try again")).toBeTruthy();
   });
 
   it("shelves a book by its work id and shows what the server stored", async () => {

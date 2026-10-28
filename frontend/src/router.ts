@@ -113,6 +113,14 @@ const router = createRouter({
         { path: "invites", component: ClubsPage, beforeEnter: toClub("/members") },
         // The pick was the old Home; without a club to show it in, Home it is.
         { path: "pick", component: ClubsPage, beforeEnter: toClub("", "/") },
+
+        // Anything else, also an unknown tab under a club or a reader: a
+        // not-found page in the app shell. A signed-out visit signs in first.
+        {
+          path: ":pathMatch(.*)*",
+          name: "not-found",
+          component: () => import("./pages/NotFoundPage.vue"),
+        },
       ],
     },
   ],

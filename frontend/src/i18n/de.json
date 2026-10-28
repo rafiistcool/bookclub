@@ -1238,5 +1238,11 @@
     "forPeople": "Für eine Person | Für {n} Personen",
     "noExpiry": "läuft nicht ab",
     "pastInvites": "{n} benutzte oder abgelaufene Einladung | {n} benutzte oder abgelaufene Einladungen"
+  },
+  "notFound": {
+    "title": "Seite nicht gefunden",
+    "body": "Unter dieser Adresse gibt es nichts. Vielleicht ist der Link alt oder vertippt.",
+    "toHome": "Start",
+    "toDiscover": "Entdecken"
   }
 }

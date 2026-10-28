@@ -15,6 +15,7 @@ import CoverPhotoButton from "../components/CoverPhotoButton.vue";
 import MergeRequestSheet from "../components/MergeRequestSheet.vue";
 import EditRequestSheet from "../components/EditRequestSheet.vue";
 import { clubsFor } from "../clubActions";
+import { worthRetrying } from "../retry";
 import {
   bookPath,
   openLibraryUrl,
@@ -40,6 +41,8 @@ const toast = useToast();
 
 const book = ref<BookDetail | null>(null);
 const error = ref("");
+/** The failed load may work a second time (network, 5xx); a 404 or a bad id never does. */
+const retryable = ref(false);
 const loaded = ref(false);
 const loadWaitSec = ref(0);
 const busy = ref(false);
@@ -119,6 +122,7 @@ async function load() {
   if (target.kind === "id" && book.value?.id === target.id && loaded.value && !error.value) return;
   loaded.value = false;
   error.value = "";
+  retryable.value = false;
   expanded.value = false;
   loadAbort?.abort();
   if (target.kind === "invalid") {
@@ -151,6 +155,7 @@ async function load() {
     }
     book.value = null;
     error.value = err instanceof ApiError ? err.message : t("book.loadFailed");
+    retryable.value = worthRetrying(err);
   } finally {
     if (!controller.signal.aborted) {
       loaded.value = true;
@@ -361,7 +366,9 @@ watch(param, load);
       <h3>{{ t("book.loadFailedTitle") }}</h3>
       <p>{{ error }}</p>
       <div class="btn-row">
-        <button class="btn btn-ghost" type="button" @click="load">{{ t("common.tryAgain") }}</button>
+        <button v-if="retryable" class="btn btn-ghost" type="button" @click="load">
+          {{ t("common.tryAgain") }}
+        </button>
         <RouterLink class="btn btn-ghost" to="/discover">{{ t("book.backToDiscover") }}</RouterLink>
       </div>
     </div>
