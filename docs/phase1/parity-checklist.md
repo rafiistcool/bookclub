@@ -25,7 +25,7 @@ Every test function of the Python backend (`backend/tests/test_*.py`: 29 files, 
   - a Python test listed in `parity-notes.md` has no line.
 
   So a new parity comment, a renamed Rust test or a new Python test needs an edit here. Lines for Python tests that no longer exist are allowed: #48 deletes `test_api_error_copy.py`, and the cutover (#52) deletes `backend/`, after which the check is deleted and this file stays as the record.
-- **Cross-package tests (PAR).** `server/tests/parity_ports.rs` holds the Python tests that no Wave 2 package ported in full: the handoffs of `docs/phase1/notes/cat.md` "Left for other packages, or PAR", and halves that a package stood in for with SQL because the route belonged to another package (the shelf → pick readers, every emitter → the activity feeds, favourites → the book page; the seams still open are listed in `docs/phase1/notes/par.md`). They run end to end through the routes of several packages, against the real `CatalogService` (`TestApp::with_real_lookup`) where a lookup is involved, and wiremock for every upstream. `server/tests/parity_schema.rs` checks the #37 schema criterion below.
+- **Cross-package tests (PAR).** `server/tests/parity_ports.rs` holds the Python tests that no Wave 2 package ported in full: the handoffs of `docs/phase1/notes/cat.md` "Left for other packages, or PAR", and halves that a package stood in for with SQL because the route belonged to another package (the shelf → pick readers, overlap, suggestions and stats; every emitter → the activity feeds, quotes included; favourites → the book page; the pick and milestone routes → the pick threads). They run end to end through the routes of several packages, against the real `CatalogService` (`TestApp::with_real_lookup`) where a lookup is involved, and wiremock for every upstream. `server/tests/parity_importer.rs` runs the legacy importer `--offline` and `rematch-legacy` against the real lookup. `server/tests/parity_visibility.rs` is the #46 matrix completeness check (below). `server/tests/parity_schema.rs` checks the #37 schema criterion below.
 
 ## Summary
 
@@ -39,7 +39,7 @@ Every test function of the Python backend (`backend/tests/test_*.py`: 29 files, 
 | `test_book_details.py` | 8 | 8 | 3 | 5 | 0 | 0 |
 | `test_diary.py` | 15 | 15 | 10 | 5 | 0 | 0 |
 | `test_favorites.py` | 12 | 12 | 8 | 4 | 0 | 0 |
-| `test_google_books.py` | 51 | 78 | 12 | 27 | 0 | 12 |
+| `test_google_books.py` | 51 | 78 | 11 | 28 | 0 | 12 |
 | `test_import.py` | 8 | 8 | 6 | 2 | 0 | 0 |
 | `test_local_reads.py` | 2 | 2 | 1 | 1 | 0 | 0 |
 | `test_members.py` | 1 | 1 | 0 | 1 | 0 | 0 |
@@ -60,7 +60,7 @@ Every test function of the Python backend (`backend/tests/test_*.py`: 29 files, 
 | `test_stats_milestones_quotes.py` | 4 | 4 | 1 | 3 | 0 | 0 |
 | `test_vote.py` | 7 | 7 | 7 | 0 | 0 | 0 |
 | `test_vote_deadline.py` | 5 | 5 | 4 | 1 | 0 | 0 |
-| **Total** | **292** | **358** | **171** | **88** | **6** | **27** |
+| **Total** | **292** | **358** | **170** | **89** | **6** | **27** |
 
 ## Known intentional changes
 
@@ -90,6 +90,7 @@ These are not repeated on each line:
 - Works come from the catalog fixtures (`TestApp::ol_work`, `TestApp::work`, a stored search hit), not from the client metadata of the first write.
 - When a test needs a row whose route belongs to another package, a package's own port often inserts it with SQL. Where that left the cross-package path untested, `tests/parity_ports.rs` runs it end to end (named on the line).
 - Upstream calls go to wiremock (`TestApp::upstream`) or `FakeCatalog`; no test leaves the machine.
+- Pictures are stored and served by MED (conventions §8): an avatar is a 256×256 WebP at `/media/{public_id}/a` (legacy: a JPEG at `/api/members/{name}/avatar?v=`), covers are WebP `l` and `s` variants under `/media/`, and a cover is fetched from Open Library as `-L.jpg` (legacy `-M.jpg`; one fetch gives both sizes, `docs/phase1/notes/med.md` deviation 8). Ports that compared the legacy JPEG bytes or cover URL compare these instead.
 
 ## #37 schema acceptance criterion, as built
 
@@ -104,6 +105,28 @@ These are not repeated on each line:
 - **Deviation 2, inherited scope:** `post_reactions` has no `club_id`; it inherits its scope through `post_id` → `posts` ON DELETE CASCADE, so a reaction can never outlive or leave its post. `club_invite_uses` follows the same pattern through `invite_id` → `club_invites`.
 - **Personal data** (`user_id` → `users`, no `club_id`): `shelf_entries`, `physical_shelf_layouts`, `user_favorites`, `search_history`, `quotes`, `import_jobs`. Other users read it through the visibility policy (`bc_visible_shelf`, `bc_visible_quotes`, conventions §6).
 - **Neither** (no `club_id`): accounts (`users`, `sessions`, `email_tokens`), `clubs` itself, the shared catalog (`authors`, `works`, `work_authors`, `editions`, `edition_contributors`, `legacy_work_keys`, `catalog_edit_requests`, `harvest_state`), media (`media`, `media_removed_hashes`, `reports`).
+
+## #46 visibility matrix, as built
+
+Conventions §6.5: every Wave 2 package covers the personal data kinds it serves across self, co-member, stranger and unknown name, and "#49 checks that the matrix is complete". `tests/parity_visibility.rs` does that in two tests:
+
+- `every_personal_column_route_and_rating_field_is_in_the_matrix` reads the live schema and the OpenAPI document. Every foreign key to `users` (28 columns), every operation with a `username` parameter (9) and every schema with a rating or take field (11) must be listed, either with the kinds that serve it or with the reason it is not personal data (account, club, catalog or moderation data, or a request body). A new personal table, `?username=` route or rating field fails until it is listed.
+- `every_personal_data_kind_has_its_four_viewer_cases` runs every kind those lists name through the routes, in one world written through the routes (`common::visibility::Viewers`: the owner, a co-member, and as strangers a member of another club, someone in no club and a former co-member). A kind cannot be added without its four cases: the kinds are an enum matched exhaustively, each kind's check matches all four cases, and a kind no list names is dead code that fails clippy.
+
+| Kind | Self | Co-member | Stranger | Unknown name | Package tests |
+|---|---|---|---|---|---|
+| Shelf (ratings, takes, progress, `dnf_reason`) | all, `only_me` included | `only_me` rating and take redacted | 404 like an unknown name | 404 `No member with that name` | `tests/shelf_visibility.rs::shelf_is_visible_to_the_audience_with_only_me_ratings_redacted` |
+| Favourites | own list, book page position | on the shelf; own list and position stay theirs | 404 like an unknown name | 404 | `tests/shelf_visibility.rs::favourites_are_shown_to_the_audience_only` |
+| Physical layout | GET | GET; PUT is 404 | GET and PUT 404 like an unknown name | 404 | `tests/shelf_visibility.rs::layout_is_visible_to_the_audience_and_saved_by_its_owner_only` |
+| Quotes | all | `audience` only | 200 and empty, like an unknown name | 200 and empty | `tests/shelf_visibility.rs::quotes_are_visible_to_the_audience_without_only_me_ones` |
+| Stats | `only_me` counted | `only_me` left out | 404 like an unknown name | 404 | `tests/shelf_visibility.rs::personal_stats_leave_only_me_ratings_and_quotes_out_for_others` |
+| Diary (entries, replies, reactions, `author_rating`) | all; own rating | `audience` roots; `author_rating` redacted | nothing; reacting or editing 404 | an unknown post id answers like a hidden one | `tests/posts_visibility.rs` |
+| Activity (personal events) | all, with payloads | from `joined_at`; `shelf_finished` rating and `only_me` `quote_added` hidden; not in a club the owner is not in | `?username=` 200 and empty, like an unknown name | 200 and empty | `tests/club_visibility.rs`, `tests/club_activity.rs::a_user_in_two_clubs_sees_separate_feeds` |
+| Book page (readers, ratings, quote count) | own rating and take | owner as a reader, `only_me` rating left out of reader, mean and count | no reader, rating or quote of the owner | not applicable: no name to pass | `tests/catalog_visibility.rs` |
+| Pick readers | own rating and take | club members only, `only_me` redacted | 404 `No such club`; another club's readers leave the owner out | not applicable | `tests/club_visibility.rs::pick_readers_are_club_members_with_only_me_ratings_redacted` |
+| Club shelves (overlap, suggestions, members' reading, club stats) | own data | members only, `only_me` left out | 404 `No such club`; another club's views leave the owner out | not applicable | `tests/shelf_visibility.rs::club_stats_are_for_members_with_only_me_ratings_left_out`, `tests/club_overlap.rs::overlap_covers_club_members_only`, `tests/club_suggestions.rs::suggestions_cover_club_members_only` |
+| Search history | own | own only; deleting the owner's entry 404 | the same | an unknown id answers like the owner's | `tests/shelf_search_history.rs::history_is_private_and_delete_is_scoped` |
+| Import jobs | own | 404 `No such import` | 404 | an unknown id answers like the owner's | `tests/shelf_import.rs::jobs_are_private` |
 
 ## test_activity.py (3)
 
@@ -178,7 +201,7 @@ These are not repeated on each line:
 - [x] `test_only_the_author_edits_or_deletes`: **ported**. `tests/posts_diary.rs::only_the_author_edits_or_deletes`.
 - [x] `test_deleting_an_entry_with_replies_leaves_a_tombstone`: **ported**. `tests/posts_diary.rs::deleting_an_entry_with_replies_leaves_a_tombstone`.
 - [x] `test_reactions_toggle_and_aggregate`: **ported**. `tests/posts_diary.rs::reactions_toggle_and_aggregate`.
-- [x] `test_entry_on_the_current_pick_records_the_pick`: **changed**. `tests/posts_picks.rs::a_club_post_records_its_pick`. `pick_id` survives only on club posts: a pick post records its pick, a diary entry on the pick's work is personal and has none (work-plan diary 1).
+- [x] `test_entry_on_the_current_pick_records_the_pick`: **changed**. `tests/posts_picks.rs::a_club_post_records_its_pick`, `tests/parity_ports.rs::old_pick_threads_survive_a_new_pick_and_an_applied_vote` (end to end: the pick set with CLUB's route). `pick_id` survives only on club posts: a pick post records its pick, a diary entry on the pick's work is personal and has none (work-plan diary 1).
 - [x] `test_feed_exposes_viewer_position_for_spoiler_shield`: **ported**. `tests/posts_diary.rs::the_feed_exposes_the_viewer_position_for_the_spoiler_shield`.
 - [x] `test_feed_is_newest_first_across_books_and_pages`: **ported**. `tests/posts_diary.rs::the_feed_is_newest_first_across_works_and_pages`.
 - [x] `test_legacy_pick_notes_are_imported_once_with_reactions`: **changed**. `tests/importer_posts.rs::legacy_pick_notes_are_imported_once_with_reactions`. Moved to IMP: the boot-time copy of `club_pick_posts` is the importer's job; a mirrored and a never-mirrored note are each imported once, with their reaction.
@@ -222,7 +245,7 @@ Verdicts from `docs/phase1/spec/google.md` §4: KEEP → ported, ADAPT and INVER
 - [x] `test_isbn_search_uses_google_isbn_field`: **changed**. `tests/catalog_search.rs::isbn_query_uses_the_isbn_lookup`, `tests/catalog_isbn.rs::a_german_isbn_search_goes_through_the_dnb`. ADAPT: an ISBN-shaped query goes to the ISBN lookup (local, DNB for 978-3, Open Library).
 - [x] `test_detail_imports_from_google_not_open_library`: **changed**. `tests/catalog_detail.rs::book_detail_resolves_description_subjects_and_authors`. The Google import is dropped; KEEP: the second open of a known book makes no upstream call.
 - [x] `test_opening_discovered_book_does_not_call_google` (12 cases): **changed**. `tests/catalog_search.rs::browsing_stores_every_hit`, `tests/catalog_detail.rs::a_displayed_hit_opens_during_a_503_outage`. INVERT: every browsed hit is stored. KEEP: opening a displayed hit works during an outage; its one-time enrichment is attempted and fails, and a 503 trips no cooldown. The "exactly one call on the next search" part is reasoned away by CAT (a 429 during the enrichment trips the cooldown).
-- [x] `test_title_hit_opens_even_when_google_isbn_lookup_misses` (2 cases): **ported**. `tests/catalog_detail.rs::a_search_hit_opens_when_the_second_lookup_misses`.
+- [x] `test_title_hit_opens_even_when_google_isbn_lookup_misses` (2 cases): **changed**. `tests/catalog_detail.rs::a_search_hit_opens_when_the_second_lookup_misses`. KEEP: opening a search hit does not depend on a second lookup; the stored hit opens although its record is gone upstream. The legacy "zero calls" does not hold: the first view of a stored search stub runs its one-time enrichment (one Open Library request, which misses), as in `test_opening_discovered_book_does_not_call_google` (PAR review, Part 2).
 - [x] `test_google_transient_503_is_retried_once`: **changed**. `tests/catalog_search.rs::a_503_is_retried_once`. ADAPT: one retry on 502, 503 or 504 after 300 ms (work-plan google 8).
 - [x] `test_google_persistent_503_stops_after_one_retry_and_can_recover`: **changed**. `tests/catalog_search.rs::a_503_is_retried_once`. ADAPT: a persistent 503 is 502 after two requests, trips no cooldown, and the next request recovers.
 - [x] `test_google_failure_does_not_leave_unobserved_future`: **changed**. `src/catalog/cache.rs::concurrent_calls_share_one_fetch_and_its_outcome`. ADAPT: a failing coalesced fetch hands its error to every waiter and leaves nothing in flight.
@@ -298,9 +321,9 @@ Verdicts from `docs/phase1/spec/google.md` §4: KEEP → ported, ADAPT and INVER
 ## test_overlap.py (4)
 
 - [x] `test_overlap_requires_auth`: **ported**. `tests/club_overlap.rs::overlap_requires_a_session`.
-- [x] `test_two_want_same_book_shows_one_does_not`: **ported**. `tests/club_overlap.rs::a_book_two_members_want_is_shown`.
-- [x] `test_finished_and_solo_want_are_excluded`: **ported**. `tests/club_overlap.rs::finished_books_and_solo_wants_are_left_out`.
-- [x] `test_include_reading_counts_want_plus_reading`: **ported**. `tests/club_overlap.rs::include_reading_counts_reading_too`.
+- [x] `test_two_want_same_book_shows_one_does_not`: **ported**. `tests/club_overlap.rs::a_book_two_members_want_is_shown`, `tests/parity_ports.rs::overlap_follows_the_shelf_routes` (end to end: the shelf entries from SHELF's routes, the member joined by invite).
+- [x] `test_finished_and_solo_want_are_excluded`: **ported**. `tests/club_overlap.rs::finished_books_and_solo_wants_are_left_out`, `tests/parity_ports.rs::overlap_follows_the_shelf_routes` (end to end).
+- [x] `test_include_reading_counts_want_plus_reading`: **ported**. `tests/club_overlap.rs::include_reading_counts_reading_too`, `tests/parity_ports.rs::overlap_follows_the_shelf_routes` (end to end).
 
 ## test_physical_shelf.py (14)
 
@@ -325,7 +348,7 @@ Verdicts from `docs/phase1/spec/google.md` §4: KEEP → ported, ADAPT and INVER
 - [x] `test_empty_pick_then_set_and_read`: **changed**. `tests/club_picks.rs::an_empty_club_has_no_pick_until_an_admin_sets_one`. `/api/config` has no `timezone` any more; the pick answer carries the club's.
 - [x] `test_same_book_updates_meeting_without_history`: **ported**. `tests/club_picks.rs::the_same_book_updates_the_meeting_without_history`.
 - [x] `test_replacing_pick_archives_previous_with_meeting`: **ported**. `tests/club_picks.rs::replacing_the_pick_archives_the_previous_one_with_its_meeting`.
-- [x] `test_reading_vs_finished_and_clear`: **changed**. `tests/club_picks.rs::readers_split_into_reading_and_finished_and_an_admin_clears_the_pick`. Clearing the pick is admin-only now; a member's DELETE is 403.
+- [x] `test_reading_vs_finished_and_clear`: **changed**. `tests/club_picks.rs::readers_split_into_reading_and_finished_and_an_admin_clears_the_pick`, `tests/parity_ports.rs::the_pick_readers_come_from_the_shelf_routes` (end to end: the shelf entries from SHELF's routes, the member joined by invite). Clearing the pick is admin-only now; a member's DELETE is 403.
 - [x] `test_meeting_uses_club_timezone`: **changed**. `tests/club_picks.rs::the_meeting_uses_the_club_time_zone`. The zone is the club's, not `BOOKCLUB_TZ`.
 - [x] `test_invalid_timezone_falls_back_to_utc`: **changed**. `tests/club_picks.rs::an_invalid_zone_is_refused_and_a_corrupt_one_reads_as_utc`. An invalid zone is refused when the club is updated (400 `That is not a valid time zone`); a corrupt stored value still reads as UTC.
 - [x] `test_invalid_pick_payload`: **changed**. `tests/club_picks.rs::invalid_pick_payloads_are_refused`. The body names a catalog work: the blank-title and key checks are gone, an unknown work is 404 `No such book.`, a missing one 400 `Field required`.
@@ -334,7 +357,7 @@ Verdicts from `docs/phase1/spec/google.md` §4: KEEP → ported, ADAPT and INVER
 
 - [x] `test_posts_require_auth_and_a_pick`: **ported**. `tests/posts_picks.rs::posts_require_auth_and_a_pick`.
 - [x] `test_members_can_post_and_read_oldest_first`: **ported**. `tests/posts_picks.rs::members_post_and_read_oldest_first`.
-- [x] `test_old_thread_stays_when_pick_changes`: **ported**. `tests/posts_picks.rs::the_old_thread_stays_when_the_pick_changes`.
+- [x] `test_old_thread_stays_when_pick_changes`: **ported**. `tests/posts_picks.rs::the_old_thread_stays_when_the_pick_changes`, `tests/parity_ports.rs::old_pick_threads_survive_a_new_pick_and_an_applied_vote` (end to end: the picks set with CLUB's routes).
 - [x] `test_post_time_uses_club_timezone`: **changed**. `tests/posts_picks.rs::post_times_use_the_club_timezone`. `BOOKCLUB_TZ` is the club's zone; a club post's label is in its club's zone wherever it appears (POSTS deviation 4).
 - [x] `test_invalid_post_body`: **ported**. `tests/posts_picks.rs::invalid_post_bodies`.
 
@@ -467,10 +490,10 @@ Self-hosting is removed: one hosted service, configured from the environment onl
 
 ## test_stats_milestones_quotes.py (4)
 
-- [x] `test_stats_year_in_review`: **changed**. `tests/shelf_stats.rs::stats_year_in_review`. The club-wide `/api/stats` is split: personal numbers from `GET /api/stats`, the members, picks and club totals from `GET /api/clubs/{slug}/stats`.
+- [x] `test_stats_year_in_review`: **changed**. `tests/shelf_stats.rs::stats_year_in_review`, `tests/parity_ports.rs::stats_count_what_the_routes_wrote` (end to end: the current pick set with CLUB's route, the reading date with `finished_on`). The club-wide `/api/stats` is split: personal numbers from `GET /api/stats`, the members, picks and club totals from `GET /api/clubs/{slug}/stats`.
 - [x] `test_stats_with_empty_club`: **ported**. `tests/shelf_stats.rs::stats_with_empty_club` (both endpoints).
-- [x] `test_milestones_crud_and_threads`: **changed**. `tests/club_milestones.rs::milestones_crud_and_threads`. PATCH is partial (clearing `due_at` takes an explicit `null`), and the chapter fields are `unit` with `range_from`/`range_to`; the posts on a milestone are inserted with SQL (POSTS checks the milestone of a post in `tests/posts_picks.rs`).
-- [x] `test_quotes_crud_and_filters`: **changed**. `tests/shelf_quotes.rs::quotes_crud_and_filters`. Quotes name a catalog work: an unknown work is 404 `No such book.` and `?work=` takes the work id; another member sees a quote because they share a club.
+- [x] `test_milestones_crud_and_threads`: **changed**. `tests/club_milestones.rs::milestones_crud_and_threads`, `tests/parity_ports.rs::milestone_threads_run_through_the_post_routes` (end to end: the post on a milestone through POSTS' route, the 400 for a missing milestone, the detached post in the thread). PATCH is partial (clearing `due_at` takes an explicit `null`), and the chapter fields are `unit` with `range_from`/`range_to`; CLUB's port inserts the posts on a milestone with SQL, PAR's goes through the routes.
+- [x] `test_quotes_crud_and_filters`: **changed**. `tests/shelf_quotes.rs::quotes_crud_and_filters`, `tests/parity_ports.rs::a_quote_reaches_the_feeds` (end to end: `quote_added` in the feeds, for the author after the delete, not for a co-member). Quotes name a catalog work: an unknown work is 404 `No such book.` and `?work=` takes the work id; another member sees a quote because they share a club.
 
 ## test_vote.py (7)
 
@@ -479,7 +502,7 @@ Self-hosting is removed: one hosted service, configured from the environment onl
 - [x] `test_members_can_vote_and_change_vote`: **ported**. `tests/club_votes.rs::members_vote_and_change_their_vote`.
 - [x] `test_cannot_nominate_current_pick_or_duplicate`: **ported**. `tests/club_votes.rs::the_current_pick_and_duplicates_cannot_be_nominated`.
 - [x] `test_nomination_limit`: **ported**. `tests/club_votes.rs::a_vote_takes_six_nominations`.
-- [x] `test_apply_winner_uses_club_pick_flow`: **ported**. `tests/club_votes.rs::applying_the_winner_makes_it_the_pick` (the old pick's post is a row made with SQL).
+- [x] `test_apply_winner_uses_club_pick_flow`: **ported**. `tests/club_votes.rs::applying_the_winner_makes_it_the_pick` (the old pick's post is a row made with SQL), `tests/parity_ports.rs::old_pick_threads_survive_a_new_pick_and_an_applied_vote` (end to end: the old pick's note through POSTS' route).
 - [x] `test_apply_requires_an_open_nomination`: **ported**. `tests/club_votes.rs::apply_needs_an_open_nomination`.
 
 ## test_vote_deadline.py (5)
@@ -488,4 +511,4 @@ Self-hosting is removed: one hosted service, configured from the environment onl
 - [x] `test_deadline_auto_applies_the_leader`: **ported**. `tests/club_votes.rs::the_deadline_applies_the_leader`.
 - [x] `test_deadline_with_no_ballots_reopens_without_deadline`: **ported**. `tests/club_votes.rs::a_deadline_without_ballots_is_cleared`.
 - [x] `test_tie_goes_to_earliest_nomination`: **ported**. `tests/club_votes.rs::a_tie_goes_to_the_earliest_nomination`.
-- [x] `test_suggestions_rank_shared_tbr_and_subject_affinity`: **changed**. `tests/club_suggestions.rs::suggestions_rank_shared_wants_and_subject_affinity`. Subjects and the Open Library rating are work columns (`works.subjects`, `works.ol_rating`).
+- [x] `test_suggestions_rank_shared_tbr_and_subject_affinity`: **changed**. `tests/club_suggestions.rs::suggestions_rank_shared_wants_and_subject_affinity`, `tests/parity_ports.rs::suggestions_follow_the_shelf_and_pick_routes` (end to end: the shelf entries from SHELF's routes, the member joined by invite). Subjects and the Open Library rating are work columns (`works.subjects`, `works.ol_rating`).
