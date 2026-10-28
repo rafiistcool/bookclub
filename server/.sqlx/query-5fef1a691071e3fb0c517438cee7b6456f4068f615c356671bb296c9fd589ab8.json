@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT (last_error_at IS NULL\n                   OR last_error_at <= now() - make_interval(secs =>\n                          CASE WHEN run_started_at IS NOT NULL AND resumption_token IS NOT NULL\n                                    AND token_issued_at > now() - make_interval(secs => $4)\n                               THEN $3::float8 ELSE $2::float8 END))\n              AND (run_started_at IS NOT NULL OR last_success_at IS NULL\n                   OR last_success_at <= now() - make_interval(secs => $2)) AS \"due!\"\n           FROM harvest_state WHERE source = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "due!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Float8",
+        "Float8",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "5fef1a691071e3fb0c517438cee7b6456f4068f615c356671bb296c9fd589ab8"
+}

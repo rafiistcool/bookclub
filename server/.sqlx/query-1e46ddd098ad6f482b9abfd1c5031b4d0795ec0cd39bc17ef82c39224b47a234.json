@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE works SET (title, match_key) = (SELECT title, match_key FROM works WHERE id = $1)\n         WHERE id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1e46ddd098ad6f482b9abfd1c5031b4d0795ec0cd39bc17ef82c39224b47a234"
+}
