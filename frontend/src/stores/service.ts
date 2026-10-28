@@ -44,8 +44,13 @@ export const useService = defineStore("service", {
         this.loaded = true;
       }
       applyBrand(this.$state);
-      // Re-paint so the palette picks up the accent that just arrived.
-      useTheme().apply();
+      // Re-paint so the palette picks up the accent that just arrived, but
+      // only once the theme store holds the reader's palette. At boot main.ts
+      // calls init() after this, and init() paints with this accent. Until
+      // then the store holds its defaults: painting them would replace what
+      // public/theme-init.js painted and overwrite the stored choice.
+      const theme = useTheme();
+      if (theme.watching) theme.apply();
     },
     /**
      * Fetches the legal settings again, after the server said the terms
