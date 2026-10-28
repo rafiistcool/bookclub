@@ -5,7 +5,7 @@ use std::path::Path;
 
 use axum::body::Body;
 use axum::extract::{Request, State};
-use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
+use axum::http::header::{CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE};
 use axum::http::{HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use tower::ServiceExt;
@@ -17,15 +17,36 @@ use crate::error::{AppError, msg};
 const NO_STORE: &str = "no-store";
 const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 
+/// The Content-Security-Policy of every answer the SPA fallback gives (the shell, its assets and
+/// the other built files). The browser loads nothing from another origin, which the privacy
+/// text promises:
+/// - scripts only from our files: `index.html` has no inline script (the theme boot script is
+///   `/theme-init.js`), Vite emits none, and vue-i18n 11 interprets messages without `eval`.
+/// - inline styles stay allowed: bound `style` attributes and the drag-and-drop library set
+///   them, and a style cannot run code.
+/// - pictures from `/media`, plus `data:` and `blob:` URLs, so a local preview of a picture
+///   before its upload needs no change here.
+/// - the manifest from our file or the `blob:` URL `brand.ts` builds from `/api/config`.
+/// - no plugins, no `<base>` elsewhere, forms only to us, and no framing at all (the API's
+///   `frame-ancestors 'none'` from `lib.rs`, which keeps this header when it is present).
+pub const SHELL_CSP: &str = "default-src 'self'; script-src 'self'; \
+    style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; \
+    connect-src 'self'; manifest-src 'self' blob:; object-src 'none'; base-uri 'self'; \
+    form-action 'self'; frame-ancestors 'none'";
+
 /// Every request no route matched. `/api` and `/media` paths get a JSON 404; with `STATIC_DIR`
-/// set, GET and HEAD get a file or the SPA shell, other methods a JSON 405.
+/// set, GET and HEAD get a file or the SPA shell with [`SHELL_CSP`], other methods a JSON 405.
 pub async fn fallback(State(state): State<AppState>, request: Request) -> Response {
     let path = request.uri().path();
     let is_api = path == "/api" || path.starts_with("/api/") || path.starts_with("/media/");
     match &state.config.static_dir {
         Some(dir) if !is_api => {
             if matches!(*request.method(), Method::GET | Method::HEAD) {
-                serve(dir, request).await
+                let mut response = serve(dir, request).await;
+                response
+                    .headers_mut()
+                    .insert(CONTENT_SECURITY_POLICY, HeaderValue::from_static(SHELL_CSP));
+                response
             } else {
                 method_not_allowed().await.into_response()
             }

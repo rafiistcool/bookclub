@@ -1,0 +1,103 @@
+# Bookclub behind Caddy (#51, #55): the site block for the Caddy that already serves
+# git.tillhome.de. Copy it into that Caddyfile (or `import` this file), set the variables in
+# Caddy's environment, and run `caddy reload`.
+#
+#   BOOKCLUB_HOST      the public host name, e.g. bookclub.example.de
+#   BOOKCLUB_UPSTREAM  the app VM's address and published port, e.g. 10.0.20.5:8080
+#
+# The app needs TRUSTED_PROXIES=<this Caddy's address as the app VM sees it>/32 (Q7). Otherwise
+# every user lands in Caddy's one rate-limit bucket, and one client can lock everyone out of
+# sign-up and reset.
+#
+# The app sets its own security headers: Content-Security-Policy, X-Frame-Options,
+# X-Content-Type-Options, Referrer-Policy and Cache-Control. They are not repeated here.
+#
+# Check the file:
+#   docker run --rm -v "$PWD/deploy/hosted:/etc/caddy:ro" -e BOOKCLUB_HOST=bookclub.test \
+#     caddy:2.10 caddy validate --config /etc/caddy/Caddyfile.example --adapter caddyfile
+# Check the limits through it: deploy/hosted/verify-limits.sh https://$BOOKCLUB_HOST
+
+{$BOOKCLUB_HOST} {
+	# Local tests only: a certificate from Caddy's own CA instead of Let's Encrypt.
+	# tls internal
+
+	# The app answers 413 itself, before reading the body, when Content-Length is above
+	# 52,432,896 bytes (a 50 MiB picture plus the multipart overhead). This limit is the
+	# backstop for bodies Caddy has to read, such as chunked ones. 51MiB is 53,477,376 bytes;
+	# Caddy's "50MB" (50,000,000 bytes) would cut off uploads the app accepts.
+	request_body {
+		max_size 51MiB
+	}
+
+	header {
+		# A year. No includeSubDomains until the final domain: other hosts of the domain may
+		# still need plain HTTP.
+		Strict-Transport-Security "max-age=31536000"
+		# The app uses no camera, microphone, location, payment or motion sensors. Clipboard
+		# and Web Share keep their defaults: the invite pages use them.
+		Permissions-Policy "accelerometer=(), browsing-topics=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+		-Server
+	}
+
+	# Only the hashed JS and CSS bundle is compressed, to about a third. API answers mix
+	# personal data with text a client sent, which compression side channels (BREACH) need,
+	# and pictures are compressed already.
+	@assets path /assets/*
+	encode @assets zstd gzip
+
+	reverse_proxy {$BOOKCLUB_UPSTREAM:127.0.0.1:8080} {
+		# Caddy sets X-Forwarded-For to the client's address and drops what an untrusted client
+		# sent. The app reads it only from TRUSTED_PROXIES.
+		health_uri /api/health
+		health_interval 15s
+		health_timeout 5s
+	}
+
+	# Access log with the client addresses, which the privacy text states, kept at most 7 days.
+	# Caddy 2.10 rolls a file only by size, and roll_keep_for counts from the roll, so a quiet
+	# site would keep lines for weeks. Caddy therefore never rolls this file. logrotate on the
+	# host rolls it every day, empty or not, and keeps 5 old files, so no line is older than
+	# 6 days plus the timer's delay. /etc/logrotate.d/bookclub-access, on the host that holds
+	# the file (a bind mount if Caddy runs in a container):
+	#
+	#   /var/log/caddy/bookclub-access.log {
+	#   	daily
+	#   	rotate 5
+	#   	maxage 7
+	#   	missingok
+	#   	copytruncate
+	#   }
+	#
+	# copytruncate, because Caddy keeps the file open. It writes in append mode, so it goes on
+	# at the start of the emptied file. Lines written during the copy can be lost.
+	#
+	# Caddy leaves out Cookie and Authorization. The URI keeps only the path, as in the app's own
+	# log: the query (search terms, `?code=`, `/login?next=/join/<code>`) becomes `?{redacted}`,
+	# and invite codes in the path become `/join/{redacted}` and `/api/invites/{redacted}/…`.
+	# The Referer, which repeats such URLs, is dropped.
+	log {
+		output file /var/log/caddy/bookclub-access.log {
+			roll_disabled
+		}
+		format filter {
+			request>uri regexp "^(/(?:api/invites|join)/)[^/?]+|([?]).*$" "${1}${2}{redacted}"
+			request>headers>Referer delete
+		}
+	}
+
+	# Q16: rate limits at the proxy. The recommendation (A) is none: the app limits login,
+	# sign-up and reset per client address, and search per account. Option B needs a Caddy
+	# built with github.com/mholt/caddy-ratelimit (xcaddy) and, in the global options,
+	# `order rate_limit before basicauth`. Then, for example:
+	# rate_limit {
+	# 	zone bookclub_auth {
+	# 		match {
+	# 			method POST
+	# 			path /api/auth/*
+	# 		}
+	# 		key {remote_host}
+	# 		events 60
+	# 		window 1m
+	# 	}
+	# }
+}

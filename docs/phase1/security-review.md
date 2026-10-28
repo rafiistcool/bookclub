@@ -82,6 +82,12 @@ The current-password check used the same `login_failures` key `u:<id>` that anon
 
 **Not changed (product decision):** the login lockout itself. The finding notes that the attacker also locks the owner out of logging in on a new device. That is the per-account login limit of C §10.1, a documented trade-off carried over from the legacy app (auth spec §2.3, and Wave 1 security #2). Counting failures per account and client address, under a higher ceiling per account, would keep one remote address from locking the owner out. It would also give a distributed guesser more tries per account. That trade-off is Rafael's to decide. A password reset already clears both login keys.
 
+**Decision record (Q17 in `docs/phase2/work-plan.md` §4, #55):** open, waiting for Rafael.
+- **A, recommended for launch:** keep counting per account, as today: 10 failures per 10 minutes, with the username and the verified address in separate buckets (`u:<id>`, `u:<id>:email`). Strangers cannot see usernames, and a password reset clears both buckets.
+- **B:** count per account and client address (`ip_key`, so an IPv6 /64), under a ceiling per account of about 100 failures an hour. One remote address could then no longer lock the owner out, but a guesser with many addresses would get up to the ceiling instead of 10 tries per 10 minutes.
+- Under A the code stays as it is. Under B, ADM2 changes the login limits (`server/src/auth/login.rs`, `server/src/ratelimit.rs`, C §10.1) and their tests in `server/tests/auth_login.rs`.
+- When Rafael answers, record the option and the date here.
+
 ### 4. [medium] Avatar uploads monopolised the picture pipeline
 
 `PUT /api/auth/me/avatar` had no rate limit, and every picture shares one pipeline of two permits: uploads, Open Library cover fetches, prefetch and spine colours. Small 25 Mpx PNGs cost about a second of CPU each. A body was buffered (up to 50 MiB) before the semaphore. The permit was also borrowed in the async function, so a client that disconnected freed it while its decode kept running.
@@ -177,7 +183,7 @@ C §5.3, §13; E §3.
 **Test:** `platform.rs::every_response_has_referrer_policy_and_a_request_id` asserts the headers on every kind of answer.
 
 **Not taken:**
-- A baseline CSP for the SPA shell (script sources and the like). It needs a hash of the inline theme script and care with the Vite build, and framing was the defect.
+- A baseline CSP for the SPA shell (script sources and the like). It needs a hash of the inline theme script and care with the Vite build, and framing was the defect. Phase 2 adds it (#55): every answer of the SPA fallback carries `spa::SHELL_CSP`, the theme script moved to `frontend/public/theme-init.js`, and this layer became `if_not_present`, so it no longer replaces the shell's policy. API answers keep `frame-ancestors 'none'`. Tests: `platform.rs::the_spa_carries_the_shell_policy`, `frontend/src/thirdParty.test.ts`.
 - HSTS. It belongs to the reverse proxy that terminates TLS (#51), as C §3 records.
 
 ### 11. [low] API answers carried no `Cache-Control`
