@@ -4,7 +4,7 @@ import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../../api/client";
 import type { BookDetailOut, EditionOut, EditRequestOut } from "../../api/generated";
-import { mergeTarget, proposedFields, requestKindLabel } from "../../admin";
+import { formatAge, hoursBetween, isOverdue, mergeTarget, proposedFields, requestKindLabel } from "../../admin";
 import { bookPath } from "../../constants";
 import { formatClubDate } from "../../i18n/dates";
 import { useLocale } from "../../stores/locale";
@@ -12,6 +12,7 @@ import { useSession } from "../../stores/session";
 import { useToast } from "../../stores/toast";
 import BookCover from "../BookCover.vue";
 import EditRequestSheet from "../EditRequestSheet.vue";
+import { useQueue } from "./useQueue";
 
 /**
  * The catalog queue: corrections of books and editions, cover photos that
@@ -20,17 +21,24 @@ import EditRequestSheet from "../EditRequestSheet.vue";
  * (an admin's values, which no catalog source overwrites); rejecting closes it
  * with an optional note. "Edit as admin" opens the request's edition, or else
  * its book, in the admin's own form; the request stays open for a decision.
+ * Each open request shows how long it has waited, flagged once that passes
+ * the target; "Decided" lists the history, newest decision first.
  */
-const emit = defineEmits<{ count: [n: number] }>();
+const props = defineProps<{
+  /** Hours after which an open request is overdue (`AdminSummary.target_hours`). */
+  targetHours: number;
+}>();
+const emit = defineEmits<{ changed: [] }>();
 
 const { t } = useI18n();
 const locale = useLocale();
 const session = useSession();
 const toast = useToast();
 
-const items = ref<EditRequestOut[]>([]);
-const loaded = ref(false);
-const error = ref("");
+const queue = useQueue<EditRequestOut>((view, page) => api.adminEditRequestPage(view, page));
+const { view, items, loaded, error, hasMore, loadingMore } = queue;
+/** The time ages count to, set per load so a list does not shift while it is read. */
+const now = ref(Date.now());
 const busyId = ref<number | null>(null);
 const rejecting = ref<number | null>(null);
 const rejectNote = ref("");
@@ -66,21 +74,27 @@ async function loadExtraBooks() {
 }
 
 async function load() {
-  try {
-    items.value = (await api.adminEditRequests()).items;
-    error.value = "";
-    emit("count", items.value.length);
-    void loadExtraBooks();
-  } catch (err) {
-    error.value = failed(err, t("admin.loadFailed"));
-  } finally {
-    loaded.value = true;
-  }
+  now.value = Date.now();
+  await queue.load();
+  void loadExtraBooks();
 }
 
+async function more() {
+  await queue.more();
+  void loadExtraBooks();
+}
+
+async function showView(next: "open" | "resolved") {
+  rejecting.value = null;
+  now.value = Date.now();
+  await queue.show(next);
+  void loadExtraBooks();
+}
+
+/** A decision closed the request: it leaves the open list, and the counts changed. */
 function drop(id: number) {
-  items.value = items.value.filter((row) => row.id !== id);
-  emit("count", items.value.length);
+  queue.drop((row) => row.id === id);
+  emit("changed");
 }
 
 /** Someone decided it meanwhile (409): it leaves the open queue either way. */
@@ -151,6 +165,29 @@ function when(iso: string): string {
   return formatClubDate(iso, session.user?.timezone || "UTC", locale.locale);
 }
 
+function waited(request: EditRequestOut): string {
+  return formatAge(hoursBetween(request.created_at, now.value));
+}
+
+function overdue(request: EditRequestOut): boolean {
+  return isOverdue(request.created_at, props.targetHours, now.value);
+}
+
+/** The proposal of a decided request: its values without "now" (an approval made them so). */
+function fieldsOf(request: EditRequestOut) {
+  return proposedFields(view.value === "open" ? request : { ...request, current: {} }, locale.locale);
+}
+
+/** "Approved by root · …" or "Rejected by root · …", and how long it took. */
+function decision(request: EditRequestOut): string {
+  const name = request.decided_by?.username ?? t("admin.someone");
+  const at = request.decided_at ? when(request.decided_at) : "";
+  const line =
+    request.status === "approved" ? t("admin.approvedBy", { name, when: at }) : t("admin.rejectedBy", { name, when: at });
+  if (!request.decided_at) return line;
+  return `${line} · ${t("admin.decidedAfter", { age: formatAge(hoursBetween(request.created_at, request.decided_at)) })}`;
+}
+
 onMounted(load);
 </script>
 
@@ -158,22 +195,39 @@ onMounted(load);
   <section class="admin-queue" aria-labelledby="admin-requests">
     <div class="section-head">
       <h2 id="admin-requests">{{ t("admin.requests") }}</h2>
-      <span v-if="items.length" class="fine subtle nums">{{ items.length }}</span>
     </div>
     <p class="fine muted">{{ t("admin.requestsBlurb") }}</p>
+
+    <div class="segmented queue-views" role="group" :aria-label="t('admin.views')">
+      <button type="button" :aria-pressed="view === 'open'" @click="showView('open')">{{ t("admin.openView") }}</button>
+      <button type="button" :aria-pressed="view === 'resolved'" @click="showView('resolved')">{{ t("admin.history") }}</button>
+    </div>
+
     <p v-if="error" class="error">
       {{ error }}
       <button class="text-btn" type="button" @click="load">{{ t("common.tryAgain") }}</button>
     </p>
     <div v-else-if="!loaded" class="skeleton admin-skeleton" aria-hidden="true" />
-    <p v-else-if="items.length === 0" class="fine subtle">{{ t("admin.noRequests") }}</p>
+    <p v-else-if="items.length === 0" class="fine subtle">
+      {{ view === "open" ? t("admin.noRequests") : t("admin.noHistory") }}
+    </p>
     <ol v-else class="admin-list">
-      <li v-for="request in items" :key="request.id" class="panel admin-item request-item">
+      <li
+        v-for="request in items"
+        :key="request.id"
+        class="panel admin-item request-item"
+        :class="{ overdue: view === 'open' && overdue(request) }"
+      >
         <p class="admin-item-head fine">
           <span class="badge">{{ requestKindLabel(request.kind) }}</span>
+          <span v-if="view === 'resolved'" class="badge" :class="`status-${request.status}`">{{ t(`admin.status.${request.status}`) }}</span>
           <span class="subtle">
             {{ t("admin.byOn", { name: request.created_by?.username ?? t("admin.someone"), when: when(request.created_at) }) }}
           </span>
+          <template v-if="view === 'open'">
+            <span class="age subtle">{{ t("admin.waiting", { age: waited(request) }) }}</span>
+            <span v-if="overdue(request)" class="badge overdue-badge">{{ t("admin.overdue") }}</span>
+          </template>
         </p>
 
         <div class="admin-book">
@@ -199,8 +253,8 @@ onMounted(load);
           </figure>
         </div>
 
-        <dl v-if="proposedFields(request, locale.locale).length" class="proposed-fields">
-          <template v-for="field in proposedFields(request, locale.locale)" :key="field.key">
+        <dl v-if="fieldsOf(request).length" class="proposed-fields">
+          <template v-for="field in fieldsOf(request)" :key="field.key">
             <dt class="fine subtle">{{ field.label }}</dt>
             <dd>
               <span v-if="field.before !== null" class="field-before" :class="{ 'was-empty': field.wasEmpty, same: field.same }">
@@ -232,7 +286,11 @@ onMounted(load);
 
         <blockquote v-if="request.note" class="fine request-note">{{ request.note }}</blockquote>
 
-        <form v-if="rejecting === request.id" class="stack" @submit.prevent="reject(request)">
+        <template v-if="view === 'resolved'">
+          <p class="fine subtle decision">{{ decision(request) }}</p>
+          <blockquote v-if="request.decision_note" class="fine request-note">{{ request.decision_note }}</blockquote>
+        </template>
+        <form v-else-if="rejecting === request.id" class="stack" @submit.prevent="reject(request)">
           <label class="field">
             <span>{{ t("admin.rejectNote") }}</span>
             <textarea v-model="rejectNote" v-autosize name="reject-note" rows="2" maxlength="2000" :placeholder="t('common.optional')" />
@@ -261,6 +319,9 @@ onMounted(load);
         </div>
       </li>
     </ol>
+    <button v-if="loaded && hasMore" class="btn btn-ghost btn-sm load-more" type="button" :disabled="loadingMore" @click="more">
+      {{ t("admin.loadMore") }}
+    </button>
     <EditRequestSheet
       v-if="editing"
       admin
@@ -273,8 +334,35 @@ onMounted(load);
 </template>
 
 <style scoped>
+.queue-views {
+  max-width: 22rem;
+  margin: var(--space-3) 0;
+}
+
 .admin-skeleton {
   height: 160px;
+}
+
+.admin-item.overdue {
+  border-color: var(--danger-border);
+}
+
+.overdue-badge {
+  color: var(--danger);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--danger-border);
+}
+
+.badge.status-rejected {
+  color: var(--danger);
+}
+
+.decision {
+  margin: 0;
+}
+
+.load-more {
+  margin-top: var(--space-3);
 }
 
 .admin-list {

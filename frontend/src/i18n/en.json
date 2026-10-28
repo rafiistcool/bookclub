@@ -1258,6 +1258,55 @@
       "saved": "Saved. Everyone sees the new values now.",
       "failed": "Could not save the changes",
       "loadFailed": "Could not load the book"
+    },
+    "views": "Open or decided",
+    "openView": "Open",
+    "history": "Decided",
+    "noHistory": "Nothing decided yet.",
+    "loadMore": "Show more",
+    "waiting": "waiting {age}",
+    "overdue": "Overdue",
+    "overdueCount": "{n} overdue",
+    "waitingCount": "{n} item waiting | {n} items waiting",
+    "decidedAfter": "after {age}",
+    "age": {
+      "underAnHour": "less than an hour",
+      "hours": "an hour | {n} hours",
+      "days": "a day | {n} days"
+    },
+    "status": {
+      "open": "Open",
+      "removed": "Taken down",
+      "dismissed": "Kept",
+      "approved": "Approved",
+      "rejected": "Rejected"
+    },
+    "takenDownBy": "Taken down by {name} · {when}",
+    "keptBy": "Kept by {name} · {when}",
+    "approvedBy": "Approved by {name} · {when}",
+    "rejectedBy": "Rejected by {name} · {when}",
+    "closedOnArrival": "Closed on arrival: the picture was already taken down",
+    "stats": {
+      "title": "Reports decided in the last {days} days",
+      "resolved": "Decided in {days} days",
+      "median": "Median hours to a decision",
+      "max": "Longest, in hours",
+      "overTarget": "Took longer than {hours} hours"
+    },
+    "takeDownForm": {
+      "toggle": "Take down a picture by URL",
+      "blurb": "For a notice that arrived by email: paste the address of the picture, or of the book page that shows it. The takedown is recorded as a report that arrived when the notice did.",
+      "url": "Address of the picture or book page",
+      "urlPlaceholder": "…/media/… or …/book/…",
+      "receivedAt": "When the notice arrived",
+      "reason": "Reason",
+      "details": "What the notice says (sender, claim)",
+      "check": "Show the picture",
+      "notAPicture": "That is not the address of a picture or a book page.",
+      "noCover": "That book shows no picture.",
+      "future": "The notice cannot have arrived in the future.",
+      "done": "Picture taken down and the notice recorded",
+      "failed": "Could not take the picture down"
     }
   },
   "notFound": {

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id FROM reports WHERE status = 'open' ORDER BY created_at, id",
+  "query": "SELECT id FROM reports WHERE status <> 'open'\n             ORDER BY resolved_at DESC NULLS LAST, id DESC\n             LIMIT $1 OFFSET $2",
   "describe": {
     "columns": [
       {
@@ -16,11 +16,14 @@
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
     },
     "nullable": [
       false
     ]
   },
-  "hash": "d1c5f64707ff2e825e22b53e8141e86596da3d82f32f16355240268dbca8e630"
+  "hash": "4f9d960900a78eb0fbf454c9c4466f839e5fe826d47460ce6357189110c0532f"
 }

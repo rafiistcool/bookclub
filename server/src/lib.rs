@@ -136,7 +136,7 @@ fn api_router() -> OpenApiRouter<AppState> {
 /// Every `/api/admin/*` route.
 fn admin_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
-        .merge(admin::invites::admin_routes())
+        .merge(admin::admin_routes())
         .merge(catalog::admin_routes())
         .merge(media::admin_routes())
 }
@@ -151,7 +151,7 @@ pub fn app(state: AppState) -> Router {
     let (api, _) = api_router().split_for_parts();
     let (admin, _) = admin_router().split_for_parts();
     // One guard for every admin route: a handler that forgets its InstanceAdmin argument is
-    // still guarded. (`admin::invites` always has routes; axum panics on a route layer over an
+    // still guarded. (`admin::admin_routes` always has routes; axum panics on a route layer over an
     // empty router.)
     let admin = admin.route_layer(middleware::from_extractor_with_state::<
         InstanceAdmin,

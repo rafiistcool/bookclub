@@ -20,11 +20,12 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 
 /// Every admin operation. A new one is added here, with its seeded ids and a valid body below.
-const ADMIN_OPERATIONS: [&str; 11] = [
+const ADMIN_OPERATIONS: [&str; 12] = [
     "DELETE /api/admin/media/{public_id}",
     "GET /api/admin/edit-requests",
     "GET /api/admin/invites",
     "GET /api/admin/reports",
+    "GET /api/admin/summary",
     "PATCH /api/admin/editions/{edition_id}",
     "PATCH /api/admin/works/{work_id}",
     "POST /api/admin/edit-requests/{request_id}/approve",
@@ -132,6 +133,15 @@ async fn seed(app: &TestApp, reader: &TestClient, club: &TestClub) -> Seeded {
         ("edition_id", edition.id.to_string()),
     ]);
     let bodies = HashMap::from([
+        // The takedown with the notice it answers, which also writes a report row.
+        (
+            "DELETE /api/admin/media/{public_id}",
+            json!({
+                "details": "A notice by email.",
+                "received_at": "2026-01-05T09:30:00Z",
+                "reason": "copyright"
+            }),
+        ),
         (
             "POST /api/admin/edit-requests/{request_id}/reject",
             json!({"note": "No."}),

@@ -1258,6 +1258,55 @@
       "saved": "Gespeichert. Alle sehen jetzt die neuen Angaben.",
       "failed": "Die Änderungen konnten nicht gespeichert werden",
       "loadFailed": "Das Buch konnte nicht geladen werden"
+    },
+    "views": "Offen oder entschieden",
+    "openView": "Offen",
+    "history": "Entschieden",
+    "noHistory": "Noch nichts entschieden.",
+    "loadMore": "Mehr zeigen",
+    "waiting": "wartet seit {age}",
+    "overdue": "Überfällig",
+    "overdueCount": "{n} überfällig",
+    "waitingCount": "{n} Eintrag wartet | {n} Einträge warten",
+    "decidedAfter": "nach {age}",
+    "age": {
+      "underAnHour": "weniger als einer Stunde",
+      "hours": "einer Stunde | {n} Stunden",
+      "days": "einem Tag | {n} Tagen"
+    },
+    "status": {
+      "open": "Offen",
+      "removed": "Entfernt",
+      "dismissed": "Behalten",
+      "approved": "Freigegeben",
+      "rejected": "Abgelehnt"
+    },
+    "takenDownBy": "Entfernt von {name} · {when}",
+    "keptBy": "Behalten von {name} · {when}",
+    "approvedBy": "Freigegeben von {name} · {when}",
+    "rejectedBy": "Abgelehnt von {name} · {when}",
+    "closedOnArrival": "Beim Eingang geschlossen: Das Bild war schon entfernt",
+    "stats": {
+      "title": "In den letzten {days} Tagen entschiedene Meldungen",
+      "resolved": "Entschieden in {days} Tagen",
+      "median": "Stunden bis zur Entscheidung (Median)",
+      "max": "Am längsten, in Stunden",
+      "overTarget": "Länger als {hours} Stunden gedauert"
+    },
+    "takeDownForm": {
+      "toggle": "Bild per Adresse entfernen",
+      "blurb": "Für eine Meldung, die per E-Mail kam: Füge die Adresse des Bildes ein oder die der Buchseite, die es zeigt. Die Entfernung wird als Meldung festgehalten, die zur Zeit der E-Mail eingegangen ist.",
+      "url": "Adresse des Bildes oder der Buchseite",
+      "urlPlaceholder": "…/media/… oder …/book/…",
+      "receivedAt": "Wann die Meldung kam",
+      "reason": "Grund",
+      "details": "Was in der Meldung steht (Absender, Anliegen)",
+      "check": "Bild zeigen",
+      "notAPicture": "Das ist keine Adresse eines Bildes oder einer Buchseite.",
+      "noCover": "Dieses Buch zeigt kein Bild.",
+      "future": "Die Meldung kann nicht in der Zukunft eingegangen sein.",
+      "done": "Bild entfernt und die Meldung festgehalten",
+      "failed": "Das Bild konnte nicht entfernt werden"
     }
   },
   "notFound": {

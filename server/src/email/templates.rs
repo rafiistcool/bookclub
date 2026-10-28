@@ -1,9 +1,10 @@
 //! Plain-text email templates in English and German, by `users.locale`
 //! (docs/phase1/conventions.md §9, §5.5): the verification link, the reset link, the notice to
-//! the old address when the address changes, and the "someone tried to use your address" notice.
+//! the old address when the address changes, the "someone tried to use your address" notice,
+//! and the instance admins' notices of new reports and catalog requests (#54).
 //!
 //! Token links carry the token in the URL fragment; the notices contain no link that changes
-//! anything, only the login and forgot-password pages.
+//! anything, only the login and forgot-password pages and the admin page.
 
 use super::Email;
 
@@ -205,6 +206,144 @@ pub fn address_in_use(site: Site, to: Recipient, attempt: Attempt) -> Email {
     mail(to, subject, text)
 }
 
+/// What waits in an admin queue, for [`admin_reports`] and [`admin_requests_digest`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueueNews {
+    /// Open items that arrived since the last mail of this queue (at least 1).
+    pub new: i64,
+    /// Open items in all.
+    pub open: i64,
+    /// Whole hours the oldest open item has waited.
+    pub oldest_hours: i64,
+}
+
+/// To an instance admin: new reports of pictures wait (at most one an hour). Counts only; the
+/// link opens the reports tab.
+pub fn admin_reports(site: Site, to: Recipient, news: QueueNews) -> Email {
+    let link = format!("{}/admin?tab=reports", site.public_url);
+    let (subject, text) = if german(to) {
+        let new = plural_de(news.new, "neue Meldung", "neue Meldungen");
+        (
+            format!("{new} bei {}", site.service),
+            format!(
+                "Hallo {user},\n\n\
+                 bei {service} {is} {new} eingegangen. Offen {are} insgesamt {open}; die \
+                 älteste wartet seit {age}.\n\n\
+                 Hier entscheidest du: {link}\n\n\
+                 Du bekommst diese Mail als Admin von {service}, höchstens einmal pro Stunde, \
+                 solange neue Meldungen eingehen.\n\n\
+                 – {service}\n",
+                user = to.username,
+                service = site.service,
+                is = if news.new == 1 { "ist" } else { "sind" },
+                are = if news.open == 1 { "ist" } else { "sind" },
+                open = plural_de(news.open, "Meldung", "Meldungen"),
+                age = age_de(news.oldest_hours),
+            ),
+        )
+    } else {
+        let new = plural_en(news.new, "new report", "new reports");
+        (
+            format!("{new} on {}", site.service),
+            format!(
+                "Hi {user},\n\n\
+                 there {is} {new} on {service}. {open} open in all; the oldest has waited \
+                 {age}.\n\n\
+                 Decide here: {link}\n\n\
+                 You get this mail as an admin of {service}, at most once an hour while new \
+                 reports arrive.\n\n\
+                 – {service}\n",
+                user = to.username,
+                service = site.service,
+                is = if news.new == 1 { "is" } else { "are" },
+                open = plural_en(news.open, "report is", "reports are"),
+                age = age_en(news.oldest_hours),
+            ),
+        )
+    };
+    mail(to, subject, text)
+}
+
+/// To an instance admin: the daily digest of new catalog requests (corrections, cover photos,
+/// merges). Counts only; the link opens the requests tab.
+pub fn admin_requests_digest(site: Site, to: Recipient, news: QueueNews) -> Email {
+    let link = format!("{}/admin?tab=requests", site.public_url);
+    let (subject, text) = if german(to) {
+        let new = plural_de(news.new, "neue Katalog-Anfrage", "neue Katalog-Anfragen");
+        (
+            format!("{new} bei {}", site.service),
+            format!(
+                "Hallo {user},\n\n\
+                 seit der letzten Übersicht {is} bei {service} {new} eingegangen: Korrekturen, \
+                 Cover-Fotos oder doppelte Bücher. Offen {are} insgesamt {open}; die älteste \
+                 wartet seit {age}.\n\n\
+                 Hier entscheidest du: {link}\n\n\
+                 Du bekommst diese Übersicht als Admin von {service}, höchstens einmal am Tag, \
+                 wenn neue Anfragen eingegangen sind.\n\n\
+                 – {service}\n",
+                user = to.username,
+                service = site.service,
+                is = if news.new == 1 { "ist" } else { "sind" },
+                are = if news.open == 1 { "ist" } else { "sind" },
+                open = plural_de(news.open, "Anfrage", "Anfragen"),
+                age = age_de(news.oldest_hours),
+            ),
+        )
+    } else {
+        let new = plural_en(news.new, "new catalog request", "new catalog requests");
+        (
+            format!("{new} on {}", site.service),
+            format!(
+                "Hi {user},\n\n\
+                 there {is} {new} on {service} since the last digest: corrections, cover \
+                 photos or books entered twice. {open} open in all; the oldest has waited \
+                 {age}.\n\n\
+                 Decide here: {link}\n\n\
+                 You get this digest as an admin of {service}, at most once a day when new \
+                 requests arrived.\n\n\
+                 – {service}\n",
+                user = to.username,
+                service = site.service,
+                is = if news.new == 1 { "is" } else { "are" },
+                open = plural_en(news.open, "request is", "requests are"),
+                age = age_en(news.oldest_hours),
+            ),
+        )
+    };
+    mail(to, subject, text)
+}
+
+/// "1 new report", "3 new reports".
+fn plural_en(n: i64, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
+/// "1 neue Meldung", "3 neue Meldungen".
+fn plural_de(n: i64, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
+/// How long the oldest item has waited: "less than an hour", "71 hours", "3 days" (hours below
+/// the 72-hour target, as the admin page shows them).
+fn age_en(hours: i64) -> String {
+    match hours {
+        ..=0 => "less than an hour".to_owned(),
+        1 => "1 hour".to_owned(),
+        2..72 => format!("{hours} hours"),
+        _ => format!("{} days", hours / 24),
+    }
+}
+
+/// The same after "seit": "weniger als einer Stunde", "5 Stunden", "3 Tagen".
+fn age_de(hours: i64) -> String {
+    match hours {
+        ..=0 => "weniger als einer Stunde".to_owned(),
+        1 => "einer Stunde".to_owned(),
+        2..72 => format!("{hours} Stunden"),
+        _ => format!("{} Tagen", hours / 24),
+    }
+}
+
 fn german(to: Recipient) -> bool {
     to.locale == "de"
 }
@@ -295,5 +434,91 @@ mod tests {
         assert!(sign_up.text.contains("sign up for a new Bookclub account"));
         let change = address_in_use(SITE, to("en"), Attempt::EmailChange);
         assert!(change.text.contains("add it to another Bookclub account"));
+    }
+
+    const NEWS: QueueNews = QueueNews {
+        new: 2,
+        open: 3,
+        oldest_hours: 50,
+    };
+
+    #[test]
+    fn admin_notices_link_to_their_tab_in_both_languages() {
+        for locale in ["en", "de"] {
+            let reports = admin_reports(SITE, to(locale), NEWS);
+            assert_eq!(reports.to, "ada@example.test");
+            assert!(
+                reports
+                    .text
+                    .contains("https://books.example.com/admin?tab=reports"),
+                "{locale}"
+            );
+            assert!(reports.subject.contains("Bookclub"), "{locale}");
+            assert!(reports.text.contains("ada"), "{locale}");
+            assert!(!reports.text.contains("#token="));
+            let digest = admin_requests_digest(SITE, to(locale), NEWS);
+            assert!(
+                digest
+                    .text
+                    .contains("https://books.example.com/admin?tab=requests"),
+                "{locale}"
+            );
+        }
+    }
+
+    #[test]
+    fn admin_notices_count_in_the_recipients_language() {
+        let en = admin_reports(SITE, to("en"), NEWS);
+        assert_eq!(en.subject, "2 new reports on Bookclub");
+        assert!(en.text.contains("there are 2 new reports on Bookclub."));
+        assert!(
+            en.text
+                .contains("3 reports are open in all; the oldest has waited 50 hours.")
+        );
+        let de = admin_reports(SITE, to("de"), NEWS);
+        assert_eq!(de.subject, "2 neue Meldungen bei Bookclub");
+        assert!(de.text.starts_with("Hallo ada"));
+        assert!(
+            de.text
+                .contains("bei Bookclub sind 2 neue Meldungen eingegangen.")
+        );
+        assert!(
+            de.text
+                .contains("Offen sind insgesamt 3 Meldungen; die älteste wartet seit 50 Stunden.")
+        );
+        let one = QueueNews {
+            new: 1,
+            open: 1,
+            oldest_hours: 0,
+        };
+        let en = admin_requests_digest(SITE, to("en"), one);
+        assert_eq!(en.subject, "1 new catalog request on Bookclub");
+        assert!(
+            en.text
+                .contains("there is 1 new catalog request on Bookclub since")
+        );
+        assert!(
+            en.text
+                .contains("1 request is open in all; the oldest has waited less than an hour.")
+        );
+        let de = admin_requests_digest(SITE, to("de"), one);
+        assert_eq!(de.subject, "1 neue Katalog-Anfrage bei Bookclub");
+        assert!(
+            de.text
+                .contains("ist bei Bookclub 1 neue Katalog-Anfrage eingegangen")
+        );
+        assert!(de.text.contains(
+            "Offen ist insgesamt 1 Anfrage; die älteste wartet seit weniger als einer Stunde."
+        ));
+    }
+
+    #[test]
+    fn ages_read_in_hours_then_days() {
+        assert_eq!(age_en(1), "1 hour");
+        assert_eq!(age_en(71), "71 hours");
+        assert_eq!(age_en(72), "3 days");
+        assert_eq!(age_de(1), "einer Stunde");
+        assert_eq!(age_de(5), "5 Stunden");
+        assert_eq!(age_de(80), "3 Tagen");
     }
 }

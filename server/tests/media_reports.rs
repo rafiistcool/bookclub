@@ -144,7 +144,7 @@ async fn reporting_creates_a_queue_item_and_an_admin_removes_the_cover(db: PgPoo
     assert!(app.media.keys().is_empty(), "{:?}", app.media.keys());
     assert_eq!(
         root.get("/api/admin/reports").await.json(),
-        json!({"items": []})
+        json!({"items": [], "page": 1, "has_more": false})
     );
     root.post(
         &format!("/api/admin/reports/{report_id}/resolve"),
@@ -349,6 +349,249 @@ async fn a_takedown_resolves_every_open_report_of_the_picture(db: PgPool) {
         .assert_detail(404, "Not found");
 }
 
+/// The reports row a direct takedown wrote for its notice, as `(reason, details, created_by,
+/// created_at, status, resolved_by, resolved_at, media_id, work_id)`, with the times as epoch
+/// seconds.
+type NoticeRow = (
+    String,
+    String,
+    Option<i64>,
+    i64,
+    String,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+);
+
+async fn notice_rows(app: &TestApp) -> Vec<NoticeRow> {
+    sqlx::query_as(
+        "SELECT reason, details, created_by, extract(epoch FROM created_at)::int8, status,
+                resolved_by, extract(epoch FROM resolved_at)::int8, media_id, work_id
+         FROM reports ORDER BY id",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap()
+}
+
+fn rfc3339(at: time::OffsetDateTime) -> String {
+    at.format(&time::format_description::well_known::Rfc3339)
+        .unwrap()
+}
+
+/// Acceptance (#54, D2): a takedown with a body records the emailed notice it answers: one
+/// `removed` report of the picture and its book, `created_at` = `received_at`, no reporter,
+/// resolved by the admin now. Without a body it answers 204 and records nothing.
+#[sqlx::test]
+async fn a_takedown_with_a_notice_records_it(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let root = app.admin("root").await;
+    let (work, public_id, _) = shown_ol_cover(&app).await;
+    let media_id = app
+        .scalar_i64(&format!(
+            "SELECT id FROM media WHERE public_id = '{public_id}'"
+        ))
+        .await;
+    let received = (time::OffsetDateTime::now_utc() - time::Duration::hours(30))
+        .replace_nanosecond(0)
+        .unwrap();
+    let res = root
+        .delete_json(
+            &format!("/api/admin/media/{public_id}"),
+            json!({
+                "details": "  Mail from the publisher: the photo is ours.  ",
+                "received_at": rfc3339(received),
+                "reason": "copyright"
+            }),
+        )
+        .await;
+    res.assert_status(204);
+    assert_eq!(cover_of(&app, work).await, None, "the picture is down");
+    let rows = notice_rows(&app).await;
+    assert_eq!(rows.len(), 1);
+    let (reason, details, created_by, created_at, status, resolved_by, resolved_at, media, book) =
+        rows[0].clone();
+    assert_eq!(
+        (
+            reason.as_str(),
+            details.as_str(),
+            created_by,
+            status.as_str()
+        ),
+        (
+            "copyright",
+            "Mail from the publisher: the photo is ours.",
+            None,
+            "removed"
+        )
+    );
+    assert_eq!(created_at, received.unix_timestamp());
+    assert_eq!(resolved_by, Some(root.id()));
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    assert!((now - resolved_at.unwrap()).abs() < 60);
+    assert_eq!((media, book), (Some(media_id), Some(work)));
+
+    // In the history, not in the open queue.
+    let history = root.get("/api/admin/reports?status=resolved").await.json();
+    let item = &history["items"][0];
+    assert_eq!(item["status"], "removed");
+    assert_eq!(item["created_by"], Value::Null);
+    assert_eq!(item["resolved_by"]["username"], "root");
+    assert_eq!(item["book"]["id"], work);
+    assert_eq!(item["removed"], true);
+    assert_eq!(
+        root.get("/api/admin/reports").await.json()["items"],
+        json!([])
+    );
+
+    // `{}` records a notice that arrived now, reason `other`; no body records nothing.
+    let (_, other) = second_picture(&app).await;
+    root.delete_json(&format!("/api/admin/media/{other}"), json!({}))
+        .await
+        .assert_status(204);
+    let rows = notice_rows(&app).await;
+    assert_eq!(rows.len(), 2);
+    assert_eq!((rows[1].0.as_str(), rows[1].1.as_str()), ("other", ""));
+    assert!((now - rows[1].3).abs() < 60);
+    let (_, third) = third_picture(&app).await;
+    root.delete(&format!("/api/admin/media/{third}"))
+        .await
+        .assert_status(204);
+    assert_eq!(notice_rows(&app).await.len(), 2);
+}
+
+/// A work showing Open Library cover 222 (never fetched); returns the work and public id.
+async fn second_picture(app: &TestApp) -> (i64, String) {
+    ol_picture(app, "Ich bin Circe", 222).await
+}
+
+async fn third_picture(app: &TestApp) -> (i64, String) {
+    ol_picture(app, "Kirke", 333).await
+}
+
+async fn ol_picture(app: &TestApp, title: &str, ol_cover_id: i64) -> (i64, String) {
+    let work = app.work(title).await;
+    let mut conn = app.db.acquire().await.unwrap();
+    let media = ol_cover_media(&mut conn, ol_cover_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let set = set_cover(
+        &mut conn,
+        CoverTarget::Work(work.id),
+        media,
+        Source::OpenLibrary,
+        false,
+    )
+    .await;
+    assert!(set.unwrap());
+    let public_id = sqlx::query_scalar("SELECT public_id FROM media WHERE id = $1")
+        .bind(media)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    (work.id, public_id)
+}
+
+/// A notice about a picture that is down already is still recorded: resolved when the picture
+/// came down if it arrived before that (and counted as the admin's), or closed on arrival
+/// (no `resolved_by`) if it arrived after.
+#[sqlx::test]
+async fn a_notice_about_a_removed_picture_is_recorded_too(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let root = app.admin("root").await;
+    let (_, public_id) = second_picture(&app).await;
+    root.delete(&format!("/api/admin/media/{public_id}"))
+        .await
+        .assert_status(204);
+    app.exec(&format!(
+        "UPDATE media SET removed_at = now() - interval '10 hours' WHERE public_id = '{public_id}'"
+    ))
+    .await;
+    let removed_at = app
+        .scalar_i64(&format!(
+            "SELECT extract(epoch FROM removed_at)::int8 FROM media WHERE public_id = '{public_id}'"
+        ))
+        .await;
+    let now = time::OffsetDateTime::now_utc();
+    let before = (now - time::Duration::hours(20))
+        .replace_nanosecond(0)
+        .unwrap();
+    let after = (now - time::Duration::hours(2))
+        .replace_nanosecond(0)
+        .unwrap();
+    for received in [before, after] {
+        root.delete_json(
+            &format!("/api/admin/media/{public_id}"),
+            json!({"received_at": rfc3339(received), "details": "By email."}),
+        )
+        .await
+        .assert_status(204);
+    }
+    let rows = notice_rows(&app).await;
+    assert_eq!(rows.len(), 2);
+    let earlier = &rows[0];
+    assert_eq!(
+        (earlier.3, earlier.4.as_str(), earlier.5, earlier.6),
+        (
+            before.unix_timestamp(),
+            "removed",
+            Some(root.id()),
+            Some(removed_at)
+        )
+    );
+    let later = &rows[1];
+    assert_eq!(
+        (later.3, later.4.as_str(), later.5, later.6),
+        (
+            after.unix_timestamp(),
+            "removed",
+            None,
+            Some(after.unix_timestamp())
+        )
+    );
+}
+
+/// A notice must name a known reason and must not arrive in the future; a refused body takes
+/// nothing down.
+#[sqlx::test]
+async fn a_takedown_notice_is_checked(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let root = app.admin("root").await;
+    let (work, public_id) = second_picture(&app).await;
+    let path = format!("/api/admin/media/{public_id}");
+    let tomorrow = time::OffsetDateTime::now_utc() + time::Duration::days(1);
+    for (body, detail) in [
+        (
+            json!({"reason": "boring"}),
+            "Input should be 'copyright', 'wrong_book', 'offensive' or 'other'",
+        ),
+        (
+            json!({"received_at": rfc3339(tomorrow)}),
+            "Input should be in the past",
+        ),
+        (json!({"received_at": "yesterday"}), "Invalid value"),
+        (json!({"details": 5}), "Input should be a valid string"),
+        (
+            json!([]),
+            "Input should be a valid dictionary or object to extract fields from",
+        ),
+    ] {
+        root.delete_json(&path, body)
+            .await
+            .assert_detail(400, detail);
+    }
+    assert!(cover_of(&app, work).await.is_some());
+    assert!(notice_rows(&app).await.is_empty());
+
+    // Long details are cut to 2000 characters, as a reader's report is.
+    root.delete_json(&path, json!({"details": "x".repeat(2100)}))
+        .await
+        .assert_status(204);
+    assert_eq!(notice_rows(&app).await[0].1.chars().count(), 2000);
+}
+
 /// Acceptance (#54): a repeat report of a picture by the same reader answers with the open
 /// report it already has: same id, no second row, no second hit on the limit. Another reader's
 /// report is a report of its own.
@@ -445,7 +688,7 @@ async fn reports_of_a_removed_picture_never_enter_the_queue(db: PgPool) {
 
     assert_eq!(
         root.get("/api/admin/reports").await.json(),
-        json!({"items": []})
+        json!({"items": [], "page": 1, "has_more": false})
     );
     let row = sqlx::query_as::<_, (String, Option<i64>, bool, String)>(
         "SELECT status, resolved_by, resolved_at IS NOT NULL, details FROM reports WHERE id = $1",

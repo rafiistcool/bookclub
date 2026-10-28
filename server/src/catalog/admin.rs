@@ -27,10 +27,11 @@ use super::shared::books::{
 use super::shared::ingest::{CoverTarget, Source, apply_admin_fields, set_cover};
 use super::{MERGE_INTO_ITSELF, PICTURE_REMOVED, REQUEST_DECIDED};
 use crate::AppState;
+use crate::admin::queue::QueueQuery;
 use crate::auth::extract::InstanceAdmin;
 use crate::dto::{BookOut, EditionOut, UserSummary, user_summaries};
 use crate::error::{ApiResult, AppError, ErrorBody, msg};
-use crate::extract::{ApiJson, ApiPath, FIELD_REQUIRED, Validate, Validator};
+use crate::extract::{ApiJson, ApiPath, ApiQuery, FIELD_REQUIRED, Validate, Validator};
 use crate::media::shared::urls::cover_urls;
 use crate::text::{py_strip, truncate_chars};
 
@@ -70,10 +71,15 @@ pub struct EditRequestOut {
     pub decision_note: String,
 }
 
-/// The open requests, oldest first.
+/// A page of the catalog queue: the open requests oldest first, or the decided ones newest
+/// decision first.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct EditRequestList {
     pub items: Vec<EditRequestOut>,
+    /// The page these items are (1-based).
+    pub page: i64,
+    /// Another page follows.
+    pub has_more: bool,
 }
 
 /// Why a request is rejected.
@@ -473,15 +479,19 @@ async fn apply_request(conn: &mut PgConnection, request: &OpenRequest) -> ApiRes
     }
 }
 
-/// The open catalog requests (edits, cover replacements, merges), oldest first.
+/// A page of the catalog queue (edits, cover replacements, merges): `?status=open` (the
+/// default) lists the open requests oldest first, `?status=resolved` the approved and rejected
+/// ones, the newest decision first. 50 a page.
 #[utoipa::path(
     get,
     path = "/api/admin/edit-requests",
     operation_id = "catalog_admin_list_edit_requests",
     tag = "admin",
     security(("bookclub_session" = []), ("bearer" = [])),
+    params(QueueQuery),
     responses(
-        (status = 200, body = EditRequestList, description = "The open requests"),
+        (status = 200, body = EditRequestList, description = "A page of the open or the decided requests"),
+        (status = 400, body = ErrorBody, description = "`Input should be 'open' or 'resolved'`, `Input should be greater than or equal to 1`, `Input should be less than or equal to 1000`, `Input should be a valid integer, unable to parse string as an integer`"),
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
         (status = 404, body = ErrorBody, description = "`Not found` (not an instance admin)")
     )
@@ -489,15 +499,37 @@ async fn apply_request(conn: &mut PgConnection, request: &OpenRequest) -> ApiRes
 pub async fn list_edit_requests(
     InstanceAdmin(_admin): InstanceAdmin,
     State(state): State<AppState>,
+    ApiQuery(query): ApiQuery<QueueQuery>,
 ) -> ApiResult<Json<EditRequestList>> {
     let mut conn = state.db.acquire().await?;
-    let ids = sqlx::query_scalar!(
-        "SELECT id FROM catalog_edit_requests WHERE status = 'open' ORDER BY created_at, id"
-    )
-    .fetch_all(&mut *conn)
-    .await?;
+    let ids = if query.resolved() {
+        sqlx::query_scalar!(
+            "SELECT id FROM catalog_edit_requests WHERE status <> 'open'
+             ORDER BY decided_at DESC NULLS LAST, id DESC
+             LIMIT $1 OFFSET $2",
+            query.limit(),
+            query.offset()
+        )
+        .fetch_all(&mut *conn)
+        .await?
+    } else {
+        sqlx::query_scalar!(
+            "SELECT id FROM catalog_edit_requests WHERE status = 'open'
+             ORDER BY created_at, id
+             LIMIT $1 OFFSET $2",
+            query.limit(),
+            query.offset()
+        )
+        .fetch_all(&mut *conn)
+        .await?
+    };
+    let (ids, has_more) = query.split(ids);
     let items = edit_request_outs(&mut conn, &ids).await?;
-    Ok(Json(EditRequestList { items }))
+    Ok(Json(EditRequestList {
+        items,
+        page: query.page,
+        has_more,
+    }))
 }
 
 /// Approves a request and applies it: edits with provenance `admin` (no source overwrites them
