@@ -2,9 +2,8 @@
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { ApiError } from "../api/client";
-import { isTermsChanged } from "../legal";
 import { useService } from "../stores/service";
-import { useSession } from "../stores/session";
+import { isTermsChanged, useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 
 /**

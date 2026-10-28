@@ -11,6 +11,22 @@ import { useTheme } from "./theme";
 
 const INVALID_TIME_ZONE = "That is not a valid time zone";
 
+/**
+ * The server's 400 when a sign-up or `POST /api/auth/terms` sent a terms
+ * version that is no longer the current one (`msg::TERMS_CHANGED`).
+ */
+export const TERMS_CHANGED = "The terms of use have changed. Reload the page and try again.";
+
+/** True for the 400 that says the terms changed since the page loaded them. */
+export function isTermsChanged(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    (error as { status?: unknown }).status === 400 &&
+    (error as { detail?: unknown }).detail === TERMS_CHANGED
+  );
+}
+
 /** The server refused the zone (one message of a 400 joined by "; "). */
 function refusedZone(error: unknown): boolean {
   return (

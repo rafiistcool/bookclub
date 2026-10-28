@@ -157,7 +157,6 @@ export function user(overrides: Partial<User> = {}): User {
     email_verified: true,
     pending_email: null,
     needs_email_prompt: false,
-    needs_terms: false,
     theme: "paper",
     color_mode: "system",
     locale: "en",

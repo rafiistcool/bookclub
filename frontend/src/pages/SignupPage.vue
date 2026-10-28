@@ -6,10 +6,9 @@ import { ApiError } from "../api/client";
 import LanguageSwitch from "../components/LanguageSwitch.vue";
 import LegalLinks from "../components/LegalLinks.vue";
 import { clearJoinCode, parseInviteCode, pendingJoinCode } from "../invites";
-import { isTermsChanged } from "../legal";
 import { useClubs } from "../stores/clubs";
 import { useService } from "../stores/service";
-import { useSession } from "../stores/session";
+import { isTermsChanged, useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 
 /**

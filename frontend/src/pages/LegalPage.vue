@@ -1,3 +1,225 @@
+<script lang="ts">
+/*
+ * Sanitising the operator's HTML.
+ *
+ * The texts come from the operator's own files (`LEGAL_DIR`), exported by a
+ * generator, and the page renders them with `v-html`. They are trusted to be
+ * the operator's, not to be harmless: a generator template, a pasted snippet
+ * or a tampered file must not run script in the app's origin, where the
+ * session cookie works. So the HTML passes an allow-list first:
+ *
+ * - Only text elements stay (headings, paragraphs, lists, tables, links,
+ *   emphasis, sections). Script, style, frames, embeds, forms, pictures and
+ *   foreign content (SVG, MathML) go with everything inside them. Pictures
+ *   go too, so that the page never loads anything from a third party.
+ * - Other elements (`font`, `center`, custom elements) are unwrapped: their
+ *   text stays, the element does not.
+ * - Only a few attributes stay (`id`, `lang`, `dir`, `title`, `href` on
+ *   links, table spans, the placeholder marker). Event handlers, `style`,
+ *   `class` and `target` never do.
+ * - A link keeps its `href` only for http, https, mailto and tel. Links to
+ *   other sites open in a new tab without an opener.
+ * - Comments go.
+ *
+ * The HTML is parsed with `DOMParser`, whose document runs no script and
+ * loads nothing. The serialised result contains no raw-text element, so the
+ * browser parses it back into the same tree.
+ */
+
+/** Removed together with everything inside them. */
+const DROP = new Set([
+  "applet",
+  "audio",
+  "base",
+  "button",
+  "canvas",
+  "datalist",
+  "dialog",
+  "embed",
+  "form",
+  "frame",
+  "frameset",
+  "head",
+  "iframe",
+  "img",
+  "input",
+  "link",
+  "map",
+  "math",
+  "meta",
+  "noembed",
+  "noframes",
+  "noscript",
+  "object",
+  "option",
+  "param",
+  "picture",
+  "portal",
+  "script",
+  "select",
+  "slot",
+  "source",
+  "style",
+  "svg",
+  "template",
+  "textarea",
+  "title",
+  "track",
+  "video",
+]);
+
+/**
+ * Kept, with these attributes besides the global ones. A `Map`, not an object:
+ * `tag in {…}` would also match `Object.prototype` names such as
+ * `constructor`, which the HTML parser accepts as a tag name.
+ */
+const KEEP: ReadonlyMap<string, readonly string[]> = new Map(
+  Object.entries({
+    a: ["href"],
+    abbr: [],
+    address: [],
+    article: [],
+    aside: [],
+    b: [],
+    blockquote: [],
+    br: [],
+    caption: [],
+    cite: [],
+    code: [],
+    col: ["span"],
+    colgroup: ["span"],
+    dd: [],
+    del: [],
+    dfn: [],
+    div: [],
+    dl: [],
+    dt: [],
+    em: [],
+    figcaption: [],
+    figure: [],
+    footer: [],
+    h1: [],
+    h2: [],
+    h3: [],
+    h4: [],
+    h5: [],
+    h6: [],
+    header: [],
+    hr: [],
+    i: [],
+    ins: [],
+    kbd: [],
+    li: ["value"],
+    mark: [],
+    ol: ["start", "reversed", "type"],
+    p: [],
+    pre: [],
+    q: [],
+    s: [],
+    section: [],
+    small: [],
+    span: [],
+    strong: [],
+    sub: [],
+    sup: [],
+    table: [],
+    tbody: [],
+    td: ["colspan", "rowspan"],
+    tfoot: [],
+    th: ["colspan", "rowspan", "scope"],
+    thead: [],
+    time: ["datetime"],
+    tr: [],
+    u: [],
+    ul: [],
+  }),
+);
+
+/** Allowed on every kept element. `data-legal-placeholder` marks the development texts. */
+const GLOBAL_ATTRIBUTES = new Set(["id", "lang", "dir", "title", "data-legal-placeholder"]);
+
+const LINK_PROTOCOLS = new Set(["http:", "https:", "mailto:", "tel:"]);
+
+/** The base relative links resolve against while checking them; never shown. */
+const CHECK_BASE = "https://legal.invalid/";
+
+/** The scheme an `href` resolves to, the way the browser reads it (tabs, newlines and spaces ignored). */
+function linkProtocol(href: string): string | null {
+  try {
+    return new URL(href, CHECK_BASE).protocol;
+  } catch {
+    return null;
+  }
+}
+
+/** A link to another site: an absolute http(s) URL on another origin. */
+function isExternal(href: string, origin: string): boolean {
+  try {
+    const url = new URL(href, CHECK_BASE);
+    if (url.origin === new URL(CHECK_BASE).origin) return false;
+    return (url.protocol === "http:" || url.protocol === "https:") && url.origin !== origin;
+  } catch {
+    return false;
+  }
+}
+
+function cleanAttributes(element: Element, tag: string, origin: string): void {
+  const allowed = KEEP.get(tag) ?? [];
+  for (const { name } of Array.from(element.attributes)) {
+    if (!GLOBAL_ATTRIBUTES.has(name) && !allowed.includes(name)) element.removeAttribute(name);
+  }
+  if (tag !== "a") return;
+  const href = element.getAttribute("href");
+  if (href === null) return;
+  const protocol = linkProtocol(href);
+  if (!protocol || !LINK_PROTOCOLS.has(protocol)) {
+    element.removeAttribute("href");
+    return;
+  }
+  if (isExternal(href, origin)) {
+    element.setAttribute("target", "_blank");
+    element.setAttribute("rel", "noopener noreferrer");
+  }
+}
+
+function cleanChildren(parent: Node, origin: string): void {
+  for (const node of Array.from(parent.childNodes)) {
+    if (node.nodeType === Node.TEXT_NODE) continue;
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      parent.removeChild(node);
+      continue;
+    }
+    const element = node as Element;
+    // HTML elements only: anything in another namespace is foreign content.
+    const tag = element.namespaceURI === "http://www.w3.org/1999/xhtml" ? element.localName : "";
+    if (!tag || DROP.has(tag)) {
+      parent.removeChild(element);
+      continue;
+    }
+    cleanChildren(element, origin);
+    if (KEEP.has(tag)) {
+      cleanAttributes(element, tag, origin);
+    } else {
+      // Unknown or structural (`html`, `body`, `font`, `center`, custom elements): keep the content only.
+      while (element.firstChild) parent.insertBefore(element.firstChild, element);
+      parent.removeChild(element);
+    }
+  }
+}
+
+/**
+ * The operator's legal HTML with everything but text, structure and safe
+ * links removed (see above). `origin` is the app's own, whose links stay in
+ * the tab.
+ */
+export function sanitizeLegalHtml(html: string, origin = globalThis.location?.origin ?? ""): string {
+  const parsed = new DOMParser().parseFromString(html, "text/html");
+  const body = parsed.body;
+  cleanChildren(body, origin);
+  return body.innerHTML;
+}
+</script>
+
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -7,7 +229,6 @@ import BackLink from "../components/BackLink.vue";
 import LanguageSwitch from "../components/LanguageSwitch.vue";
 import LegalLinks from "../components/LegalLinks.vue";
 import { formatDay } from "../i18n/dates";
-import { sanitizeLegalHtml } from "../legal";
 import { useLocale } from "../stores/locale";
 import { useService } from "../stores/service";
 import type { LegalDoc, LegalDocumentOut } from "../types";
@@ -18,8 +239,8 @@ import type { LegalDoc, LegalDocumentOut } from "../types";
  * only the other one, in that language with a note. Public, signed in or out,
  * outside the app shell.
  *
- * The HTML passes `sanitizeLegalHtml` (src/legal.ts) before `v-html`: text and
- * safe links only, no script, handlers, styles or pictures.
+ * The HTML passes `sanitizeLegalHtml` (the module script above) before
+ * `v-html`: text and safe links only, no script, handlers, styles or pictures.
  */
 const props = defineProps<{ doc: LegalDoc }>();
 

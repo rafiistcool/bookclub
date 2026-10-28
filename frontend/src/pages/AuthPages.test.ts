@@ -16,6 +16,7 @@ const api: Record<string, ReturnType<typeof vi.fn>> = {
   savePreferences: vi.fn(),
   previewInvite: vi.fn(),
   config: vi.fn(),
+  acceptTerms: vi.fn(),
 };
 
 vi.mock("../api/client", () => {
@@ -32,11 +33,12 @@ vi.mock("../api/client", () => {
 });
 
 import { ApiError } from "../api/client";
+import TermsPrompt from "../components/TermsPrompt.vue";
 import { i18n } from "../i18n";
+import { translateApiError } from "../i18n/apiErrors";
 import { useLocale } from "../stores/locale";
 import { useService } from "../stores/service";
-import { useSession } from "../stores/session";
-import { TERMS_CHANGED } from "../legal";
+import { isTermsChanged, TERMS_CHANGED, useSession } from "../stores/session";
 import ForgotPasswordPage from "./ForgotPasswordPage.vue";
 import JoinPage from "./JoinPage.vue";
 import LoginPage from "./LoginPage.vue";
@@ -310,5 +312,91 @@ describe("auth pages", () => {
     await flushPromises();
     expect(api.register).toHaveBeenLastCalledWith(expect.objectContaining({ terms_version: "2026-12-01" }));
     expect(router.currentRoute.value.path).toBe("/");
+  });
+});
+
+describe("the terms changed answer", () => {
+  afterEach(() => {
+    i18n.global.locale.value = "en";
+  });
+
+  it("is recognised and translated", () => {
+    expect(isTermsChanged({ status: 400, detail: TERMS_CHANGED })).toBe(true);
+    expect(isTermsChanged({ status: 400, detail: "That invite code is not valid" })).toBe(false);
+    expect(isTermsChanged(new Error(TERMS_CHANGED))).toBe(false);
+    expect(isTermsChanged(null)).toBe(false);
+    expect(translateApiError(TERMS_CHANGED)).toBe("The terms of use have changed. Have a look at them and try again.");
+    i18n.global.locale.value = "de";
+    expect(translateApiError(TERMS_CHANGED)).toBe(
+      "Die Nutzungsbedingungen haben sich geändert. Sieh sie dir an und versuch es nochmal.",
+    );
+  });
+});
+
+/** The legal part of `/api/config` with terms in force, for the prompt in the app shell. */
+const TERMS = { legal: ["imprint", "privacy", "terms"] as const, terms_version: "2026-11-01", contact_email: null };
+
+function mountPrompt(needsTerms: boolean) {
+  setActivePinia(createPinia());
+  useService().$patch({ ...TERMS, legal: [...TERMS.legal], name: "Bookclub" });
+  useSession().user = user({ needs_terms: needsTerms });
+  return mount(TermsPrompt);
+}
+
+describe("TermsPrompt", () => {
+  beforeEach(() => {
+    for (const fn of Object.values(api)) fn.mockReset();
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("stays away from accounts that accepted the current terms", () => {
+    expect(mountPrompt(false).find("section").exists()).toBe(false);
+  });
+
+  it("asks once, links the texts and records the current version", async () => {
+    api.acceptTerms.mockResolvedValue(user({ needs_terms: false }));
+    const wrapper = mountPrompt(true);
+    expect(wrapper.get("h2").text()).toBe("Terms of use");
+    expect(wrapper.text().replace(/\s+/g, " ")).toContain(
+      "The terms of use of Bookclub are new or have changed. Please read them and accept them. The privacy policy explains what we store about you.",
+    );
+    expect(wrapper.findAll("a").map((link) => link.attributes("href"))).toEqual(["/terms", "/privacy"]);
+
+    await wrapper.get("button").trigger("click");
+    await flushPromises();
+    expect(api.acceptTerms).toHaveBeenCalledWith("2026-11-01");
+    expect(useSession().user?.needs_terms).toBe(false);
+    expect(wrapper.find("section").exists()).toBe(false);
+  });
+
+  it("fetches the new version when the terms changed, and accepts that one next", async () => {
+    api.acceptTerms
+      .mockRejectedValueOnce(new ApiError("The terms of use have changed.", 400, TERMS_CHANGED))
+      .mockResolvedValueOnce(user({ needs_terms: false }));
+    api.config.mockResolvedValue({ ...TERMS, terms_version: "2026-12-01" });
+    const wrapper = mountPrompt(true);
+
+    await wrapper.get("button").trigger("click");
+    await flushPromises();
+    expect(wrapper.get(".error").text()).toBe("The terms of use have changed.");
+    expect(useService().terms_version).toBe("2026-12-01");
+    expect(useSession().user?.needs_terms).toBe(true);
+
+    await wrapper.get("button").trigger("click");
+    await flushPromises();
+    expect(api.acceptTerms).toHaveBeenLastCalledWith("2026-12-01");
+    expect(wrapper.find("section").exists()).toBe(false);
+  });
+
+  it("loads the version first when the page has none", async () => {
+    api.config.mockResolvedValue({ ...TERMS, terms_version: "2026-11-01" });
+    api.acceptTerms.mockResolvedValue(user({ needs_terms: false }));
+    const wrapper = mountPrompt(true);
+    useService().terms_version = null;
+    await wrapper.get("button").trigger("click");
+    await flushPromises();
+    expect(api.config).toHaveBeenCalledTimes(1);
+    expect(api.acceptTerms).toHaveBeenCalledWith("2026-11-01");
   });
 });

@@ -12,6 +12,17 @@ type ServiceLegal = Pick<ServiceConfig, "legal" | "terms_version" | "contact_ema
 export const LEGAL_DEFAULTS: ServiceLegal = { legal: [], terms_version: null, contact_email: null };
 
 /**
+ * Every legal text (#53), in the order the links list them: the operator's
+ * imprint, privacy policy and terms of use, served by `GET /api/legal/{doc}`.
+ */
+export const LEGAL_DOCS: readonly LegalDoc[] = ["imprint", "privacy", "terms"];
+
+/** The page of a legal text. Each one is public, signed in or out. */
+export function legalPath(doc: LegalDoc): string {
+  return `/${doc}`;
+}
+
+/**
  * The service's name and accent (`GET /api/config`), for the wordmark and the
  * Paper theme, and its legal settings: the documents `/imprint`, `/privacy`
  * and `/terms` show, the terms version a sign-up accepts, and the public

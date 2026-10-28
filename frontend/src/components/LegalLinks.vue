@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { LEGAL_DOCS, legalPath } from "../legal";
-import { useService } from "../stores/service";
+import { LEGAL_DOCS, legalPath, useService } from "../stores/service";
 
 /**
  * Imprint · Privacy · Terms: the operator's legal texts, wherever a visitor

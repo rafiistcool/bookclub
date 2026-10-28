@@ -96,7 +96,7 @@ The browser never talks to these hosts; the server does, from its own IP address
 - No analytics, no error tracking, no CDN, no embedded media, no social plugins. GATE (#55) adds a Content-Security-Policy that limits the page to its own origin.
 - The only way out is a link the user clicks: "View on Open Library" on a book page, which opens in a new tab without a referrer (`frontend/src/pages/BookDetailPage.vue` (`book.viewOpenLibrary`)).
 - The web app manifest and icons are local files (`frontend/public/`).
-- The legal pages show the operator's HTML without pictures, frames, styles or scripts, and links to other sites open in a new tab without a referrer (`frontend/src/legal.ts`), so a generator template cannot add a request to a third party.
+- The legal pages show the operator's HTML without pictures, frames, styles or scripts, and links to other sites open in a new tab without a referrer (`frontend/src/pages/LegalPage.vue` (`sanitizeLegalHtml`)), so a generator template cannot add a request to a third party.
 
 ## 7. Retention
 
