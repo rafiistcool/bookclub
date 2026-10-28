@@ -51,7 +51,7 @@ const PERSONAL: [&str; 6] = [
 ];
 /// Accounts, the clubs themselves, the shared catalog, media and jobs: neither club nor
 /// personal data, no `club_id`.
-const GLOBAL: [&str; 16] = [
+const GLOBAL: [&str; 15] = [
     "users",
     "sessions",
     "email_tokens",
@@ -67,7 +67,6 @@ const GLOBAL: [&str; 16] = [
     "catalog_edit_requests",
     "reports",
     "harvest_state",
-    "admin_notify_state",
 ];
 
 struct ForeignKey {

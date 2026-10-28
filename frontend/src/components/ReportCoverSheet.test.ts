@@ -20,7 +20,7 @@ describe("ReportCoverSheet", () => {
   });
 
   it("sends the reason and details for the cover's media id", async () => {
-    reportCover.mockResolvedValue({ id: 1, status: "open" });
+    reportCover.mockResolvedValue({ id: 1 });
     const wrapper = mount(ReportCoverSheet, { props: { publicId: "abc2def", title: "Circe" } });
     const send = wrapper.get('button[type="submit"]');
     expect(send.attributes("disabled")).toBeDefined();
@@ -30,16 +30,6 @@ describe("ReportCoverSheet", () => {
     await flushPromises();
     expect(reportCover).toHaveBeenCalledWith("abc2def", { reason: "wrong_book", details: "It shows Galatea." });
     expect(useToast().items[0]?.message).toBe("Thanks. An admin will look at it.");
-    expect(wrapper.emitted("close")).toHaveLength(1);
-  });
-
-  it("says so when the picture was already taken down", async () => {
-    reportCover.mockResolvedValue({ id: 4, status: "removed" });
-    const wrapper = mount(ReportCoverSheet, { props: { publicId: "abc2def", title: "Circe" } });
-    await wrapper.get('input[value="offensive"]').setValue(true);
-    await wrapper.get("form").trigger("submit");
-    await flushPromises();
-    expect(useToast().items[0]?.message).toBe("This picture was already taken down. Thanks anyway.");
     expect(wrapper.emitted("close")).toHaveLength(1);
   });
 

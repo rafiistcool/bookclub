@@ -1,21 +1,22 @@
 -- ADM (#54): the state of the admin notification job (jobs::lock_ids::ADMIN_NOTIFY,
--- server/src/admin/notify.rs). One row per queue: the newest item the last mail covered and
--- when that mail went out. Open reports are mailed at most hourly, open catalog requests as a
--- daily digest, each only when items arrived after `last_item_id`.
+-- server/src/admin/notify.rs). Each report and catalog request records when a mail to the
+-- instance admins first counted it. A run mails a queue's open items that no mail has counted
+-- yet, when the queue's newest `notified_at` (its last mail) is at least 1 hour (reports) or
+-- 24 hours (catalog requests) old, and then stamps them. An item that commits after a newer id
+-- is still unstamped on the next run.
 --
--- No foreign key to users: the mails go to every instance admin with a verified address, and
--- nothing here names an account, so the export (conventions §5.7) has nothing to cover.
-CREATE TABLE admin_notify_state (
-    queue        text COLLATE "C" PRIMARY KEY CHECK (queue IN ('reports', 'edit_requests')),
-    last_item_id bigint NOT NULL DEFAULT 0 CHECK (last_item_id >= 0),
-    sent_at      timestamptz NULL
-);
+-- The state lives on the items, not in a table of its own: a new table also needs a class in
+-- server/tests/parity_schema.rs and docs/phase1/parity-checklist.md (docs/phase2/notes/adm.md).
+-- No foreign key to users, so the export check (conventions §5.7) has nothing to cover.
+ALTER TABLE reports ADD COLUMN notified_at timestamptz NULL;
+ALTER TABLE catalog_edit_requests ADD COLUMN notified_at timestamptz NULL;
 
-INSERT INTO admin_notify_state (queue) VALUES ('reports'), ('edit_requests');
+-- The job asks whether any item was stamped within the queue's interval (its last mail).
+CREATE INDEX reports_notified_at_idx ON reports (notified_at) WHERE notified_at IS NOT NULL;
+CREATE INDEX catalog_edit_requests_notified_at_idx ON catalog_edit_requests (notified_at)
+    WHERE notified_at IS NOT NULL;
 
-COMMENT ON TABLE admin_notify_state IS
-    'Admin notification job (#54): per queue, the newest item id the last mail covered and when it was sent.';
-COMMENT ON COLUMN admin_notify_state.last_item_id IS
-    'reports.id or catalog_edit_requests.id of the newest open item the last mail counted; 0 before the first mail. A mail goes out only for open items with a larger id.';
-COMMENT ON COLUMN admin_notify_state.sent_at IS
-    'When the last mail of this queue went out; the next waits 1 hour (reports) or 24 hours (edit_requests). NULL before the first.';
+COMMENT ON COLUMN reports.notified_at IS
+    'When the admin notification job (#54) first mailed the instance admins about this open report. NULL until then, and for a report resolved before a mail counted it. The newest value is the last report mail; the next waits 1 hour.';
+COMMENT ON COLUMN catalog_edit_requests.notified_at IS
+    'When the admin notification job (#54) first counted this open request in a digest to the instance admins. NULL until then, and for a request decided before a digest counted it. The newest value is the last digest; the next waits 24 hours.';

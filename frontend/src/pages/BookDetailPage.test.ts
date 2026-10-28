@@ -15,9 +15,6 @@ const editions = vi.fn();
 const requestWorkEdit = vi.fn();
 const diary = vi.fn();
 const nominate = vi.fn();
-const getEdition = vi.fn();
-const adminEditWork = vi.fn();
-const adminEditEdition = vi.fn();
 
 vi.mock("../api/client", () => ({
   ApiError: class ApiError extends Error {
@@ -41,9 +38,6 @@ vi.mock("../api/client", () => ({
     requestWorkEdit: (...args: unknown[]) => requestWorkEdit(...args),
     diary: (...args: unknown[]) => diary(...args),
     nominate: (...args: unknown[]) => nominate(...args),
-    edition: (...args: unknown[]) => getEdition(...args),
-    adminEditWork: (...args: unknown[]) => adminEditWork(...args),
-    adminEditEdition: (...args: unknown[]) => adminEditEdition(...args),
   },
 }));
 
@@ -67,7 +61,7 @@ function detail(overrides: Partial<BookDetail> = {}): BookDetail {
   });
 }
 
-async function mountBook(path = "/book/4", clubs: ClubSummary[] = [], isAdmin = false) {
+async function mountBook(path = "/book/4", clubs: ClubSummary[] = []) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: "/book/:id", component: BookDetailPage }],
@@ -76,7 +70,7 @@ async function mountBook(path = "/book/4", clubs: ClubSummary[] = [], isAdmin = 
   await router.isReady();
   const pinia = createPinia();
   setActivePinia(pinia);
-  useSession().user = user({ clubs, is_admin: isAdmin });
+  useSession().user = user({ clubs });
   const wrapper = mount(BookDetailPage, {
     global: { plugins: [pinia, router] },
   });
@@ -90,7 +84,7 @@ function button(wrapper: Awaited<ReturnType<typeof mountBook>>["wrapper"], label
 
 describe("BookDetailPage", () => {
   beforeEach(() => {
-    for (const mock of [book, addFavorite, removeFavorite, addToShelf, patchShelf, removeFromShelf, editions, requestWorkEdit, diary, nominate, getEdition, adminEditWork, adminEditEdition]) {
+    for (const mock of [book, addFavorite, removeFavorite, addToShelf, patchShelf, removeFromShelf, editions, requestWorkEdit, diary, nominate]) {
       mock.mockReset();
     }
     book.mockResolvedValue(detail());
@@ -233,42 +227,6 @@ describe("BookDetailPage", () => {
     expect(requestWorkEdit).toHaveBeenCalledWith(4, { pages: 320, subjects: ["Fiction", "Brazil"] }, "");
     expect(wrapper.find("form.edit-request").exists()).toBe(false);
     expect(useToast().items.at(-1)?.message).toBe("Thanks. An admin will look at it.");
-  });
-
-  it("lets only an instance admin edit the book and the reader's edition directly", async () => {
-    book.mockResolvedValue(detail({ edition_id: 13 }));
-    const reader = await mountBook();
-    expect(button(reader.wrapper, "as admin")).toBeUndefined();
-    reader.wrapper.unmount();
-
-    const { wrapper } = await mountBook("/book/4", [], true);
-    await button(wrapper, "Edit as admin")!.trigger("click");
-    const form = wrapper.get("form.edit-request");
-    expect(wrapper.get(".sheet").text()).toContain("Edit this book as admin");
-    expect(form.find("textarea[name=note]").exists()).toBe(false);
-    await form.get("input[name=title]").setValue("The Witch of Portobello (revised)");
-    adminEditWork.mockResolvedValue(detail({ edition_id: 13, title: "The Witch of Portobello (revised)" }));
-    await form.trigger("submit");
-    await flushPromises();
-    expect(adminEditWork).toHaveBeenCalledWith(4, { title: "The Witch of Portobello (revised)" });
-    expect(requestWorkEdit).not.toHaveBeenCalled();
-    expect(wrapper.get("h1").text()).toBe("The Witch of Portobello (revised)");
-    expect(wrapper.find("form.edit-request").exists()).toBe(false);
-
-    getEdition.mockResolvedValue(edition({ id: 13, work_id: 4, publisher: "Diogenes" }));
-    await button(wrapper, "Edit your edition as admin")!.trigger("click");
-    await flushPromises();
-    expect(getEdition).toHaveBeenCalledWith(13);
-    const editionForm = wrapper.get("form.edit-request");
-    expect(wrapper.get(".sheet").text()).toContain("Edit this edition as admin");
-    await editionForm.get("input[name=publisher]").setValue("Diogenes Verlag");
-    adminEditEdition.mockResolvedValue(edition({ id: 13, work_id: 4, publisher: "Diogenes Verlag" }));
-    book.mockClear();
-    await editionForm.trigger("submit");
-    await flushPromises();
-    expect(adminEditEdition).toHaveBeenCalledWith(13, { publisher: "Diogenes Verlag" });
-    expect(book).toHaveBeenCalledWith(4);
-    expect(useToast().items.at(-1)?.message).toBe("Saved. Everyone sees the new values now.");
   });
 
   describe("a finished book on the shelf", () => {

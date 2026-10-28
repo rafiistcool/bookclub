@@ -3,11 +3,13 @@
 //! mailed at most once an hour, catalog requests as a digest at most once a day. A mail names
 //! counts and the oldest item's age only, never a reporter or what they wrote.
 //!
-//! `admin_notify_state` (migration 2100) keeps, per queue, the newest item the last mail counted
-//! (`last_item_id`) and when it went out (`sent_at`). A run mails a queue when open items with a
-//! larger id exist and the queue's interval has passed since `sent_at`; then both move on. An
-//! item resolved before the run is not news. The job runs every few minutes, so the first report
-//! after a quiet hour is mailed within minutes.
+//! The state lives on the items (migration 2100): `reports.notified_at` and
+//! `catalog_edit_requests.notified_at` say when a mail first counted the item, and the newest of
+//! them is the queue's last mail. A run mails a queue when open items without `notified_at`
+//! exist and the queue's interval has passed since its last mail; then it stamps those items.
+//! An item resolved before the run is not news, and an item that commits after a newer one was
+//! mailed is still news. The job runs every few minutes, so the first report after a quiet hour
+//! is mailed within minutes.
 
 use std::time::Duration;
 
@@ -27,7 +29,7 @@ pub const DIGEST_EVERY_HOURS: i32 = 24;
 /// The longest the job waits for one mail.
 const SEND_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// One of the two queues the job watches (`admin_notify_state.queue`).
+/// One of the two queues the job watches: `reports` or `catalog_edit_requests`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Queue {
     Reports,
@@ -35,13 +37,6 @@ pub enum Queue {
 }
 
 impl Queue {
-    fn key(self) -> &'static str {
-        match self {
-            Queue::Reports => "reports",
-            Queue::EditRequests => "edit_requests",
-        }
-    }
-
     fn every_hours(self) -> i32 {
         match self {
             Queue::Reports => REPORTS_EVERY_HOURS,
@@ -81,7 +76,7 @@ pub async fn run(state: &AppState, conn: &mut PgConnection) -> anyhow::Result<No
 }
 
 /// Mails `queue`'s news to `admins` when there is news and its interval has passed; returns
-/// the mails sent. The state moves on when at least one mail went out, so a failed send is
+/// the mails sent. The news is stamped when at least one mail went out, so a failed send is
 /// tried again on the next run, and nothing is lost while no admin has a verified address.
 async fn notify_queue(
     state: &AppState,
@@ -89,19 +84,10 @@ async fn notify_queue(
     queue: Queue,
     admins: &[Admin],
 ) -> anyhow::Result<usize> {
-    let due = sqlx::query!(
-        r#"SELECT last_item_id,
-                  sent_at IS NULL OR sent_at <= now() - make_interval(hours => $2) AS "due!"
-           FROM admin_notify_state WHERE queue = $1"#,
-        queue.key(),
-        queue.every_hours()
-    )
-    .fetch_one(&mut *conn)
-    .await?;
-    if !due.due || admins.is_empty() {
+    if admins.is_empty() {
         return Ok(0);
     }
-    let Some((news, newest)) = news(conn, queue, due.last_item_id).await? else {
+    let Some((news, fresh)) = news(conn, queue).await? else {
         return Ok(0);
     };
     let site = site(&state.config);
@@ -121,59 +107,84 @@ async fn notify_queue(
         }
     }
     if sent > 0 {
-        sqlx::query!(
-            "UPDATE admin_notify_state SET last_item_id = $2, sent_at = now() WHERE queue = $1",
-            queue.key(),
-            newest
-        )
-        .execute(&mut *conn)
-        .await?;
+        stamp(conn, queue, &fresh).await?;
     }
     Ok(sent)
 }
 
-/// The open items of `queue` newer than `after` (by id), with the open total and the oldest
-/// open item's age, and the newest id; `None` when nothing new is open.
+/// `queue`'s news when its interval has passed since its last mail (the newest `notified_at`):
+/// the open items no mail has counted yet, with the open total and the oldest open item's age,
+/// and those items' ids. `None` when the interval has not passed or nothing new is open.
 async fn news(
     conn: &mut PgConnection,
     queue: Queue,
-    after: i64,
-) -> sqlx::Result<Option<(QueueNews, i64)>> {
+) -> sqlx::Result<Option<(QueueNews, Vec<i64>)>> {
+    let hours = queue.every_hours();
     let row = match queue {
         Queue::Reports => sqlx::query!(
-            r#"SELECT count(*) FILTER (WHERE id > $1) AS "new!",
-                          count(*) AS "open!",
-                          max(id) FILTER (WHERE id > $1) AS newest,
-                          floor(extract(epoch FROM now() - min(created_at)) / 3600)::int8
-                              AS oldest_hours
-                   FROM reports WHERE status = 'open'"#,
-            after
+            r#"SELECT count(*) FILTER (WHERE notified_at IS NULL) AS "new!",
+                      count(*) AS "open!",
+                      array_agg(id ORDER BY id) FILTER (WHERE notified_at IS NULL) AS fresh,
+                      floor(extract(epoch FROM now() - min(created_at)) / 3600)::int8
+                          AS oldest_hours,
+                      NOT EXISTS (SELECT 1 FROM reports
+                                  WHERE notified_at > now() - make_interval(hours => $1))
+                          AS "due!"
+               FROM reports WHERE status = 'open'"#,
+            hours
         )
         .fetch_one(&mut *conn)
         .await
-        .map(|row| (row.new, row.open, row.newest, row.oldest_hours))?,
+        .map(|row| (row.new, row.open, row.fresh, row.oldest_hours, row.due))?,
         Queue::EditRequests => sqlx::query!(
-            r#"SELECT count(*) FILTER (WHERE id > $1) AS "new!",
-                          count(*) AS "open!",
-                          max(id) FILTER (WHERE id > $1) AS newest,
-                          floor(extract(epoch FROM now() - min(created_at)) / 3600)::int8
-                              AS oldest_hours
-                   FROM catalog_edit_requests WHERE status = 'open'"#,
-            after
+            r#"SELECT count(*) FILTER (WHERE notified_at IS NULL) AS "new!",
+                      count(*) AS "open!",
+                      array_agg(id ORDER BY id) FILTER (WHERE notified_at IS NULL) AS fresh,
+                      floor(extract(epoch FROM now() - min(created_at)) / 3600)::int8
+                          AS oldest_hours,
+                      NOT EXISTS (SELECT 1 FROM catalog_edit_requests
+                                  WHERE notified_at > now() - make_interval(hours => $1))
+                          AS "due!"
+               FROM catalog_edit_requests WHERE status = 'open'"#,
+            hours
         )
         .fetch_one(&mut *conn)
         .await
-        .map(|row| (row.new, row.open, row.newest, row.oldest_hours))?,
+        .map(|row| (row.new, row.open, row.fresh, row.oldest_hours, row.due))?,
     };
-    let (new, open, newest, oldest_hours) = row;
-    Ok(newest.filter(|_| new > 0).map(|newest| {
-        let news = QueueNews {
-            new,
-            open,
-            oldest_hours: oldest_hours.unwrap_or(0).max(0),
-        };
-        (news, newest)
-    }))
+    let (new, open, fresh, oldest_hours, due) = row;
+    let fresh = fresh.unwrap_or_default();
+    if !due || new == 0 || fresh.is_empty() {
+        return Ok(None);
+    }
+    let news = QueueNews {
+        new,
+        open,
+        oldest_hours: oldest_hours.unwrap_or(0).max(0),
+    };
+    Ok(Some((news, fresh)))
+}
+
+/// Marks the items a mail counted (`ids`, from [`news`]) as mailed now. An item that was
+/// resolved meanwhile is stamped too: it was counted.
+async fn stamp(conn: &mut PgConnection, queue: Queue, ids: &[i64]) -> sqlx::Result<()> {
+    match queue {
+        Queue::Reports => sqlx::query!(
+            "UPDATE reports SET notified_at = now() WHERE id = ANY($1) AND notified_at IS NULL",
+            ids
+        )
+        .execute(&mut *conn)
+        .await
+        .map(drop),
+        Queue::EditRequests => sqlx::query!(
+            "UPDATE catalog_edit_requests SET notified_at = now()
+             WHERE id = ANY($1) AND notified_at IS NULL",
+            ids
+        )
+        .execute(&mut *conn)
+        .await
+        .map(drop),
+    }
 }
 
 /// Sends one mail; a failure or a send slower than [`SEND_TIMEOUT`] is logged.

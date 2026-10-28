@@ -66,11 +66,12 @@ async fn run(app: &TestApp) -> NotifyRun {
     run_with(&app.state, &app.db).await
 }
 
-/// Moves the last mail of `queue` `hours` into the past.
-async fn sent_hours_ago(app: &TestApp, queue: &str, hours: i64) {
+/// Moves the last mail of a queue `hours` into the past: every item of `table` (`reports` or
+/// `catalog_edit_requests`) that a mail counted gets `notified_at` that long ago.
+async fn sent_hours_ago(app: &TestApp, table: &str, hours: i64) {
     app.exec(&format!(
-        "UPDATE admin_notify_state SET sent_at = now() - interval '{hours} hours'
-         WHERE queue = '{queue}'"
+        "UPDATE {table} SET notified_at = now() - interval '{hours} hours'
+         WHERE notified_at IS NOT NULL"
     ))
     .await;
 }
@@ -181,6 +182,39 @@ async fn only_open_reports_are_news(db: PgPool) {
     assert_eq!(mail.subject, "1 new report on Bookclub");
 }
 
+/// An open report that no mail counted is news even when a report with a larger id was mailed
+/// before it: two reports filed at once can commit in either order, so the job goes by what each
+/// report records (`notified_at`), not by the largest id it has seen.
+#[sqlx::test]
+async fn a_report_that_commits_late_is_still_news(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let (ada, grace) = people(&app).await;
+    let first = picture(&app, "Circe", 101).await;
+    report(&ada, &first).await;
+    let second = picture(&app, "Ich bin Circe", 102).await;
+    report(&grace, &second).await;
+    // As if a run had seen the second report while the first one's transaction was still open.
+    app.exec(
+        "UPDATE reports SET notified_at = now() - interval '1 hour'
+         WHERE id = (SELECT max(id) FROM reports)",
+    )
+    .await;
+    assert_eq!(run(&app).await.report_mails, 2);
+    let mail = &app.email.sent_to("root@example.test")[0];
+    assert_eq!(mail.subject, "1 new report on Bookclub");
+    assert!(
+        mail.text.contains("2 reports are open in all"),
+        "{}",
+        mail.text
+    );
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM reports WHERE notified_at IS NULL")
+            .await,
+        0
+    );
+    assert_eq!(run(&app).await, NotifyRun::default(), "nothing new");
+}
+
 /// Catalog requests go out as a digest at most once a day, with a link to the requests tab.
 #[sqlx::test]
 async fn catalog_requests_go_out_as_a_daily_digest(db: PgPool) {
@@ -204,13 +238,13 @@ async fn catalog_requests_go_out_as_a_daily_digest(db: PgPool) {
 
     request(&grace, work.id, 400).await;
     assert_eq!(run(&app).await, NotifyRun::default(), "within the day");
-    sent_hours_ago(&app, "edit_requests", 23).await;
+    sent_hours_ago(&app, "catalog_edit_requests", 23).await;
     assert_eq!(
         run(&app).await,
         NotifyRun::default(),
         "still within the day"
     );
-    sent_hours_ago(&app, "edit_requests", 24).await;
+    sent_hours_ago(&app, "catalog_edit_requests", 24).await;
     assert_eq!(run(&app).await.digest_mails, 2);
     let digest = &app.email.sent_to("root@example.test")[1];
     assert_eq!(digest.subject, "1 new catalog request on Bookclub");
@@ -244,7 +278,7 @@ async fn news_waits_until_a_mail_goes_out(db: PgPool) {
     down.email = Arc::new(Refusing);
     assert_eq!(run_with(&down, &app.db).await, NotifyRun::default());
     assert_eq!(
-        app.scalar_i64("SELECT count(*) FROM admin_notify_state WHERE sent_at IS NOT NULL")
+        app.scalar_i64("SELECT count(*) FROM reports WHERE notified_at IS NOT NULL")
             .await,
         0
     );
