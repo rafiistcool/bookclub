@@ -76,6 +76,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/media/{public_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Takes a picture down directly, without a report: same effect as resolving one with
+         *     `remove`. Taking down a removed picture changes nothing.
+         */
+        delete: operations["media_admin_take_down"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The open reports, oldest first. */
+        get: operations["media_admin_list_reports"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/reports/{report_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Removes the reported picture (everywhere it is shown, for good) or dismisses the report. */
+        post: operations["media_admin_resolve_report"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/works/{work_id}/merge": {
         parameters: {
             query?: never;
@@ -161,6 +215,27 @@ export interface paths {
          *     A wrong password counts as a login failure (429 after ten).
          */
         delete: operations["auth_delete_me"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/me/avatar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Uploads a profile picture: centre-cropped, 256×256, WebP, metadata (EXIF, GPS) dropped. The
+         *     previous picture is deleted.
+         */
+        put: operations["media_put_avatar"];
+        post?: never;
+        /** Deletes the profile picture. Answers the same when there is none. */
+        delete: operations["media_delete_avatar"];
         options?: never;
         head?: never;
         patch?: never;
@@ -672,6 +747,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/books/works/{work_id}/cover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Uploads a photo of the reader's copy as the book's cover. The first cover of an edition (or
+         *     of a work, without `edition_id`) is set at once; otherwise an admin decides.
+         */
+        post: operations["media_upload_cover"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/books/works/{work_id}/edit-requests": {
         parameters: {
             query?: never;
@@ -1107,6 +1202,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/media/{public_id}/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reports a cover (`cover_public_id` of a book or edition): copyright, the wrong book,
+         *     offensive, or something else. 20 per day.
+         */
+        post: operations["media_report"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/openapi.json": {
         parameters: {
             query?: never;
@@ -1324,6 +1439,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/shelf/spine-colors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Samples the cover colours of the caller's shelf books that have none yet, 12 at a time. */
+        post: operations["media_spine_colors"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/shelf/{entry_id}": {
         parameters: {
             query?: never;
@@ -1360,6 +1492,26 @@ export interface paths {
          *     the owner, `only_me` ratings and quotes are left out.
          */
         get: operations["shelf_personal_stats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media/{public_id}/{variant}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Serves a picture. Public: the id is the secret. Covers have the variants `l` (≤ 800 px wide)
+         *     and `s` (≤ 240 px wide), avatars `a` (256×256).
+         */
+        get: operations["media_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1580,6 +1732,29 @@ export interface components {
             name: string;
             /** @description `"translator"`, `"illustrator"` or `"editor"`. */
             role: string;
+        };
+        /** @description A cover existed, so the photo waits in the admin queue as a `cover_replace` request. */
+        CoverRequested: {
+            /** Format: int64 */
+            request_id: number;
+        };
+        /** @description The photo became the cover. */
+        CoverSet: {
+            /** @description The book with its new cover (in the edition's context when one was named). */
+            book: components["schemas"]["BookOut"];
+        };
+        /** @description The multipart form of a cover photo (OpenAPI only). */
+        CoverUpload: {
+            /**
+             * Format: binary
+             * @description A JPEG, PNG, WebP or GIF of at most 50 MB and 25 megapixels.
+             */
+            file: string;
+            /**
+             * Format: int64
+             * @description The edition the photo shows (an edition of the work in the path); without it, the work.
+             */
+            edition_id?: number | null;
         };
         /** @description A book no source knows. */
         CustomBookIn: {
@@ -2181,6 +2356,14 @@ export interface components {
             /** @description The club's time zone. */
             timezone: string;
         };
+        /** @description The multipart form of an avatar upload (OpenAPI only). */
+        PictureUpload: {
+            /**
+             * Format: binary
+             * @description A JPEG, PNG, WebP or GIF of at most 50 MB and 25 megapixels.
+             */
+            file: string;
+        };
         /**
          * @description One post (a diary entry or a club post) as the viewer sees it: the legacy `DiaryEntryOut`
          *     plus the scope fields.
@@ -2369,6 +2552,51 @@ export interface components {
             timezone?: string | null;
             /** @description `en` or `de`; default `en`. */
             locale?: string | null;
+        };
+        /** @description The report is in the admin queue. */
+        ReportCreated: {
+            /** Format: int64 */
+            id: number;
+        };
+        /** @description A reader's report of a cover. */
+        ReportIn: {
+            /** @description `copyright`, `wrong_book`, `offensive` or `other`. */
+            reason: string;
+            /** @description What is wrong; at most 2000 characters. */
+            details?: string | null;
+        };
+        /** @description The open reports, oldest first. */
+        ReportList: {
+            items: components["schemas"]["ReportOut"][];
+        };
+        /** @description A report in the admin queue. */
+        ReportOut: {
+            /** Format: int64 */
+            id: number;
+            /** @description `copyright`, `wrong_book`, `offensive` or `other`. */
+            reason: string;
+            details: string;
+            /** @description `open`, `removed` or `dismissed`. */
+            status: string;
+            /** @description The reported picture. */
+            media_public_id: string | null;
+            /** @description The picture was taken down (by this report or otherwise). */
+            removed: boolean;
+            /** @description The picture, null once it was taken down. */
+            cover_url: string | null;
+            cover_thumb_url: string | null;
+            book: components["schemas"]["BookOut"] | null;
+            created_by: components["schemas"]["UserSummary"] | null;
+            /** Format: date-time */
+            created_at: string;
+            resolved_by: components["schemas"]["UserSummary"] | null;
+            /** Format: date-time */
+            resolved_at: string | null;
+        };
+        /** @description What the admin decided. */
+        ReportResolveIn: {
+            /** @description `remove` takes the picture down; `dismiss` keeps it. */
+            action: string;
         };
         /** @description The token from a `/reset-password#token=…` link and the new password. */
         ResetConfirmIn: {
@@ -2616,6 +2844,18 @@ export interface components {
              */
             expires_in_days?: number | null;
         };
+        /** @description The colours sampled by one call. */
+        SpineColorsOut: {
+            /** @description `#rrggbb` by work id (`BookOut.id`, as a string key); only books that got a colour. */
+            colors: {
+                [key: string]: string;
+            };
+            /**
+             * Format: int64
+             * @description Books still waiting after this batch; 0 after a fetch that should be retried later.
+             */
+            remaining: number;
+        };
         /**
          * @description How a book stands: spine out, lying flat, or facing out with its cover.
          * @enum {string}
@@ -2707,6 +2947,9 @@ export type ClubRef = components['schemas']['ClubRef'];
 export type ClubStatsOut = components['schemas']['ClubStatsOut'];
 export type ClubSummary = components['schemas']['ClubSummary'];
 export type ContributorOut = components['schemas']['ContributorOut'];
+export type CoverRequested = components['schemas']['CoverRequested'];
+export type CoverSet = components['schemas']['CoverSet'];
+export type CoverUpload = components['schemas']['CoverUpload'];
 export type CustomBookIn = components['schemas']['CustomBookIn'];
 export type DecorationKind = components['schemas']['DecorationKind'];
 export type DiaryEntryIn = components['schemas']['DiaryEntryIn'];
@@ -2756,6 +2999,7 @@ export type PhysicalSpine = components['schemas']['PhysicalSpine'];
 export type PickPostIn = components['schemas']['PickPostIn'];
 export type PickStat = components['schemas']['PickStat'];
 export type PickThreadOut = components['schemas']['PickThreadOut'];
+export type PictureUpload = components['schemas']['PictureUpload'];
 export type PostOut = components['schemas']['PostOut'];
 export type PostPatchIn = components['schemas']['PostPatchIn'];
 export type PreferencesIn = components['schemas']['PreferencesIn'];
@@ -2766,6 +3010,11 @@ export type QuotePatchIn = components['schemas']['QuotePatchIn'];
 export type ReactionIn = components['schemas']['ReactionIn'];
 export type ReactionOut = components['schemas']['ReactionOut'];
 export type RegisterIn = components['schemas']['RegisterIn'];
+export type ReportCreated = components['schemas']['ReportCreated'];
+export type ReportIn = components['schemas']['ReportIn'];
+export type ReportList = components['schemas']['ReportList'];
+export type ReportOut = components['schemas']['ReportOut'];
+export type ReportResolveIn = components['schemas']['ReportResolveIn'];
 export type ResetConfirmIn = components['schemas']['ResetConfirmIn'];
 export type ResetRequestIn = components['schemas']['ResetRequestIn'];
 export type RoleIn = components['schemas']['RoleIn'];
@@ -2784,6 +3033,7 @@ export type ShelfMaterial = components['schemas']['ShelfMaterial'];
 export type ShelfPatchIn = components['schemas']['ShelfPatchIn'];
 export type ShelfStatus = components['schemas']['ShelfStatus'];
 export type SignupInviteIn = components['schemas']['SignupInviteIn'];
+export type SpineColorsOut = components['schemas']['SpineColorsOut'];
 export type SpineDisplay = components['schemas']['SpineDisplay'];
 export type TokenIn = components['schemas']['TokenIn'];
 export type TokenOut = components['schemas']['TokenOut'];
@@ -3044,6 +3294,146 @@ export interface operations {
             };
         };
     };
+    media_admin_take_down: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The picture's public id */
+                public_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The picture is removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    media_admin_list_reports: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The open reports, oldest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportList"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not found` for everyone but instance admins */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    media_admin_resolve_report: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The report id */
+                report_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportResolveIn"];
+            };
+        };
+        responses: {
+            /** @description The resolved report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportOut"];
+                };
+            };
+            /** @description `Input should be 'remove' or 'dismiss'` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `This report was already resolved` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     catalog_admin_merge_work: {
         parameters: {
             query?: never;
@@ -3243,6 +3633,86 @@ export interface operations {
             };
             /** @description `Too many attempts. Wait a few minutes.` */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    media_put_avatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["PictureUpload"];
+            };
+        };
+        responses: {
+            /** @description The account with its new `avatar_url` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserOut"];
+                };
+            };
+            /** @description `Use a JPEG, PNG, WebP, or GIF`, `That file is not a picture`, `That picture has too many pixels`, `That picture is too large (50 MB max)` or `This picture was removed` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `That picture is too large (50 MB max)` (by `Content-Length`, before the body is read) */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    media_delete_avatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account, `avatar_url` null */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserOut"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4527,6 +4997,87 @@ export interface operations {
             };
             /** @description `Could not load the library right now. Try again.` */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    media_upload_cover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A work id, `OL…W`, or a legacy key */
+                work_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["CoverUpload"];
+            };
+        };
+        responses: {
+            /** @description The photo is the cover now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverSet"];
+                };
+            };
+            /** @description A cover existed: the photo is a `cover_replace` request */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverRequested"];
+                };
+            };
+            /** @description `Use a JPEG, PNG, WebP, or GIF`, `That file is not a picture`, `That picture has too many pixels`, `That picture is too large (50 MB max)`, `This picture was removed`, `That edition belongs to another book` or an `edition_id` that is not a number */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such book.` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `That picture is too large (50 MB max)` (by `Content-Length`, before the body is read) */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Slow down a little. Try again later.` (30 uploads per day) */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6098,6 +6649,69 @@ export interface operations {
             };
         };
     };
+    media_report: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The cover's `cover_public_id` */
+                public_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportIn"];
+            };
+        };
+        responses: {
+            /** @description The report is in the admin queue */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportCreated"];
+                };
+            };
+            /** @description `Input should be 'copyright', 'wrong_book', 'offensive' or 'other'` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not found`: no such cover */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Slow down a little. Try again later.` (20 per day) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     platform_openapi: {
         parameters: {
             query?: never;
@@ -6966,6 +7580,35 @@ export interface operations {
             };
         };
     };
+    media_spine_colors: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The colours of this batch; the client asks again while `remaining > 0` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpineColorsOut"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     shelf_remove: {
         parameters: {
             query?: never;
@@ -7114,6 +7757,67 @@ export interface operations {
             };
             /** @description `No member with that name` (also for users outside the caller's audience) */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    media_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The picture's public id (`cover_public_id`, or the id in `avatar_url`) */
+                public_id: string;
+                /** @description `l` or `s` for covers, `a` for avatars */
+                variant: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The image (`image/webp`, or `image/jpeg` for imported avatars), cached for a year */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/webp": number[];
+                };
+            };
+            /** @description `Not found`: unknown id or variant, or Open Library has no such cover */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `This picture was removed` */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `The library is busy. Wait a few seconds and try again.` (Open Library throttled) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Could not load the cover right now. Try again.` (Open Library did not answer) */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };
