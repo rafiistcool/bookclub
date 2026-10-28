@@ -363,11 +363,14 @@ All are module constants in `picks` (`mod.rs`, `current.rs`, `milestones.rs`) an
   of a club write (work, club, users, vote, pick; "Work merges" above).
 - **POSTS:** a write that holds a row `catalog::merge_works` waits for later (a post of the
   loser, its thread) and then inserts a row referencing a user the merge locks `FOR UPDATE`
-  (author, actor) can deadlock with the merge the same way; lock the user first.
+  (author, actor) can deadlock with the merge the same way; lock the user first. (Done as
+  merged: POSTS locks the work before the post and the users, docs/phase1/notes/posts.md "Work
+  lock".)
 - **SHELF / integrator:** `tests/shelf_import.rs::two_runs_of_one_job_handle_each_row_once`
-  (merged from phase1-green, untouched here) failed twice in about 30 runs on this branch: the
-  job ended `failed` instead of `done`. It passed in isolation 20 times in a row and in the final
-  full run. Nothing CLUB changed is on the import's path.
+  (merged from phase1-green, untouched here) failed now and then on this branch: the job ended
+  `failed` instead of `done`. Resolved upstream by 9b03a09 (the test harness's fake catalog
+  ingests each hit in one transaction), merged here with phase1-green; nothing CLUB changed is
+  on the import's path.
 - **PAR (#49):** see "Parity" below.
 
 ## Parity (part 1)
