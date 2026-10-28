@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO posts (work_id, author_id, parent_id, club_id, pick_id, milestone_id,\n                            visibility, body, spoiler_upto, progress_at, status_at)\n         SELECT $1::int8, $2::int8, $3::int8, $4::int8, $5::int8, $6::int8,\n                $7::text, $8::text, $9::int4, $10::int4, $11::text\n         WHERE $4::int8 IS NULL\n            OR EXISTS (SELECT 1 FROM club_picks cp\n                       WHERE cp.club_id = $4 AND cp.id = $5 AND cp.ended_at IS NULL)\n         RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Text",
+        "Text",
+        "Int4",
+        "Int4",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9796b1f5e08c00cf8a70d75ca19ec03e982575b967d048b1a9ef70b0e974be28"
+}
