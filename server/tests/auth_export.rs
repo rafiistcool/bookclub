@@ -688,6 +688,50 @@ async fn exports_are_limited_to_five_an_hour(db: PgPool) {
 /// A sign-up with a free address and one with an address a verified account holds export the
 /// same profile, apart from the values that name the account: `pending_email` follows
 /// `UserOut` and stays null for an unverified account (§5.5 "No enumeration").
+/// Security review 2026-10-28 #6: each export holds the account's whole `data.json` while it
+/// streams, so two run at once on the instance and one per account. A refused export does not
+/// use up one of the account's five an hour.
+#[sqlx::test]
+async fn exports_run_two_at_a_time_and_one_per_account(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let slots = app
+        .state
+        .limits
+        .exports
+        .clone()
+        .try_acquire_many_owned(2)
+        .unwrap();
+    export(&ada)
+        .await
+        .assert_detail(429, "Slow down a little. Try again later.");
+    drop(slots);
+    let running = app
+        .state
+        .limits
+        .export_gate
+        .try_enter(&format!("u:{}", ada.id()))
+        .unwrap();
+    export(&ada)
+        .await
+        .assert_detail(429, "Slow down a little. Try again later.");
+    let grace = app.user("grace").await;
+    export(&grace).await.assert_status(200);
+    drop(running);
+    for _ in 0..5 {
+        export(&ada).await.assert_status(200);
+    }
+    export(&ada)
+        .await
+        .assert_detail(429, "Slow down a little. Try again later.");
+    // Every finished download gave its slot back.
+    app.settle().await;
+    assert_eq!(
+        app.state.limits.exports.available_permits(),
+        bookclub_server::ratelimit::EXPORTS_AT_ONCE
+    );
+}
+
 #[sqlx::test]
 async fn the_export_tells_no_sign_up_from_another(db: PgPool) {
     let app = TestApp::with_env(db, &[("SIGNUP_MODE", "open")]).await;

@@ -23,7 +23,7 @@ use super::openlibrary::{OlDoc, Sort};
 use super::shared::isbn::{looks_like_isbn, parse_isbn};
 use super::{
     BROWSE_UNAVAILABLE, INVALID_SORT, INVALID_SUBJECT, NO_SUCH_SUBJECT, QUERY_TOO_SHORT,
-    SEARCH_TOO_LONG, SEARCH_UNAVAILABLE, browse_error,
+    SEARCH_TOO_LONG, SEARCH_UNAVAILABLE, browse_error, upstream_turn,
 };
 use crate::AppState;
 use crate::auth::extract::CurrentUser;
@@ -39,6 +39,10 @@ pub const MIN_QUERY_CHARS: usize = 3;
 /// The local catalog is searched for needles of at least this many characters.
 pub const MIN_LOCAL_CHARS: usize = 2;
 pub const MAX_LIMIT: i64 = 40;
+/// Highest page of a search or a subject. Every page is its own upstream call and cache entry,
+/// so an open-ended page number bypassed the cache at will; Open Library pages that deep are
+/// not worth reading anyway.
+pub const MAX_PAGE: i64 = 100;
 
 static TITLE_BY_AUTHOR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)^(.+?)\s+by\s+(.+)$").unwrap());
@@ -69,7 +73,7 @@ pub struct SearchParams {
     /// readinglog).
     #[serde(default)]
     pub sort: Option<String>,
-    /// 1 or more.
+    /// 1 to 100.
     #[serde(default = "first_page")]
     pub page: i32,
     /// 1 to 40, default 24.
@@ -82,7 +86,7 @@ impl Validate for SearchParams {
         if let Some(sort) = &self.sort {
             v.check(Sort::parse(sort).is_some(), INVALID_SORT);
         }
-        v.range_i64(Some(self.page.into()), 1, i64::MAX);
+        v.range_i64(Some(self.page.into()), 1, MAX_PAGE);
         v.range_i64(Some(self.limit.into()), 1, MAX_LIMIT);
     }
 }
@@ -106,7 +110,7 @@ impl Validate for TrendingParams {
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct SubjectParams {
-    /// 1 or more.
+    /// 1 to 100.
     #[serde(default = "first_page")]
     pub page: i32,
     /// 1 to 40, default 12.
@@ -116,7 +120,7 @@ pub struct SubjectParams {
 
 impl Validate for SubjectParams {
     fn validate(&mut self, v: &mut Validator) {
-        v.range_i64(Some(self.page.into()), 1, i64::MAX);
+        v.range_i64(Some(self.page.into()), 1, MAX_PAGE);
         v.range_i64(Some(self.limit.into()), 1, MAX_LIMIT);
     }
 }
@@ -395,7 +399,8 @@ async fn trending_page(state: &AppState, viewer: i64, limit: i32) -> ApiResult<S
             parameter error"),
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
         (status = 429, body = ErrorBody, description = "`The library is busy. Try again in {n} \
-            seconds.` or `The library is busy. Wait a few seconds and try again.`"),
+            seconds.` or `The library is busy. Wait a few seconds and try again.`; `Slow down a \
+            little. Try again later.` (60 catalog requests per account a minute)"),
         (status = 502, body = ErrorBody, description = "`Could not search the library right \
             now. Try again.` (trending: `Could not load the library right now. Try again.`)")
     )
@@ -405,6 +410,7 @@ pub async fn search(
     State(state): State<AppState>,
     ApiQuery(params): ApiQuery<SearchParams>,
 ) -> ApiResult<Json<SearchPage>> {
+    let _turn = upstream_turn(&state, user.id).await?;
     Ok(Json(run_search(&state, user.id, params).await?))
 }
 
@@ -420,7 +426,7 @@ pub async fn search(
         (status = 200, body = SearchPage, description = "Trending works; `page` 1, `has_more` false"),
         (status = 400, body = ErrorBody, description = "A parameter error, or an upstream 422"),
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
-        (status = 429, body = ErrorBody, description = "The library is busy"),
+        (status = 429, body = ErrorBody, description = "The library is busy, or `Slow down a little. Try again later.` (60 catalog requests per account a minute)"),
         (status = 502, body = ErrorBody, description = "`Could not load the library right now. Try again.`")
     )
 )]
@@ -429,6 +435,7 @@ pub async fn trending(
     State(state): State<AppState>,
     ApiQuery(params): ApiQuery<TrendingParams>,
 ) -> ApiResult<Json<SearchPage>> {
+    let _turn = upstream_turn(&state, user.id).await?;
     Ok(Json(trending_page(&state, user.id, params.limit).await?))
 }
 
@@ -448,7 +455,7 @@ pub async fn trending(
         (status = 400, body = ErrorBody, description = "`That is not a valid subject.`, a parameter error, or an upstream 422"),
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
         (status = 404, body = ErrorBody, description = "`No such subject.`"),
-        (status = 429, body = ErrorBody, description = "The library is busy"),
+        (status = 429, body = ErrorBody, description = "The library is busy, or `Slow down a little. Try again later.` (60 catalog requests per account a minute)"),
         (status = 502, body = ErrorBody, description = "`Could not load the library right now. Try again.`")
     )
 )]
@@ -462,6 +469,7 @@ pub async fn subject(
     if key.is_empty() {
         return Err(AppError::bad_request(INVALID_SUBJECT));
     }
+    let _turn = upstream_turn(&state, user.id).await?;
     let (page, limit) = (params.page, params.limit);
     let offset = (i64::from(page) - 1) * i64::from(limit);
     let (docs, work_count) = state

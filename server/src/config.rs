@@ -362,11 +362,10 @@ fn check_smtp_tls(raw: &str) -> Result<()> {
         .query_pairs()
         .find(|(key, _)| key == "tls")
         .map(|(_, value)| value.into_owned());
-    let encrypted = match (url.scheme(), tls.as_deref()) {
-        ("smtps", _) => true,
-        ("smtp", Some("required")) => true,
-        _ => false,
-    };
+    let encrypted = matches!(
+        (url.scheme(), tls.as_deref()),
+        ("smtps", _) | ("smtp", Some("required"))
+    );
     // `smtp` is no special scheme, so the url crate keeps an IPv4 host as a name.
     let loopback = match url.host() {
         Some(url::Host::Domain(name)) => {

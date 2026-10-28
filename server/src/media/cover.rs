@@ -28,7 +28,7 @@ use super::pipeline::PictureKind;
 use super::service::store_variants;
 use super::shared::urls::{new_public_id, storage_prefix};
 use super::shared::{NewMedia, register};
-use super::upload::{CoverUpload, picture_error, read_picture};
+use super::upload::{CoverUpload, picture_error, read_picture, upload_turn};
 use super::{avatar::refuse_removed, delete_prefixes};
 use crate::AppState;
 use crate::auth::extract::CurrentUser;
@@ -72,7 +72,7 @@ pub struct CoverRequested {
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
         (status = 404, body = ErrorBody, description = "`No such book.`"),
         (status = 413, body = ErrorBody, description = "`That picture is too large (50 MB max)` (by `Content-Length`, before the body is read)"),
-        (status = 429, body = ErrorBody, description = "`Slow down a little. Try again later.` (30 uploads per day)")
+        (status = 429, body = ErrorBody, description = "`Slow down a little. Try again later.` (30 uploads per day, or another upload of the account still running)")
     )
 )]
 pub async fn upload_cover(
@@ -82,6 +82,14 @@ pub async fn upload_cover(
     headers: HeaderMap,
     multipart: Result<ApiMultipart, AppError>,
 ) -> ApiResult<Response> {
+    // Before the body is read: one upload per account at a time, and none over the daily limit
+    // (checked here without counting; it counts below, after the body and book checks).
+    let _turn = upload_turn(&state.limits, user.id)?;
+    state
+        .limits
+        .upload_user
+        .check(&format!("u:{}", user.id))
+        .map_err(|wait| wait.into_error(msg::SLOW_DOWN))?;
     let (data, fields) = read_picture(&headers, multipart).await?;
     let edition_id = match fields.0.get("edition_id").map(|value| value.trim()) {
         None | Some("") => None,

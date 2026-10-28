@@ -1219,3 +1219,30 @@ async fn detail_and_refresh_need_a_session(db: PgPool) {
         .assert_detail(401, "Not signed in");
     assert_eq!(total_calls(&app).await, 0);
 }
+
+/// Security review 2026-10-28 #5: importing an unknown book and a stub's first view call Open
+/// Library, so they count against the account's catalog limit. Over it, an unknown book is
+/// 429 and a stub is served as it is, without asking upstream.
+#[sqlx::test]
+async fn imports_and_first_views_count_against_the_catalog_limit(db: PgPool) {
+    let (app, _fake, ada) = setup(db).await;
+    ada.get("/api/books/search?q=circe")
+        .await
+        .assert_status(200);
+    let work = work_id_of(&app, "OL1W").await;
+    let key = format!("u:{}", ada.id());
+    while !app.state.limits.catalog_user.is_limited(&key) {
+        app.state.limits.catalog_user.hit(&key);
+    }
+    let before = calls(&app, "/works/").await;
+    let stub = ada.get(&format!("/api/books/works/{work}")).await;
+    stub.assert_status(200);
+    assert_eq!(stub.json()["description"], "");
+    ada.get("/api/books/works/OL99999W")
+        .await
+        .assert_detail(429, "Slow down a little. Try again later.");
+    assert_eq!(calls(&app, "/works/").await, before);
+    let grace = app.user("grace").await;
+    let full = grace.get(&format!("/api/books/works/{work}")).await.json();
+    assert_eq!(full["description"], "A plain string description.");
+}

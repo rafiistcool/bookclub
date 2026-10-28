@@ -273,7 +273,7 @@ mod tests {
         );
         // The dummy hash is made once and reused.
         let first = passwords.dummy.get().cloned().unwrap();
-        passwords.verify("other", None).await;
+        passwords.verify("other", None).await.unwrap();
         assert_eq!(passwords.dummy.get(), Some(&first));
     }
 

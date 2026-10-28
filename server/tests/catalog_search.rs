@@ -1109,3 +1109,71 @@ async fn browsing_stores_every_hit(db: PgPool) {
         .unwrap();
     assert_eq!(title, "Circe (edited)");
 }
+
+/// Security review 2026-10-28 #5: every user shares Open Library's 3 requests a second, so one
+/// account gets 60 catalog requests a minute (search, trending, subjects); another account is
+/// not affected.
+#[sqlx::test]
+async fn catalog_requests_are_limited_per_account(db: PgPool) {
+    let (app, _fake, ada) = setup(db).await;
+    let long = "x".repeat(201);
+    for _ in 0..60 {
+        search(&ada, &long)
+            .await
+            .assert_detail(400, "Search is too long");
+    }
+    for path in [
+        "/api/books/search?q=circe",
+        "/api/books/trending",
+        "/api/books/subjects/fiction",
+    ] {
+        let refused = ada.get(path).await;
+        refused.assert_detail(429, "Slow down a little. Try again later.");
+        assert!(refused.header("retry-after").is_some());
+    }
+    let grace = app.user("grace").await;
+    search(&grace, "circe").await.assert_status(200);
+}
+
+/// Two catalog requests per account at a time; a third waits for a turn instead of claiming
+/// more of the shared throttle's slots.
+#[sqlx::test]
+async fn an_account_has_two_catalog_requests_at_a_time(db: PgPool) {
+    let (app, _fake, ada) = setup(db).await;
+    let key = format!("u:{}", ada.id());
+    let first = app.state.limits.catalog_gate.enter(&key).await;
+    let _second = app.state.limits.catalog_gate.enter(&key).await;
+    let waiting = tokio::spawn({
+        let ada = ada.clone();
+        async move { search(&ada, "circe").await }
+    });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(!waiting.is_finished(), "the third request waits for a turn");
+    let grace = app.user("grace").await;
+    search(&grace, "circe").await.assert_status(200);
+    drop(first);
+    tokio::time::timeout(Duration::from_secs(10), waiting)
+        .await
+        .unwrap()
+        .unwrap()
+        .assert_status(200);
+}
+
+/// Pages go up to 100: each page is its own upstream call and cache entry.
+#[sqlx::test]
+async fn pages_stop_at_100(db: PgPool) {
+    let (app, _fake, ada) = setup(db).await;
+    for path in [
+        "/api/books/search?q=circe&page=101",
+        "/api/books/search?q=circe&page=2147483647",
+        "/api/books/subjects/fiction?page=101",
+    ] {
+        ada.get(path)
+            .await
+            .assert_detail(400, "Input should be less than or equal to 100");
+    }
+    assert!(paths(&app).await.is_empty());
+    ada.get("/api/books/subjects/fiction?page=100")
+        .await
+        .assert_status(200);
+}

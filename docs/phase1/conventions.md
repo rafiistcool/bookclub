@@ -597,7 +597,8 @@ Body `{password}`. The password is checked with `auth::account::verify_current_p
 
 The response is a ZIP that contains `data.json` and `media/`. It is `auth::export::export_me`:
 
-- **Streamed, bounded memory.** The rows are read first; then a spawned task writes the ZIP into the response body through a channel of one chunk: each picture is read from the media store, written (stored, not recompressed) and sent before the next one is read, and `data.json` (deflated) and the central directory come last. An export holds at most one picture and `data.json` in memory however many pictures the user uploaded (cover uploads have a daily limit but no total), and the producer waits for a slow client instead of reading ahead. The entries carry their sizes in data descriptors (the `zip` crate's stream mode), which unzip tools read from the central directory. A media-store error after the answer started aborts the download (logged); the archive then has no central directory, so no reader takes it for complete.
+- **Streamed, bounded memory.** The rows are read first; then a spawned task writes the ZIP into the response body through a channel of one chunk: each picture is read from the media store, written (stored, not recompressed) and sent before the next one is read, and `data.json` (deflated) and the central directory come last. `data.json` is serialised once (pretty), which drops the rows' `serde_json::Value`, and is deflated and sent in 256 KiB slices. An export holds at most one picture and `data.json` in memory however many pictures the user uploaded (cover uploads have a daily limit but no total), and the producer waits for a slow client instead of reading ahead.
+- **Bounded in number and time** (security review 2026-10-28 #6). `data.json` grows with what the user wrote (posts and quotes have no count limit), so: two exports stream at once on the instance (`RateLimits::exports`, `ratelimit::EXPORTS_AT_ONCE`) and one per account (`export_gate`), both taken before the rows are read and held until the stream ends, else 429 `Slow down a little. Try again later.` (checked before `export_user`, so a refused export does not count). The response body does not count against the request deadline (§3) and hyper has no write timeout, so the producer bounds itself: a chunk the client does not take within 60 s ends the export (`send_chunk`), and so does a download still running after an hour; either drops the rows and frees the slots. The entries carry their sizes in data descriptors (the `zip` crate's stream mode), which unzip tools read from the central directory. A media-store error after the answer started aborts the download (logged); the archive then has no central directory, so no reader takes it for complete.
 
 - 5 exports per user and hour (`export_user`, 429 `Slow down a little. Try again later.`).
 - Every section is read in one `REPEATABLE READ, READ ONLY` transaction, so the sections agree with each other.
@@ -1158,9 +1159,16 @@ impl SlidingWindow {
     pub fn check_and_hit(&self, key: &str) -> Result<(), RetryAfter>;   // atomic per key; a refusal records nothing
     pub fn clear(&self, key: &str);
 }
-pub struct RateLimits { pub login_failures, pub login_unknown, pub login_ip, pub signup_ip, pub reset_ip, pub reset_account,
-    pub email_send_user, pub email_target, pub invite_preview_ip, pub invite_accept_user, pub refresh_user, pub upload_user,
-    pub report_user, pub edit_request_user, pub custom_book_user, pub export_user: SlidingWindow }
+pub struct RateLimits { pub login_failures, pub password_check_session, pub password_check_user, pub login_unknown,
+    pub login_ip, pub signup_ip, pub reset_ip, pub reset_account, pub email_send_user, pub email_target, pub notice_target,
+    pub invite_preview_ip, pub invite_accept_user, pub refresh_user, pub upload_user, pub report_user, pub edit_request_user,
+    pub custom_book_user, pub export_user, pub avatar_user, pub catalog_user: SlidingWindow,
+    pub upload_gate, pub catalog_gate, pub export_gate: KeyedGate,   // at most N at once per key (`u:<id>`)
+    pub exports: Arc<Semaphore> }                                    // exports streaming on the instance
+/// At most `permits` operations at once per key: `try_enter` refuses (None) when they are taken, `enter` waits.
+/// The GatePass gives the turn back on drop; a key's entry lives only while someone holds or waits for it.
+impl KeyedGate { pub fn new(permits: usize) -> Self; pub fn try_enter(&self, key: &str) -> Option<GatePass>;
+                 pub async fn enter(&self, key: &str) -> GatePass; }
 /// Rate-limit key for a client address: an IPv4 address as is, an IPv6 address by its /64 prefix
 /// (a client with a /64 can otherwise mint a fresh key per request).
 pub fn ip_key(ip: IpAddr) -> String;
@@ -1194,7 +1202,11 @@ pub fn unknown_identifier_key(normalised: &str) -> String;
 | Reports | 20 per day |
 | Edit requests | 50 per day |
 | Custom books | 30 per day |
-| Export | 5 per hour |
+| Export | 5 per hour; and 2 at once on the instance (`exports`), 1 per account (`export_gate`), held while the download streams (§5.7) |
+| `avatar_user`: `PUT /api/auth/me/avatar` per account | 10 per hour |
+| `upload_gate`: picture uploads (avatar and cover) per account at once | 1, refused (429) before the body is read |
+| `catalog_user`: catalog requests that may call Open Library (search, trending, subjects, an unknown `OL…W` import, a stub's first view) per account | 60 per minute |
+| `catalog_gate`: the same requests per account at once | 2; further ones wait for a turn |
 
 - **Auth limits** (login, sign-up, reset) answer 429 `Too many attempts. Wait a few minutes.` with `Retry-After`.
 - **Other limits** answer 429 `Slow down a little. Try again later.`

@@ -36,8 +36,9 @@ pub use merge::{MergeReport, merge_works};
 pub use service::CatalogService;
 
 use crate::AppState;
-use crate::error::AppError;
+use crate::error::{ApiResult, AppError, msg};
 use crate::outbound::HostThrottle;
+use crate::ratelimit::GatePass;
 use cache::Fetch;
 
 // Detail strings of the catalog (docs/phase1/spec/catalog.md §1.11, endpoint-map §4), byte for
@@ -91,6 +92,25 @@ pub fn admin_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(admin::approve_edit_request))
         .routes(routes!(admin::reject_edit_request))
         .routes(routes!(admin::merge_work))
+}
+
+/// One account's turn at a request that may call Open Library (search, trending, a subject, the
+/// import or first view of a book), held until the request ends. Every user shares the `ol_api`
+/// throttle (3 requests a second, at most 2 s of waiting on request paths), so one account
+/// must not fill it (security review 2026-10-28 #5):
+///
+/// - `catalog_user`: 60 such requests per account a minute (429 `Slow down a little. Try again
+///   later.`);
+/// - `catalog_gate`: two at a time per account, further ones wait for a turn. One account then
+///   holds at most a few throttle slots, and every other request still gets one within its wait.
+pub async fn upstream_turn(state: &AppState, user_id: i64) -> ApiResult<GatePass> {
+    let key = format!("u:{user_id}");
+    state
+        .limits
+        .catalog_user
+        .check_and_hit(&key)
+        .map_err(|wait| wait.into_error(msg::SLOW_DOWN))?;
+    Ok(state.limits.catalog_gate.enter(&key).await)
 }
 
 /// 429 for a busy upstream: `The library is busy. Try again in {n} seconds.` (and

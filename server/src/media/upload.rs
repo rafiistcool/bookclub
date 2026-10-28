@@ -18,6 +18,7 @@ use bytes::{Bytes, BytesMut};
 use super::pipeline::{MAX_UPLOAD_BYTES, PictureError};
 use crate::error::{ApiResult, AppError, msg};
 use crate::extract::{ApiMultipart, FormFields};
+use crate::ratelimit::{GatePass, RateLimits};
 
 /// Multipart overhead allowed on top of [`MAX_UPLOAD_BYTES`] in `Content-Length`.
 pub const UPLOAD_LENGTH_SLACK: u64 = 4096;
@@ -54,6 +55,16 @@ pub fn oversize_content_length(headers: &HeaderMap) -> bool {
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.trim().parse::<u64>().ok())
         .is_some_and(|length| length > MAX_UPLOAD_BYTES as u64 + UPLOAD_LENGTH_SLACK)
+}
+
+/// The account's one picture upload at a time (`RateLimits::upload_gate`), taken before the
+/// body is read; 429 `Slow down a little. Try again later.` while another is still running, so
+/// one account cannot hold many 50 MiB bodies in memory or queue many decodes at once.
+pub fn upload_turn(limits: &RateLimits, user_id: i64) -> ApiResult<GatePass> {
+    limits
+        .upload_gate
+        .try_enter(&format!("u:{user_id}"))
+        .ok_or_else(|| AppError::too_many(msg::SLOW_DOWN, None))
 }
 
 /// The picture's bytes and the form's text fields.

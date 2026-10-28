@@ -24,7 +24,7 @@ use super::shared::books::{BookRef, book_out};
 use super::shared::ingest::{self, Mode, WorkRecord};
 use super::shared::isbn::Isbn13;
 use super::shared::work_ref::{WorkRef, resolve_local};
-use super::{BROWSE_UNAVAILABLE, NOT_FROM_OPEN_LIBRARY, busy};
+use super::{BROWSE_UNAVAILABLE, NOT_FROM_OPEN_LIBRARY, busy, upstream_turn};
 use crate::AppState;
 use crate::auth::extract::CurrentUser;
 use crate::dto::{CatalogSource, ClubRef, ShelfStatus, Visibility, user_summaries};
@@ -390,7 +390,7 @@ async fn dnb_cover_check(state: &AppState, work_id: i64) -> ApiResult<()> {
         (status = 200, body = BookDetailOut, description = "The book"),
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
         (status = 404, body = ErrorBody, description = "`No such book.`"),
-        (status = 429, body = ErrorBody, description = "Open Library is busy (importing an unknown `OL…W` id)"),
+        (status = 429, body = ErrorBody, description = "Open Library is busy (importing an unknown `OL…W` id), or `Slow down a little. Try again later.` (60 catalog requests per account a minute)"),
         (status = 502, body = ErrorBody, description = "`Could not load the library right now. Try again.`")
     )
 )]
@@ -402,11 +402,21 @@ pub async fn get_work(
     let work_ref = parse_work_ref(&raw)?;
     let work_id = match stored_work(&state, &work_ref).await? {
         Some(work) => {
-            first_view(&state, &work).await?;
+            // A first view asks Open Library, under the account's catalog limits
+            // (`upstream_turn`); over them, the stub is served as it is and enriched later.
+            if !work.details_fetched {
+                match upstream_turn(&state, user.id).await {
+                    Ok(_turn) => first_view(&state, &work).await?,
+                    Err(_) => tracing::debug!(work_id = work.id, "first view deferred"),
+                }
+            }
             work.id
         }
         None => match &work_ref {
-            WorkRef::OpenLibrary(ol_work_id) => import(&state, ol_work_id, false).await?,
+            WorkRef::OpenLibrary(ol_work_id) => {
+                let _turn = upstream_turn(&state, user.id).await?;
+                import(&state, ol_work_id, false).await?
+            }
             _ => return Err(AppError::not_found(msg::NO_SUCH_BOOK)),
         },
     };

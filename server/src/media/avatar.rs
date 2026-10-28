@@ -16,17 +16,17 @@ use super::pipeline::PictureKind;
 use super::service::store_variants;
 use super::shared::urls::{new_public_id, storage_prefix};
 use super::shared::{NewMedia, is_removed_hash, register};
-use super::upload::{PictureUpload, picture_error, read_picture};
+use super::upload::{PictureUpload, picture_error, read_picture, upload_turn};
 use super::{PICTURE_REMOVED, delete_prefixes};
 use crate::AppState;
 use crate::auth::extract::CurrentUser;
 use crate::auth::user_out;
 use crate::dto::UserOut;
-use crate::error::{ApiResult, AppError, ErrorBody};
+use crate::error::{ApiResult, AppError, ErrorBody, msg};
 use crate::extract::ApiMultipart;
 
 /// Uploads a profile picture: centre-cropped, 256×256, WebP, metadata (EXIF, GPS) dropped. The
-/// previous picture is deleted.
+/// previous picture is deleted. Ten uploads per account an hour, and one at a time.
 #[utoipa::path(
     put,
     path = "/api/auth/me/avatar",
@@ -38,7 +38,8 @@ use crate::extract::ApiMultipart;
         (status = 200, body = UserOut, description = "The account with its new `avatar_url`"),
         (status = 400, body = ErrorBody, description = "`Use a JPEG, PNG, WebP, or GIF`, `That file is not a picture`, `That picture has too many pixels`, `That picture is too large (50 MB max)` or `This picture was removed`"),
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
-        (status = 413, body = ErrorBody, description = "`That picture is too large (50 MB max)` (by `Content-Length`, before the body is read)")
+        (status = 413, body = ErrorBody, description = "`That picture is too large (50 MB max)` (by `Content-Length`, before the body is read)"),
+        (status = 429, body = ErrorBody, description = "`Slow down a little. Try again later.` (10 an hour, or another upload of the account still running)")
     )
 )]
 pub async fn put_avatar(
@@ -47,6 +48,14 @@ pub async fn put_avatar(
     headers: HeaderMap,
     multipart: Result<ApiMultipart, AppError>,
 ) -> ApiResult<Json<UserOut>> {
+    // Before the body is read: the upload's 50 MiB and its decode are what one account must
+    // not multiply (security review 2026-10-28 #4).
+    let _turn = upload_turn(&state.limits, user.id)?;
+    state
+        .limits
+        .avatar_user
+        .check_and_hit(&format!("u:{}", user.id))
+        .map_err(|wait| wait.into_error(msg::SLOW_DOWN))?;
     let (data, _) = read_picture(&headers, multipart).await?;
     let processed = state
         .media_service

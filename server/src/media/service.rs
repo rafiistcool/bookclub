@@ -97,7 +97,9 @@ pub struct MediaService {
 struct Inner {
     store: Arc<dyn MediaStore>,
     outbound: Arc<Outbound>,
-    pictures: Semaphore,
+    /// The pipeline's permits. Each job moves an owned permit into its blocking task
+    /// ([`with_picture_permit`]), so a request that goes away cannot free it mid-decode.
+    pictures: Arc<Semaphore>,
     /// Cover fetches in flight by media id, with the generation that started them.
     in_flight: Mutex<HashMap<i64, (u64, InFlight)>>,
     generation: AtomicU64,
@@ -111,7 +113,7 @@ impl MediaService {
             inner: Arc::new(Inner {
                 store,
                 outbound,
-                pictures: Semaphore::new(PICTURES_AT_ONCE),
+                pictures: Arc::new(Semaphore::new(PICTURES_AT_ONCE)),
                 in_flight: Mutex::new(HashMap::new()),
                 generation: AtomicU64::new(0),
             }),
@@ -142,8 +144,9 @@ impl MediaService {
     /// The spine colour of stored picture bytes (`color::dominant_color`; `""` when none is
     /// usable), sampled on the blocking pool under the pipeline's two-at-a-time limit.
     pub async fn dominant_color(&self, data: Bytes) -> anyhow::Result<String> {
-        let _permit = self.inner.pictures.acquire().await?;
-        let color = tokio::task::spawn_blocking(move || dominant_color(&data)).await?;
+        let color = with_picture_permit(&self.inner.pictures, move || dominant_color(&data))
+            .await
+            .map_err(anyhow::Error::msg)?;
         Ok(color.unwrap_or_default())
     }
 
@@ -187,14 +190,9 @@ impl MediaService {
 
 impl Inner {
     async fn process(&self, kind: PictureKind, data: Bytes) -> Result<Processed, PictureError> {
-        let _permit = self
-            .pictures
-            .acquire()
+        with_picture_permit(&self.pictures, move || pipeline::process(kind, &data))
             .await
-            .map_err(|_| PictureError::Encode("the picture pipeline is closed".into()))?;
-        tokio::task::spawn_blocking(move || pipeline::process(kind, &data))
-            .await
-            .unwrap_or_else(|error| Err(PictureError::Encode(error.to_string())))
+            .unwrap_or_else(|error| Err(PictureError::Encode(error)))
     }
 
     fn finished(&self, media_id: i64, generation: u64) {
@@ -442,10 +440,62 @@ pub async fn run_prefetch(state: AppState, shutdown: CancellationToken) {
     tracing::info!("cover prefetch worker stopped");
 }
 
+/// Runs `job` on the blocking pool under one of `permits`. The owned permit moves into the
+/// blocking task: when the request that started the job goes away (its client disconnected),
+/// the decode still holds the permit until it ends, so cancelled uploads cannot start more
+/// decodes than the pipeline allows (security review 2026-10-28 #4).
+async fn with_picture_permit<T: Send + 'static>(
+    permits: &Arc<Semaphore>,
+    job: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, String> {
+    let permit = permits
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| "the picture pipeline is closed".to_owned())?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        job()
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::media::shared::MemMediaStore;
+
+    #[tokio::test]
+    async fn a_cancelled_caller_leaves_the_permit_with_the_running_job() {
+        let permits = Arc::new(Semaphore::new(1));
+        let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let caller = tokio::spawn({
+            let permits = permits.clone();
+            async move {
+                with_picture_permit(&permits, move || {
+                    started_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                })
+                .await
+            }
+        });
+        tokio::task::spawn_blocking(move || started_rx.recv().unwrap())
+            .await
+            .unwrap();
+        caller.abort();
+        let _ = caller.await;
+        assert_eq!(permits.available_permits(), 0, "the decode still runs");
+        release_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while permits.available_permits() == 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the permit comes back when the job ends");
+    }
 
     fn service() -> MediaService {
         let config = Config::from_lookup(|key| match key {

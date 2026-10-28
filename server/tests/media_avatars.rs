@@ -495,3 +495,56 @@ async fn a_taken_down_avatar_stays_out_after_the_account_is_deleted(db: PgPool) 
         .assert_detail(400, "This picture was removed");
     assert_eq!(avatar_url(&carol).await, Value::Null);
 }
+
+/// Security review 2026-10-28 #4: ten avatar uploads per account an hour. Each one is a full
+/// decode in the pipeline every picture of the instance shares.
+#[sqlx::test]
+async fn avatar_uploads_are_limited_per_account(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    for n in 0..10u8 {
+        upload(&ada, png(32, [n, 0, 0]), "a.png", "image/png")
+            .await
+            .assert_status(200);
+    }
+    let refused = upload(&ada, png(32, [9, 9, 9]), "a.png", "image/png").await;
+    refused.assert_detail(429, "Slow down a little. Try again later.");
+    assert!(refused.header("retry-after").is_some());
+    let grace = app.user("grace").await;
+    upload(&grace, png(32, [1, 1, 1]), "g.png", "image/png")
+        .await
+        .assert_status(200);
+}
+
+/// One picture upload per account at a time: while one runs, another (avatar or cover) is
+/// refused before its body is read, so one account cannot hold many 50 MiB bodies at once.
+#[sqlx::test]
+async fn a_second_upload_while_one_runs_is_refused(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let circe = app.work("Circe").await;
+    let running = app
+        .state
+        .limits
+        .upload_gate
+        .try_enter(&format!("u:{}", ada.id()))
+        .unwrap();
+    upload(&ada, png(32, [1, 2, 3]), "a.png", "image/png")
+        .await
+        .assert_detail(429, "Slow down a little. Try again later.");
+    ada.post_multipart(
+        &format!("/api/books/works/{}/cover", circe.id),
+        vec![Part::file("c.png", "image/png", png(64, [4, 5, 6]))],
+    )
+    .await
+    .assert_detail(429, "Slow down a little. Try again later.");
+    let grace = app.user("grace").await;
+    upload(&grace, png(32, [1, 1, 1]), "g.png", "image/png")
+        .await
+        .assert_status(200);
+    drop(running);
+    upload(&ada, png(32, [1, 2, 3]), "a.png", "image/png")
+        .await
+        .assert_status(200);
+    assert_eq!(app.state.limits.upload_gate.keys_in_use(), 0);
+}

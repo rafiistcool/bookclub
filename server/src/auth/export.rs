@@ -8,11 +8,15 @@
 //! make it readable (work titles, club names).
 //!
 //! The ZIP is streamed: the pictures are read one at a time and each is sent as soon as it is
-//! written, then `data.json` and the central directory follow. An export therefore holds at most
-//! one picture and `data.json` in memory, however many pictures the user uploaded.
+//! written, then `data.json` (in slices, as it is deflated) and the central directory follow.
+//! An export therefore holds at most one picture and `data.json` in memory, however many
+//! pictures the user uploaded. Two exports stream at once on the instance, one per account; a
+//! client that stops reading for a minute, or a download still running after an hour, ends
+//! the export and frees what it holds.
 
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::State;
@@ -25,7 +29,7 @@ use sqlx::PgConnection;
 use time::format_description::well_known::Rfc3339;
 use time::macros::format_description;
 use time::{OffsetDateTime, UtcOffset};
-use tokio::sync::mpsc;
+use tokio::sync::{OwnedSemaphorePermit, mpsc};
 use zip::write::{SimpleFileOptions, StreamWriter};
 use zip::{CompressionMethod, ZipWriter};
 
@@ -34,12 +38,29 @@ use super::extract::CurrentUser;
 use crate::AppState;
 use crate::error::{ApiResult, AppError, ErrorBody, msg};
 use crate::media::shared::MediaStore;
+use crate::ratelimit::GatePass;
 use crate::tz;
 
 /// A piece of the response body; an error aborts the download.
 type Chunk = io::Result<Bytes>;
 
-/// Downloads everything the service stores about the signed-in user. Five exports an hour.
+/// The longest the export waits for the client to take the next chunk. A client that stops
+/// reading (a zero TCP window, a stalled HTTP/2 stream) ends the export, so its rows and its
+/// slot are not held until the connection dies.
+const SEND_TIMEOUT: Duration = Duration::from_secs(60);
+/// The longest an export streams in all, however slowly its client reads.
+const EXPORT_DEADLINE: Duration = Duration::from_secs(3600);
+/// `data.json` is deflated and sent in slices of this many bytes.
+const JSON_SLICE: usize = 256 * 1024;
+
+/// What an export holds while it streams: its account's turn and one of the instance's slots.
+struct ExportTurn {
+    _account: GatePass,
+    _slot: OwnedSemaphorePermit,
+}
+
+/// Downloads everything the service stores about the signed-in user. Five exports an hour, one
+/// at a time per account and two at a time on the instance.
 #[utoipa::path(
     get,
     path = "/api/auth/me/export",
@@ -50,15 +71,30 @@ type Chunk = io::Result<Bytes>;
         (status = 200, content_type = "application/zip",
          description = "`bookclub-export-<username>-<YYYYMMDD>.zip` with `data.json` and `media/`"),
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
-        (status = 429, body = ErrorBody, description = "`Slow down a little. Try again later.`")
+        (status = 429, body = ErrorBody, description = "`Slow down a little. Try again later.` (5 an hour, another export of the account still running, or two exports running on the instance)")
     )
 )]
 pub async fn export_me(user: CurrentUser, State(state): State<AppState>) -> ApiResult<Response> {
+    // Taken before the rows are read, and held until the download ends (security review
+    // 2026-10-28 #6): each export holds the account's whole `data.json` in memory.
+    let key = account_key(user.id);
+    let busy = || AppError::too_many(msg::SLOW_DOWN, None);
+    let account = state.limits.export_gate.try_enter(&key).ok_or_else(busy)?;
+    let slot = state
+        .limits
+        .exports
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| busy())?;
     state
         .limits
         .export_user
-        .check_and_hit(&account_key(user.id))
+        .check_and_hit(&key)
         .map_err(|wait| wait.into_error(msg::SLOW_DOWN))?;
+    let turn = ExportTurn {
+        _account: account,
+        _slot: slot,
+    };
     let mut tx = state
         .db
         .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ, READ ONLY")
@@ -83,7 +119,7 @@ pub async fn export_me(user: CurrentUser, State(state): State<AppState>) -> ApiR
     );
     // One chunk in flight: the producer waits for the client instead of reading ahead.
     let (sender, receiver) = mpsc::channel::<Chunk>(1);
-    tokio::spawn(stream_zip(state.media.clone(), data, media, sender));
+    tokio::spawn(stream_zip(state.media.clone(), data, media, sender, turn));
     let body = Body::from_stream(stream::unfold(receiver, |mut receiver| async move {
         let chunk = receiver.recv().await?;
         Some((chunk, receiver))
@@ -543,24 +579,46 @@ async fn stream_zip(
     data: Map<String, Value>,
     rows: Vec<MediaRow>,
     sender: mpsc::Sender<Chunk>,
+    turn: ExportTurn,
 ) {
-    if let Err(error) = write_zip(media.as_ref(), data, rows, &sender).await {
+    let written = tokio::time::timeout(
+        EXPORT_DEADLINE,
+        write_zip(media.as_ref(), data, rows, &sender, SEND_TIMEOUT),
+    )
+    .await
+    .unwrap_or_else(|_| Err(anyhow::anyhow!("the export ran past its deadline")));
+    if let Err(error) = written {
         tracing::warn!(error = %format!("{error:#}"), "the export failed");
-        // Nothing to do when the client is gone already.
-        let _ = sender
-            .send(Err(io::Error::other("the export failed")))
-            .await;
+        // Nothing to do when the client is gone or not reading.
+        let _ = sender.try_send(Err(io::Error::other("the export failed")));
+    }
+    drop(turn);
+}
+
+/// Hands `chunk` to the response body within `wait`. `Ok(false)`: the client went away; an
+/// error: it stopped reading.
+async fn send_chunk(
+    sender: &mpsc::Sender<Chunk>,
+    chunk: Bytes,
+    wait: Duration,
+) -> anyhow::Result<bool> {
+    match tokio::time::timeout(wait, sender.send(Ok(chunk))).await {
+        Ok(sent) => Ok(sent.is_ok()),
+        Err(_) => anyhow::bail!("the client stopped reading the export"),
     }
 }
 
 /// `media/`: every stored variant of every picture that was not taken down, as
 /// `media/<public_id>/<variant>.<webp|jpg>`, each sent once it is written; then `data.json`
-/// with the `uploaded_media` rows. Stops quietly when the client goes away.
+/// with the `uploaded_media` rows, serialised once (the rows are dropped then) and deflated and
+/// sent slice by slice. Stops quietly when the client goes away, and with an error when it
+/// takes no chunk for `wait`.
 async fn write_zip(
     media: &dyn MediaStore,
     mut data: Map<String, Value>,
     rows: Vec<MediaRow>,
     sender: &mpsc::Sender<Chunk>,
+    wait: Duration,
 ) -> anyhow::Result<()> {
     let mut zip = ExportZip::new();
     let mut items = Vec::with_capacity(rows.len());
@@ -579,7 +637,7 @@ async fn write_zip(
                 };
                 let path = format!("media/{}/{variant}.{extension}", row.public_id);
                 let chunk = zip.add_media(&path, &bytes)?;
-                if sender.send(Ok(chunk)).await.is_err() {
+                if !send_chunk(sender, chunk, wait).await? {
                     return Ok(());
                 }
                 paths.push(path);
@@ -588,11 +646,29 @@ async fn write_zip(
         items.push(row.to_json(paths));
     }
     data.insert("uploaded_media".into(), Value::Array(items));
-    let mut data = Value::Object(data);
-    utc_timestamps(&mut data);
-    let last = tokio::task::spawn_blocking(move || zip.finish(&data)).await??;
+    let json = tokio::task::spawn_blocking(move || {
+        let mut data = Value::Object(data);
+        utc_timestamps(&mut data);
+        serde_json::to_vec_pretty(&data).map(Bytes::from)
+    })
+    .await??;
+    zip.start_data()?;
+    for start in (0..json.len()).step_by(JSON_SLICE) {
+        let slice = json.slice(start..(start + JSON_SLICE).min(json.len()));
+        let (back, chunk) = tokio::task::spawn_blocking(move || {
+            let chunk = zip.write_data(&slice);
+            (zip, chunk)
+        })
+        .await?;
+        zip = back;
+        let chunk = chunk?;
+        if !chunk.is_empty() && !send_chunk(sender, chunk, wait).await? {
+            return Ok(());
+        }
+    }
+    let last = tokio::task::spawn_blocking(move || zip.finish()).await??;
     // A client that left before the last chunk needs nothing more.
-    let _ = sender.send(Ok(last)).await;
+    send_chunk(sender, last, wait).await?;
     Ok(())
 }
 
@@ -652,12 +728,22 @@ impl ExportZip {
         Ok(self.spool.take())
     }
 
-    /// Adds `data.json` (pretty, deflated) and the central directory.
-    fn finish(self, data: &Value) -> anyhow::Result<Bytes> {
-        let ExportZip { mut zip, spool } = self;
+    /// Starts `data.json` (deflated).
+    fn start_data(&mut self) -> anyhow::Result<()> {
         let deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
-        zip.start_file("data.json", deflated)?;
-        zip.write_all(&serde_json::to_vec_pretty(data)?)?;
+        self.zip.start_file("data.json", deflated)?;
+        Ok(())
+    }
+
+    /// Adds the next bytes of `data.json` and returns what the deflater produced so far.
+    fn write_data(&mut self, bytes: &[u8]) -> anyhow::Result<Bytes> {
+        self.zip.write_all(bytes)?;
+        Ok(self.spool.take())
+    }
+
+    /// Ends `data.json` and adds the central directory.
+    fn finish(self) -> anyhow::Result<Bytes> {
+        let ExportZip { zip, spool } = self;
         zip.finish()?;
         Ok(spool.take())
     }
@@ -721,6 +807,29 @@ mod tests {
         );
     }
 
+    /// Security review 2026-10-28 #6: a client that stops reading ends the export instead of
+    /// holding its rows (and its export slot) until the connection dies.
+    #[tokio::test]
+    async fn a_client_that_stops_reading_ends_the_export() {
+        let (sender, mut receiver) = mpsc::channel::<Chunk>(1);
+        let wait = Duration::from_millis(50);
+        assert!(
+            send_chunk(&sender, Bytes::from_static(b"one"), wait)
+                .await
+                .unwrap()
+        );
+        // The channel holds one chunk; nobody takes it.
+        let stalled = send_chunk(&sender, Bytes::from_static(b"two"), wait).await;
+        assert!(stalled.is_err(), "{stalled:?}");
+        assert_eq!(receiver.recv().await.unwrap().unwrap(), "one");
+        drop(receiver);
+        assert!(
+            !send_chunk(&sender, Bytes::from_static(b"three"), wait)
+                .await
+                .unwrap()
+        );
+    }
+
     #[test]
     fn the_zip_streams_each_file_then_data_json() {
         let mut zip = ExportZip::new();
@@ -731,10 +840,13 @@ mod tests {
         );
         assert!(first.ends_with(b"RIFF....WEBP"));
         let second = zip.add_media("media/abc/s.jpg", b"\xff\xd8jpeg").unwrap();
-        let last = zip
-            .finish(&json!({"profile": {"username": "ada"}}))
-            .unwrap();
-        let bytes = [first, second, last].concat();
+        zip.start_data().unwrap();
+        let data = serde_json::to_vec_pretty(&json!({"profile": {"username": "ada"}})).unwrap();
+        let (head, tail) = data.split_at(5);
+        let third = zip.write_data(head).unwrap();
+        let fourth = zip.write_data(tail).unwrap();
+        let last = zip.finish().unwrap();
+        let bytes = [first, second, third, fourth, last].concat();
 
         let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
         let mut names: Vec<String> = archive

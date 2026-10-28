@@ -1,11 +1,12 @@
 //! In-process sliding-window rate limits (docs/phase1/conventions.md §10.1).
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
+use tokio::sync::Semaphore;
 
 use crate::error::AppError;
 
@@ -14,6 +15,8 @@ const MAX_KEYS: u64 = 100_000;
 const MINUTE: Duration = Duration::from_secs(60);
 const HOUR: Duration = Duration::from_secs(3600);
 const DAY: Duration = Duration::from_secs(86_400);
+/// Data exports that may stream at once on the instance (each holds the account's `data.json`).
+pub const EXPORTS_AT_ONCE: usize = 2;
 
 /// Seconds until the oldest hit leaves the window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,11 +125,92 @@ impl SlidingWindow {
     }
 }
 
-fn lock(entry: &Mutex<VecDeque<Instant>>) -> std::sync::MutexGuard<'_, VecDeque<Instant>> {
-    // A panic while holding the lock cannot leave the deque inconsistent.
+fn lock<T>(entry: &Mutex<T>) -> MutexGuard<'_, T> {
+    // A panic while holding the lock cannot leave the deque or the map inconsistent.
     entry
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+type Gates = Arc<Mutex<HashMap<String, Arc<Semaphore>>>>;
+
+/// At most `permits` operations at once per key (`u:<id>`): a sliding window limits how often,
+/// this how many at the same time, so one account cannot fill a queue every user shares.
+/// [`KeyedGate::try_enter`] refuses when the key's turns are taken, [`KeyedGate::enter`] waits
+/// for one. A key's entry lives only while someone holds or waits for it.
+pub struct KeyedGate {
+    permits: usize,
+    gates: Gates,
+}
+
+/// A turn (or a place in the queue for one) of a [`KeyedGate`] key; dropping it gives the turn
+/// back and forgets the key when nobody else uses it.
+pub struct GatePass {
+    key: String,
+    semaphore: Arc<Semaphore>,
+    gates: Gates,
+    holding: bool,
+}
+
+impl KeyedGate {
+    pub fn new(permits: usize) -> Self {
+        Self {
+            permits,
+            gates: Arc::default(),
+        }
+    }
+
+    fn join(&self, key: &str) -> GatePass {
+        let semaphore = lock(&self.gates)
+            .entry(key.to_owned())
+            .or_insert_with(|| Arc::new(Semaphore::new(self.permits)))
+            .clone();
+        GatePass {
+            key: key.to_owned(),
+            semaphore,
+            gates: self.gates.clone(),
+            holding: false,
+        }
+    }
+
+    /// A turn for `key` now, or `None` when all of its turns are taken.
+    pub fn try_enter(&self, key: &str) -> Option<GatePass> {
+        let mut pass = self.join(key);
+        let permit = pass.semaphore.try_acquire().ok()?;
+        permit.forget();
+        pass.holding = true;
+        Some(pass)
+    }
+
+    /// Waits for a turn for `key` (first come, first served).
+    pub async fn enter(&self, key: &str) -> GatePass {
+        let mut pass = self.join(key);
+        pass.semaphore
+            .acquire()
+            .await
+            .expect("a gate's semaphore is never closed")
+            .forget();
+        pass.holding = true;
+        pass
+    }
+
+    /// Keys with a holder or a waiter (tests).
+    pub fn keys_in_use(&self) -> usize {
+        lock(&self.gates).len()
+    }
+}
+
+impl Drop for GatePass {
+    fn drop(&mut self) {
+        let mut gates = lock(&self.gates);
+        if self.holding {
+            self.semaphore.add_permits(1);
+        }
+        // The map's reference and this one: nobody else holds or waits for the key.
+        if Arc::strong_count(&self.semaphore) == 2 {
+            gates.remove(&self.key);
+        }
+    }
 }
 
 /// Every limit of §10.1. Each test gets a fresh set, because the harness builds a fresh `AppState`.
@@ -168,6 +252,22 @@ pub struct RateLimits {
     pub edit_request_user: SlidingWindow,
     pub custom_book_user: SlidingWindow,
     pub export_user: SlidingWindow,
+    /// `PUT /api/auth/me/avatar` per account.
+    pub avatar_user: SlidingWindow,
+    /// One picture upload (avatar or cover) per account at a time; a second one is refused
+    /// before its body is read, so one account holds at most one 50 MiB buffer.
+    pub upload_gate: KeyedGate,
+    /// Catalog requests that may call Open Library (search, trending, subjects, the import or
+    /// first view of a book) per account, so one account cannot use up the shared budget.
+    pub catalog_user: SlidingWindow,
+    /// Two of those requests per account at a time; more wait for a turn. One account then
+    /// holds at most a few of the `ol_api` throttle's slots, and other users' requests still
+    /// get one within their wait.
+    pub catalog_gate: KeyedGate,
+    /// Exports streaming at once on the instance ([`EXPORTS_AT_ONCE`]); a full set is 429.
+    pub exports: Arc<Semaphore>,
+    /// One export per account at a time.
+    pub export_gate: KeyedGate,
 }
 
 impl RateLimits {
@@ -193,6 +293,12 @@ impl RateLimits {
             edit_request_user: SlidingWindow::new(50, DAY),
             custom_book_user: SlidingWindow::new(30, DAY),
             export_user: SlidingWindow::new(5, HOUR),
+            avatar_user: SlidingWindow::new(10, HOUR),
+            upload_gate: KeyedGate::new(1),
+            catalog_user: SlidingWindow::new(60, MINUTE),
+            catalog_gate: KeyedGate::new(2),
+            exports: Arc::new(Semaphore::new(EXPORTS_AT_ONCE)),
+            export_gate: KeyedGate::new(1),
         }
     }
 }
@@ -372,10 +478,65 @@ mod tests {
             (&limits.edit_request_user, 50, 86_400),
             (&limits.custom_book_user, 30, 86_400),
             (&limits.export_user, 5, 3600),
+            (&limits.password_check_session, 10, 600),
+            (&limits.password_check_user, 30, 3600),
+            (&limits.notice_target, 6, 86_400),
+            (&limits.avatar_user, 10, 3600),
+            (&limits.catalog_user, 60, 60),
         ];
         for (limit, count, seconds) in cases {
             assert_eq!(limit.limit, count);
             assert_eq!(limit.window, Duration::from_secs(seconds));
         }
+        assert_eq!(limits.exports.available_permits(), EXPORTS_AT_ONCE);
+    }
+
+    #[test]
+    fn a_gate_refuses_a_key_whose_turns_are_taken_and_forgets_idle_keys() {
+        let gate = KeyedGate::new(1);
+        let first = gate.try_enter("u:1").unwrap();
+        assert!(gate.try_enter("u:1").is_none());
+        let other = gate.try_enter("u:2").unwrap();
+        assert_eq!(gate.keys_in_use(), 2);
+        drop(first);
+        let again = gate.try_enter("u:1").unwrap();
+        drop(again);
+        drop(other);
+        assert_eq!(gate.keys_in_use(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_waiting_gate_lets_callers_in_one_after_the_other() {
+        let gate = Arc::new(KeyedGate::new(2));
+        let a = gate.enter("u:1").await;
+        let _b = gate.enter("u:1").await;
+        let waiting = tokio::spawn({
+            let gate = gate.clone();
+            async move {
+                let _c = gate.enter("u:1").await;
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(!waiting.is_finished(), "a third caller waits for a turn");
+        drop(a);
+        tokio::time::timeout(Duration::from_secs(5), waiting)
+            .await
+            .unwrap()
+            .unwrap();
+        // A waiter that gives up leaves nothing behind either.
+        let held = gate.enter("u:3").await;
+        let gave_up = tokio::spawn({
+            let gate = gate.clone();
+            async move {
+                let _x = gate.enter("u:3").await;
+                let _y = gate.enter("u:3").await;
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        gave_up.abort();
+        let _ = gave_up.await;
+        drop(held);
+        drop(_b);
+        assert_eq!(gate.keys_in_use(), 0);
     }
 }
