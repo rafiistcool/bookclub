@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { api, ApiError } from "../api/client";
 import AccountSettings from "../components/AccountSettings.vue";
+import AdminLink from "../components/admin/AdminLink.vue";
 import Avatar from "../components/Avatar.vue";
 import DeleteAccount from "../components/DeleteAccount.vue";
 import FavoritesEditor from "../components/FavoritesEditor.vue";
@@ -243,7 +244,7 @@ onMounted(() => {
         <h2 id="instance-admin">{{ t("admin.title") }}</h2>
       </div>
       <p class="fine muted">{{ t("admin.settingsBlurb") }}</p>
-      <RouterLink class="btn btn-ghost" to="/admin">{{ t("admin.open") }}</RouterLink>
+      <AdminLink />
     </section>
 
     <DeleteAccount @deleted="toLogin(t('account.deleted'))" />

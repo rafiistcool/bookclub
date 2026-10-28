@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE catalog_edit_requests SET notified_at = now()\n             WHERE id = ANY($1) AND notified_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "034ee76a9bf2d9746b86c5541675f1f2243ce1333927384f7610e9062f23ae70"
+}

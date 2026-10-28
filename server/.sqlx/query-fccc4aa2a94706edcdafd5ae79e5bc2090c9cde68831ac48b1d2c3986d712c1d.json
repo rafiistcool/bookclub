@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT r.id AS \"id!\", r.reason AS \"reason!\", r.details AS \"details!\",\n                  r.status AS \"status!\", r.work_id, r.edition_id, r.created_by,\n                  r.created_at AS \"created_at!\", r.resolved_by, r.resolved_at,\n                  m.public_id AS \"public_id?\", m.removed_at IS NOT NULL AS \"removed?\"\n           FROM reports r\n           LEFT JOIN media m ON m.id = r.media_id\n           WHERE r.id = ANY($1)",
+  "query": "SELECT r.id AS \"id!\", r.reason AS \"reason!\", r.details AS \"details!\",\n                  r.status AS \"status!\", r.work_id, r.edition_id, r.created_by,\n                  r.created_at AS \"created_at!\", r.resolved_by, r.resolved_at,\n                  COALESCE(r.status = 'removed' AND r.resolved_by IS NULL\n                           AND r.resolved_at = r.created_at, false) AS \"closed_on_arrival!\",\n                  m.public_id AS \"public_id?\", m.removed_at IS NOT NULL AS \"removed?\"\n           FROM reports r\n           LEFT JOIN media m ON m.id = r.media_id\n           WHERE r.id = ANY($1)",
   "describe": {
     "columns": [
       {
@@ -115,6 +115,12 @@
       },
       {
         "ordinal": 10,
+        "name": "closed_on_arrival!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 11,
         "name": "public_id?",
         "type_info": "Text",
         "origin": {
@@ -125,7 +131,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "removed?",
         "type_info": "Bool",
         "origin": "Expression"
@@ -147,9 +153,10 @@
       true,
       true,
       true,
+      null,
       false,
       null
     ]
   },
-  "hash": "d49a13efce79dddc31c42a86b50d996b6ce4e62e5b0a48d93c7d0fee8ca42e8f"
+  "hash": "fccc4aa2a94706edcdafd5ae79e5bc2090c9cde68831ac48b1d2c3986d712c1d"
 }

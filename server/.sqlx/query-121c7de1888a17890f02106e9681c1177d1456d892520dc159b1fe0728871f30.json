@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id FROM catalog_edit_requests WHERE status = 'open' ORDER BY created_at, id",
+  "query": "SELECT id FROM catalog_edit_requests WHERE status = 'open'\n             ORDER BY created_at, id\n             LIMIT $1 OFFSET $2",
   "describe": {
     "columns": [
       {
@@ -16,11 +16,14 @@
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
     },
     "nullable": [
       false
     ]
   },
-  "hash": "d1120fb119ddfc1656899a3fcb83fd694b5f22e081e8af159aef0e3e4f51f952"
+  "hash": "121c7de1888a17890f02106e9681c1177d1456d892520dc159b1fe0728871f30"
 }

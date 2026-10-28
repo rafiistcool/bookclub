@@ -1,0 +1,124 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, title, subtitle, publisher, language, format, pages, publication_year,\n                    planned_publication_date\n             FROM editions WHERE id = ANY($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "title",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "subtitle",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "subtitle"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "publisher",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "publisher"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "language",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "language"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "format",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "format"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "pages",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "pages"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "publication_year",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "publication_year"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "planned_publication_date",
+        "type_info": "Date",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "planned_publication_date"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "9713a11223f0dcd5e613ded463167550edde6ff0ae61ccb3baff3f188f4050fd"
+}

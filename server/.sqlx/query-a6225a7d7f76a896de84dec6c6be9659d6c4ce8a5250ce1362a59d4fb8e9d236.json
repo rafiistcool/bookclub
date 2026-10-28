@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO reports (target_kind, media_id, work_id, edition_id, reason, details,\n                              created_by, created_at, status, resolved_by, resolved_at)\n         SELECT 'cover', $1, $2, $3, $4, $5, NULL, received, 'removed',\n                CASE WHEN removed IS NULL OR removed > received THEN $7::int8 END,\n                CASE WHEN removed IS NULL THEN now() ELSE greatest(removed, received) END\n         FROM (SELECT least(coalesce($6, now()), now()) AS received,\n                      $8::timestamptz AS removed) AS t",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a6225a7d7f76a896de84dec6c6be9659d6c4ce8a5250ce1362a59d4fb8e9d236"
+}

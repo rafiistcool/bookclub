@@ -23,8 +23,9 @@ async function submit() {
   busy.value = true;
   error.value = "";
   try {
-    await api.reportCover(props.publicId, { reason: reason.value, details: details.value.trim() || null });
-    toast.show(t("cover.reported"));
+    const created = await api.reportCover(props.publicId, { reason: reason.value, details: details.value.trim() || null });
+    // A repeat names the reader's open report; a picture taken down meanwhile needs nobody.
+    toast.show(created.status === "removed" ? t("cover.alreadyRemoved") : t("cover.reported"));
     emit("close");
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : t("cover.reportFailed");

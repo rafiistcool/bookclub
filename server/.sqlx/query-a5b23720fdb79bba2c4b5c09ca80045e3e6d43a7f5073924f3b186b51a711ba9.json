@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE catalog_edit_requests\n         SET status = 'rejected', decided_by = $2, decided_at = now(), decision_note = $3\n         WHERE media_id = $1 AND kind = 'cover_replace' AND status = 'open'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a5b23720fdb79bba2c4b5c09ca80045e3e6d43a7f5073924f3b186b51a711ba9"
+}

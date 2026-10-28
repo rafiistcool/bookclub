@@ -1,17 +1,22 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
-import type { EditRequestOut, ReportOut } from "../api/generated";
-import { bookDetail, bookOut, invite, user } from "../test/fixtures";
+import type { AdminSummary, EditRequestOut, ReportOut } from "../api/generated";
+import { bookDetail, bookOut, edition, invite, user } from "../test/fixtures";
 
 const api: Record<string, ReturnType<typeof vi.fn>> = {
   book: vi.fn(),
-  adminEditRequests: vi.fn(),
+  edition: vi.fn(),
+  adminEditWork: vi.fn(),
+  adminEditEdition: vi.fn(),
+  adminSummary: vi.fn(),
+  adminEditRequestPage: vi.fn(),
   approveEditRequest: vi.fn(),
   rejectEditRequest: vi.fn(),
-  adminReports: vi.fn(),
+  adminReportPage: vi.fn(),
   resolveReport: vi.fn(),
+  adminTakeDown: vi.fn(),
   adminInvites: vi.fn(),
   createSignupInvite: vi.fn(),
 };
@@ -19,9 +24,11 @@ const api: Record<string, ReturnType<typeof vi.fn>> = {
 vi.mock("../api/client", () => {
   class ApiError extends Error {
     status: number;
-    constructor(message: string, status: number) {
+    detail: unknown;
+    constructor(message: string, status: number, detail: unknown = null) {
       super(message);
       this.status = status;
+      this.detail = detail;
     }
   }
   return { ApiError, api: new Proxy({}, { get: (_target, key: string) => api[key] }) };
@@ -44,6 +51,7 @@ function editRequest(overrides: Partial<EditRequestOut> = {}): EditRequestOut {
     edition_id: null,
     book: bookOut({ id: 9, title: "Circe" }),
     payload: {} as Record<string, never>,
+    current: {} as Record<string, never>,
     cover_url: null,
     cover_thumb_url: null,
     cover_public_id: null,
@@ -72,6 +80,26 @@ function report(overrides: Partial<ReportOut> = {}): ReportOut {
     created_at: "2026-10-27T10:00:00Z",
     resolved_by: null,
     resolved_at: null,
+    closed_on_arrival: false,
+    ...overrides,
+  };
+}
+
+/** A page of a queue, as `?status=&page=` answers. */
+function page<T>(items: T[], hasMore = false, number = 1) {
+  return { items, page: number, has_more: hasMore };
+}
+
+function queueSummary(open: number, overdue = 0) {
+  return { open, overdue, oldest: open ? { id: 1, created_at: "2026-10-27T10:00:00Z" } : null };
+}
+
+function summary(overrides: Partial<AdminSummary> = {}): AdminSummary {
+  return {
+    target_hours: 72,
+    reports: queueSummary(0),
+    edit_requests: queueSummary(0),
+    report_stats: { days: 90, resolved: 0, median_hours: null, max_hours: null, over_target: 0 },
     ...overrides,
   };
 }
@@ -101,17 +129,27 @@ describe("AdminPage", () => {
   beforeEach(() => {
     for (const fn of Object.values(api)) fn.mockReset();
     api.book.mockRejectedValue(new ApiError("No such book.", 404, "No such book."));
+    api.adminSummary.mockResolvedValue(summary());
+    api.adminEditRequestPage.mockResolvedValue(page([]));
+    api.adminReportPage.mockResolvedValue(page([]));
     i18n.global.locale.value = "en";
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("lists the open catalog requests with what they propose, and approves one", async () => {
-    api.adminEditRequests.mockResolvedValue({
-      items: [
+    api.adminEditRequestPage.mockResolvedValue(
+      page([
         editRequest({ payload: { title: "Circe", pages: 393, subtitle: null } as never, note: "From the back cover." }),
         editRequest({ id: 2, kind: "work_merge", payload: { into_work_id: 31 } as never }),
-      ],
-    });
+      ]),
+    );
+    api.adminSummary.mockResolvedValueOnce(summary({ edit_requests: queueSummary(2) }));
+    api.adminSummary.mockResolvedValueOnce(summary({ edit_requests: queueSummary(1) }));
     const { wrapper } = await mountAdmin();
+    expect(api.adminEditRequestPage).toHaveBeenCalledWith("open", 1);
     const items = wrapper.findAll(".request-item");
     expect(items).toHaveLength(2);
     expect(items[0]!.text()).toContain("Book details");
@@ -128,10 +166,15 @@ describe("AdminPage", () => {
     expect(api.approveEditRequest).toHaveBeenCalledWith(1);
     expect(wrapper.findAll(".request-item")).toHaveLength(1);
     expect(useToast().items.at(-1)?.message).toBe("Approved");
+    // The badges come from the summary, read again after the decision.
+    expect(api.adminSummary).toHaveBeenCalledTimes(2);
+    expect(wrapper.get(".admin-tabs button").text()).toBe("Requests 1");
   });
 
   it("reads only the merge target, which the queue names without carrying it", async () => {
-    api.adminEditRequests.mockResolvedValue({
+    api.adminEditRequestPage.mockResolvedValue({
+      page: 1,
+      has_more: false,
       items: [
         editRequest({ id: 1, kind: "edition_edit", edition_id: 13, payload: { pages: 530 } as never }),
         editRequest({ id: 2, kind: "cover_replace", edition_id: 13, cover_thumb_url: "/media/p/s", cover_url: "/media/p/l" }),
@@ -156,7 +199,7 @@ describe("AdminPage", () => {
   });
 
   it("rejects with a note, and drops a request someone else decided", async () => {
-    api.adminEditRequests.mockResolvedValue({ items: [editRequest(), editRequest({ id: 2 })] });
+    api.adminEditRequestPage.mockResolvedValue(page([editRequest(), editRequest({ id: 2 })]));
     const { wrapper } = await mountAdmin();
     const first = wrapper.findAll(".request-item")[0]!;
     await buttonIn(first, "Reject").trigger("click");
@@ -176,9 +219,12 @@ describe("AdminPage", () => {
   });
 
   it("takes a reported cover down with a second tap, or keeps it", async () => {
-    api.adminReports.mockResolvedValue({ items: [report(), report({ id: 8, reason: "copyright", details: "" })] });
+    api.adminReportPage.mockResolvedValue(
+      page([report(), report({ id: 8, reason: "copyright", details: "", media_public_id: "def" })]),
+    );
     const { wrapper } = await mountAdmin("/admin?tab=reports");
-    expect(api.adminEditRequests).not.toHaveBeenCalled();
+    expect(api.adminEditRequestPage).not.toHaveBeenCalled();
+    expect(api.adminReportPage).toHaveBeenCalledWith("open", 1);
     const items = wrapper.findAll(".report-item");
     expect(items[0]!.text()).toContain("It shows a different book");
     expect(items[0]!.text()).toContain("That is a cookbook.");
@@ -196,6 +242,396 @@ describe("AdminPage", () => {
     await flushPromises();
     expect(api.resolveReport).toHaveBeenLastCalledWith(8, "dismiss");
     expect(wrapper.text()).toContain("No open reports.");
+  });
+
+  it("shows the record's value now beside each proposed one", async () => {
+    api.adminEditRequestPage.mockResolvedValue(
+      page([
+        editRequest({
+          payload: { title: "Circe", pages: 393, subtitle: null, year: 2018 } as never,
+          current: { title: "Cirse", pages: null, subtitle: "A Novel", year: 2018 } as never,
+        }),
+      ]),
+    );
+    const { wrapper } = await mountAdmin();
+    const item = wrapper.get(".request-item");
+    expect(item.findAll("dt").map((node) => node.text())).toEqual(["Title", "Pages", "Subtitle", "First published"]);
+    expect(item.findAll(".field-before .field-value").map((node) => node.text())).toEqual(["Cirse", "(empty)", "A Novel", "2018"]);
+    expect(item.findAll(".field-before.was-empty")).toHaveLength(1);
+    expect(item.findAll(".field-after .field-value").map((node) => node.text())).toEqual(["Circe", "393", "(clear it)", "2018"]);
+    expect(item.findAll(".field-after")[3]!.text()).toContain("already so");
+    expect(item.findAll(".field-before .field-tag")[0]!.text()).toBe("Now");
+    expect(item.findAll(".field-after .field-tag")[0]!.text()).toBe("Proposed");
+
+    i18n.global.locale.value = "de";
+    await flushPromises();
+    expect(item.findAll(".field-before .field-value")[1]!.text()).toBe("(leer)");
+    expect(item.findAll(".field-before .field-tag")[0]!.text()).toBe("Jetzt");
+  });
+
+  it("edits a request's book as admin, and reads the queue again", async () => {
+    api.adminEditRequestPage.mockResolvedValue(
+      page([editRequest({ payload: { title: "Circe" } as never, current: { title: "Cirse" } as never })]),
+    );
+    api.book.mockResolvedValue(bookDetail({ id: 9, title: "Cirse", subtitle: "", authors: "Madeline Miller" }));
+    const { wrapper } = await mountAdmin();
+    await buttonIn(wrapper.get(".request-item"), "Edit as admin").trigger("click");
+    await flushPromises();
+    expect(api.book).toHaveBeenCalledWith(9);
+    const sheet = wrapper.get(".sheet");
+    expect(sheet.text()).toContain("Edit this book as admin");
+    expect(sheet.find("textarea[name=note]").exists()).toBe(false);
+    await sheet.get("input[name=title]").setValue("Circe (corrected)");
+    api.adminEditWork.mockResolvedValue(bookDetail({ id: 9, title: "Circe (corrected)" }));
+    await sheet.get("form").trigger("submit");
+    await flushPromises();
+    expect(api.adminEditWork).toHaveBeenCalledWith(9, { title: "Circe (corrected)" });
+    expect(api.adminEditRequestPage).toHaveBeenCalledTimes(2);
+    expect(wrapper.find(".sheet").exists()).toBe(false);
+    expect(useToast().items.at(-1)?.message).toBe("Saved. Everyone sees the new values now.");
+    // The request stays open for a decision.
+    expect(api.approveEditRequest).not.toHaveBeenCalled();
+    expect(api.rejectEditRequest).not.toHaveBeenCalled();
+  });
+
+  it("edits the edition a request names, with the server's 400 in the sheet", async () => {
+    api.adminEditRequestPage.mockResolvedValue(
+      page([editRequest({ kind: "edition_edit", edition_id: 13, payload: { pages: 530 } as never })]),
+    );
+    api.edition.mockResolvedValue(edition({ id: 13, work_id: 9, pages: 500, publisher: "Klett" }));
+    const { wrapper } = await mountAdmin();
+    await buttonIn(wrapper.get(".request-item"), "Edit as admin").trigger("click");
+    await flushPromises();
+    expect(api.edition).toHaveBeenCalledWith(13);
+    expect(api.book).not.toHaveBeenCalled();
+    const sheet = wrapper.get(".sheet");
+    expect(sheet.text()).toContain("Edit this edition as admin");
+    await sheet.get("input[name=pages]").setValue(530);
+    api.adminEditEdition.mockRejectedValue(new ApiError("Invalid value for pages", 400, "Invalid value for pages"));
+    await sheet.get("form").trigger("submit");
+    await flushPromises();
+    expect(api.adminEditEdition).toHaveBeenCalledWith(13, { pages: 530 });
+    expect(wrapper.get(".sheet").text()).toContain("Invalid value for pages");
+    expect(api.adminEditRequestPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes every open report of a picture with one decision", async () => {
+    api.adminReportPage.mockResolvedValue(
+      page([
+        report(),
+        report({ id: 9, created_by: { id: 3, username: "grace", avatar_url: null } }),
+        report({ id: 8, media_public_id: "def" }),
+      ]),
+    );
+    api.adminSummary.mockResolvedValueOnce(summary({ reports: queueSummary(3) }));
+    api.adminSummary.mockResolvedValueOnce(summary({ reports: queueSummary(1) }));
+    const { wrapper } = await mountAdmin("/admin?tab=reports");
+    expect(wrapper.findAll(".admin-tabs button")[1]!.text()).toBe("Reports 3");
+    expect(wrapper.findAll(".report-item")).toHaveLength(3);
+    api.resolveReport.mockResolvedValue(report({ status: "dismissed" }));
+    await buttonIn(wrapper.findAll(".report-item")[1]!, "Keep it").trigger("click");
+    await flushPromises();
+    expect(api.resolveReport).toHaveBeenCalledWith(9, "dismiss");
+    expect(wrapper.findAll(".report-item")).toHaveLength(1);
+    expect(wrapper.get(".report-item").text()).toContain("That is a cookbook.");
+    expect(wrapper.findAll(".admin-tabs button")[1]!.text()).toBe("Reports 1");
+  });
+
+  it("shows both badges on first load, with the overdue ones marked", async () => {
+    api.adminSummary.mockResolvedValue(summary({ edit_requests: queueSummary(2), reports: queueSummary(3, 1) }));
+    const { wrapper } = await mountAdmin();
+    const tabs = wrapper.findAll(".admin-tabs button");
+    expect(tabs.map((node) => node.text())).toEqual(["Requests 2", "Reports 3", "Invites"]);
+    expect(tabs[0]!.get(".seg-count").classes()).not.toContain("overdue");
+    expect(tabs[1]!.get(".seg-count").classes()).toContain("overdue");
+    expect(tabs[1]!.get(".seg-count").attributes("title")).toBe("1 overdue");
+    // Only the shown queue is read; the other badge comes from the summary.
+    expect(api.adminReportPage).not.toHaveBeenCalled();
+  });
+
+  it("shows how long each open item has waited, and flags it after 72 hours", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-28T12:00:00Z"));
+    api.adminEditRequestPage.mockResolvedValue(
+      page([
+        editRequest({ id: 1, created_at: "2026-10-28T11:30:00Z" }),
+        editRequest({ id: 2, created_at: "2026-10-28T07:00:00Z" }),
+        editRequest({ id: 3, created_at: "2026-10-24T12:00:00Z" }),
+      ]),
+    );
+    const { wrapper } = await mountAdmin();
+    const items = wrapper.findAll(".request-item");
+    expect(items.map((item) => item.get(".age").text())).toEqual([
+      "waiting less than an hour",
+      "waiting 5 hours",
+      "waiting 4 days",
+    ]);
+    expect(items.map((item) => item.find(".overdue-badge").exists())).toEqual([false, false, true]);
+    expect(items[2]!.classes()).toContain("overdue");
+
+    api.adminReportPage.mockResolvedValue(
+      page([report({ id: 7, created_at: "2026-10-25T11:00:00Z" }), report({ id: 8, created_at: "2026-10-25T13:00:00Z" })]),
+    );
+    await wrapper.findAll(".admin-tabs button")[1]!.trigger("click");
+    await flushPromises();
+    const reports = wrapper.findAll(".report-item");
+    expect(reports.map((item) => item.get(".age").text())).toEqual(["waiting 3 days", "waiting 71 hours"]);
+    expect(reports[0]!.get(".overdue-badge").text()).toBe("Overdue");
+    expect(reports[1]!.find(".overdue-badge").exists()).toBe(false);
+
+    i18n.global.locale.value = "de";
+    await flushPromises();
+    expect(wrapper.findAll(".report-item .age").map((node) => node.text())).toEqual([
+      "wartet seit 3 Tagen",
+      "wartet seit 71 Stunden",
+    ]);
+    expect(wrapper.get(".overdue-badge").text()).toBe("Überfällig");
+  });
+
+  it("lists decided reports in the history, with the 90-day figures and more pages", async () => {
+    const root = { id: 1, username: "root", avatar_url: null };
+    const decided = Array.from({ length: 50 }, (_, index) =>
+      report({
+        id: 100 + index,
+        status: "dismissed",
+        cover_url: null,
+        cover_thumb_url: null,
+        created_at: "2026-10-20T10:00:00Z",
+        resolved_by: root,
+        resolved_at: "2026-10-22T12:00:00Z",
+      }),
+    );
+    decided[0] = report({
+      id: 100,
+      status: "removed",
+      removed: true,
+      created_by: null,
+      details: "Mail from the publisher.",
+      cover_url: null,
+      cover_thumb_url: null,
+      created_at: "2026-10-26T10:00:00Z",
+      resolved_by: root,
+      resolved_at: "2026-10-26T15:00:00Z",
+    });
+    decided[1] = report({
+      id: 101,
+      status: "removed",
+      removed: true,
+      created_at: "2026-10-26T10:00:00Z",
+      resolved_by: null,
+      resolved_at: "2026-10-26T10:00:00Z",
+      closed_on_arrival: true,
+    });
+    // Decided by an admin who has since deleted the account: no `resolved_by`, but not closed on arrival.
+    decided[3] = report({
+      id: 103,
+      status: "removed",
+      removed: true,
+      cover_url: null,
+      cover_thumb_url: null,
+      created_at: "2026-10-20T10:00:00Z",
+      resolved_by: null,
+      resolved_at: "2026-10-22T12:00:00Z",
+    });
+    api.adminSummary.mockResolvedValue(
+      summary({ report_stats: { days: 90, resolved: 49, median_hours: 50, max_hours: 80.5, over_target: 1 } }),
+    );
+    const { wrapper } = await mountAdmin("/admin?tab=reports");
+    api.adminReportPage.mockResolvedValueOnce(page(decided, true));
+    await buttonIn(wrapper.get(".queue-views"), "Decided").trigger("click");
+    await flushPromises();
+    expect(api.adminReportPage).toHaveBeenLastCalledWith("resolved", 1);
+    expect(wrapper.find("details.takedown").exists()).toBe(false);
+    expect(wrapper.get(".report-stats").findAll("dd").map((node) => node.text())).toEqual(["49", "50", "80.5", "1"]);
+    expect(wrapper.get(".report-stats").text()).toContain("Took longer than 72 hours");
+
+    const items = wrapper.findAll(".report-item");
+    expect(items).toHaveLength(50);
+    expect(items[0]!.text()).toContain("Taken down");
+    expect(items[0]!.text()).toContain("someone ·");
+    expect(items[0]!.get(".decision").text()).toMatch(/^Taken down by root · .+ · after 5 hours$/);
+    expect(items[0]!.text()).toContain("Mail from the publisher.");
+    expect(items[1]!.get(".decision").text()).toBe("Closed on arrival: the picture was already taken down");
+    expect(items[2]!.get(".decision").text()).toMatch(/^Kept by root · .+ · after 50 hours$/);
+    expect(items[3]!.get(".decision").text()).toMatch(/^Taken down by someone · .+ · after 50 hours$/);
+    expect(items[2]!.findAll("button").map((node) => node.text())).toEqual([]);
+
+    api.adminReportPage.mockResolvedValueOnce(page([report({ id: 150, status: "dismissed", resolved_by: root })], false, 2));
+    await buttonIn(wrapper.get(".admin-queue"), "Show more").trigger("click");
+    await flushPromises();
+    expect(api.adminReportPage).toHaveBeenLastCalledWith("resolved", 2);
+    expect(wrapper.findAll(".report-item")).toHaveLength(51);
+    expect(wrapper.findAll("button").some((node) => node.text() === "Show more")).toBe(false);
+
+    api.adminReportPage.mockResolvedValueOnce(page([report()]));
+    await buttonIn(wrapper.get(".queue-views"), "Open").trigger("click");
+    await flushPromises();
+    expect(api.adminReportPage).toHaveBeenLastCalledWith("open", 1);
+    expect(wrapper.findAll(".report-item")).toHaveLength(1);
+  });
+
+  it("lists decided catalog requests without their buttons", async () => {
+    const { wrapper } = await mountAdmin();
+    api.adminEditRequestPage.mockResolvedValueOnce(
+      page([
+        editRequest({
+          status: "rejected",
+          payload: { pages: 393 } as never,
+          current: { pages: 393 } as never,
+          decided_by: { id: 1, username: "root", avatar_url: null },
+          decided_at: "2026-10-28T10:00:00Z",
+          decision_note: "The back cover says 392.",
+        }),
+      ]),
+    );
+    await buttonIn(wrapper.get(".queue-views"), "Decided").trigger("click");
+    await flushPromises();
+    expect(api.adminEditRequestPage).toHaveBeenLastCalledWith("resolved", 1);
+    const item = wrapper.get(".request-item");
+    expect(item.text()).toContain("Rejected");
+    expect(item.get(".decision").text()).toMatch(/^Rejected by root · .+ · after 24 hours$/);
+    expect(item.text()).toContain("The back cover says 392.");
+    // The proposal without "now": a decision made it so or not.
+    expect(item.findAll(".field-before")).toHaveLength(0);
+    expect(item.findAll("button").map((node) => node.text())).toEqual([]);
+  });
+
+  it("takes a picture down by its address and records the notice", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-28T12:00:00Z"));
+    const { wrapper } = await mountAdmin("/admin?tab=reports");
+    const form = wrapper.get("details.takedown form");
+    await form.get("input[name=takedown-url]").setValue("not a link");
+    await form.trigger("submit");
+    await flushPromises();
+    expect(form.get("[role=alert]").text()).toBe("That is not the address of a picture or a book page.");
+
+    const id = "abcdefghijklmnopqrstuvwxyz";
+    await form.get("input[name=takedown-url]").setValue(`https://books.example.com/media/${id}/l`);
+    await form.get("input[name=received-at]").setValue("2026-10-27T09:30");
+    await form.get("select[name=reason]").setValue("offensive");
+    await form.get("textarea[name=details]").setValue("  Mail from someone without an account.  ");
+    await form.trigger("submit");
+    await flushPromises();
+    expect(api.adminTakeDown).not.toHaveBeenCalled();
+    expect(form.find("[role=alert]").exists()).toBe(false);
+    expect(form.get(".takedown-target").text()).toContain("The picture disappears");
+
+    api.adminTakeDown.mockResolvedValue(undefined);
+    api.adminSummary.mockClear();
+    api.adminReportPage.mockClear();
+    expect(buttonIn(form, "Take down for good").attributes("type")).toBe("submit");
+    await form.trigger("submit");
+    await flushPromises();
+    expect(api.adminTakeDown).toHaveBeenCalledWith(id, {
+      reason: "offensive",
+      details: "Mail from someone without an account.",
+      received_at: new Date("2026-10-27T09:30").toISOString(),
+    });
+    expect(useToast().items.at(-1)?.message).toBe("Picture taken down and the notice recorded");
+    expect(api.adminSummary).toHaveBeenCalledTimes(1);
+    expect(api.adminReportPage).toHaveBeenCalledWith("open", 1);
+    expect((form.get("input[name=takedown-url]").element as HTMLInputElement).value).toBe("");
+  });
+
+  it("takes down the cover of a book page, and refuses a notice from the future", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-28T12:00:00Z"));
+    api.book.mockResolvedValue(
+      bookDetail({ id: 9, title: "Circe", cover_public_id: "zyxwvutsrqponmlkjihgfedcba", cover_url: "/media/zyx/l", cover_thumb_url: "/media/zyx/s" }),
+    );
+    const { wrapper } = await mountAdmin("/admin?tab=reports");
+    const form = wrapper.get("details.takedown form");
+    await form.get("input[name=takedown-url]").setValue("https://books.example.com/book/9");
+    await form.trigger("submit");
+    await flushPromises();
+    expect(api.book).toHaveBeenCalledWith(9);
+    expect(form.get(".takedown-target").text()).toContain("Circe");
+
+    await form.get("input[name=received-at]").setValue("2026-10-30T09:30");
+    expect(buttonIn(form, "Take down for good").attributes("type")).toBe("submit");
+    await form.trigger("submit");
+    await flushPromises();
+    expect(form.get("[role=alert]").text()).toBe("The notice cannot have arrived in the future.");
+    expect(api.adminTakeDown).not.toHaveBeenCalled();
+
+    await form.get("input[name=received-at]").setValue("");
+    api.adminTakeDown.mockResolvedValue(undefined);
+    expect(buttonIn(form, "Take down for good").attributes("type")).toBe("submit");
+    await form.trigger("submit");
+    await flushPromises();
+    expect(api.adminTakeDown).toHaveBeenCalledWith("zyxwvutsrqponmlkjihgfedcba", { reason: "copyright", details: "" });
+
+    api.book.mockResolvedValue(bookDetail({ id: 10, cover_public_id: null }));
+    await form.get("input[name=takedown-url]").setValue("/book/10");
+    await form.trigger("submit");
+    await flushPromises();
+    expect(form.get("[role=alert]").text()).toBe("That book shows no picture.");
+  });
+
+  it("shows more open reports from the page a decision shortened, listing none twice", async () => {
+    const first = Array.from({ length: 50 }, (_, index) =>
+      report({ id: 200 + index, media_public_id: `pic${index}`, details: `Report ${200 + index}` }),
+    );
+    api.adminReportPage.mockResolvedValueOnce(page(first, true));
+    const { wrapper } = await mountAdmin("/admin?tab=reports");
+    expect(wrapper.findAll(".report-item")).toHaveLength(50);
+    api.resolveReport.mockResolvedValue(report({ id: 200, status: "dismissed" }));
+    await buttonIn(wrapper.findAll(".report-item")[0]!, "Keep it").trigger("click");
+    await flushPromises();
+    expect(wrapper.findAll(".report-item")).toHaveLength(49);
+
+    // The decision moved everything up by one: the server's page 1 is now the 49 still shown and
+    // one more. Page 2 would skip that one.
+    const next = report({ id: 250, media_public_id: "pic50", details: "Report 250" });
+    api.adminReportPage.mockResolvedValueOnce(page([...first.slice(1), next], true));
+    await buttonIn(wrapper.get(".admin-queue"), "Show more").trigger("click");
+    await flushPromises();
+    expect(api.adminReportPage).toHaveBeenLastCalledWith("open", 1);
+    const shown = wrapper.findAll(".report-item .report-details").map((node) => node.text());
+    expect(shown).toEqual([...first.slice(1).map((item) => item.details), "Report 250"]);
+    expect(new Set(shown).size).toBe(50);
+  });
+
+  it("offers the takedown without a record when the server cannot record the notice", async () => {
+    const { wrapper } = await mountAdmin("/admin?tab=reports");
+    const form = wrapper.get("details.takedown form");
+    const id = "avataravataravataravatar22";
+    await form.get("input[name=takedown-url]").setValue(`/media/${id}/a`);
+    await form.trigger("submit");
+    await flushPromises();
+    const refusal = "Only notices about covers can be recorded";
+    api.adminTakeDown.mockRejectedValueOnce(new ApiError(refusal, 400, refusal));
+    await form.trigger("submit");
+    await flushPromises();
+    expect(api.adminTakeDown).toHaveBeenCalledTimes(1);
+    expect(api.adminTakeDown.mock.calls[0]![1]).toMatchObject({ reason: "copyright" });
+    expect(form.get("[role=alert]").text()).toContain("A notice about it cannot be recorded yet, so nothing was taken down.");
+    expect(useToast().items.map((item) => item.message)).not.toContain("Picture taken down and the notice recorded");
+
+    api.adminTakeDown.mockResolvedValueOnce(undefined);
+    expect(buttonIn(form, "Take down without a record").attributes("type")).toBe("submit");
+    await form.trigger("submit");
+    await flushPromises();
+    expect(api.adminTakeDown).toHaveBeenLastCalledWith(id);
+    expect(useToast().items.at(-1)?.message).toBe("Picture taken down. The notice was not recorded.");
+    expect((form.get("input[name=takedown-url]").element as HTMLInputElement).value).toBe("");
+  });
+
+  it("words the server's refusal of an arrival time ahead of its clock", async () => {
+    const { wrapper } = await mountAdmin("/admin?tab=reports");
+    i18n.global.locale.value = "de";
+    const form = wrapper.get("details.takedown form");
+    await form.get("input[name=takedown-url]").setValue("abcdefghijklmnopqrstuvwxyz");
+    await form.trigger("submit");
+    await flushPromises();
+    // This device's clock is behind the server's, so its own check passed.
+    const refusal = "Input should be in the past";
+    api.adminTakeDown.mockRejectedValueOnce(new ApiError(refusal, 400, refusal));
+    await form.trigger("submit");
+    await flushPromises();
+    expect(form.get("[role=alert]").text()).toBe("Die Meldung kann nicht in der Zukunft eingegangen sein.");
+    expect(buttonIn(form, "Endgültig entfernen")).toBeTruthy();
   });
 
   it("creates a sign-up invite with the limits given, and lists the others", async () => {
