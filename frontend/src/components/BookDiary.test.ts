@@ -35,11 +35,11 @@ import BookDiary from "./BookDiary.vue";
 
 const CLUB = { slug: "readers-ab12", name: "Readers" };
 
-async function mountDiary(props: Record<string, unknown>, role = "member") {
+async function mountDiary(props: Record<string, unknown>, role: string | null = "member") {
   const pinia = createPinia();
   setActivePinia(pinia);
   useSession().user = user({
-    clubs: [{ ...CLUB, role, timezone: "Europe/Berlin", member_count: 3 }],
+    clubs: role ? [{ ...CLUB, role, timezone: "Europe/Berlin", member_count: 3 }] : [],
   });
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/", component: { template: "<p />" } }] });
   await router.push("/");
@@ -74,6 +74,32 @@ describe("BookDiary", () => {
     await flushPromises();
     expect(api.addPickPost).toHaveBeenCalledWith(CLUB.slug, null, { body: "Chapter 3!", spoiler_upto: 40 });
     expect(wrapper.text()).toContain("Chapter 3!");
+    // The club page refreshes its feed of members' writing on this.
+    expect(wrapper.emitted("posted")?.[0]?.[0]).toMatchObject({ id: 8 });
+    // In its own discussion a club post needs no club tag.
+    expect(wrapper.find(".entry-club").exists()).toBe(false);
+  });
+
+  it("names the club of a club post in a work's diary", async () => {
+    const items = [
+      post({ id: 1, author: "grace", body: "Mine to keep" }),
+      post({ id: 2, author: "max", body: "For Thursday", club: CLUB, pick_id: 5 }),
+    ];
+    api.diary.mockResolvedValue({ work_id: 9, my_progress: null, my_status: null, items, timezone: "UTC" });
+    const wrapper = await mountDiary({ workId: 9 });
+    const tags = wrapper.findAll(".entry-club");
+    expect(tags).toHaveLength(1);
+    expect(tags[0].text()).toBe("Readers");
+    expect(tags[0].attributes("href")).toBe("/c/readers-ab12/discussions");
+  });
+
+  it("leaves the meeting out of a solo reader's prompts", async () => {
+    api.diary.mockResolvedValue({ work_id: 9, my_progress: null, my_status: null, items: [], timezone: "UTC" });
+    const solo = await mountDiary({ workId: 9 }, null);
+    expect(solo.get(".diary-empty").text()).not.toContain("meeting");
+    expect(solo.get(".compose textarea").attributes("placeholder")).not.toContain("meeting");
+    const member = await mountDiary({ workId: 9 });
+    expect(member.get(".diary-empty").text()).toContain("meeting");
   });
 
   it("keeps an ended pick's discussion read-only", async () => {

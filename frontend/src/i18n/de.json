@@ -492,7 +492,10 @@
     "closed": "Dieses Club-Buch ist vorbei: Sein Gespräch ist geschlossen.",
     "onlyMe": "Nur ich",
     "onlyMeBadge": "Nur du",
-    "onlyMeHint": "Nur du siehst diesen Eintrag"
+    "onlyMeHint": "Nur du siehst diesen Eintrag",
+    "clubPostIn": "Im Gespräch von {club} geschrieben",
+    "emptySolo": "Noch nichts geschrieben. Wo stehst du, was ist hängengeblieben, was willst du dir merken?",
+    "placeholderSolo": "Ein Gedanke, eine Frage, etwas zum Merken"
   },
   "vote": {
     "title": "Abstimmung fürs Nächste",
@@ -906,7 +909,8 @@
     "toCurrent": "← Aktuelles Club-Buch",
     "heading": "Gespräch",
     "written": "Von Mitgliedern geschrieben",
-    "nothingWritten": "Von den Mitgliedern ist noch nichts geschrieben."
+    "nothingWritten": "Von den Mitgliedern ist noch nichts geschrieben.",
+    "writeAria": "Im Gespräch des Clubs schreiben"
   },
   "activity": {
     "heading": "Aktivität",
@@ -1004,7 +1008,6 @@
     "add": "Adresse hinzufügen",
     "dismiss": "Jetzt nicht",
     "save": "Adresse speichern",
-    "sent": "Wir haben einen Link an {email} geschickt. Öffne ihn, um die Adresse zu bestätigen.",
     "failed": "Die Adresse konnte nicht gespeichert werden"
   },
   "account": {
@@ -1053,6 +1056,7 @@
     "deletePassword": "Dein Passwort, zur Bestätigung",
     "deleteFinal": "Endgültig löschen",
     "deleteFailed": "Das Konto konnte nicht gelöscht werden",
-    "deleted": "Dein Konto wurde gelöscht"
+    "deleted": "Dein Konto wurde gelöscht",
+    "deviceOn": "{browser} unter {os}"
   }
 }

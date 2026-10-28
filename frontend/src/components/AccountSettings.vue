@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
+import { describeUserAgent } from "../devices";
 import { formatClubDate } from "../i18n/dates";
 import { useLocale } from "../stores/locale";
 import { useSession } from "../stores/session";
@@ -108,6 +109,15 @@ async function endSession(row: SessionOut) {
   } catch (err) {
     toast.show(message(err, t("account.sessionsFailed")));
   }
+}
+
+/** "Firefox on Linux" for a browser; an app's own label; the raw User-Agent when it says too little. */
+function deviceName(row: { kind: string; label: string }): string {
+  if (row.kind === "bearer") return row.label || t("account.app");
+  if (!row.label) return t("account.browser");
+  const { browser, os } = describeUserAgent(row.label);
+  if (browser && os) return t("account.deviceOn", { browser, os });
+  return browser ?? row.label;
 }
 
 function lastUsed(row: SessionOut): string {
@@ -217,7 +227,7 @@ onMounted(() => {
     <ul v-else class="session-list">
       <li v-for="row in sessions" :key="row.id" class="session-row">
         <span class="session-meta">
-          <strong class="session-label">{{ row.label || (row.kind === "bearer" ? t("account.app") : t("account.browser")) }}</strong>
+          <strong class="session-label" :title="row.label || undefined">{{ deviceName(row) }}</strong>
           <span class="finer subtle">
             <template v-if="row.current">{{ t("account.thisDevice") }} · </template>
             {{ t("account.lastUsed", { when: lastUsed(row) }) }}

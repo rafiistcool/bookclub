@@ -25,6 +25,8 @@ const props = defineProps<{
   compact?: boolean;
   /** No reply button (an ended pick's discussion). */
   noReply?: boolean;
+  /** Name the club of a club post (in a work's diary, where both scopes meet). */
+  showClub?: boolean;
   busy?: boolean;
 }>();
 
@@ -127,6 +129,14 @@ watch(
       <span v-if="marker" class="entry-marker" :class="entry.status_at ?? ''">{{ marker }}</span>
       <span class="finer subtle entry-time">{{ when }}</span>
       <span v-if="entry.edited" class="finer subtle">{{ t("diary.edited") }}</span>
+      <RouterLink
+        v-if="showClub && entry.club"
+        class="badge entry-club"
+        :to="`/c/${entry.club.slug}/discussions`"
+        :title="t('diary.clubPostIn', { club: entry.club.name })"
+      >
+        {{ entry.club.name }}
+      </RouterLink>
       <span v-if="entry.visibility === 'only_me'" class="badge only-me-badge" :title="t('diary.onlyMeHint')">
         {{ t("diary.onlyMeBadge") }}
       </span>
@@ -378,6 +388,10 @@ watch(
 
 .only-me-badge {
   font-size: var(--text-2xs);
+}
+
+.entry-club {
+  text-decoration: none;
 }
 
 .entry-actions {

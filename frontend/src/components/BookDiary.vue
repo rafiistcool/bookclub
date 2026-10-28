@@ -37,6 +37,11 @@ const props = defineProps<{
   heading?: string;
 }>();
 
+const emit = defineEmits<{
+  /** A new entry or reply was posted (the club page refreshes its feed). */
+  posted: [entry: Entry];
+}>();
+
 const REPLY_PREVIEW = 2;
 
 const toast = useToast();
@@ -44,6 +49,8 @@ const session = useSession();
 const route = useRoute();
 const clubs = useClubs();
 const diary = ref<Thread | null>(null);
+/** No clubs: no meeting to prepare for, so the prompts leave it out. */
+const solo = computed(() => !props.club && !session.user?.clubs.length);
 /** The club has no current pick, so there is no discussion to show. */
 const noPick = ref(false);
 const loaded = ref(false);
@@ -196,6 +203,7 @@ async function submit() {
     // Posted: forget the draft now, even if the page changes before the field clears.
     saveDraft(key, "");
     diary.value.items = [...diary.value.items, created];
+    emit("posted", created);
     draft.value = "";
     composing.value = false;
     onlyMe.value = false;
@@ -221,6 +229,7 @@ async function submitReply(parent: Entry) {
   try {
     const created = await post({ body, spoiler_upto: replySpoiler.value, parent_id: parent.id });
     parent.replies = [...parent.replies, created];
+    emit("posted", created);
     expandReplies(parent.id);
     saveDraft(replyDraftId(parent.id), "");
     replyTo.value = null;
@@ -340,6 +349,7 @@ watch(
             :entry="entry"
             :my-progress="myProgress"
             :my-status="myStatus"
+            :show-club="!club"
             :busy="busyId === entry.id"
             @react="react(entry, $event)"
             :no-reply="diary?.can_post === false"
@@ -406,7 +416,7 @@ watch(
         </li>
       </ol>
       <div v-else class="diary-empty">
-        <p class="fine subtle">{{ club ? t("diary.emptyClub") : t("diary.empty") }}</p>
+        <p class="fine subtle">{{ club ? t("diary.emptyClub") : solo ? t("diary.emptySolo") : t("diary.empty") }}</p>
         <button v-if="diary?.can_post" class="btn btn-ghost btn-sm" type="button" @click="focusComposer">
           {{ t("diary.writeFirst") }}
         </button>
@@ -423,14 +433,14 @@ watch(
       @focusin="composing = true"
     >
       <label class="field">
-        <span class="visually-hidden">{{ t("diary.writeAria") }}</span>
+        <span class="visually-hidden">{{ club ? t("discussions.writeAria") : t("diary.writeAria") }}</span>
         <textarea
           v-autosize
           ref="composer"
           v-model="draft"
           :rows="composeOpen ? 3 : 1"
           maxlength="1000"
-          :placeholder="t('diary.placeholder')"
+          :placeholder="solo ? t('diary.placeholderSolo') : t('diary.placeholder')"
         />
       </label>
       <div v-show="composeOpen" class="compose-row">

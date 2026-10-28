@@ -26,7 +26,7 @@ async function save() {
     const address = email.value.trim();
     await api.changeEmail(address, password.value);
     session.user = await api.me();
-    toast.show(t("emailPrompt.sent", { email: address }));
+    toast.show(t("account.emailSent", { email: address }));
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : t("emailPrompt.failed");
   } finally {

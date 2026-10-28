@@ -492,7 +492,10 @@
     "closed": "This pick is over: its discussion is closed.",
     "onlyMe": "Only me",
     "onlyMeBadge": "Only you",
-    "onlyMeHint": "Only you can see this entry"
+    "onlyMeHint": "Only you can see this entry",
+    "clubPostIn": "Written in the discussion of {club}",
+    "emptySolo": "Nothing written yet. Where are you, what stood out, what do you want to remember?",
+    "placeholderSolo": "A thought, a question, something to remember"
   },
   "vote": {
     "title": "Next-up vote",
@@ -906,7 +909,8 @@
     "toCurrent": "← Current pick",
     "heading": "Discussion",
     "written": "Written by members",
-    "nothingWritten": "Nothing written by members yet."
+    "nothingWritten": "Nothing written by members yet.",
+    "writeAria": "Write in the club's discussion"
   },
   "activity": {
     "heading": "Activity",
@@ -1004,7 +1008,6 @@
     "add": "Add an address",
     "dismiss": "Not now",
     "save": "Save address",
-    "sent": "We sent a link to {email}. Open it to confirm the address.",
     "failed": "Could not save the address"
   },
   "account": {
@@ -1053,6 +1056,7 @@
     "deletePassword": "Your password, to confirm",
     "deleteFinal": "Delete for good",
     "deleteFailed": "Could not delete the account",
-    "deleted": "Your account was deleted"
+    "deleted": "Your account was deleted",
+    "deviceOn": "{browser} on {os}"
   }
 }

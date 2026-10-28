@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import BookDiary from "../../components/BookDiary.vue";
@@ -10,6 +10,7 @@ const { t } = useI18n();
 const route = useRoute();
 
 const club = useCurrentClub();
+const feed = ref<InstanceType<typeof DiaryFeed> | null>(null);
 const slug = computed(() => club.value.slug);
 /** `?pick=<id>`: an earlier pick's discussion (from the past picks on the club page). */
 const pickId = computed(() => {
@@ -25,11 +26,12 @@ const pickId = computed(() => {
       <RouterLink v-if="pickId" class="fine" :to="`/c/${slug}/discussions`">
         {{ t("discussions.toCurrent") }}
       </RouterLink>
-      <BookDiary :club="{ slug, pickId }" :heading="t('discussions.heading')" />
+      <BookDiary :club="{ slug, pickId }" :heading="t('discussions.heading')" @posted="feed?.reload()" />
     </section>
 
     <section class="section">
       <DiaryFeed
+        ref="feed"
         :club="slug"
         :heading="t('discussions.written')"
         :empty-text="t('discussions.nothingWritten')"

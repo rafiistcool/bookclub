@@ -35,6 +35,8 @@ const error = ref("");
 const loaded = ref(false);
 const hasMore = ref(false);
 const busy = ref(false);
+/** The answer's zone: the club's in a club feed, where every line is in it (personal events too). */
+const feedZone = ref<string | null>(null);
 
 const rows = computed(() => items.value.map((item) => ({ item, line: activityLine(item) })));
 
@@ -46,6 +48,7 @@ async function load(more = false) {
     const page = await api.activity({ before, limit: props.pageSize ?? 15, club: props.club });
     items.value = more ? [...items.value, ...page.items] : page.items;
     hasMore.value = page.has_more;
+    feedZone.value = page.timezone;
     error.value = "";
   } catch (err) {
     if (props.club && isClubGone(err)) clubs.markGone(props.club);
@@ -56,8 +59,13 @@ async function load(more = false) {
   }
 }
 
+/**
+ * A club feed shows every line in the club's zone, as its labels are; the home
+ * feed shows club events in their club's zone and personal ones in the viewer's.
+ */
 function when(item: ActivityItem): string {
-  return formatClubDate(item.created_at, postTimeZone(item, session.user), locale.locale) || item.created_label;
+  const zone = props.club && feedZone.value ? feedZone.value : postTimeZone(item, session.user);
+  return formatClubDate(item.created_at, zone, locale.locale) || item.created_label;
 }
 
 onMounted(() => void load());
