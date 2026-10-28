@@ -23,12 +23,12 @@ No file in `server/src` changed: Part 1 found no server bug. No migration, no ne
 - a Python test function has no line, or a section's count differs from its file;
 - a line is not `- [x]`, has no status, or a **ported**, **changed** or **replaced** line names no Rust test, or a **dropped** line has no reason;
 - a parity comment sits on a Rust test that its Python test's line does not name;
-- the checklist names a Rust test (anywhere in the file) that does not exist;
-- a parametrised Python test's line has no "(N cases)";
-- the summary table disagrees with the sections (test count and the four statuses per file, and the total row);
+- the checklist names a Rust test (anywhere in the file) that does not exist, or a function without a `#[test]`, `#[sqlx::test]` or `#[tokio::test]` attribute (Part 3);
+- a parametrised Python test's line has no "(N cases)", or N is not the product of the lengths of its `@pytest.mark.parametrize` lists, or a line of a test without `parametrize` gives one (Part 3);
+- the summary table disagrees with the sections: the test count, the case count (the sum of the lines' N, 1 for a line without one; Part 3) and the four statuses per file; the total row is not the sum of the rows; the opening paragraph's "N files, N functions, N cases" and "All N are." are not the table's (Part 3);
 - a Python test listed in `parity-notes.md` has no line.
 
-Mutation-checked: deleting a line, unchecking one, removing a status, renaming a referenced Rust test, changing a summary number and adding a parity comment to another Rust test each fail with a message that names the line.
+Mutation-checked: deleting a line, unchecking one, removing a status, renaming a referenced Rust test, changing a summary number and adding a parity comment to another Rust test each fail with a message that names the line. Part 3 adds the mutations listed there.
 
 Decisions:
 - **A Rust test, not a Python script.** CI runs it with `cargo test`, and CI's server job has the whole checkout. It finds the repository through `CARGO_MANIFEST_DIR/..`.
@@ -70,15 +70,17 @@ Findings while writing them (no server change needed):
 
 ### The #37 schema acceptance criterion (`tests/parity_schema.rs`)
 
-`club_scoped_tables_carry_club_id_and_personal_tables_do_not` classifies every table of the live schema and checks the class:
-- club data: `club_id NOT NULL` with a foreign key over `club_id` to `clubs` or to another club table (the composite keys);
-- `club_invites`: nullable `club_id` → `clubs` (NULL = a sign-up invite);
-- deviation 1 (`posts`, `events`): nullable `club_id` → `clubs`, plus `posts_parent_fk` on `(parent_id, work_id, scope_key)`, `posts_club_needs_pick`, `posts_visibility_scope`, `events_scope`, `events_personal_no_pick`;
+`club_scoped_tables_carry_club_id_and_personal_tables_do_not` classifies every table of the live schema (each exactly once) and checks the class (as tightened in Part 3):
+- club data: `club_id NOT NULL`, with a foreign key from `club_id` alone to `clubs`, or a composite key over `club_id` into another club table with every column NOT NULL (`milestones`, `next_up_nominations`, `next_up_ballots`);
+- `club_invites`: nullable `club_id`, with a foreign key from `club_id` alone to `clubs` (NULL = a sign-up invite);
+- deviation 1 (`posts`, `events`): nullable `club_id`, with a foreign key from `club_id` alone to `clubs` (the MATCH SIMPLE composite keys `posts_pick_fk` and `events_pick_fk` do not count), plus `posts_parent_fk` on `(parent_id, work_id, scope_key)`, `posts_club_needs_pick`, `posts_visibility_scope`, `events_scope`, `events_personal_no_pick`;
 - deviation 2 (`post_reactions`, and `club_invite_uses` by the same pattern): no `club_id`, a NOT NULL foreign key to the parent with ON DELETE CASCADE;
-- personal data: no `club_id`, `user_id` → `users`;
+- personal data: no `club_id`, a NOT NULL `user_id` → `users`;
 - everything else (accounts, `clubs`, catalog, media, harvest state): no `club_id`.
 
-`club_invite_uses` is not one of the two deviations #37 records. It is a redemption log under an invite, so it inherits its scope like `post_reactions`; the checklist names it under deviation 2. **For the integrator:** add it to the #37 note and the schema header comment if you agree, or tell PAR to classify it otherwise.
+`the_checklist_classifies_every_table_like_the_schema_test` (Part 3) compares the classes with the Tables column of the checklist's #37 table.
+
+Two classifications are PAR's and not in the schema header, which records only the two deviations: `club_invites` with a nullable `club_id` (club or instance), and `club_invite_uses`, a redemption log under an invite that inherits its scope like `post_reactions` (deviation 2's pattern). The header says the deviations are "recorded in #37", but #37 has no comment and an unchanged body. See "For the integrator".
 
 ## Part 2: the end-to-end tests and the review (done)
 
@@ -116,7 +118,7 @@ The checklist section "#46 visibility matrix, as built" has the table. How "comp
 Decisions:
 - **Unknown name where there is no name.** The book page, the pick readers and the club views (overlap, suggestions, members, club stats) take no username, so their unknown-name case is "not applicable", as `catalog_visibility.rs` already says; their stranger case checks that the owner is absent (and that another club's view leaves the owner out even for a co-member who can see the owner's shelf). For the diary, the search history and import jobs the unknown name is an unknown id, and the test compares the stranger's answer for the owner's item with the answer for an id that names nothing.
 - **Owner-only kinds are in the matrix.** `search_history` and `import_jobs` are personal tables nobody else may read; the matrix checks that a co-member and strangers get 404 (`Search history entry not found`, `No such import`) like for an unknown id, and that the owner's row survives their attempts.
-- **What is not personal data** (each with its reason in the test): sessions and email tokens (account), memberships, removals, invites, picks, milestones, nominations and ballots (club data, members only), `works.created_by`/`editions.created_by` (provenance, never served), catalog edit requests and reports (admin moderation), `media.uploaded_by` (never served; an avatar is served by its unguessable public id, MED), and the member-administration routes `PATCH`/`DELETE /api/clubs/{slug}/members/{username}`.
+- **What is not personal data** (each with its reason in the test): sessions and email tokens (account), memberships, removals, picks, milestones, nominations and ballots (club data, members only), who created and who redeemed an invite (`InviteOut.created_by` and `used_by`, for the club's admins, or instance admins for a sign-up invite), `works.created_by`/`editions.created_by` (provenance, never served), catalog edit requests and reports (admin moderation), `media.uploaded_by` (never served; an avatar is served by its unguessable public id, MED), and the member-administration routes `PATCH`/`DELETE /api/clubs/{slug}/members/{username}`.
 - As built by the packages, and confirmed here: for a stranger, `GET /api/quotes?username=` and `GET /api/activity?username=` answer 200 with an empty list, exactly like an unknown name; every other `?username=` route answers 404 `No member with that name` for both.
 
 ### The seams Part 1 left open (`tests/parity_ports.rs`)
@@ -150,8 +152,34 @@ The review compared assertions; it did not mutation-test the 259 Rust tests.
 - **A new table fails `parity_schema.rs`** until it is added to one of its classes and to the checklist's #37 section. INT's `server/migrations/12*.sql` may add one; if so, classify it in the same merge (PAR owns the file, but a one-line addition to a list during the merge is the expected fix).
 - **A new or renamed parity comment, or a renamed Rust test named in the checklist, fails `parity_checklist.rs`.** The message names the line to edit.
 - **#48** deletes `test_api_error_copy.py`; nothing in the checklist needs to change for that.
-- **A new foreign key to `users`, a new `username` parameter or a new rating/take field fails `parity_visibility.rs`** until it is listed in that test's tables (with its kinds and cases, or the reason it is not personal data) and in the checklist's #46 table. INT's `server/migrations/12*.sql` may add such a column; listing it is a one-line addition during the merge.
+- **A new foreign key to `users`, a new `username` parameter or a new rating/take field fails `parity_visibility.rs`** (`every_personal_column_route_and_rating_field_is_in_the_matrix`) until it is listed in that test's tables, with its kinds or the reason it is not personal data. INT's `server/migrations/12*.sql` may add such a column; listing it is a one-line addition during the merge. A new kind also needs its four cases and its row in the checklist's #46 table, which `the_checklist_has_a_row_per_kind` checks.
+- **#37 has no record of the schema deviations.** The checklist and the schema header said they were "also noted on #37"; #37 has no comment, and its body is unchanged. The checklist now cites only the header and itself. Two hand-offs:
+  1. A comment on #37 (Forgejo), for example: "Acceptance criterion 3 as built (`docs/phase1/parity-checklist.md`, '#37 schema acceptance criterion, as built'; checked by `server/tests/parity_schema.rs`). Club-scoped tables carry `club_id` with a foreign key and personal tables don't, with two reasoned deviations: (1) `posts` and `events` hold both scopes in one table, `club_id` NULL = personal, kept apart by `posts_parent_fk` on `(parent_id, work_id, scope_key)`, `posts_club_needs_pick`, `posts_visibility_scope`, `events_scope` and `events_personal_no_pick`; (2) `post_reactions` has no `club_id` and inherits its scope through `post_id` NOT NULL → `posts` ON DELETE CASCADE. Two more classifications: `club_invites.club_id` is nullable, NULL being a sign-up invite an instance admin mints (no club to join); `club_invite_uses` has no `club_id` and inherits its scope through `invite_id` NOT NULL → `club_invites` ON DELETE CASCADE, like `post_reactions`."
+  2. The header of `server/migrations/0001_init.sql` (frozen, W1/INT), so that its "(recorded in #37 and the parity checklist)" is true once the comment is posted and it names the same cases. Replace the `post_reactions` item and append one line, so the end of that list reads:
+     ```
+     --       - post_reactions has no club_id: a reaction inherits its scope through
+     --         post_id (ON DELETE CASCADE), so it can never outlive or leave its post.
+     --         club_invite_uses inherits its scope through invite_id the same way.
+     --     club_invites.club_id is nullable: NULL is a sign-up invite an instance
+     --     admin mints (no club to join).
+     ```
+     Caveat: sqlx checksums the whole migration file, comments included, so this edit makes `cargo sqlx migrate run` refuse every database that has already applied version 1 ("previously applied but has been modified"). There is no production Postgres before the cutover (#52), but every worktree and dev database would need a reset (CI starts from an empty one). If that is not worth it, leave the header and let the #37 comment carry the two classifications; the parity test and the checklist do not depend on the header.
 - No `blocked_on_frozen` item from Part 1 or Part 2. HAR's open point (a deleted multi-ISBN record withdraws only its first edition, `docs/phase1/notes/har.md` "Open points") is in INT's files now; PAR did not touch it.
+
+## Part 3: review fixes
+
+Reviewers found gaps between what the docs promised and what the parity tests checked. The numbers were right; the guards were looser than stated. No file in `server/src` changed and no server bug was found, so there is still no `blocked_on_frozen` item; the two #37 hand-offs above touch INT/W1 files and Forgejo.
+
+- **#37 citation.** The checklist's #37 section said the deviations were "also noted on #37". It now cites the schema header and itself, names the two classifications the header does not record, and points here.
+- **#37 table checked against the test.** The checklist's #37 section is now a table (Class, Tables, As built). `parity_schema.rs::the_checklist_classifies_every_table_like_the_schema_test` parses its Tables column and compares it, class by class, with the test's arrays; the schema test also fails when a table is classified twice. Before, a table added only to the test's arrays passed.
+- **`club_id` → `clubs` on that column alone** for `club_invites`, `posts` and `events`. Before, any foreign key whose columns included `club_id` into a club table counted, so `events` passed through `events_pick_fk` (MATCH SIMPLE, skipped while `pick_id` is NULL) even without `events_club_id_fkey`. Club data may still use a composite key, but only with every column NOT NULL.
+- **NOT NULL checked** for the deviation 2 keys (`post_reactions.post_id`, `club_invite_uses.invite_id`) and for `user_id` of every personal table, as the docs said.
+- **Case counts checked.** `parity_checklist.rs` used to copy each row's Cases cell into the expected value and only looked for " cases)" on a line. Now N on a line must be the product of the lengths of the test's `@pytest.mark.parametrize` lists (parsed textually: comments and strings skipped, nested brackets counted; a non-literal list or a comprehension fails with "needs a checker update"), a row's Cases must be the sum of its lines' N (1 without one), and the opening paragraph's counts must be the total row's.
+- **A named Rust test must be a test.** The reference check walks back from the `fn` line over attributes, comments and blank lines and needs `#[test]`, `#[sqlx::test` or `#[tokio::test`; otherwise "is not a test".
+- **#46 table checked against the kinds.** `parity_visibility.rs::the_checklist_has_a_row_per_kind` compares the rows of the checklist's #46 table with `Kind::label` of every kind the discovery tables name.
+- **`club_invite_uses.user_id` reason.** It said "a redemption log, never served", but `InviteOut.used_by` (`src/clubs/out.rs`, `invite_outs`) serves it. Both invite columns now say what serves them and to whom: the club's admins, or instance admins for a sign-up invite (`GET /api/admin/invites`, the same `invite_outs`).
+
+Mutation-checked, each failing with a message naming the cause and passing again once restored: the `test_spa_cache.py` row's Cases set to 5 and the total to 359; "(35 cases)" set to "(3 cases)"; a fifth path added to `test_spa_cache.py`'s parametrize list; the opening paragraph's 358 set to 357; a checklist reference pointed at the helper `tests/parity_ports.rs::known_ol_work`; `club_invites` moved to the Neither row; `media_removed_hashes` dropped from the #37 table; the #46 row "Physical layout" renamed; and a temporary migration (deleted again) that dropped `events_club_id_fkey` and the NOT NULL of `club_invite_uses.invite_id`, `quotes.user_id` and `milestones.pick_id`, each of which the schema test reported.
 
 ## Left
 

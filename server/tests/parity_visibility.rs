@@ -12,6 +12,9 @@
 //!   parameter and every schema with a rating or take field must be in a table below, either
 //!   with the kinds that serve it or with the reason it is not personal data. So a new
 //!   personal table, `?username=` route or rating field fails until the matrix covers it.
+//! - `the_checklist_has_a_row_per_kind` compares the kinds with the rows of the checklist's
+//!   "#46 visibility matrix, as built" table (docs/phase1/parity-checklist.md), by
+//!   [`Kind::label`].
 //!
 //! A stranger is each of `otherclub` (shares a club with the co-member but not with the owner),
 //! `stranger` (in no club) and `former` (left the owner's club); see `tests/common/visibility.rs`.
@@ -21,10 +24,13 @@
 mod common;
 
 use std::collections::BTreeSet;
+use std::fs;
+use std::path::Path;
 
 use common::routes::operations;
 use common::visibility::{UNKNOWN, Viewers, assert_hidden_like_unknown};
 use common::*;
+use regex::Regex;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 
@@ -59,6 +65,26 @@ enum Kind {
     SearchHistory,
     /// Goodreads import jobs: their owner's alone.
     ImportJobs,
+}
+
+impl Kind {
+    /// Its row in the checklist's #46 table: the Kind column up to a parenthesis.
+    fn label(self) -> &'static str {
+        match self {
+            Kind::Shelf => "Shelf",
+            Kind::Favourites => "Favourites",
+            Kind::Layout => "Physical layout",
+            Kind::Quotes => "Quotes",
+            Kind::Stats => "Stats",
+            Kind::Diary => "Diary",
+            Kind::Activity => "Activity",
+            Kind::BookPage => "Book page",
+            Kind::PickReaders => "Pick readers",
+            Kind::ClubShelves => "Club shelves",
+            Kind::SearchHistory => "Search history",
+            Kind::ImportJobs => "Import jobs",
+        }
+    }
 }
 
 /// The viewer cases of conventions §6.5.
@@ -150,11 +176,17 @@ const USER_COLUMNS: &[(&str, Class)] = &[
     ),
     (
         "club_invites.created_by",
-        Not("club data: the club's admins only (clubs_invites.rs)"),
+        Not(
+            "invite data: `InviteOut.created_by`, for the club's admins only, or instance admins \
+             for a sign-up invite (clubs_invites.rs)",
+        ),
     ),
     (
         "club_invite_uses.user_id",
-        Not("club data: a redemption log, never served"),
+        Not(
+            "invite data: who redeemed an invite, `InviteOut.used_by`, for the club's admins \
+             only, or instance admins for a sign-up invite (clubs_invites.rs)",
+        ),
     ),
     (
         "clubs.created_by",
@@ -336,6 +368,45 @@ async fn every_personal_column_route_and_rating_field_is_in_the_matrix(db: PgPoo
     problems.extend(compare("schema", &schemas, RATING_SCHEMAS));
 
     assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+/// Every kind the tables above name: the kinds the matrix runs.
+fn named_kinds() -> BTreeSet<Kind> {
+    let mut kinds = kinds_of(USER_COLUMNS);
+    kinds.extend(kinds_of(USERNAME_ROUTES));
+    kinds.extend(kinds_of(RATING_SCHEMAS));
+    kinds
+}
+
+#[test]
+fn the_checklist_has_a_row_per_kind() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/phase1/parity-checklist.md");
+    let text = fs::read_to_string(path).unwrap();
+    let start = text
+        .find("\n## #46 visibility matrix")
+        .expect("the checklist has a #46 section");
+    let section = &text[start + 1..];
+    let section = &section[..section.find("\n## ").unwrap_or(section.len())];
+    let row = Regex::new(r"(?m)^\| ([^|(]+?) (?:\([^|]*\) )?\|").unwrap();
+    let rows: BTreeSet<&str> = row
+        .captures_iter(section)
+        .map(|found| found.get(1).unwrap().as_str())
+        .filter(|label| *label != "Kind" && !label.starts_with("---"))
+        .collect();
+    let kinds: BTreeSet<&str> = named_kinds().into_iter().map(Kind::label).collect();
+    let mut problems: Vec<String> = kinds
+        .difference(&rows)
+        .map(|label| format!("{label}: a kind of this test, but no row in the #46 table"))
+        .collect();
+    problems.extend(
+        rows.difference(&kinds)
+            .map(|label| format!("{label}: a row of the #46 table, but no kind of this test")),
+    );
+    assert!(
+        problems.is_empty(),
+        "docs/phase1/parity-checklist.md, #46 section:\n{}",
+        problems.join("\n")
+    );
 }
 
 /// The owner's data, written through the routes, and the viewers.
@@ -1255,9 +1326,7 @@ async fn import_jobs(w: &World, case: Case) -> Covered {
 #[sqlx::test]
 async fn every_personal_data_kind_has_its_four_viewer_cases(db: PgPool) {
     let w = World::new(db).await;
-    let mut kinds = kinds_of(USER_COLUMNS);
-    kinds.extend(kinds_of(USERNAME_ROUTES));
-    kinds.extend(kinds_of(RATING_SCHEMAS));
+    let kinds = named_kinds();
     let mut matrix = Vec::new();
     for kind in &kinds {
         for case in CASES {

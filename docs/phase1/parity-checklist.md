@@ -19,9 +19,9 @@ Every test function of the Python backend (`backend/tests/test_*.py`: 29 files, 
   - a Python test function has no line here, or a section's count is wrong;
   - a line is not checked off, has no status, or a ported, changed or replaced line names no Rust test;
   - a `/// parity:` comment sits on a Rust test that the line of its Python test does not name;
-  - a Rust test named anywhere in this file does not exist;
-  - a parametrised test's line does not give its case count;
-  - a row of the summary table disagrees with its section;
+  - a Rust test named anywhere in this file does not exist, or names a function without a `#[test]`, `#[sqlx::test]` or `#[tokio::test]` attribute;
+  - a parametrised test's line does not give its case count "(N cases)", N is not the product of the lengths of its `parametrize` lists, or a line of a test that is not parametrised gives one;
+  - a row of the summary table disagrees with its section: the tests, the cases (the sum of the lines' N, 1 for a line without one) and the statuses; the total row is not the sum of the rows, or the opening paragraph's numbers are not the total row's;
   - a Python test listed in `parity-notes.md` has no line.
 
   So a new parity comment, a renamed Rust test or a new Python test needs an edit here. Lines for Python tests that no longer exist are allowed: #48 deletes `test_api_error_copy.py`, and the cutover (#52) deletes `backend/`, after which the check is deleted and this file stays as the record.
@@ -94,24 +94,34 @@ These are not repeated on each line:
 
 ## #37 schema acceptance criterion, as built
 
-#37: "Club-scoped tables carry club_id with FK, personal tables don't." This holds with two recorded, reasoned deviations, also noted on #37 and in the header of `server/migrations/0001_init.sql`. `tests/parity_schema.rs::club_scoped_tables_carry_club_id_and_personal_tables_do_not` checks the classification below against the live schema. It fails for any new table until the table is classified there and here.
+#37: "Club-scoped tables carry club_id with FK, personal tables don't." This holds with two reasoned deviations, recorded in the header of `server/migrations/0001_init.sql` and here. Two classifications are this checklist's own and not in that header: `club_invites` (club or instance) and `club_invite_uses` (deviation 2's pattern). #37 itself has no note on any of this yet; `docs/phase1/notes/par.md` asks the integrator for one.
 
-- **Club data** (`club_id NOT NULL`, with a foreign key over `club_id`): `club_memberships`, `club_removals`, `club_picks`, `next_up_votes` (to `clubs`); `milestones` (`(club_id, pick_id)` → `club_picks`), `next_up_nominations` and `next_up_ballots` (`(club_id, vote_id)` → `next_up_votes`). The composite keys mean a child row can never point into another club.
-- **Club or instance:** `club_invites.club_id` → `clubs`, NULL for a sign-up invite an instance admin mints for the closed beta (no club to join).
-- **Deviation 1, both scopes in one table:** `posts` and `events` have a nullable `club_id` → `clubs`; NULL means personal.
+Two tests check the table below:
+- `tests/parity_schema.rs::club_scoped_tables_carry_club_id_and_personal_tables_do_not` checks each class against the live schema. A table of the schema that the test does not classify, classifies twice, or classifies although it is gone fails it.
+- `tests/parity_schema.rs::the_checklist_classifies_every_table_like_the_schema_test` compares the Tables column below with the test's classes, so a table classified in the test but not here, here but not in the test, or in another class fails it.
+
+| Class | Tables | As built |
+|---|---|---|
+| Club data | `club_memberships`, `club_removals`, `club_picks`, `next_up_votes`, `milestones`, `next_up_nominations`, `next_up_ballots` | `club_id NOT NULL`, with a foreign key from `club_id` alone to `clubs`, or a composite key with every column NOT NULL into another club table: `milestones` (`club_id`, `pick_id`) → `club_picks`, `next_up_nominations` and `next_up_ballots` (`club_id`, `vote_id`) → `next_up_votes`. The composite keys mean a child row can never point into another club. |
+| Club or instance | `club_invites` | A nullable `club_id`, with a foreign key from `club_id` alone to `clubs`. NULL for a sign-up invite an instance admin mints for the closed beta (no club to join). |
+| Deviation 1: both scopes | `posts`, `events` | A nullable `club_id`, with a foreign key from `club_id` alone to `clubs`; NULL means personal. A composite key such as `events_pick_fk` does not count: it is MATCH SIMPLE and skipped when `pick_id` is NULL. |
+| Deviation 2: inherited scope | `post_reactions`, `club_invite_uses` | No `club_id`. A NOT NULL foreign key to the parent with ON DELETE CASCADE: `post_id` → `posts`, `invite_id` → `club_invites`. |
+| Personal data | `shelf_entries`, `physical_shelf_layouts`, `user_favorites`, `search_history`, `quotes`, `import_jobs` | No `club_id`. A NOT NULL foreign key `user_id` → `users`. Other users read it through the visibility policy (`bc_visible_shelf`, `bc_visible_quotes`, conventions §6). |
+| Neither | `users`, `sessions`, `email_tokens`, `clubs`, `authors`, `works`, `work_authors`, `editions`, `edition_contributors`, `legacy_work_keys`, `catalog_edit_requests`, `harvest_state`, `media`, `media_removed_hashes`, `reports` | No `club_id`: accounts, the clubs themselves, the shared catalog and media. |
+
+- **Deviation 1, both scopes in one table.** The test also checks the constraints that keep the scopes apart:
   - `posts`: a club post has `club_id` and `pick_id` together (`posts_club_needs_pick`). `posts_parent_fk` on `(parent_id, work_id, scope_key)`, with `scope_key = coalesce(club_id, 0)`, ties a reply to its parent's work and scope. Only a personal root may be `only_me` (`posts_visibility_scope`).
   - `events`: the kind decides the scope (`events_scope`: the `shelf_*`, `progress` and `quote_added` kinds are personal). `events_personal_no_pick` keeps a pick out of personal events, since `events_pick_fk` is MATCH SIMPLE and skipped when `club_id` is NULL.
   - Why: a diary entry and a pick post have the same shape, replies, reactions and tombstones, and one feed reads both (work-plan appendix, diary 1); a personal event is stored once and shown in every club of its actor from `joined_at` on (club 5).
-- **Deviation 2, inherited scope:** `post_reactions` has no `club_id`; it inherits its scope through `post_id` → `posts` ON DELETE CASCADE, so a reaction can never outlive or leave its post. `club_invite_uses` follows the same pattern through `invite_id` → `club_invites`.
-- **Personal data** (`user_id` → `users`, no `club_id`): `shelf_entries`, `physical_shelf_layouts`, `user_favorites`, `search_history`, `quotes`, `import_jobs`. Other users read it through the visibility policy (`bc_visible_shelf`, `bc_visible_quotes`, conventions §6).
-- **Neither** (no `club_id`): accounts (`users`, `sessions`, `email_tokens`), `clubs` itself, the shared catalog (`authors`, `works`, `work_authors`, `editions`, `edition_contributors`, `legacy_work_keys`, `catalog_edit_requests`, `harvest_state`), media (`media`, `media_removed_hashes`, `reports`).
+- **Deviation 2, inherited scope.** A reaction inherits its scope through its post, so it can never outlive or leave its post. `club_invite_uses`, the redemption log of an invite, follows the same pattern; the schema header names only `post_reactions`.
 
 ## #46 visibility matrix, as built
 
-Conventions §6.5: every Wave 2 package covers the personal data kinds it serves across self, co-member, stranger and unknown name, and "#49 checks that the matrix is complete". `tests/parity_visibility.rs` does that in two tests:
+Conventions §6.5: every Wave 2 package covers the personal data kinds it serves across self, co-member, stranger and unknown name, and "#49 checks that the matrix is complete". `tests/parity_visibility.rs` does that in three tests:
 
-- `every_personal_column_route_and_rating_field_is_in_the_matrix` reads the live schema and the OpenAPI document. Every foreign key to `users` (28 columns), every operation with a `username` parameter (9) and every schema with a rating or take field (11) must be listed, either with the kinds that serve it or with the reason it is not personal data (account, club, catalog or moderation data, or a request body). A new personal table, `?username=` route or rating field fails until it is listed.
-- `every_personal_data_kind_has_its_four_viewer_cases` runs every kind those lists name through the routes, in one world written through the routes (`common::visibility::Viewers`: the owner, a co-member, and as strangers a member of another club, someone in no club and a former co-member). A kind cannot be added without its four cases: the kinds are an enum matched exhaustively, each kind's check matches all four cases, and a kind no list names is dead code that fails clippy.
+- `tests/parity_visibility.rs::every_personal_column_route_and_rating_field_is_in_the_matrix` reads the live schema and the OpenAPI document. Every foreign key to `users` (28 columns), every operation with a `username` parameter (9) and every schema with a rating or take field (11) must be listed, either with the kinds that serve it or with the reason it is not personal data (account, club, invite, catalog or moderation data, or a request body). A new personal table, `?username=` route or rating field fails until it is listed in the test.
+- `tests/parity_visibility.rs::every_personal_data_kind_has_its_four_viewer_cases` runs every kind those lists name through the routes, in one world written through the routes (`common::visibility::Viewers`: the owner, a co-member, and as strangers a member of another club, someone in no club and a former co-member). A kind cannot be added without its four cases: the kinds are an enum matched exhaustively, each kind's check matches all four cases, and a kind no list names is dead code that fails clippy.
+- `tests/parity_visibility.rs::the_checklist_has_a_row_per_kind` compares the kinds those lists name with the rows of the table below (the Kind column up to its parenthesis), so a new kind also needs its row here.
 
 | Kind | Self | Co-member | Stranger | Unknown name | Package tests |
 |---|---|---|---|---|---|
