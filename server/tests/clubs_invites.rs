@@ -548,11 +548,13 @@ async fn a_removal_revokes_the_invites_the_removed_person_knows(db: PgPool) {
         .await
         .assert_status(200);
 
-    // A plain member: only the invites they made (as an admin, before a demotion) or used.
-    let fresh = link(&owner, &club).await;
+    // A plain member: the invites they made or used, and, after a demotion, every invite they
+    // could list as an admin (security review 2026-10-28 #9: demote-then-remove used to leave
+    // those working for a second account).
     let bob = app.user("bob").await;
     app.join(&club, &bob, "admin").await;
     let bobs = link(&bob, &club).await;
+    let seen = link(&owner, &club).await;
     owner
         .patch(
             &format!("/api/clubs/{}/members/bob", club.slug),
@@ -560,18 +562,42 @@ async fn a_removal_revokes_the_invites_the_removed_person_knows(db: PgPool) {
         )
         .await
         .assert_status(200);
+    let fresh = link(&owner, &club).await;
     let cleo = app.user("cleo").await;
     accept(&cleo, &fresh).await.assert_status(200);
     let untouched = link(&owner, &club).await;
-    for (name, code) in [("bob", &bobs), ("cleo", &fresh)] {
-        assert_eq!(revoked(code.clone()).await, 0, "{name}: {code}");
-        owner
-            .delete(&format!("/api/clubs/{}/members/{name}", club.slug))
-            .await
-            .assert_status(204);
-        assert_eq!(revoked(code.clone()).await, 1, "{name}: {code}");
-    }
+    assert_eq!(revoked(bobs.clone()).await, 0);
+    assert_eq!(revoked(seen.clone()).await, 0);
+    owner
+        .delete(&format!("/api/clubs/{}/members/bob", club.slug))
+        .await
+        .assert_status(204);
+    assert_eq!(revoked(bobs.clone()).await, 1, "his own link");
+    assert_eq!(
+        revoked(seen.clone()).await,
+        1,
+        "listed while he was an admin"
+    );
+    assert_eq!(
+        revoked(fresh.clone()).await,
+        0,
+        "created after his demotion"
+    );
+    owner
+        .delete(&format!("/api/clubs/{}/members/cleo", club.slug))
+        .await
+        .assert_status(204);
+    assert_eq!(revoked(fresh.clone()).await, 1, "the link she used");
     assert_eq!(revoked(untouched.clone()).await, 0);
+    let res = app
+        .anon()
+        .post(
+            "/api/auth/register",
+            json!({"username": "bob2", "email": "b2@example.test",
+                   "password": PASSWORD, "invite_code": seen}),
+        )
+        .await;
+    res.assert_detail(400, INVALID);
     accept(&app.user("frank").await, &untouched)
         .await
         .assert_status(200);

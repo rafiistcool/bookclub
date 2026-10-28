@@ -10,6 +10,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use serde::Deserialize;
 use sqlx::PgConnection;
+use time::OffsetDateTime;
 use utoipa::ToSchema;
 
 use super::extract::{ClubAdmin, ClubMember, ClubOwner, Role, role_in};
@@ -111,8 +112,12 @@ pub async fn change_role(
         return Err(AppError::forbidden(msg::ONLY_OWNER));
     }
     let (target, _) = target_named(&mut tx, club_id, &username).await?;
+    // A demoted admin keeps the time: their removal later revokes the invites they could list.
     let updated = sqlx::query!(
-        "UPDATE club_memberships SET role = $3
+        "UPDATE club_memberships
+         SET role = $3,
+             admin_until = CASE WHEN role = 'admin' AND $3 = 'member' THEN clock_timestamp()
+                                ELSE admin_until END
          WHERE club_id = $1 AND user_id = $2 AND role <> 'owner'",
         club_id,
         target,
@@ -139,8 +144,9 @@ pub async fn change_role(
 ///
 /// The removal also revokes every active invite of the club the person knows, so a second
 /// account cannot walk back in with one: the invites they created or redeemed, and, when they
-/// were an admin (admins list every invite), all of them. A link someone else forwarded to them
-/// is beyond what the server knows; the admins revoke it.
+/// are an admin (admins list every invite), all of them; when they were one before a demotion,
+/// every invite created up to the demotion. A link someone else forwarded to them is beyond
+/// what the server knows; the admins revoke it.
 #[utoipa::path(
     delete,
     path = "/api/clubs/{slug}/members/{username}",
@@ -176,20 +182,18 @@ pub async fn remove_member(
         return Err(AppError::bad_request(USE_LEAVE));
     }
     // An admin removes members only; the owner anyone but the owner.
-    let removed = sqlx::query!(
+    let admin_until = sqlx::query_scalar!(
         "DELETE FROM club_memberships
          WHERE club_id = $1 AND user_id = $2
-           AND CASE WHEN $3 THEN role <> 'owner' ELSE role = 'member' END",
+           AND CASE WHEN $3 THEN role <> 'owner' ELSE role = 'member' END
+         RETURNING admin_until",
         club_id,
         target,
         caller == Role::Owner
     )
-    .execute(&mut *tx)
+    .fetch_optional(&mut *tx)
     .await?
-    .rows_affected();
-    if removed == 0 {
-        return Err(AppError::forbidden(msg::ONLY_OWNER));
-    }
+    .ok_or_else(|| AppError::forbidden(msg::ONLY_OWNER))?;
     // Dated under the club lock, not at the start of the transaction, so an invite created
     // before the removal is never dated after it (`invites::join`).
     sqlx::query!(
@@ -200,30 +204,49 @@ pub async fn remove_member(
     )
     .execute(&mut *tx)
     .await?;
-    revoke_known_invites(&mut tx, club_id, target, target_role >= Role::Admin).await?;
+    let known = if target_role >= Role::Admin {
+        Known::All
+    } else {
+        Known::Own { admin_until }
+    };
+    revoke_known_invites(&mut tx, club_id, target, known).await?;
     tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Revokes the active invites of the club that `user_id` knows: those they created or
-/// redeemed, or every one when `all` (a removed admin could list them). Runs under the club
-/// lock of the removal, so no invite can be created or redeemed in between.
+/// Which invites of the club a removed person knows.
+enum Known {
+    /// An admin lists every invite.
+    All,
+    /// A member: those they created or redeemed, plus, after a demotion, every invite created
+    /// while they could still list them (up to `admin_until`).
+    Own { admin_until: Option<OffsetDateTime> },
+}
+
+/// Revokes the active invites of the club that `user_id` knows ([`Known`]). Runs under the club
+/// lock of the removal, so no invite can be created or redeemed in between, and invites and
+/// demotions are both dated with `clock_timestamp()` under that lock.
 async fn revoke_known_invites(
     conn: &mut PgConnection,
     club_id: i64,
     user_id: i64,
-    all: bool,
+    known: Known,
 ) -> sqlx::Result<()> {
+    let (all, admin_until) = match known {
+        Known::All => (true, None),
+        Known::Own { admin_until } => (false, admin_until),
+    };
     sqlx::query!(
         "UPDATE club_invites SET revoked_at = clock_timestamp()
          WHERE club_id = $1 AND revoked_at IS NULL
            AND (expires_at IS NULL OR expires_at > now())
            AND (max_uses IS NULL OR use_count < max_uses)
-           AND ($3 OR created_by = $2
+           AND ($3 OR created_by = $2 OR created_at <= $4
                 OR id IN (SELECT invite_id FROM club_invite_uses WHERE user_id = $2))",
         club_id,
         user_id,
-        all
+        all,
+        admin_until
     )
     .execute(conn)
     .await?;
