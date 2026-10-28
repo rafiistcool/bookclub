@@ -6,6 +6,9 @@ mod common;
 #[path = "fixtures/legacy/harness.rs"]
 mod legacy;
 
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
@@ -1080,4 +1083,153 @@ async fn bad_input_is_refused_before_anything_is_written(db: PgPool) {
 
     assert_eq!(app.scalar_i64("SELECT count(*) FROM users").await, 0);
     assert!(app.media.keys().is_empty());
+}
+
+/// The directory of a legacy file, made read-only (`chmod 555`) like a `:ro` bind mount or a
+/// directory the server's uid does not own; the mode is restored on drop, so the temporary
+/// directory can be removed even after a failed assertion.
+struct ReadOnlyDir(PathBuf);
+
+impl ReadOnlyDir {
+    fn new(file: &Path) -> Self {
+        let dir = file.parent().unwrap().to_owned();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
+        ReadOnlyDir(dir)
+    }
+
+    /// Every file in the directory with its SHA-256, to show the import left it untouched.
+    fn snapshot(&self) -> Vec<(String, Vec<u8>)> {
+        let mut files: Vec<(String, Vec<u8>)> = fs::read_dir(&self.0)
+            .unwrap()
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                (name, Sha256::digest(fs::read(&path).unwrap()).to_vec())
+            })
+            .collect();
+        files.sort();
+        files
+    }
+}
+
+impl Drop for ReadOnlyDir {
+    fn drop(&mut self) {
+        let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o755));
+    }
+}
+
+/// `<db>-wal` or `<db>-shm` next to `db`.
+fn sidecar(db: &Path, suffix: &str) -> PathBuf {
+    let mut name = db.as_os_str().to_owned();
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
+/// The production database runs in WAL mode. A copy of its files can hold committed rows that
+/// no checkpoint has moved into the database file yet; they live only in `bookclub.db-wal`.
+/// From a directory the importer cannot write (the `:ro` mount of `import-legacy`), SQLite
+/// cannot create the `-shm` index it needs, so a direct read-only open fails. The importer
+/// reads a private copy instead: the uncheckpointed user, quote and theme change arrive, the
+/// counts match, and the source directory is left exactly as it was.
+#[sqlx::test]
+async fn a_wal_database_with_uncheckpointed_rows_imports_from_a_read_only_directory(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let legacy = load("fresh.sql");
+    {
+        let conn = rusqlite::Connection::open(&legacy.path).unwrap();
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode, "wal");
+        // Leave the rows below in the WAL: no automatic checkpoint, none on close.
+        conn.set_db_config(
+            rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE,
+            true,
+        )
+        .unwrap();
+        conn.execute_batch(
+            "PRAGMA wal_autocheckpoint = 0;
+             INSERT INTO users (id, username, password_hash, theme, color_mode, locale, created_at,
+                                notify_meeting, notify_pick, notify_note)
+                 SELECT 6, 'wally', password_hash, 'paper', 'system', 'de',
+                        '2026-08-31 18:00:00.000001', 1, 1, 1
+                 FROM users WHERE username = 'demo';
+             INSERT INTO quotes (id, user_id, book_id, body, page, created_at)
+                 SELECT 4, 6, min(id), 'Written after the last checkpoint.', 7,
+                        '2026-08-31 18:30:00'
+                 FROM books;
+             UPDATE users SET theme = 'ink' WHERE username = 'anna';",
+        )
+        .unwrap();
+    }
+    let wal = sidecar(&legacy.path, "-wal");
+    assert!(
+        fs::metadata(&wal).unwrap().len() > 0,
+        "the rows are in the WAL"
+    );
+    // A copy of the files has no shared-memory index (and the import must not need one).
+    let _ = fs::remove_file(sidecar(&legacy.path, "-shm"));
+
+    let dir = ReadOnlyDir::new(&legacy.path);
+    let before = dir.snapshot();
+    let names: Vec<&str> = before.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["bookclub.db", "bookclub.db-wal"]);
+    let report = import_ok(&app, legacy.args("demo")).await;
+
+    let line = |name: &str| {
+        let e = report.entity(name).unwrap();
+        (e.source, e.target)
+    };
+    assert_eq!(line("users"), (Some(6), Some(6)));
+    assert_eq!(line("quotes"), (Some(4), Some(4)));
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM users").await, 6);
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM quotes").await, 4);
+    assert_eq!(
+        app.scalar_i64(
+            "SELECT count(*) FROM users u JOIN quotes q ON q.user_id = u.id
+             WHERE u.username = 'wally' AND u.locale = 'de'
+               AND q.body = 'Written after the last checkpoint.'"
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM users WHERE username = 'anna' AND theme = 'ink'")
+            .await,
+        1
+    );
+    assert_eq!(dir.snapshot(), before, "the source directory changed");
+}
+
+/// `python -m app.backup` writes a copy whose header still says WAL, without a `-wal` file.
+/// From a read-only directory SQLite cannot create the WAL files that header asks for, and a
+/// direct read-only open fails with "attempt to write a readonly database". The private copy
+/// imports with the fixture's counts.
+#[sqlx::test]
+async fn a_wal_backup_copy_without_its_wal_file_imports_from_a_read_only_directory(db: PgPool) {
+    let app = TestApp::new(db).await;
+    program_merge(&app);
+    let legacy = load("fresh.sql");
+    {
+        let conn = rusqlite::Connection::open(&legacy.path).unwrap();
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode, "wal");
+    }
+    // The last connection checkpointed and removed the WAL files; the header keeps WAL mode
+    // (file format versions 2 and 2 at offsets 18 and 19).
+    let header = fs::read(&legacy.path).unwrap();
+    assert_eq!((header[18], header[19]), (2, 2));
+    assert!(!sidecar(&legacy.path, "-wal").exists());
+
+    let dir = ReadOnlyDir::new(&legacy.path);
+    let before = dir.snapshot();
+    let report = import_ok(&app, legacy.args("demo")).await;
+    let users = report.entity("users").unwrap();
+    assert_eq!((users.source, users.target), (Some(5), Some(5)));
+    let shelf = report.entity("shelf").unwrap();
+    assert_eq!((shelf.source, shelf.target), (Some(27), Some(26)));
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM users").await, 5);
+    assert_eq!(dir.snapshot(), before, "the source directory changed");
 }
