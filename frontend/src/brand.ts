@@ -17,10 +17,14 @@ export function applyBrand(config: ServiceBrand): void {
   if (apple) apple.setAttribute("content", name);
   const manifest = document.querySelector('link[rel="manifest"]');
   if (!manifest) return;
+  // A blob: manifest has no base URL of its own, so Chrome ignores a
+  // relative start_url ("URL is invalid"); give it and the scope absolute.
+  const origin = window.location.origin;
   const payload = {
     name,
     short_name: name.slice(0, 32),
-    start_url: "/",
+    start_url: `${origin}/`,
+    scope: `${origin}/`,
     display: "standalone",
     background_color: readToken("--bg") || "#f7f4ec",
     theme_color: config.theme || DEFAULTS.theme,

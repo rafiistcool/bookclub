@@ -67,7 +67,7 @@ export const useTheme = defineStore("theme", {
     },
   },
   actions: {
-    /** Adopt whatever the boot script in index.html already painted. */
+    /** Adopt whatever public/theme-init.js, which index.html loads, already painted. */
     init() {
       const theme = read(THEME_KEY);
       const mode = read(MODE_KEY);
