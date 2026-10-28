@@ -51,6 +51,9 @@ async fn config_is_public_branding(db: PgPool) {
             "theme_dark": "#8e361c",
             "public_url": "http://localhost:5173",
             "signup": "invite",
+            "legal": ["imprint", "privacy", "terms"],
+            "terms_version": null,
+            "contact_email": null,
         })
     );
 }
@@ -62,14 +65,20 @@ async fn config_is_public_branding(db: PgPool) {
 /// `BOOKCLUB_THEME`, so there is no invalid theme to warn about: `theme` is always the legacy
 /// default `#b44a2a`); the manifest is a static file; the public origin needs no CORS (the SPA
 /// is same-origin).
+///
+/// #53: open sign-up outside DEV_MODE needs the legal texts (`LEGAL_DIR`), and `/api/config`
+/// names them, their terms version and the contact address.
 #[sqlx::test]
 async fn config_follows_the_service_settings(db: PgPool) {
-    let mut env = PRODUCTION_ENV.to_vec();
+    let legal = legal_dir("2026-11-01");
+    let mut env: Vec<(&str, &str)> = PRODUCTION_ENV.to_vec();
     env.extend([
         ("SERVICE_NAME", "Thursday Readers"),
         ("PUBLIC_URL", "https://books.example.com/app"),
         ("SIGNUP_MODE", "open"),
         ("CORS_ORIGINS", "capacitor://localhost"),
+        ("CONTACT_EMAIL", "hello@books.example.com"),
+        ("LEGAL_DIR", legal.path().to_str().unwrap()),
     ]);
     let app = TestApp::with_env(db, &env).await;
     let body = app.anon().get("/api/config").await.json();
@@ -77,6 +86,9 @@ async fn config_follows_the_service_settings(db: PgPool) {
     assert_eq!(body["public_url"], "https://books.example.com");
     assert_eq!(body["signup"], "open");
     assert_eq!(body["theme"], "#b44a2a");
+    assert_eq!(body["legal"], json!(["imprint", "privacy", "terms"]));
+    assert_eq!(body["terms_version"], "2026-11-01");
+    assert_eq!(body["contact_email"], "hello@books.example.com");
 
     let allowed = preflight(&app.anon(), "capacitor://localhost").await;
     assert_eq!(
@@ -219,6 +231,58 @@ fn production_startup_refuses_unsafe_settings() {
     log_mail.push(("EMAIL_TRANSPORT", "log"));
     let error = config_from(&log_mail).unwrap_err();
     assert!(error.to_string().contains("EMAIL_TRANSPORT"), "{error}");
+}
+
+/// #53: strangers may sign up only once the imprint, the privacy policy and the terms are
+/// online. Outside DEV_MODE, `SIGNUP_MODE=open` needs all six files in `LEGAL_DIR`, and no file
+/// may be a development placeholder; invite mode starts without them.
+#[test]
+fn open_sign_up_without_the_legal_texts_is_refused_outside_dev_mode() {
+    let mut open: Vec<(&str, &str)> = PRODUCTION_ENV.to_vec();
+    open.push(("SIGNUP_MODE", "open"));
+    let error = config_from(&open).unwrap_err();
+    assert!(error.to_string().contains("SIGNUP_MODE=open"), "{error}");
+
+    let legal = legal_dir("1");
+    std::fs::remove_file(legal.path().join("privacy.de.html")).unwrap();
+    open.push(("LEGAL_DIR", legal.path().to_str().unwrap()));
+    let error = config_from(&open).unwrap_err();
+    assert!(error.to_string().contains("privacy.de.html"), "{error}");
+    // Invite mode goes live with what is there.
+    let mut invite = open.clone();
+    invite.push(("SIGNUP_MODE", "invite"));
+    assert_eq!(config_from(&invite).unwrap().legal.documents().len(), 3);
+    // DEV_MODE needs no texts at all.
+    let mut dev = open.clone();
+    dev.retain(|(key, _)| *key != "LEGAL_DIR");
+    dev.push(("DEV_MODE", "true"));
+    assert!(config_from(&dev).is_ok());
+
+    // The placeholders are refused outside DEV_MODE, in either mode.
+    let placeholders = concat!(env!("CARGO_MANIFEST_DIR"), "/legal-placeholder");
+    let mut invite: Vec<(&str, &str)> = PRODUCTION_ENV.to_vec();
+    invite.push(("LEGAL_DIR", placeholders));
+    let error = config_from(&invite).unwrap_err();
+    assert!(error.to_string().contains("placeholder"), "{error}");
+}
+
+/// #53: DEV_MODE serves the marked placeholders when `LEGAL_DIR` is unset, and the contact
+/// address is public.
+#[sqlx::test]
+async fn dev_mode_serves_placeholders_and_the_contact_is_public(db: PgPool) {
+    let app = TestApp::with_env(db, &[("CONTACT_EMAIL", "dev@example.test")]).await;
+    let anon = app.anon();
+    let config = anon.get("/api/config").await.json();
+    assert_eq!(config["legal"], json!(["imprint", "privacy", "terms"]));
+    assert_eq!(config["contact_email"], "dev@example.test");
+    let imprint = anon.get("/api/legal/imprint?locale=de").await;
+    imprint.assert_status(200);
+    assert!(
+        imprint.json()["html"]
+            .as_str()
+            .unwrap()
+            .contains("data-legal-placeholder")
+    );
 }
 
 /// The login limit per IP keys IPv6 clients by their /64, so a client with a /64 cannot mint

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT u.id, u.username, u.email, u.email_verified_at IS NOT NULL AS \"email_verified!\",\n                  (SELECT t.email FROM email_tokens t\n                   WHERE t.user_id = u.id AND t.purpose = 'verify_email'\n                     AND t.used_at IS NULL AND t.expires_at > now()\n                   ORDER BY t.id DESC LIMIT 1) AS open_verification,\n                  (u.email IS NULL AND u.email_prompt_dismissed_at IS NULL) AS \"needs_email_prompt!\",\n                  u.theme, u.color_mode, u.locale, u.timezone, u.is_admin,\n                  m.public_id AS \"avatar_public_id?\"\n           FROM users u\n           LEFT JOIN media m ON m.id = u.avatar_media_id AND m.removed_at IS NULL\n           WHERE u.id = $1",
+  "query": "SELECT u.id, u.username, u.email, u.email_verified_at IS NOT NULL AS \"email_verified!\",\n                  (SELECT t.email FROM email_tokens t\n                   WHERE t.user_id = u.id AND t.purpose = 'verify_email'\n                     AND t.used_at IS NULL AND t.expires_at > now()\n                   ORDER BY t.id DESC LIMIT 1) AS open_verification,\n                  (u.email IS NULL AND u.email_prompt_dismissed_at IS NULL) AS \"needs_email_prompt!\",\n                  u.terms_version, u.theme, u.color_mode, u.locale, u.timezone, u.is_admin,\n                  m.public_id AS \"avatar_public_id?\"\n           FROM users u\n           LEFT JOIN media m ON m.id = u.avatar_media_id AND m.removed_at IS NULL\n           WHERE u.id = $1",
   "describe": {
     "columns": [
       {
@@ -56,6 +56,17 @@
       },
       {
         "ordinal": 6,
+        "name": "terms_version",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "terms_version"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
         "name": "theme",
         "type_info": "Text",
         "origin": {
@@ -66,7 +77,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "color_mode",
         "type_info": "Text",
         "origin": {
@@ -77,7 +88,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "locale",
         "type_info": "Text",
         "origin": {
@@ -88,7 +99,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "timezone",
         "type_info": "Text",
         "origin": {
@@ -99,7 +110,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "is_admin",
         "type_info": "Bool",
         "origin": {
@@ -110,7 +121,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "avatar_public_id?",
         "type_info": "Text",
         "origin": {
@@ -133,6 +144,7 @@
       null,
       null,
       null,
+      true,
       false,
       false,
       false,
@@ -141,5 +153,5 @@
       true
     ]
   },
-  "hash": "f4403db30db7ec1ae68facd26a8b6d65225f7fdaa6da5625a05774f8cfc9a2f9"
+  "hash": "f5fb979a9a1d29628386e6efb89feb0add0142d5e50461a88fa7b9b15b50818b"
 }

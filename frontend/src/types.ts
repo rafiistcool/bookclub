@@ -74,8 +74,8 @@ export type ShelfList = ShelfListOut;
 export type Favorite = FavoriteOut;
 export type FavoritesList = FavoritesOut;
 export type SearchHistoryEntry = SearchHistoryOut;
-/** Service branding from `GET /api/config`. */
-export type ServiceBrand = ServiceConfig;
+/** Service branding from `GET /api/config` (its legal fields are the service store's). */
+export type ServiceBrand = Pick<ServiceConfig, "name" | "theme" | "theme_dark" | "public_url" | "signup">;
 
 export type GoodreadsImport = ImportJobOut;
 export type GoodreadsSkip = ImportSkipOut;

@@ -849,3 +849,24 @@ async fn a_former_member_exports_no_club_data_of_others(db: PgPool) {
     assert_eq!(created["name"], "Readers");
     assert_eq!(one_row(&after, "club_removals")["club_name"], "Readers");
 }
+
+/// #53: the acceptance of the terms is part of the profile: the version and the time. The
+/// profile is the `users` row, so both columns are exported without a code change.
+#[sqlx::test]
+async fn the_export_holds_the_accepted_terms(db: PgPool) {
+    let legal = legal_dir("2026-11-01");
+    let app = TestApp::with_env(db, &[("LEGAL_DIR", legal.path().to_str().unwrap())]).await;
+    let ada = app.user("ada").await;
+    let profile = data_json(&export(&ada).await)["profile"].clone();
+    assert_eq!(profile["terms_version"], Value::Null);
+    assert_eq!(profile["terms_accepted_at"], Value::Null);
+
+    ada.post("/api/auth/terms", json!({"terms_version": "2026-11-01"}))
+        .await
+        .assert_status(200);
+    let data = data_json(&export(&ada).await);
+    assert_eq!(data["profile"]["terms_version"], "2026-11-01");
+    let accepted = data["profile"]["terms_accepted_at"].as_str().unwrap();
+    assert!(accepted.ends_with('Z'), "{accepted}");
+    assert_utc_timestamps(&data, "data");
+}

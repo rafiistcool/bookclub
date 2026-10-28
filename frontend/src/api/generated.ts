@@ -504,6 +504,8 @@ export interface paths {
          *     new account keeps the unverified address, no link is sent, and the holder gets the "someone
          *     tried to use your address" notice. A club invite also joins the club; a sign-up invite only
          *     unlocks sign-up. Called while signed in, it switches the session (the old one is deleted).
+         *     Whenever the operator's terms are configured, the body must carry their current version,
+         *     which is stored with the time of the sign-up.
          */
         post: operations["auth_register"];
         delete?: never;
@@ -544,6 +546,27 @@ export interface paths {
          *     cleared).
          */
         delete: operations["auth_revoke_session"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/terms": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accepts the current version of the operator's terms: the one-time prompt of imported
+         *     accounts, and of everyone after a new version (`UserOut.needs_terms`). Stores the version
+         *     and the time; accepting the version already accepted keeps the first time.
+         */
+        post: operations["auth_accept_terms"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1438,8 +1461,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The service name, accent colours, public origin and sign-up mode. Public; answers from
-         *     memory.
+         * The service name, accent colours, public origin, sign-up mode and legal settings. Public;
+         *     answers from memory.
          */
         get: operations["auth_get_config"];
         put?: never;
@@ -1529,6 +1552,26 @@ export interface paths {
          *     the preview's limit.
          */
         post: operations["clubs_accept_invite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/legal/{doc}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The imprint, the privacy policy or the terms of use, in German or English. Public: these
+         *     pages must open signed out. The DEV_MODE placeholders are marked as such.
+         */
+        get: operations["legal_get_document"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2587,6 +2630,30 @@ export interface components {
             /** Format: int64 */
             shelf_id: number | null;
         };
+        /**
+         * @description A legal document. A fixed list: `{doc}` never names a file outside it.
+         * @enum {string}
+         */
+        LegalDoc: "imprint" | "privacy" | "terms";
+        /** @description A legal document as the operator provided it. */
+        LegalDocumentOut: {
+            doc: components["schemas"]["LegalDoc"];
+            /**
+             * @description The language served, `de` or `en`: the requested one, or the other when the operator has
+             *     the document in that language only.
+             */
+            locale: string;
+            /** @description True when `locale` is not the language the request asked for. */
+            fallback: boolean;
+            /**
+             * Format: date
+             * @description When the operator last changed the document (`manifest.json`), `YYYY-MM-DD`; null when
+             *     not given.
+             */
+            updated: string | null;
+            /** @description The document as an HTML fragment, exactly as the operator's file holds it. */
+            html: string;
+        };
         /** @description Username or verified email address, and password. */
         LoginIn: {
             /** @description A username, or a verified email address (it contains `@`). Stripped and lowercased. */
@@ -3134,6 +3201,12 @@ export interface components {
             timezone?: string | null;
             /** @description `en` or `de`; default `en`. */
             locale?: string | null;
+            /**
+             * @description The version of the operator's terms the sign-up page showed (`/api/config.terms_version`).
+             *     Required, and must be the current one, whenever the terms are configured; it is stored
+             *     with the time as the acceptance. Ignored while no terms are configured.
+             */
+            terms_version?: string | null;
         };
         /** @description The report is in the admin queue. */
         ReportCreated: {
@@ -3243,7 +3316,7 @@ export interface components {
             page: number;
             has_more: boolean;
         };
-        /** @description Public service branding for the SPA. */
+        /** @description Public service branding and legal settings for the SPA. */
         ServiceConfig: {
             /** @description `SERVICE_NAME`. */
             name: string;
@@ -3255,6 +3328,18 @@ export interface components {
             public_url: string;
             /** @description `"invite"` (sign-up needs an invite code) or `"open"`. */
             signup: string;
+            /**
+             * @description The documents `GET /api/legal/{doc}` serves: the operator's (`LEGAL_DIR`), or the
+             *     DEV_MODE placeholders. Empty when there are none.
+             */
+            legal: components["schemas"]["LegalDoc"][];
+            /**
+             * @description The current version of the operator's terms. A sign-up must send it as `terms_version`;
+             *     null when no terms are configured (nothing to accept).
+             */
+            terms_version: string | null;
+            /** @description `CONTACT_EMAIL`: the public contact and takedown address. Null when unset (DEV_MODE). */
+            contact_email: string | null;
         };
         /**
          * @description How a session authenticates.
@@ -3443,6 +3528,11 @@ export interface components {
          * @enum {string}
          */
         SpineDisplay: "spine" | "flat" | "cover";
+        /** @description The version of the operator's terms the user accepts. */
+        TermsIn: {
+            /** @description The version the page showed: `/api/config.terms_version`. */
+            terms_version: string;
+        };
         /** @description Credentials for a new bearer token. */
         TokenIn: {
             /** @description A username, or a verified email address. */
@@ -3475,6 +3565,12 @@ export interface components {
              */
             pending_email: string | null;
             needs_email_prompt: boolean;
+            /**
+             * @description The operator's terms are configured and the account has not accepted their current
+             *     version (imported accounts, and everyone after a new version): the app asks once and
+             *     records the answer with `POST /api/auth/terms`.
+             */
+            needs_terms: boolean;
             theme: string;
             color_mode: string;
             locale: string;
@@ -3734,6 +3830,8 @@ export type InviteOut = components['schemas']['InviteOut'];
 export type InvitePreview = components['schemas']['InvitePreview'];
 export type InviteTarget = components['schemas']['InviteTarget'];
 export type IsbnHitOut = components['schemas']['IsbnHitOut'];
+export type LegalDoc = components['schemas']['LegalDoc'];
+export type LegalDocumentOut = components['schemas']['LegalDocumentOut'];
 export type LoginIn = components['schemas']['LoginIn'];
 export type MemberList = components['schemas']['MemberList'];
 export type MemberOut = components['schemas']['MemberOut'];
@@ -3796,6 +3894,7 @@ export type ShelfStatus = components['schemas']['ShelfStatus'];
 export type SignupInviteIn = components['schemas']['SignupInviteIn'];
 export type SpineColorsOut = components['schemas']['SpineColorsOut'];
 export type SpineDisplay = components['schemas']['SpineDisplay'];
+export type TermsIn = components['schemas']['TermsIn'];
 export type TokenIn = components['schemas']['TokenIn'];
 export type TokenOut = components['schemas']['TokenOut'];
 export type TransferIn = components['schemas']['TransferIn'];
@@ -5128,7 +5227,7 @@ export interface operations {
                     "application/json": components["schemas"]["UserOut"];
                 };
             };
-            /** @description Invalid fields, a missing or invalid invite code */
+            /** @description Invalid fields, a missing or invalid invite code, or `The terms of use have changed. Reload the page and try again.` (a missing or old `terms_version` while terms are configured) */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -5234,6 +5333,48 @@ export interface operations {
             };
             /** @description `No such session` (also another user's) */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    auth_accept_terms: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TermsIn"];
+            };
+        };
+        responses: {
+            /** @description The account, `needs_terms` false */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserOut"];
+                };
+            };
+            /** @description `The terms of use have changed. Reload the page and try again.` (not the current version, or no terms configured) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8593,6 +8734,50 @@ export interface operations {
             };
             /** @description `Slow down a little. Try again later.` */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    legal_get_document: {
+        parameters: {
+            query?: {
+                /** @description `de` or `en` (default `en`). */
+                locale?: string;
+            };
+            header?: never;
+            path: {
+                /** @description `imprint`, `privacy` or `terms` */
+                doc: components["schemas"]["LegalDoc"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The document; `fallback` when it is served in the other language */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalDocumentOut"];
+                };
+            };
+            /** @description `locale must be one of: en, de` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not found`: no such document, or the operator has not provided it */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -138,6 +138,10 @@ pub struct UserOut {
     /// link, only while the account's own address is verified; else null.
     pub pending_email: Option<String>,
     pub needs_email_prompt: bool,
+    /// The operator's terms are configured and the account has not accepted their current
+    /// version (imported accounts, and everyone after a new version): the app asks once and
+    /// records the answer with `POST /api/auth/terms`.
+    pub needs_terms: bool,
     pub theme: String,
     pub color_mode: String,
     pub locale: String,

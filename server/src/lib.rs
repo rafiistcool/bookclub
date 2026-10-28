@@ -17,6 +17,7 @@ pub mod harvest;
 mod health;
 pub mod importer;
 pub mod jobs;
+pub mod legal;
 pub mod media;
 pub mod openapi;
 pub mod outbound;
@@ -131,6 +132,7 @@ fn api_router() -> OpenApiRouter<AppState> {
         .merge(votes::routes())
         .merge(overlap::routes())
         .merge(activity::routes())
+        .merge(legal::routes())
 }
 
 /// Every `/api/admin/*` route.
@@ -171,6 +173,11 @@ pub fn app(state: AppState) -> Router {
         .fallback(spa::fallback)
         .method_not_allowed_fallback(spa::method_not_allowed)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
+        // `UserOut.needs_terms` needs the current terms version (`legal::terms_scope`).
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            legal::terms_scope,
+        ))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::session::maintain_cookie,

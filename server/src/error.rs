@@ -64,6 +64,11 @@ pub mod msg {
     pub const EDITION_OF_ANOTHER_BOOK: &str = "That edition belongs to another book";
     /// Also returned for `closes_at` and `due_at` (docs/phase1/spec/club.md §2.1).
     pub const MEETING_AT_FORMAT: &str = "meeting_at must be a date and time";
+
+    // LEG (#53).
+    /// 400 when a sign-up or `POST /api/auth/terms` sends no terms version, or another one than
+    /// the operator's current terms (`LEGAL_DIR/manifest.json`).
+    pub const TERMS_CHANGED: &str = "The terms of use have changed. Reload the page and try again.";
 }
 
 /// An error response. Every non-2xx answer of the API is one of these.
