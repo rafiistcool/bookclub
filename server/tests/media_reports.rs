@@ -1,5 +1,5 @@
-//! Notice and takedown (#43, endpoint-map §6): `POST /api/media/{public_id}/reports`, the admin
-//! queue in `media::admin_routes()`, and what a takedown guarantees afterwards.
+//! Notice and takedown (#43, #54, endpoint-map §6): `POST /api/media/{public_id}/reports`, the
+//! admin queue in `media::admin_routes()`, and what a takedown guarantees afterwards.
 
 mod common;
 
@@ -347,17 +347,265 @@ async fn a_takedown_resolves_every_open_report_of_the_picture(db: PgPool) {
     root.delete("/api/admin/media/abcdefghijklmnopqrstuvwxyz")
         .await
         .assert_detail(404, "Not found");
-    // A removed picture can still be reported (the queue shows it removed); it stays removed.
-    report(&ada, &public_id, json!({"reason": "other"}))
+}
+
+/// Acceptance (#54): a repeat report of a picture by the same reader answers with the open
+/// report it already has: same id, no second row, no second hit on the limit. Another reader's
+/// report is a report of its own.
+#[sqlx::test]
+async fn a_repeat_report_answers_with_the_open_report(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let grace = app.user("grace").await;
+    let root = app.admin("root").await;
+    let (_, public_id, _) = shown_ol_cover(&app).await;
+    let first = report(&ada, &public_id, json!({"reason": "offensive"})).await;
+    first.assert_status(201);
+    let id = first.json()["id"].as_i64().unwrap();
+    assert_eq!(first.json(), json!({"id": id, "status": "open"}));
+    // Even with another reason and details, and past the daily limit of new reports.
+    for _ in 0..25 {
+        let again = report(
+            &ada,
+            &public_id,
+            json!({"reason": "copyright", "details": "Mine."}),
+        )
+        .await;
+        again.assert_status(201);
+        assert_eq!(again.json(), json!({"id": id, "status": "open"}));
+    }
+    let other = report(&grace, &public_id, json!({"reason": "other"})).await;
+    other.assert_status(201);
+    assert_ne!(other.json()["id"], id);
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM reports").await, 2);
+    let stored: String = sqlx::query_scalar("SELECT reason FROM reports WHERE id = $1")
+        .bind(id)
+        .fetch_one(&app.db)
         .await
-        .assert_status(201);
+        .unwrap();
+    assert_eq!(stored, "offensive", "a repeat changes nothing");
     let items = root.get("/api/admin/reports").await.json()["items"].clone();
-    assert_eq!(items[0]["removed"], true);
-    assert_eq!(items[0]["cover_url"], Value::Null);
+    assert_eq!(items.as_array().unwrap().len(), 2);
+    // Ada's one report counted once: 19 more pictures, then the limit.
+    for n in 0..20 {
+        let other_id = format!("pic{n:0>23}");
+        app.exec(&format!(
+            "INSERT INTO media (public_id, kind, source, uploaded_by)
+             VALUES ('{other_id}', 'cover', 'upload', {})",
+            grace.id()
+        ))
+        .await;
+        let res = report(&ada, &other_id, json!({"reason": "other"})).await;
+        if n < 19 {
+            res.assert_status(201);
+        } else {
+            res.assert_detail(429, "Slow down a little. Try again later.");
+        }
+    }
+    // A repeat still answers at the limit.
+    let again = report(&ada, &public_id, json!({"reason": "other"})).await;
+    assert_eq!(again.json(), json!({"id": id, "status": "open"}));
+}
+
+/// Acceptance (#54): a report of a picture that was already taken down never enters the open
+/// queue. It is recorded as resolved (`removed`, by nobody), answered with `status` `removed`,
+/// and a repeat names the same record; a reader whose report took the picture down gets that
+/// report back.
+#[sqlx::test]
+async fn reports_of_a_removed_picture_never_enter_the_queue(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let lin = app.user("lin").await;
+    let root = app.admin("root").await;
+    let (_, public_id, _) = shown_ol_cover(&app).await;
+    let ada_report = report(&ada, &public_id, json!({"reason": "copyright"}))
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+    root.delete(&format!("/api/admin/media/{public_id}"))
+        .await
+        .assert_status(204);
+
+    let again = report(&ada, &public_id, json!({"reason": "other"})).await;
+    again.assert_status(201);
+    assert_eq!(again.json(), json!({"id": ada_report, "status": "removed"}));
+    let late = report(
+        &lin,
+        &public_id,
+        json!({"reason": "offensive", "details": "Gone?"}),
+    )
+    .await;
+    late.assert_status(201);
+    let late_id = late.json()["id"].as_i64().unwrap();
+    assert_ne!(late_id, ada_report);
+    assert_eq!(late.json()["status"], "removed");
+    let repeat = report(&lin, &public_id, json!({"reason": "other"})).await;
+    assert_eq!(repeat.json(), json!({"id": late_id, "status": "removed"}));
+
+    assert_eq!(
+        root.get("/api/admin/reports").await.json(),
+        json!({"items": []})
+    );
+    let row = sqlx::query_as::<_, (String, Option<i64>, bool, String)>(
+        "SELECT status, resolved_by, resolved_at IS NOT NULL, details FROM reports WHERE id = $1",
+    )
+    .bind(late_id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(row, ("removed".into(), None, true, "Gone?".into()));
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM reports").await, 2);
+}
+
+/// Acceptance (#54): "dismiss" closes every open report of the picture, not only the one the
+/// admin chose; a report of another picture stays open, and a later report opens a new one.
+#[sqlx::test]
+async fn dismissing_closes_every_open_report_of_the_picture(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let grace = app.user("grace").await;
+    let root = app.admin("root").await;
+    let (work, public_id, _) = shown_ol_cover(&app).await;
+    let mut ids = Vec::new();
+    for who in [&ada, &grace] {
+        let res = report(who, &public_id, json!({"reason": "wrong_book"})).await;
+        ids.push(res.json()["id"].as_i64().unwrap());
+    }
+    app.exec(&format!(
+        "INSERT INTO media (public_id, kind, source, uploaded_by)
+         VALUES ('otherotherotherotherother1', 'cover', 'upload', {})",
+        grace.id()
+    ))
+    .await;
+    let elsewhere = report(
+        &ada,
+        "otherotherotherotherother1",
+        json!({"reason": "other"}),
+    )
+    .await
+    .json()["id"]
+        .as_i64()
+        .unwrap();
+
+    let res = root
+        .post(
+            &format!("/api/admin/reports/{}/resolve", ids[1]),
+            json!({"action": "dismiss"}),
+        )
+        .await;
+    res.assert_status(200);
+    assert_eq!(res.json()["status"], "dismissed");
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM reports
+             WHERE id IN ({}, {}) AND status = 'dismissed' AND resolved_by = {}",
+            ids[0],
+            ids[1],
+            root.id()
+        ))
+        .await,
+        2
+    );
+    let items = root.get("/api/admin/reports").await.json()["items"].clone();
+    assert_eq!(items.as_array().unwrap().len(), 1);
+    assert_eq!(items[0]["id"], elsewhere);
+    assert!(cover_of(&app, work).await.is_some(), "the picture stays");
+    root.post(
+        &format!("/api/admin/reports/{}/resolve", ids[0]),
+        json!({"action": "remove"}),
+    )
+    .await
+    .assert_detail(409, "This report was already resolved");
+    // Dismissed is not open: a new report of the picture is a new item.
+    let fresh = report(&ada, &public_id, json!({"reason": "offensive"})).await;
+    fresh.assert_status(201);
+    assert!(!ids.contains(&fresh.json()["id"].as_i64().unwrap()));
+    assert_eq!(fresh.json()["status"], "open");
+}
+
+/// Acceptance (#54): a takedown rejects the open `cover_replace` requests that propose the
+/// picture, with a note, so none of them waits for an approval that could only fail. Requests
+/// for other pictures stay open.
+#[sqlx::test]
+async fn a_takedown_rejects_the_cover_requests_for_the_picture(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let grace = app.user("grace").await;
+    let lin = app.user("lin").await;
+    let root = app.admin("root").await;
+    let work = app.work("My Zine").await;
+    for (who, color) in [
+        (&ada, [200, 0, 0]),
+        (&grace, [0, 200, 0]),
+        (&lin, [0, 0, 200]),
+    ] {
+        let res = who
+            .post_multipart(
+                &format!("/api/books/works/{}/cover", work.id),
+                vec![Part::file("c.jpg", "image/jpeg", jpeg(color))],
+            )
+            .await;
+        assert!(res.status.is_success(), "{}", res.text());
+    }
+    let requests: Vec<(i64, String, i64)> = sqlx::query_as(
+        "SELECT r.id, m.public_id, r.created_by FROM catalog_edit_requests r
+         JOIN media m ON m.id = r.media_id ORDER BY r.id",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(requests.len(), 2, "grace's and lin's photos wait");
+    let (graces, picture, _) = requests[0].clone();
+    let (lins, _, _) = requests[1].clone();
+
+    // Through a report's "remove", like the direct takedown (both use take_down_locked).
+    let reported = report(&ada, &picture, json!({"reason": "offensive"}))
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+    root.post(
+        &format!("/api/admin/reports/{reported}/resolve"),
+        json!({"action": "remove"}),
+    )
+    .await
+    .assert_status(200);
+    let decided = sqlx::query_as::<_, (String, Option<i64>, bool, String)>(
+        "SELECT status, decided_by, decided_at IS NOT NULL, decision_note
+         FROM catalog_edit_requests WHERE id = $1",
+    )
+    .bind(graces)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        decided,
+        (
+            "rejected".into(),
+            Some(root.id()),
+            true,
+            "The picture was taken down".into()
+        )
+    );
+    let queue = root.get("/api/admin/edit-requests").await.json();
+    let open: Vec<i64> = queue["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(open, [lins]);
+    root.post(
+        &format!("/api/admin/edit-requests/{graces}/approve"),
+        json!({}),
+    )
+    .await
+    .assert_detail(409, "This request was already decided");
 }
 
 /// Reports name a cover by its public id: unknown ids and avatars are 404; the reason is one
-/// of four; details are trimmed and cut at 2000 characters; 20 per user and day.
+/// of four; details are trimmed and cut at 2000 characters; 20 new reports per user and day.
 #[sqlx::test]
 async fn reports_are_checked_and_limited(db: PgPool) {
     let app = TestApp::new(db).await;
@@ -412,12 +660,21 @@ async fn reports_are_checked_and_limited(db: PgPool) {
         .scalar_i64("SELECT max(char_length(details))::int8 FROM reports")
         .await;
     assert_eq!(stored, 2000);
-    for _ in 1..20 {
-        report(&ada, &public_id, json!({"reason": "other"}))
+    // 20 new reports a day (a repeat of an open report is no new report): 19 more pictures.
+    app.exec(&format!(
+        "INSERT INTO media (public_id, kind, source, uploaded_by)
+         SELECT 'limit' || lpad(n::text, 21, '0'), 'cover', 'upload', {}
+         FROM generate_series(1, 20) AS n",
+        ada.id()
+    ))
+    .await;
+    let picture = |n: usize| format!("limit{n:0>21}");
+    for n in 1..20 {
+        report(&ada, &picture(n), json!({"reason": "other"}))
             .await
             .assert_status(201);
     }
-    let limited = report(&ada, &public_id, json!({"reason": "other"})).await;
+    let limited = report(&ada, &picture(20), json!({"reason": "other"})).await;
     limited.assert_detail(429, "Slow down a little. Try again later.");
     assert_eq!(app.scalar_i64("SELECT count(*) FROM reports").await, 20);
 }

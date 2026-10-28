@@ -1,13 +1,21 @@
 //! Notice and takedown (endpoint-map §6): any signed-in reader reports a cover, an instance
 //! admin removes or dismisses it.
 //!
+//! **A report** names a picture, not a book, and the queue holds one open report per reader and
+//! picture: a repeat answers with the reader's open report, and a report of a picture already
+//! taken down is recorded as resolved (`removed`) and never enters the open queue. Both are
+//! answered like the first report (201 with the same id), and only a new row counts against the
+//! limit. **Dismissing** closes every open report of the picture.
+//!
 //! **A takedown** ([`take_down`]), in one transaction: the media row is locked, the hashes of
 //! its original bytes and of every stored variant go into `media_removed_hashes`, the row gets
 //! `removed_at` (and loses `storage_key`), then `ingest::clear_media` clears every cover that
-//! showed it, then the picture's open reports are resolved as `removed`. That order (media row,
-//! catalog rows, reports) is the one ingest, `set_cover` and `merge_works` lock in, so a takedown
-//! waits for an ingest that is attaching the picture and then clears it too. The bytes are
-//! deleted after the commit. The row stays, with its hash: `ingest::ol_cover_media` never hands
+//! showed it, then the picture's open reports are resolved as `removed` and its open
+//! `cover_replace` requests are rejected with a note. That order (media row, catalog rows,
+//! reports, requests) is the one ingest, `set_cover` and `merge_works` lock in, so a takedown
+//! waits for an ingest that is attaching the picture and then clears it too. Reports, dismissals
+//! and cover approvals lock the media row first as well. The bytes are deleted after the
+//! commit. The row stays, with its hash: `ingest::ol_cover_media` never hands
 //! it out again, no fetch or backfill downloads it again, `/media/…` answers 410, and an upload
 //! of the same file, or of a variant a reader saved from `/media/…`, is refused.
 
@@ -18,7 +26,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
-use sqlx::PgConnection;
+use sqlx::{Connection, PgConnection};
 use time::OffsetDateTime;
 use utoipa::ToSchema;
 
@@ -44,6 +52,12 @@ pub const REASON_CHOICES: &str =
 pub const ACTION_CHOICES: &str = "Input should be 'remove' or 'dismiss'";
 /// 409 for a report an admin already resolved (admin only).
 pub const REPORT_RESOLVED: &str = "This report was already resolved";
+/// The decision note of a `cover_replace` request whose picture a takedown removed.
+pub const TAKEN_DOWN_NOTE: &str = "The picture was taken down";
+
+/// The advisory lock space (two-key form) that serialises one reader's reports of one picture.
+/// Separate from `jobs::lock_ids` and ingest's `0x6263_0100`.
+const REPORT_LOCK_SPACE: i32 = 0x6263_0200;
 
 const REASONS: [&str; 4] = ["copyright", "wrong_book", "offensive", "other"];
 
@@ -66,10 +80,14 @@ impl Validate for ReportIn {
     }
 }
 
-/// The report is in the admin queue.
+/// The report is in the admin queue, or the picture is gone already.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ReportCreated {
+    /// The report; a repeat names the reader's earlier report.
     pub id: i64,
+    /// `open`: an admin will look at it; `removed`: the picture was already taken down, and
+    /// nothing waits in the queue.
+    pub status: String,
 }
 
 /// A report in the admin queue.
@@ -121,7 +139,9 @@ impl Validate for ReportResolveIn {
 }
 
 /// Reports a cover (`cover_public_id` of a book or edition): copyright, the wrong book,
-/// offensive, or something else. 20 per day.
+/// offensive, or something else. 20 per day. Idempotent per reader and picture: a repeat
+/// answers with the reader's open report, and a picture already taken down gets a closed record
+/// (`status` `removed`); neither counts against the limit again.
 #[utoipa::path(
     post,
     path = "/api/media/{public_id}/reports",
@@ -131,11 +151,11 @@ impl Validate for ReportResolveIn {
     params(("public_id" = String, Path, description = "The cover's `cover_public_id`")),
     request_body = ReportIn,
     responses(
-        (status = 201, body = ReportCreated, description = "The report is in the admin queue"),
+        (status = 201, body = ReportCreated, description = "The report is in the admin queue (`open`), or the picture was already taken down (`removed`); a repeat names the same report"),
         (status = 400, body = ErrorBody, description = "`Input should be 'copyright', 'wrong_book', 'offensive' or 'other'`"),
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
         (status = 404, body = ErrorBody, description = "`Not found`: no such cover"),
-        (status = 429, body = ErrorBody, description = "`Slow down a little. Try again later.` (20 per day)")
+        (status = 429, body = ErrorBody, description = "`Slow down a little. Try again later.` (20 new reports per day)")
     )
 )]
 pub async fn report(
@@ -152,6 +172,38 @@ pub async fn report(
     .fetch_optional(&mut *conn)
     .await?
     .ok_or_else(|| AppError::not_found(msg::NOT_FOUND))?;
+    let mut tx = conn.begin().await?;
+    // The picture first (conventions §7.2), FOR SHARE: a takedown or a dismissal that is under
+    // way finishes first and this report sees it; a later one waits and then resolves it.
+    let removed = sqlx::query_scalar!(
+        r#"SELECT removed_at IS NOT NULL AS "removed!" FROM media WHERE id = $1 FOR SHARE"#,
+        media_id
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "SELECT pg_advisory_xact_lock($1, hashtext($2::int8::text || ':' || $3::int8::text))",
+        REPORT_LOCK_SPACE,
+        user.id,
+        media_id
+    )
+    .execute(&mut *tx)
+    .await?;
+    let status = if removed { "removed" } else { "open" };
+    let earlier = sqlx::query_scalar!(
+        "SELECT id FROM reports
+         WHERE created_by = $1 AND media_id = $2 AND status = $3
+         ORDER BY id DESC LIMIT 1",
+        user.id,
+        media_id,
+        status
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some(id) = earlier {
+        tx.rollback().await?;
+        return Ok(created(id, status));
+    }
     state
         .limits
         .report_user
@@ -172,27 +224,43 @@ pub async fn report(
                    ORDER BY r.id LIMIT 1) AS requested_edition"#,
         media_id
     )
-    .fetch_one(&mut *conn)
+    .fetch_one(&mut *tx)
     .await
     .map(|row| match (row.edition_work, row.edition, row.work) {
         (Some(work), Some(edition), _) => (Some(work), Some(edition)),
         (_, _, Some(work)) => (Some(work), None),
         _ => (row.requested_work, row.requested_edition),
     })?;
+    // A picture taken down already: the notice is recorded, closed at once (no admin decided
+    // it, so `resolved_by` stays null).
     let id = sqlx::query_scalar!(
         "INSERT INTO reports (target_kind, media_id, work_id, edition_id, reason, details,
-                              created_by)
-         VALUES ('cover', $1, $2, $3, $4, $5, $6) RETURNING id",
+                              created_by, status, resolved_at)
+         VALUES ('cover', $1, $2, $3, $4, $5, $6, $7, CASE WHEN $8 THEN now() END)
+         RETURNING id",
         media_id,
         work_id,
         edition_id,
         body.reason,
         body.details.unwrap_or_default(),
-        user.id
+        user.id,
+        status,
+        removed
     )
-    .fetch_one(&mut *conn)
+    .fetch_one(&mut *tx)
     .await?;
-    Ok((StatusCode::CREATED, Json(ReportCreated { id })))
+    tx.commit().await?;
+    Ok(created(id, status))
+}
+
+fn created(id: i64, status: &str) -> (StatusCode, Json<ReportCreated>) {
+    (
+        StatusCode::CREATED,
+        Json(ReportCreated {
+            id,
+            status: status.to_owned(),
+        }),
+    )
 }
 
 /// The open reports, oldest first.
@@ -223,6 +291,7 @@ pub async fn list_reports(
 }
 
 /// Removes the reported picture (everywhere it is shown, for good) or dismisses the report.
+/// Either way every open report of the picture is resolved with it.
 #[utoipa::path(
     post,
     path = "/api/admin/reports/{report_id}/resolve",
@@ -264,14 +333,26 @@ pub async fn resolve_report(
         }
         "removed"
     } else {
+        if let Some(media_id) = report.media_id {
+            // The picture first, as a takedown and a report lock it: dismissals and takedowns
+            // of one picture take turns, and a report filed meanwhile is dismissed too.
+            sqlx::query_scalar!(
+                "SELECT id FROM media WHERE id = $1 FOR NO KEY UPDATE",
+                media_id
+            )
+            .fetch_optional(&mut *tx)
+            .await?;
+        }
         "dismissed"
     };
+    // This report, and every other open report of the picture.
     sqlx::query!(
         "UPDATE reports SET status = $3, resolved_by = $2, resolved_at = now()
-         WHERE id = $1 AND status = 'open'",
+         WHERE status = 'open' AND (id = $1 OR media_id = $4)",
         report_id,
         admin.id,
-        status
+        status,
+        report.media_id
     )
     .execute(&mut *tx)
     .await?;
@@ -332,8 +413,8 @@ pub async fn take_down(
 
 /// The takedown inside the caller's transaction (see the module docs): locks the media row,
 /// records the hashes it must not come back under, sets `removed_at` and clears `storage_key`,
-/// clears every cover that shows it, and resolves the picture's open reports as `removed` by
-/// `admin_id`. Returns the storage prefixes to delete after the commit (empty when the picture
+/// clears every cover that shows it, resolves the picture's open reports as `removed` by
+/// `admin_id`, and rejects its open `cover_replace` requests with [`TAKEN_DOWN_NOTE`]. Returns the storage prefixes to delete after the commit (empty when the picture
 /// was removed already).
 pub async fn take_down_locked(
     conn: &mut PgConnection,
@@ -374,6 +455,17 @@ pub async fn take_down_locked(
          WHERE media_id = $1 AND status = 'open'",
         media_id,
         admin_id
+    )
+    .execute(&mut *conn)
+    .await?;
+    // Approving them later could only fail with `This picture was removed`.
+    sqlx::query!(
+        "UPDATE catalog_edit_requests
+         SET status = 'rejected', decided_by = $2, decided_at = now(), decision_note = $3
+         WHERE media_id = $1 AND kind = 'cover_replace' AND status = 'open'",
+        media_id,
+        admin_id,
+        TAKEN_DOWN_NOTE
     )
     .execute(&mut *conn)
     .await?;

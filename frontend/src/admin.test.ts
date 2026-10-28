@@ -18,14 +18,38 @@ describe("the admin queue", () => {
       request("edition_edit", { pages: 401, format: "paperback", language: "ger", subtitle: null, subjects: ["A", "B"] }),
       "en",
     );
+    const unknown = { before: null, wasEmpty: false, same: false };
     expect(fields).toEqual([
-      { key: "pages", label: "Pages", value: "401", cleared: false },
-      { key: "format", label: "Format", value: "Paperback", cleared: false },
-      { key: "language", label: "Language", value: "German", cleared: false },
-      { key: "subtitle", label: "Subtitle", value: "(clear it)", cleared: true },
-      { key: "subjects", label: "Subjects", value: "A, B", cleared: false },
+      { key: "pages", label: "Pages", value: "401", cleared: false, ...unknown },
+      { key: "format", label: "Format", value: "Paperback", cleared: false, ...unknown },
+      { key: "language", label: "Language", value: "German", cleared: false, ...unknown },
+      { key: "subtitle", label: "Subtitle", value: "(clear it)", cleared: true, ...unknown },
+      { key: "subjects", label: "Subjects", value: "A, B", cleared: false, ...unknown },
     ]);
     expect(proposedFields(request("cover_replace", {}), "en")).toEqual([]);
+  });
+
+  it("puts the record's value now beside each proposed one", () => {
+    const fields = proposedFields(
+      {
+        ...request("edition_edit", { pages: 401, format: "paperback", language: "ger", subtitle: null, publisher: "Klett" }),
+        current: { pages: 380, format: null, language: "eng", subtitle: "Roman", publisher: "Klett" } as never,
+      },
+      "en",
+    );
+    expect(fields.map(({ key, before, wasEmpty, same }) => ({ key, before, wasEmpty, same }))).toEqual([
+      { key: "pages", before: "380", wasEmpty: false, same: false },
+      { key: "format", before: "(empty)", wasEmpty: true, same: false },
+      { key: "language", before: "English", wasEmpty: false, same: false },
+      { key: "subtitle", before: "Roman", wasEmpty: false, same: false },
+      { key: "publisher", before: "Klett", wasEmpty: false, same: true },
+    ]);
+    i18n.global.locale.value = "de";
+    const [subjects] = proposedFields(
+      { ...request("work_edit", { subjects: [] }), current: { subjects: [] } as never },
+      "de",
+    );
+    expect(subjects).toMatchObject({ value: "(leeren)", before: "(leer)", wasEmpty: true, same: true });
   });
 
   it("names the request kinds in both languages, and the merge target", () => {

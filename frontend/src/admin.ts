@@ -6,7 +6,8 @@ import { languageName } from "./languages";
 /**
  * Reading the admin queue. `EditRequestOut.payload` is an object without a
  * schema: the proposed fields for an edit, `{into_work_id}` for a merge,
- * `{}` for a cover photo.
+ * `{}` for a cover photo. `EditRequestOut.current` holds the record's value
+ * now under the same keys.
  */
 export const REQUEST_KINDS = ["work_edit", "edition_edit", "cover_replace", "work_merge"] as const;
 
@@ -29,7 +30,19 @@ const FIELD_KEYS = [
   "planned_publication_date",
 ];
 
-export type ProposedField = { key: string; label: string; value: string; cleared: boolean };
+export type ProposedField = {
+  key: string;
+  label: string;
+  /** The proposed value, labelled; "(clear it)" when the request clears the field. */
+  value: string;
+  cleared: boolean;
+  /** What the record holds now (`EditRequestOut.current`); null when that is not known. */
+  before: string | null;
+  /** The record holds nothing in this field now. */
+  wasEmpty: boolean;
+  /** The proposal is what the record holds already. */
+  same: boolean;
+};
 
 function show(key: string, value: unknown, locale: string): string {
   if (Array.isArray(value)) return value.map(String).join(", ");
@@ -40,17 +53,36 @@ function show(key: string, value: unknown, locale: string): string {
   return typeof value === "string" ? value : JSON.stringify(value);
 }
 
-/** The fields an edit request proposes, labelled, in the order they were sent; null means "clear it". */
-export function proposedFields(request: Pick<EditRequestOut, "kind" | "payload">, locale: string): ProposedField[] {
+function isEmpty(value: unknown): boolean {
+  return value == null || value === "" || (Array.isArray(value) && value.length === 0);
+}
+
+function sameValue(a: unknown, b: unknown): boolean {
+  return JSON.stringify(isEmpty(a) ? null : a) === JSON.stringify(isEmpty(b) ? null : b);
+}
+
+type Proposal = Pick<EditRequestOut, "kind" | "payload"> & Partial<Pick<EditRequestOut, "current">>;
+
+/**
+ * The fields an edit request proposes, labelled, in the order they were sent,
+ * each with the record's value now; null means "clear it".
+ */
+export function proposedFields(request: Proposal, locale: string): ProposedField[] {
   if (request.kind !== "work_edit" && request.kind !== "edition_edit") return [];
   const payload = request.payload as Record<string, unknown>;
+  const current = (request.current ?? {}) as Record<string, unknown>;
   return Object.entries(payload).map(([key, value]) => {
-    const cleared = value === null || (Array.isArray(value) && value.length === 0);
+    const cleared = isEmpty(value);
+    const known = key in current;
+    const wasEmpty = known && isEmpty(current[key]);
     return {
       key,
       label: FIELD_KEYS.includes(key) ? t(`editRequest.fields.${key}`) : key,
       value: cleared ? t("admin.cleared") : show(key, value, locale),
       cleared,
+      before: !known ? null : wasEmpty ? t("admin.empty") : show(key, current[key], locale),
+      wasEmpty,
+      same: known && sameValue(current[key], value),
     };
   });
 }

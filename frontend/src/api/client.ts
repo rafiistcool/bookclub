@@ -400,6 +400,8 @@ export const api = {
     ),
   /** Every edition of a work, oldest first. */
   editions: (workId: number) => request<EditionList>(`${workPath(workId)}/editions`),
+  /** One edition. */
+  edition: (editionId: number) => request<EditionOut>(`/api/books/editions/${editionId}`),
   /** A missing edition (201). A known ISBN is 409 with `work_id` and `edition_id` in the body. */
   addEdition: (workId: number, body: NewEditionIn) =>
     request<EditionOut>(`${workPath(workId)}/editions`, json("POST", body)),
@@ -431,6 +433,12 @@ export const api = {
   /** `remove` takes the picture down everywhere; `dismiss` keeps it. */
   resolveReport: (id: number, action: "remove" | "dismiss") =>
     request<ReportOut>(`/api/admin/reports/${id}/resolve`, json("POST", { action })),
+  /** Sets a book's facts at once (provenance `admin`: no catalog source overwrites them). Null clears a field. */
+  adminEditWork: (workId: number | string, fields: EditFields) =>
+    request<BookDetailOut>(`/api/admin/works/${enc(String(workId))}`, json("PATCH", { fields })),
+  /** The same for one edition. */
+  adminEditEdition: (editionId: number, fields: EditFields) =>
+    request<EditionOut>(`/api/admin/editions/${editionId}`, json("PATCH", { fields })),
   /** Club-less sign-up invites, newest first. */
   adminInvites: () => request<InviteList>("/api/admin/invites"),
   createSignupInvite: (body: SignupInviteIn) =>

@@ -78,6 +78,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/editions/{edition_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Sets an edition's facts directly, without a request: the fields get provenance `admin`, like
+         *     a book's. Same keys, rules and 400s as an approved edit request. Answers with the edition as
+         *     it is now.
+         */
+        patch: operations["catalog_admin_edit_edition"];
+        trace?: never;
+    };
     "/api/admin/invites": {
         parameters: {
             query?: never;
@@ -142,12 +163,36 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Removes the reported picture (everywhere it is shown, for good) or dismisses the report. */
+        /**
+         * Removes the reported picture (everywhere it is shown, for good) or dismisses the report.
+         *     Either way every open report of the picture is resolved with it.
+         */
         post: operations["media_admin_resolve_report"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/admin/works/{work_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Sets a book's facts directly, without a request: the fields get provenance `admin`, so no
+         *     refresh, enrichment or harvest overwrites them afterwards. Same keys, rules and 400s as an
+         *     approved edit request. Answers with the book as it is now.
+         */
+        patch: operations["catalog_admin_edit_work"];
         trace?: never;
     };
     "/api/admin/works/{work_id}/merge": {
@@ -1546,7 +1591,9 @@ export interface paths {
         put?: never;
         /**
          * Reports a cover (`cover_public_id` of a book or edition): copyright, the wrong book,
-         *     offensive, or something else. 20 per day.
+         *     offensive, or something else. 20 per day. Idempotent per reader and picture: a repeat
+         *     answers with the reader's open report, and a picture already taken down gets a closed record
+         *     (`status` `removed`); neither counts against the limit again.
          */
         post: operations["media_report"];
         delete?: never;
@@ -1905,6 +1952,16 @@ export interface components {
             has_more: boolean;
             /** @description The club's zone (club feed) or the caller's (home feed). */
             timezone: string;
+        };
+        /** @description Fields an instance admin sets directly. */
+        AdminEditIn: {
+            /**
+             * @description The new values, with the keys and rules of an edit request (`EditRequestIn.fields`).
+             *     Works: `title`, `subtitle`, `authors`, `year`, `description`, `subjects`, `pages`.
+             *     Editions: `title`, `subtitle`, `publisher`, `language`, `format`, `pages`,
+             *     `publication_year`, `planned_publication_date` (`YYYY-MM-DD`). Null clears a field.
+             */
+            fields: Record<string, never>;
         };
         /** @description One work with the viewer's shelf state, their audience's readers and the catalog facts. */
         BookDetailOut: {
@@ -2368,6 +2425,12 @@ export interface components {
              *     `cover_replace`: `{}`.
              */
             payload: Record<string, never>;
+            /**
+             * @description `work_edit`/`edition_edit`: the record's value now for each proposed field, keyed like
+             *     `payload` (an empty text is null, a list of subjects an array); `{}` for the other kinds
+             *     and when the record is gone. A `work_edit` reads the work its book was merged into.
+             */
+            current: Record<string, never>;
             /** @description `cover_replace`: the proposed picture (null once it was taken down). */
             cover_url: string | null;
             cover_thumb_url: string | null;
@@ -3135,10 +3198,18 @@ export interface components {
             /** @description `en` or `de`; default `en`. */
             locale?: string | null;
         };
-        /** @description The report is in the admin queue. */
+        /** @description The report is in the admin queue, or the picture is gone already. */
         ReportCreated: {
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description The report; a repeat names the reader's earlier report.
+             */
             id: number;
+            /**
+             * @description `open`: an admin will look at it; `removed`: the picture was already taken down, and
+             *     nothing waits in the queue.
+             */
+            status: string;
         };
         /** @description A reader's report of a cover. */
         ReportIn: {
@@ -3680,6 +3751,7 @@ export interface components {
 export type AccountDeleteIn = components['schemas']['AccountDeleteIn'];
 export type ActivityItem = components['schemas']['ActivityItem'];
 export type ActivityOut = components['schemas']['ActivityOut'];
+export type AdminEditIn = components['schemas']['AdminEditIn'];
 export type BookDetailOut = components['schemas']['BookDetailOut'];
 export type BookOut = components['schemas']['BookOut'];
 export type BookReader = components['schemas']['BookReader'];
@@ -4026,6 +4098,60 @@ export interface operations {
             };
         };
     };
+    catalog_admin_edit_edition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The edition id */
+                edition_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminEditIn"];
+            };
+        };
+        responses: {
+            /** @description The edition with the new values */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionOut"];
+                };
+            };
+            /** @description `Field required` (no fields), `Unknown field: <key>` or `Invalid value for <key>` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such book.`, or `Not found` (not an instance admin) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     admin_list_invites: {
         parameters: {
             query?: never;
@@ -4246,6 +4372,60 @@ export interface operations {
             };
             /** @description `This report was already resolved` */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    catalog_admin_edit_work: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A work id, `OL…W`, or a legacy key */
+                work_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminEditIn"];
+            };
+        };
+        responses: {
+            /** @description The book with the new values */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookDetailOut"];
+                };
+            };
+            /** @description `Field required` (no fields), `Unknown field: <key>` or `Invalid value for <key>` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such book.`, or `Not found` (not an instance admin) */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8618,7 +8798,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The report is in the admin queue */
+            /** @description The report is in the admin queue (`open`), or the picture was already taken down (`removed`); a repeat names the same report */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -8654,7 +8834,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description `Slow down a little. Try again later.` (20 per day) */
+            /** @description `Slow down a little. Try again later.` (20 new reports per day) */
             429: {
                 headers: {
                     [name: string]: unknown;

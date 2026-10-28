@@ -1,6 +1,6 @@
-//! Edit and merge requests and the admin queue (#41, endpoint-map §4): readers propose, an
+//! Edit and merge requests and the admin queue (#41, #54, endpoint-map §4): readers propose, an
 //! instance admin approves (through `apply_admin_fields`, `set_cover(…, Admin)` or
-//! `merge_works`) or rejects.
+//! `merge_works`) or rejects, seeing the current value beside each proposed one.
 
 mod common;
 
@@ -280,6 +280,116 @@ async fn requests_on_the_same_edition_both_carry_the_book(db: PgPool) {
             item["id"]
         );
     }
+}
+
+/// Acceptance (#54): `current` holds the record's value now for each proposed field, keyed like
+/// the payload (empty text is null); a work edit reads the work, an edition edit the edition.
+/// Cover photos and merges propose no fields, so theirs is `{}`. After the approval the record
+/// holds the proposed values.
+#[sqlx::test]
+async fn edit_requests_carry_the_current_values(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let root = app.admin("root").await;
+    let work = app.ol_work("OL1W", "Cirse", "Madeline Miller").await;
+    let (dnb, edition) = app
+        .dnb_work("Der Hobbit", "J. R. R. Tolkien", "9783608938289")
+        .await;
+    app.exec(&format!(
+        "UPDATE works SET pages = 390, subjects = '{{Myth}}' WHERE id = {};
+         UPDATE editions SET publisher = 'Klett', pages = 310,
+                planned_publication_date = '2026-05-01' WHERE id = {}",
+        work.id, edition.id
+    ))
+    .await;
+    let proposal = json!({"title": "Circe", "authors": null, "year": 2018, "subtitle": "A Novel",
+                          "pages": 393, "subjects": ["Mythology"], "description": "A witch."});
+    let work_edit = ada
+        .post(
+            &format!("/api/books/works/{}/edit-requests", work.id),
+            json!({"fields": proposal}),
+        )
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+    let edition_edit = ada
+        .post(
+            &format!("/api/books/editions/{}/edit-requests", edition.id),
+            json!({"fields": {"publisher": "Klett-Cotta", "language": "ger", "pages": 380,
+                              "planned_publication_date": "2026-11-01"}}),
+        )
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+    let photo = upload_media(&app, &ada).await;
+    cover_request(&app, &ada, dnb.id, Some(edition.id), photo).await;
+    let other = app.work("The Hobbit").await;
+    ada.post(
+        &format!("/api/books/works/{}/merge-requests", other.id),
+        json!({"into_work_id": dnb.id}),
+    )
+    .await
+    .assert_status(201);
+
+    let queue = root.get("/api/admin/edit-requests").await.json();
+    let items = queue["items"].as_array().unwrap();
+    assert_eq!(items.len(), 4);
+    assert_eq!(
+        items[0]["current"],
+        json!({"title": "Cirse", "authors": "Madeline Miller", "year": null, "subtitle": null,
+               "pages": 390, "subjects": ["Myth"], "description": null})
+    );
+    assert_eq!(
+        items[1]["current"],
+        json!({"publisher": "Klett", "language": null, "pages": 310,
+               "planned_publication_date": "2026-05-01"})
+    );
+    assert_eq!(items[2]["kind"], "cover_replace");
+    assert_eq!(items[2]["current"], json!({}));
+    assert_eq!(items[3]["kind"], "work_merge");
+    assert_eq!(items[3]["current"], json!({}));
+
+    for id in [work_edit, edition_edit] {
+        let res = root
+            .post(&format!("/api/admin/edit-requests/{id}/approve"), json!({}))
+            .await;
+        res.assert_status(200);
+        let body = res.json();
+        assert_eq!(body["current"], body["payload"], "request {id}");
+    }
+}
+
+/// A work edit on a book that was merged away shows the values of the work it was merged into,
+/// the one an approval would change.
+#[sqlx::test]
+async fn current_values_follow_a_merge(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let root = app.admin("root").await;
+    let loser = app.work("Der Hobit").await;
+    let winner = app.work("Der Hobbit").await;
+    let id = ada
+        .post(
+            &format!("/api/books/works/{}/edit-requests", loser.id),
+            json!({"fields": {"pages": 310}}),
+        )
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+    // The merge itself rejects the open requests on the loser; reopen this one by hand.
+    let mut conn = app.db.acquire().await.unwrap();
+    merge_works(&mut conn, loser.id, winner.id).await.unwrap();
+    app.exec(&format!(
+        "UPDATE catalog_edit_requests SET status = 'open' WHERE id = {id};
+         UPDATE works SET pages = 300 WHERE id = {}",
+        winner.id
+    ))
+    .await;
+    let queue = root.get("/api/admin/edit-requests").await.json();
+    assert_eq!(queue["items"][0]["current"], json!({"pages": 300}));
 }
 
 /// Rejecting keeps the catalog as it is and records the admin's note.
@@ -719,4 +829,58 @@ async fn a_merge_that_lost_a_race_is_a_4xx(db: PgPool) {
             "only the first merge happened"
         );
     }
+}
+
+/// Acceptance (#54): a takedown and the approval of a `cover_replace` for the same picture cannot
+/// deadlock. The approval locks the picture before the request row, as the takedown does, so it
+/// waits for the takedown, which rejects the request; the approval then answers 409.
+#[sqlx::test]
+async fn a_takedown_rejects_a_cover_request_an_admin_is_approving(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let root = app.admin("root").await;
+    let work = app.work("Der Hobbit").await;
+    let photo = upload_media(&app, &ada).await;
+    let id = cover_request(&app, &ada, work.id, None, photo).await;
+
+    // A takedown that holds the picture while the approval starts.
+    let mut takedown = app.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM media WHERE id = $1 FOR UPDATE")
+        .bind(photo)
+        .execute(&mut *takedown)
+        .await
+        .unwrap();
+    let finish_takedown = async {
+        until_a_lock_wait(&app.db).await;
+        bookclub_server::media::reports::take_down_locked(
+            &mut takedown,
+            app.media.as_ref(),
+            photo,
+            root.id(),
+        )
+        .await
+        .unwrap();
+        takedown.commit().await.unwrap();
+    };
+    let path = format!("/api/admin/edit-requests/{id}/approve");
+    let (res, ()) = tokio::join!(root.post(&path, json!({})), finish_takedown);
+    res.assert_detail(409, "This request was already decided");
+    let (status, note): (String, String) =
+        sqlx::query_as("SELECT status, decision_note FROM catalog_edit_requests WHERE id = $1")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        (status.as_str(), note.as_str()),
+        ("rejected", "The picture was taken down")
+    );
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM works WHERE id = {} AND cover_media_id IS NULL",
+            work.id
+        ))
+        .await,
+        1
+    );
 }

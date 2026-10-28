@@ -11,7 +11,8 @@
 //! - [`detail`]: `GET /api/books/works/{work_id}` (`BookDetailOut`, the one-time enrichment of
 //!   stubs) and its refresh.
 //! - [`custom`] and [`editions`]: user-added works and editions.
-//! - [`requests`]: edit and merge requests; [`admin`]: the admin queue and the direct merge.
+//! - [`requests`]: edit and merge requests; [`admin`]: the admin queue, the direct merge and the
+//!   direct admin edit.
 //! - [`merge`]: `merge_works`, two works becoming one (conventions §7.6).
 
 pub mod admin;
@@ -92,6 +93,8 @@ pub fn admin_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(admin::approve_edit_request))
         .routes(routes!(admin::reject_edit_request))
         .routes(routes!(admin::merge_work))
+        .routes(routes!(admin::edit_work))
+        .routes(routes!(admin::edit_edition))
 }
 
 /// One account's turn at a request that may call Open Library (search, trending, a subject, the

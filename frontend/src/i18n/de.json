@@ -25,6 +25,7 @@
     "reportSend": "Meldung senden",
     "reporting": "Wird gesendet…",
     "reported": "Danke. Jemand aus dem Admin-Team sieht es sich an.",
+    "alreadyRemoved": "Dieses Bild wurde schon entfernt. Trotzdem danke.",
     "reportFailed": "Die Meldung konnte nicht gesendet werden",
     "photoAdd": "Foto deines Exemplars hinzufügen",
     "photoSuggest": "Foto deines Exemplars vorschlagen",
@@ -1214,6 +1215,12 @@
     "proposedCover": "Vorgeschlagenes Foto",
     "coverGone": "Das Foto wurde entfernt",
     "cleared": "(leeren)",
+    "empty": "(leer)",
+    "now": "Jetzt",
+    "proposed": "Vorschlag",
+    "noChange": "schon so",
+    "editAsAdmin": "Als Admin bearbeiten",
+    "editEditionAsAdmin": "Deine Ausgabe als Admin bearbeiten",
     "mergeInto": "Zusammenführen mit:",
     "bookN": "Buch {id}",
     "approve": "Freigeben",
@@ -1242,7 +1249,16 @@
     "anyNumber": "Beliebig viele Personen",
     "forPeople": "Für eine Person | Für {n} Personen",
     "noExpiry": "läuft nicht ab",
-    "pastInvites": "{n} benutzte oder abgelaufene Einladung | {n} benutzte oder abgelaufene Einladungen"
+    "pastInvites": "{n} benutzte oder abgelaufene Einladung | {n} benutzte oder abgelaufene Einladungen",
+    "edit": {
+      "title": "Buch als Admin bearbeiten",
+      "editionTitle": "Ausgabe als Admin bearbeiten",
+      "blurb": "Deine Angaben zu „{title}“ gelten sofort, und keine Katalogquelle überschreibt sie später.",
+      "save": "Für alle speichern",
+      "saved": "Gespeichert. Alle sehen jetzt die neuen Angaben.",
+      "failed": "Die Änderungen konnten nicht gespeichert werden",
+      "loadFailed": "Das Buch konnte nicht geladen werden"
+    }
   },
   "notFound": {
     "title": "Seite nicht gefunden",

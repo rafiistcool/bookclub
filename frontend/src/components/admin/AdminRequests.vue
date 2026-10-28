@@ -3,7 +3,7 @@ import { vAutosize } from "../../autosize";
 import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../../api/client";
-import type { BookDetailOut, EditRequestOut } from "../../api/generated";
+import type { BookDetailOut, EditionOut, EditRequestOut } from "../../api/generated";
 import { mergeTarget, proposedFields, requestKindLabel } from "../../admin";
 import { bookPath } from "../../constants";
 import { formatClubDate } from "../../i18n/dates";
@@ -11,12 +11,15 @@ import { useLocale } from "../../stores/locale";
 import { useSession } from "../../stores/session";
 import { useToast } from "../../stores/toast";
 import BookCover from "../BookCover.vue";
+import EditRequestSheet from "../EditRequestSheet.vue";
 
 /**
  * The catalog queue: corrections of books and editions, cover photos that
- * would replace a cover, and "these are the same book". Approving applies the
- * request (an admin's values, which no catalog source overwrites); rejecting
- * closes it with an optional note.
+ * would replace a cover, and "these are the same book". A correction shows the
+ * record's value now beside each proposed one. Approving applies the request
+ * (an admin's values, which no catalog source overwrites); rejecting closes it
+ * with an optional note. "Edit as admin" opens the request's edition, or else
+ * its book, in the admin's own form; the request stays open for a decision.
  */
 const emit = defineEmits<{ count: [n: number] }>();
 
@@ -36,6 +39,9 @@ const rejectNote = ref("");
  * the work is gone.
  */
 const extraBooks = ref<Record<number, BookDetailOut | null>>({});
+/** The record the admin edits directly, read fresh when the sheet opens. */
+const editing = ref<{ book?: BookDetailOut; edition?: EditionOut } | null>(null);
+const opening = ref<number | null>(null);
 
 function failed(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback;
@@ -118,6 +124,29 @@ async function reject(request: EditRequestOut) {
   }
 }
 
+/** "Edit as admin": the request's edition when it names one, else its book. */
+async function editAsAdmin(request: EditRequestOut) {
+  if (opening.value) return;
+  opening.value = request.id;
+  try {
+    if (request.edition_id != null) {
+      editing.value = { edition: await api.edition(request.edition_id) };
+    } else if (request.work_id != null) {
+      editing.value = { book: await api.book(request.work_id) };
+    }
+  } catch (err) {
+    toast.show(failed(err, t("admin.edit.loadFailed")));
+  } finally {
+    opening.value = null;
+  }
+}
+
+/** The record changed: read the queue again for the current values. */
+function edited() {
+  editing.value = null;
+  void load();
+}
+
 function when(iso: string): string {
   return formatClubDate(iso, session.user?.timezone || "UTC", locale.locale);
 }
@@ -173,7 +202,17 @@ onMounted(load);
         <dl v-if="proposedFields(request, locale.locale).length" class="proposed-fields">
           <template v-for="field in proposedFields(request, locale.locale)" :key="field.key">
             <dt class="fine subtle">{{ field.label }}</dt>
-            <dd :class="{ cleared: field.cleared }">{{ field.value }}</dd>
+            <dd>
+              <span v-if="field.before !== null" class="field-before" :class="{ 'was-empty': field.wasEmpty, same: field.same }">
+                <span class="field-tag finer subtle">{{ t("admin.now") }}</span>
+                <span class="field-value" :class="{ long: field.key === 'description' }">{{ field.before }}</span>
+              </span>
+              <span class="field-after" :class="{ cleared: field.cleared }">
+                <span v-if="field.before !== null" class="field-tag finer subtle">{{ t("admin.proposed") }}</span>
+                <span class="field-value" :class="{ long: field.key === 'description' }">{{ field.value }}</span>
+                <span v-if="field.same" class="finer subtle">{{ t("admin.noChange") }}</span>
+              </span>
+            </dd>
           </template>
         </dl>
 
@@ -210,9 +249,26 @@ onMounted(load);
           <button class="btn btn-ghost btn-sm" type="button" :disabled="busyId === request.id" @click="startReject(request)">
             {{ t("admin.reject") }}
           </button>
+          <button
+            v-if="request.work_id != null || request.edition_id != null"
+            class="btn btn-ghost btn-sm admin-edit"
+            type="button"
+            :disabled="opening === request.id"
+            @click="editAsAdmin(request)"
+          >
+            {{ t("admin.editAsAdmin") }}
+          </button>
         </div>
       </li>
     </ol>
+    <EditRequestSheet
+      v-if="editing"
+      admin
+      :book="editing.book"
+      :edition="editing.edition"
+      @saved="edited"
+      @close="editing = null"
+    />
   </section>
 </template>
 
@@ -288,14 +344,69 @@ onMounted(load);
 }
 
 .proposed-fields dd {
+  display: grid;
+  gap: 2px;
   margin: 0;
+  min-width: 0;
+}
+
+.field-before,
+.field-after {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.field-tag {
+  flex: 0 0 auto;
+  min-width: 4.5rem;
+}
+
+.field-value {
+  flex: 0 1 auto;
+  min-width: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.proposed-fields dd.cleared {
+.field-value.long {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
+}
+
+.field-before .field-value {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.field-before.was-empty .field-value {
+  font-style: italic;
+  text-decoration: none;
+}
+
+.field-before.same .field-value {
+  text-decoration: none;
+}
+
+.field-after.cleared .field-value {
   font-style: italic;
   color: var(--text-muted);
+}
+
+/* On a phone the field's name goes above its values, so each value keeps its tag beside it. */
+@media (max-width: 34rem) {
+  .proposed-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .proposed-fields dd + dt {
+    margin-top: var(--space-2);
+  }
 }
 
 .request-note {

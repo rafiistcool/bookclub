@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT m.id FROM catalog_edit_requests r JOIN media m ON m.id = r.media_id\n         WHERE r.id = $1 FOR SHARE OF m",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "93932e2c7986b13170515cb661bb8e2b3a60b42fd4b37924115c8e7f5f0b33da"
+}

@@ -3,10 +3,13 @@ import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
 import type { EditRequestOut, ReportOut } from "../api/generated";
-import { bookDetail, bookOut, invite, user } from "../test/fixtures";
+import { bookDetail, bookOut, edition, invite, user } from "../test/fixtures";
 
 const api: Record<string, ReturnType<typeof vi.fn>> = {
   book: vi.fn(),
+  edition: vi.fn(),
+  adminEditWork: vi.fn(),
+  adminEditEdition: vi.fn(),
   adminEditRequests: vi.fn(),
   approveEditRequest: vi.fn(),
   rejectEditRequest: vi.fn(),
@@ -44,6 +47,7 @@ function editRequest(overrides: Partial<EditRequestOut> = {}): EditRequestOut {
     edition_id: null,
     book: bookOut({ id: 9, title: "Circe" }),
     payload: {} as Record<string, never>,
+    current: {} as Record<string, never>,
     cover_url: null,
     cover_thumb_url: null,
     cover_public_id: null,
@@ -176,7 +180,9 @@ describe("AdminPage", () => {
   });
 
   it("takes a reported cover down with a second tap, or keeps it", async () => {
-    api.adminReports.mockResolvedValue({ items: [report(), report({ id: 8, reason: "copyright", details: "" })] });
+    api.adminReports.mockResolvedValue({
+      items: [report(), report({ id: 8, reason: "copyright", details: "", media_public_id: "def" })],
+    });
     const { wrapper } = await mountAdmin("/admin?tab=reports");
     expect(api.adminEditRequests).not.toHaveBeenCalled();
     const items = wrapper.findAll(".report-item");
@@ -196,6 +202,96 @@ describe("AdminPage", () => {
     await flushPromises();
     expect(api.resolveReport).toHaveBeenLastCalledWith(8, "dismiss");
     expect(wrapper.text()).toContain("No open reports.");
+  });
+
+  it("shows the record's value now beside each proposed one", async () => {
+    api.adminEditRequests.mockResolvedValue({
+      items: [
+        editRequest({
+          payload: { title: "Circe", pages: 393, subtitle: null, year: 2018 } as never,
+          current: { title: "Cirse", pages: null, subtitle: "A Novel", year: 2018 } as never,
+        }),
+      ],
+    });
+    const { wrapper } = await mountAdmin();
+    const item = wrapper.get(".request-item");
+    expect(item.findAll("dt").map((node) => node.text())).toEqual(["Title", "Pages", "Subtitle", "First published"]);
+    expect(item.findAll(".field-before .field-value").map((node) => node.text())).toEqual(["Cirse", "(empty)", "A Novel", "2018"]);
+    expect(item.findAll(".field-before.was-empty")).toHaveLength(1);
+    expect(item.findAll(".field-after .field-value").map((node) => node.text())).toEqual(["Circe", "393", "(clear it)", "2018"]);
+    expect(item.findAll(".field-after")[3]!.text()).toContain("already so");
+    expect(item.findAll(".field-before .field-tag")[0]!.text()).toBe("Now");
+    expect(item.findAll(".field-after .field-tag")[0]!.text()).toBe("Proposed");
+
+    i18n.global.locale.value = "de";
+    await flushPromises();
+    expect(item.findAll(".field-before .field-value")[1]!.text()).toBe("(leer)");
+    expect(item.findAll(".field-before .field-tag")[0]!.text()).toBe("Jetzt");
+  });
+
+  it("edits a request's book as admin, and reads the queue again", async () => {
+    api.adminEditRequests.mockResolvedValue({
+      items: [editRequest({ payload: { title: "Circe" } as never, current: { title: "Cirse" } as never })],
+    });
+    api.book.mockResolvedValue(bookDetail({ id: 9, title: "Cirse", subtitle: "", authors: "Madeline Miller" }));
+    const { wrapper } = await mountAdmin();
+    await buttonIn(wrapper.get(".request-item"), "Edit as admin").trigger("click");
+    await flushPromises();
+    expect(api.book).toHaveBeenCalledWith(9);
+    const sheet = wrapper.get(".sheet");
+    expect(sheet.text()).toContain("Edit this book as admin");
+    expect(sheet.find("textarea[name=note]").exists()).toBe(false);
+    await sheet.get("input[name=title]").setValue("Circe (corrected)");
+    api.adminEditWork.mockResolvedValue(bookDetail({ id: 9, title: "Circe (corrected)" }));
+    await sheet.get("form").trigger("submit");
+    await flushPromises();
+    expect(api.adminEditWork).toHaveBeenCalledWith(9, { title: "Circe (corrected)" });
+    expect(api.adminEditRequests).toHaveBeenCalledTimes(2);
+    expect(wrapper.find(".sheet").exists()).toBe(false);
+    expect(useToast().items.at(-1)?.message).toBe("Saved. Everyone sees the new values now.");
+    // The request stays open for a decision.
+    expect(api.approveEditRequest).not.toHaveBeenCalled();
+    expect(api.rejectEditRequest).not.toHaveBeenCalled();
+  });
+
+  it("edits the edition a request names, with the server's 400 in the sheet", async () => {
+    api.adminEditRequests.mockResolvedValue({
+      items: [editRequest({ kind: "edition_edit", edition_id: 13, payload: { pages: 530 } as never })],
+    });
+    api.edition.mockResolvedValue(edition({ id: 13, work_id: 9, pages: 500, publisher: "Klett" }));
+    const { wrapper } = await mountAdmin();
+    await buttonIn(wrapper.get(".request-item"), "Edit as admin").trigger("click");
+    await flushPromises();
+    expect(api.edition).toHaveBeenCalledWith(13);
+    expect(api.book).not.toHaveBeenCalled();
+    const sheet = wrapper.get(".sheet");
+    expect(sheet.text()).toContain("Edit this edition as admin");
+    await sheet.get("input[name=pages]").setValue(530);
+    api.adminEditEdition.mockRejectedValue(new ApiError("Invalid value for pages", 400, "Invalid value for pages"));
+    await sheet.get("form").trigger("submit");
+    await flushPromises();
+    expect(api.adminEditEdition).toHaveBeenCalledWith(13, { pages: 530 });
+    expect(wrapper.get(".sheet").text()).toContain("Invalid value for pages");
+    expect(api.adminEditRequests).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes every open report of a picture with one decision", async () => {
+    api.adminReports.mockResolvedValue({
+      items: [
+        report(),
+        report({ id: 9, created_by: { id: 3, username: "grace", avatar_url: null } }),
+        report({ id: 8, media_public_id: "def" }),
+      ],
+    });
+    const { wrapper } = await mountAdmin("/admin?tab=reports");
+    expect(wrapper.findAll(".report-item")).toHaveLength(3);
+    api.resolveReport.mockResolvedValue(report({ status: "dismissed" }));
+    await buttonIn(wrapper.findAll(".report-item")[1]!, "Keep it").trigger("click");
+    await flushPromises();
+    expect(api.resolveReport).toHaveBeenCalledWith(9, "dismiss");
+    expect(wrapper.findAll(".report-item")).toHaveLength(1);
+    expect(wrapper.get(".report-item").text()).toContain("That is a cookbook.");
+    expect(wrapper.findAll(".admin-tabs button")[1]!.text()).toBe("Reports 1");
   });
 
   it("creates a sign-up invite with the limits given, and lists the others", async () => {

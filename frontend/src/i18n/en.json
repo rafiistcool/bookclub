@@ -25,6 +25,7 @@
     "reportSend": "Send report",
     "reporting": "Sending…",
     "reported": "Thanks. An admin will look at it.",
+    "alreadyRemoved": "This picture was already taken down. Thanks anyway.",
     "reportFailed": "Could not send that report",
     "photoAdd": "Add a photo of your copy",
     "photoSuggest": "Suggest a photo of your copy",
@@ -1214,6 +1215,12 @@
     "proposedCover": "Proposed photo",
     "coverGone": "The photo was taken down",
     "cleared": "(clear it)",
+    "empty": "(empty)",
+    "now": "Now",
+    "proposed": "Proposed",
+    "noChange": "already so",
+    "editAsAdmin": "Edit as admin",
+    "editEditionAsAdmin": "Edit your edition as admin",
     "mergeInto": "Merge into:",
     "bookN": "book {id}",
     "approve": "Approve",
@@ -1242,7 +1249,16 @@
     "anyNumber": "Any number of people",
     "forPeople": "For one person | For {n} people",
     "noExpiry": "does not expire",
-    "pastInvites": "{n} used or ended invite | {n} used or ended invites"
+    "pastInvites": "{n} used or ended invite | {n} used or ended invites",
+    "edit": {
+      "title": "Edit this book as admin",
+      "editionTitle": "Edit this edition as admin",
+      "blurb": "Your values for “{title}” apply at once, and no catalog source overwrites them later.",
+      "save": "Save for everyone",
+      "saved": "Saved. Everyone sees the new values now.",
+      "failed": "Could not save the changes",
+      "loadFailed": "Could not load the book"
+    }
   },
   "notFound": {
     "title": "Page not found",

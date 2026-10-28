@@ -13,7 +13,7 @@ import BookCover from "../BookCover.vue";
 /**
  * Notice and takedown: readers' reports of a cover. "Take down" removes the
  * picture everywhere for good (no refresh brings it back); "Keep it" closes
- * the report.
+ * the report. Either decision closes every open report of the picture.
  */
 const emit = defineEmits<{ count: [n: number] }>();
 
@@ -52,6 +52,13 @@ function drop(id: number) {
   emit("count", items.value.length);
 }
 
+/** The report and every other open report of its picture, which the decision closed too. */
+function dropPicture(report: ReportOut) {
+  const picture = report.media_public_id;
+  items.value = items.value.filter((row) => row.id !== report.id && (picture == null || row.media_public_id !== picture));
+  emit("count", items.value.length);
+}
+
 async function resolve(report: ReportOut, action: "remove" | "dismiss") {
   if (busyId.value) return;
   if (action === "remove" && confirming.value !== report.id) {
@@ -62,7 +69,7 @@ async function resolve(report: ReportOut, action: "remove" | "dismiss") {
   busyId.value = report.id;
   try {
     await api.resolveReport(report.id, action);
-    drop(report.id);
+    dropPicture(report);
     toast.show(action === "remove" ? t("admin.takenDown") : t("admin.kept"));
   } catch (err) {
     // Resolved meanwhile (409): it leaves the open queue either way.

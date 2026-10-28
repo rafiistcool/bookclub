@@ -1,16 +1,19 @@
-//! The minimal admin queue of catalog requests and the direct merge (endpoint-map §4; #54
-//! builds the UI). Every route sits under `/api/admin/`, behind the `InstanceAdmin` route layer.
+//! The admin queue of catalog requests, the direct merge and the direct admin edit
+//! (endpoint-map §4, #54). Every route sits under `/api/admin/`, behind the `InstanceAdmin` route
+//! layer.
 //!
 //! Approving applies a request through the sanctioned writers only: `ingest::apply_admin_fields`
 //! for edits (provenance `admin`, so no source overwrites them), `ingest::set_cover(…, Admin)`
-//! for a `cover_replace`, and [`super::merge_works`] for a `work_merge`.
+//! for a `cover_replace`, and [`super::merge_works`] for a `work_merge`. The direct admin edit
+//! (`PATCH /api/admin/works/{work_id}`, `PATCH /api/admin/editions/{edition_id}`) writes through
+//! `apply_admin_fields` too, with the same checks and 400s as an approval.
 
 use std::collections::HashMap;
 
 use axum::Json;
 use axum::extract::State;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value, json};
 use sqlx::{Connection, PgConnection};
 use time::OffsetDateTime;
 use utoipa::ToSchema;
@@ -18,14 +21,16 @@ use utoipa::ToSchema;
 use super::detail::{BookDetailOut, book_detail, require_local_work};
 use super::merge::merge_works;
 use super::requests::MAX_NOTE_CHARS;
-use super::shared::books::{BookRef, book_outs, follow_merges, require_work};
+use super::shared::books::{
+    BookRef, book_outs, edition_outs, follow_merges, follow_merges_many, require_work,
+};
 use super::shared::ingest::{CoverTarget, Source, apply_admin_fields, set_cover};
 use super::{MERGE_INTO_ITSELF, PICTURE_REMOVED, REQUEST_DECIDED};
 use crate::AppState;
 use crate::auth::extract::InstanceAdmin;
-use crate::dto::{BookOut, UserSummary, user_summaries};
+use crate::dto::{BookOut, EditionOut, UserSummary, user_summaries};
 use crate::error::{ApiResult, AppError, ErrorBody, msg};
-use crate::extract::{ApiJson, ApiPath, Validate, Validator};
+use crate::extract::{ApiJson, ApiPath, FIELD_REQUIRED, Validate, Validator};
 use crate::media::shared::urls::cover_urls;
 use crate::text::{py_strip, truncate_chars};
 
@@ -46,6 +51,11 @@ pub struct EditRequestOut {
     /// `cover_replace`: `{}`.
     #[schema(value_type = Object)]
     pub payload: Value,
+    /// `work_edit`/`edition_edit`: the record's value now for each proposed field, keyed like
+    /// `payload` (an empty text is null, a list of subjects an array); `{}` for the other kinds
+    /// and when the record is gone. A `work_edit` reads the work its book was merged into.
+    #[schema(value_type = Object)]
+    pub current: Value,
     /// `cover_replace`: the proposed picture (null once it was taken down).
     pub cover_url: Option<String>,
     pub cover_thumb_url: Option<String>,
@@ -89,6 +99,129 @@ pub struct WorkMergeIn {
 
 impl Validate for WorkMergeIn {}
 
+/// Fields an instance admin sets directly.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct AdminEditIn {
+    /// The new values, with the keys and rules of an edit request (`EditRequestIn.fields`).
+    /// Works: `title`, `subtitle`, `authors`, `year`, `description`, `subjects`, `pages`.
+    /// Editions: `title`, `subtitle`, `publisher`, `language`, `format`, `pages`,
+    /// `publication_year`, `planned_publication_date` (`YYYY-MM-DD`). Null clears a field.
+    #[schema(value_type = Object)]
+    pub fields: Map<String, Value>,
+}
+
+impl Validate for AdminEditIn {
+    fn validate(&mut self, v: &mut Validator) {
+        v.check(!self.fields.is_empty(), FIELD_REQUIRED);
+    }
+}
+
+/// A text as an edit request writes it: empty is null.
+fn text_value(text: String) -> Value {
+    if text.is_empty() {
+        Value::Null
+    } else {
+        Value::String(text)
+    }
+}
+
+/// The present values of works and editions under the edit-request keys, by record id.
+#[derive(Default)]
+struct CurrentValues {
+    works: HashMap<i64, Map<String, Value>>,
+    editions: HashMap<i64, Map<String, Value>>,
+    /// The current work of each requested work id (merges followed).
+    merged: HashMap<i64, i64>,
+}
+
+impl CurrentValues {
+    async fn load(
+        conn: &mut PgConnection,
+        work_ids: &[i64],
+        edition_ids: &[i64],
+    ) -> sqlx::Result<Self> {
+        let merged = follow_merges_many(conn, work_ids).await?;
+        let current: Vec<i64> = merged.values().copied().collect();
+        let works = sqlx::query!(
+            "SELECT id, title, subtitle, author_names, first_publish_year, description, subjects,
+                    pages
+             FROM works WHERE id = ANY($1)",
+            &current
+        )
+        .fetch_all(&mut *conn)
+        .await?
+        .into_iter()
+        .map(|row| {
+            let mut values = Map::new();
+            values.insert("title".into(), Value::String(row.title));
+            values.insert("subtitle".into(), text_value(row.subtitle));
+            values.insert("authors".into(), text_value(row.author_names));
+            values.insert("year".into(), json!(row.first_publish_year));
+            values.insert("description".into(), text_value(row.description));
+            values.insert("subjects".into(), json!(row.subjects));
+            values.insert("pages".into(), json!(row.pages));
+            (row.id, values)
+        })
+        .collect();
+        let editions = sqlx::query!(
+            "SELECT id, title, subtitle, publisher, language, format, pages, publication_year,
+                    planned_publication_date
+             FROM editions WHERE id = ANY($1)",
+            edition_ids
+        )
+        .fetch_all(&mut *conn)
+        .await?
+        .into_iter()
+        .map(|row| {
+            let mut values = Map::new();
+            values.insert("title".into(), json!(row.title));
+            values.insert("subtitle".into(), json!(row.subtitle));
+            values.insert("publisher".into(), text_value(row.publisher));
+            values.insert("language".into(), json!(row.language));
+            values.insert("format".into(), json!(row.format));
+            values.insert("pages".into(), json!(row.pages));
+            values.insert("publication_year".into(), json!(row.publication_year));
+            values.insert(
+                "planned_publication_date".into(),
+                json!(row.planned_publication_date),
+            );
+            (row.id, values)
+        })
+        .collect();
+        Ok(CurrentValues {
+            works,
+            editions,
+            merged,
+        })
+    }
+
+    /// `EditRequestOut.current` of one request.
+    fn of(
+        &self,
+        kind: &str,
+        work_id: Option<i64>,
+        edition_id: Option<i64>,
+        payload: &Value,
+    ) -> Value {
+        let record = match kind {
+            "work_edit" => work_id
+                .and_then(|id| self.merged.get(&id))
+                .and_then(|id| self.works.get(id)),
+            "edition_edit" => edition_id.and_then(|id| self.editions.get(&id)),
+            _ => None,
+        };
+        let (Some(record), Some(proposed)) = (record, payload.as_object()) else {
+            return Value::Object(Map::new());
+        };
+        Value::Object(
+            proposed
+                .keys()
+                .filter_map(|key| Some((key.clone(), record.get(key)?.clone())))
+                .collect(),
+        )
+    }
+}
+
 /// The [`EditRequestOut`]s of `ids`, in that order (missing ids are left out).
 pub async fn edit_request_outs(
     conn: &mut PgConnection,
@@ -115,6 +248,17 @@ pub async fn edit_request_outs(
         })
         .collect();
     let books = book_outs(conn, &refs).await?;
+    let edited_works: Vec<i64> = rows
+        .iter()
+        .filter(|row| row.kind == "work_edit")
+        .filter_map(|row| row.work_id)
+        .collect();
+    let edited_editions: Vec<i64> = rows
+        .iter()
+        .filter(|row| row.kind == "edition_edit")
+        .filter_map(|row| row.edition_id)
+        .collect();
+    let current = CurrentValues::load(conn, &edited_works, &edited_editions).await?;
     let user_ids: Vec<i64> = rows
         .iter()
         .flat_map(|row| [row.created_by, row.decided_by])
@@ -124,6 +268,7 @@ pub async fn edit_request_outs(
     let mut by_id: HashMap<i64, EditRequestOut> = rows
         .into_iter()
         .map(|row| {
+            let current = current.of(&row.kind, row.work_id, row.edition_id, &row.payload);
             // Cloned, not removed: several requests can name the same work and edition.
             let book = row.work_id.and_then(|work_id| {
                 books
@@ -142,6 +287,7 @@ pub async fn edit_request_outs(
                 edition_id: row.edition_id,
                 book,
                 payload: row.payload,
+                current,
                 cover_url,
                 cover_thumb_url,
                 cover_public_id: row.cover,
@@ -163,6 +309,21 @@ async fn edit_request_out(conn: &mut PgConnection, id: i64) -> ApiResult<EditReq
         .await?
         .pop()
         .ok_or_else(|| AppError::not_found(msg::NOT_FOUND))
+}
+
+/// Locks the picture of a `cover_replace` request `FOR SHARE`, before the request row. A takedown
+/// locks the picture and then rejects the open requests that propose it, so an approval that
+/// took the request row first would deadlock with it (conventions §7.2: media rows first). The
+/// request's `media_id` never changes, so reading it without a lock is safe.
+async fn lock_request_media(conn: &mut PgConnection, id: i64) -> sqlx::Result<()> {
+    sqlx::query_scalar!(
+        "SELECT m.id FROM catalog_edit_requests r JOIN media m ON m.id = r.media_id
+         WHERE r.id = $1 FOR SHARE OF m",
+        id
+    )
+    .fetch_optional(conn)
+    .await?;
+    Ok(())
 }
 
 /// An open request, locked by the caller's transaction.
@@ -363,6 +524,7 @@ pub async fn approve_edit_request(
 ) -> ApiResult<Json<EditRequestOut>> {
     let mut conn = state.db.acquire().await?;
     let mut tx = conn.begin().await?;
+    lock_request_media(&mut tx, request_id).await?;
     let request = lock_open_request(&mut tx, request_id).await?;
     // Decided first: a merge rejects the open requests on the work it merges away, this one
     // excepted.
@@ -451,4 +613,71 @@ pub async fn merge_work(
     merge_resolved(&mut tx, loser, winner).await?;
     tx.commit().await?;
     Ok(Json(book_detail(&mut conn, admin.id, winner).await?))
+}
+
+/// Sets a book's facts directly, without a request: the fields get provenance `admin`, so no
+/// refresh, enrichment or harvest overwrites them afterwards. Same keys, rules and 400s as an
+/// approved edit request. Answers with the book as it is now.
+#[utoipa::path(
+    patch,
+    path = "/api/admin/works/{work_id}",
+    operation_id = "catalog_admin_edit_work",
+    tag = "admin",
+    security(("bookclub_session" = []), ("bearer" = [])),
+    params(("work_id" = String, Path, description = "A work id, `OL…W`, or a legacy key")),
+    request_body = AdminEditIn,
+    responses(
+        (status = 200, body = BookDetailOut, description = "The book with the new values"),
+        (status = 400, body = ErrorBody, description = "`Field required` (no fields), `Unknown field: <key>` or `Invalid value for <key>`"),
+        (status = 401, body = ErrorBody, description = "`Not signed in`"),
+        (status = 404, body = ErrorBody, description = "`No such book.`, or `Not found` (not an instance admin)")
+    )
+)]
+pub async fn edit_work(
+    InstanceAdmin(admin): InstanceAdmin,
+    State(state): State<AppState>,
+    ApiPath(raw): ApiPath<String>,
+    ApiJson(body): ApiJson<AdminEditIn>,
+) -> ApiResult<Json<BookDetailOut>> {
+    let mut conn = state.db.acquire().await?;
+    let work_id = require_local_work(&mut conn, &raw).await?;
+    let mut tx = conn.begin().await?;
+    apply_admin_fields(&mut tx, CoverTarget::Work(work_id), &body.fields).await?;
+    tx.commit().await?;
+    Ok(Json(book_detail(&mut conn, admin.id, work_id).await?))
+}
+
+/// Sets an edition's facts directly, without a request: the fields get provenance `admin`, like
+/// a book's. Same keys, rules and 400s as an approved edit request. Answers with the edition as
+/// it is now.
+#[utoipa::path(
+    patch,
+    path = "/api/admin/editions/{edition_id}",
+    operation_id = "catalog_admin_edit_edition",
+    tag = "admin",
+    security(("bookclub_session" = []), ("bearer" = [])),
+    params(("edition_id" = i64, Path, description = "The edition id")),
+    request_body = AdminEditIn,
+    responses(
+        (status = 200, body = EditionOut, description = "The edition with the new values"),
+        (status = 400, body = ErrorBody, description = "`Field required` (no fields), `Unknown field: <key>` or `Invalid value for <key>`"),
+        (status = 401, body = ErrorBody, description = "`Not signed in`"),
+        (status = 404, body = ErrorBody, description = "`No such book.`, or `Not found` (not an instance admin)")
+    )
+)]
+pub async fn edit_edition(
+    _admin: InstanceAdmin,
+    State(state): State<AppState>,
+    ApiPath(edition_id): ApiPath<i64>,
+    ApiJson(body): ApiJson<AdminEditIn>,
+) -> ApiResult<Json<EditionOut>> {
+    let mut conn = state.db.acquire().await?;
+    let mut tx = conn.begin().await?;
+    apply_admin_fields(&mut tx, CoverTarget::Edition(edition_id), &body.fields).await?;
+    tx.commit().await?;
+    edition_outs(&mut conn, &[edition_id])
+        .await?
+        .remove(&edition_id)
+        .map(Json)
+        .ok_or_else(|| AppError::not_found(msg::NO_SUCH_BOOK))
 }
