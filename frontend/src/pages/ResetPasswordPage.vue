@@ -3,7 +3,7 @@ import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { api, ApiError } from "../api/client";
-import { linkToken } from "../authToken";
+import { isDeadLink, linkToken } from "../authToken";
 import LanguageSwitch from "../components/LanguageSwitch.vue";
 import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
@@ -43,6 +43,12 @@ async function submit() {
     if (session.user) session.reset();
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : t("reset.failed");
+    // A used or expired link stays dead: offer a new one instead of the form.
+    // A password that is too short keeps the form, to try again.
+    if (isDeadLink(err)) {
+      token.value = null;
+      password.value = "";
+    }
   } finally {
     pending.value = false;
   }

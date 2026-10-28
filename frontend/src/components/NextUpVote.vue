@@ -86,6 +86,7 @@ async function confirm(meetingAt: string | null) {
   try {
     const result = await api.applyVote(props.slug, row.id, meetingAt);
     vote.value = result.vote;
+    clubs.syncPick(props.slug, result.pick);
     toast.show(t("vote.confirmed", { title: row.book.title }));
     emit("applied");
   } catch (err) {

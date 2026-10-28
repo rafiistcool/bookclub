@@ -26,7 +26,11 @@ const pickId = computed(() => {
       <RouterLink v-if="pickId" class="fine" :to="`/c/${slug}/discussions`">
         {{ t("discussions.toCurrent") }}
       </RouterLink>
-      <BookDiary :club="{ slug, pickId }" :heading="t('discussions.heading')" @posted="feed?.reload()" />
+      <BookDiary
+        :club="{ slug, pickId, currentPickId: club.current_pick?.id ?? null }"
+        :heading="t('discussions.heading')"
+        @posted="feed?.reload()"
+      />
     </section>
 
     <section class="section">

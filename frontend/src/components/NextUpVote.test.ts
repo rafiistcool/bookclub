@@ -1,7 +1,7 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { nomination, vote } from "../test/fixtures";
+import { clubOut, clubPick, nomination, vote } from "../test/fixtures";
 
 const api = { vote: vi.fn(), castVote: vi.fn(), applyVote: vi.fn(), setVoteDeadline: vi.fn() };
 
@@ -11,6 +11,7 @@ vi.mock("../api/client", () => ({
 }));
 
 import { i18n } from "../i18n";
+import { useClubs } from "../stores/clubs";
 import NextUpVote from "./NextUpVote.vue";
 
 const OPEN = vote({
@@ -57,13 +58,16 @@ describe("NextUpVote", () => {
 
   it("confirms a winner with the meeting through the club's vote", async () => {
     const wrapper = await mountVote(true);
-    api.applyVote.mockResolvedValue({ pick: {}, vote: vote() });
+    useClubs().current = clubOut({ current_pick: null });
+    api.applyVote.mockResolvedValue({ pick: clubPick({ id: 9, meeting_at: "2026-12-01T18:00:00Z" }), vote: vote() });
     await wrapper.findAll(".vote-actions .text-btn")[0]!.trigger("click");
     await wrapper.get(".sheet input[type=datetime-local]").setValue("2026-12-01T19:00");
     await wrapper.get(".sheet .btn-primary").trigger("click");
     await flushPromises();
     expect(api.applyVote).toHaveBeenCalledWith("readers-ab12", 1, "2026-12-01T19:00");
     expect(wrapper.emitted("applied")).toHaveLength(1);
+    // The club's other pages (the discussion) see the new pick without asking again.
+    expect(useClubs().current?.current_pick).toMatchObject({ id: 9, meeting_at: "2026-12-01T18:00:00Z" });
   });
 
   it("sets the deadline in the club's zone", async () => {

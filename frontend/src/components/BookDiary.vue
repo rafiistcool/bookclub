@@ -30,8 +30,13 @@ type Thread = {
 const props = defineProps<{
   /** The work's numeric id: its diary entries, plus the club posts of the viewer's clubs. */
   workId?: number;
-  /** A club pick's discussion instead (`pickId` null: the current pick). */
-  club?: { slug: string; pickId?: number | null };
+  /**
+   * A club pick's discussion instead (`pickId` null: the current pick).
+   * `currentPickId` is the club's current pick as `ClubOut.current_pick` has
+   * it: null means there is none, so the current pick's discussion is not
+   * asked for (it would answer 404 `No club pick yet`); left out, it is asked.
+   */
+  club?: { slug: string; pickId?: number | null; currentPickId?: number | null };
   /** Show only the newest N entries until the reader asks for the rest. */
   preview?: number;
   heading?: string;
@@ -131,7 +136,19 @@ async function fetchThread(): Promise<Thread> {
   return { ...(await api.diary(props.workId!)), can_post: true };
 }
 
+/** The club answer already says there is no current pick: nothing to ask for. */
+const knownNoPick = computed(
+  () => Boolean(props.club && !props.club.pickId && props.club.currentPickId === null),
+);
+
 async function load() {
+  if (knownNoPick.value) {
+    noPick.value = true;
+    diary.value = null;
+    error.value = "";
+    loaded.value = true;
+    return;
+  }
   try {
     diary.value = await fetchThread();
     noPick.value = false;
@@ -313,13 +330,17 @@ onMounted(() => {
 });
 onBeforeUnmount(() => document.removeEventListener("pointerdown", foldComposer));
 watch(
-  () => threadKey.value,
-  () => {
+  // The current pick's discussion also follows the club answer: a pick set
+  // since (or the layout's fresh answer) brings its discussion.
+  [threadKey, () => (props.club && !props.club.pickId ? props.club.currentPickId : undefined)],
+  ([key], [before]) => {
     loaded.value = false;
-    showAll.value = false;
-    spoilerTouched.value = false;
-    replyTo.value = null;
-    draft.value = loadDraft(draftId.value);
+    if (key !== before) {
+      showAll.value = false;
+      spoilerTouched.value = false;
+      replyTo.value = null;
+      draft.value = loadDraft(draftId.value);
+    }
     void load();
   },
 );

@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { clubOut, user } from "../test/fixtures";
+import { bookOut, clubOut, clubPick, user } from "../test/fixtures";
 import { blockedStorage, memoryStorage } from "../test/storage";
 
 const clubsList = vi.fn();
@@ -141,6 +141,32 @@ describe("useClubs", () => {
     clubs.upsert(clubOut({ ...A, role: "owner", member_count: 4 }));
     expect(session.user.clubs.map((club) => club.slug)).toEqual([B.slug, A.slug]);
     expect(session.user.clubs[1]).toMatchObject({ role: "owner", member_count: 4 });
+  });
+
+  it("keeps a club's current pick in step with a pick answer", () => {
+    useSession().user = user({ clubs: [summary(A), summary(B)] });
+    const clubs = useClubs();
+    clubs.current = clubOut({ ...A, current_pick: null });
+    clubs.list = [clubOut({ ...A, current_pick: null }), clubOut({ ...B, current_pick: null })];
+
+    clubs.syncPick(A.slug, clubPick({ id: 7, book: bookOut({ id: 3 }), meeting_at: null }));
+    expect(clubs.current?.current_pick).toEqual({ id: 7, book: bookOut({ id: 3 }), meeting_at: null });
+    expect(clubs.list.map((club) => club.current_pick?.id ?? null)).toEqual([7, null]);
+
+    // An answer that changes nothing leaves the objects alone (no re-render, no reload).
+    const before = clubs.current;
+    const list = clubs.list;
+    clubs.syncPick(A.slug, clubPick({ id: 7, book: bookOut({ id: 3 }), meeting_at: null }));
+    expect(clubs.current).toBe(before);
+    expect(clubs.list).toBe(list);
+
+    // Another club's answer does not touch the open club.
+    clubs.syncPick(B.slug, clubPick({ id: 8 }));
+    expect(clubs.current?.current_pick?.id).toBe(7);
+    expect(clubs.list[1]?.current_pick?.id).toBe(8);
+
+    clubs.syncPick(A.slug, null);
+    expect(clubs.current?.current_pick).toBeNull();
   });
 
   it("forgets a stale last-used club on refresh", async () => {

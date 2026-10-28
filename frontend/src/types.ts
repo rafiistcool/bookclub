@@ -36,6 +36,7 @@ export type {
   BookReader,
   ClubOut,
   ClubPickReader,
+  ClubPickSummary,
   ClubRef,
   ClubSummary,
   InvitePreview,

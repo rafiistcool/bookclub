@@ -112,6 +112,16 @@ Owner: FE. These notes record what the frontend package built, where it fills ga
   - Not built: the direct merge (`POST /api/admin/works/{id}/merge`) and the direct takedown (`DELETE /api/admin/media/{public_id}`); the queues cover both. #54 (Phase 2) owns the admin queue's real UI; this is the minimal one.
 - **Tests:** 370 vitest tests in 63 files (336 before part 4). New: `stores/session.test.ts`, `editRequests.test.ts`, `admin.test.ts` (with `languages.ts`), `pages/AdminPage.test.ts`; new cases in `router.test.ts`, `covers.test.ts`, `goodreads.test.ts`, `i18n/apiErrors.test.ts`, `pages/BookDetailPage.test.ts`, `pages/ShelfPage.test.ts`, `pages/AuthPages.test.ts`, `components/AccountSettings.test.ts`, `components/QuoteList.test.ts`, `components/EditionPicker.test.ts`. `src/test/fixtures.ts` gained `edition()`.
 
+**Smoke-test fixes** (a browser pass of the built SPA against the Rust server, after part 4):
+
+- **No 404 on the discussion of a club without a pick.** `/c/<slug>/discussions` asked `GET …/pick/posts` every time and showed "No book is picked right now" from its 404 `No club pick yet`, which the browser logs as a console error. The page now passes the club answer's `current_pick` to `BookDiary` (`club.currentPickId`); null means no request and the same "no pick" state. An earlier pick (`?pick=<id>`) is still asked for. The 404 is still handled, for a club answer that is out of date.
+  - The club layout reads `GET /api/clubs/{slug}` only when the slug changes, so a new store action, `syncPick`, keeps `current_pick` in step with every pick answer the SPA gets: `GET …/pick` on the pick page, the meeting edit (`PATCH …/pick`), "Set as club pick" (`PUT …/pick`) and the vote's "Confirm winner" (`POST …/vote/apply`).
+  - `BookDiary` reloads the current pick's thread when `currentPickId` changes, so a pick that appears (or a fresh club answer) brings its discussion without a page load.
+  - A pick another member sets while the reader stays inside the club's tabs shows up only on the pick page or after the club is opened again; until then the discussion page keeps saying there is no pick.
+- **A dead reset link drops the form.** When `POST /api/auth/password-reset/confirm` answers 400 `That link has expired or was already used` (`isDeadLink` in `authToken.ts`), the reset page hides the form and shows "Ask for a new link" (`/forgot-password`), as it does without a token. Other errors, such as `New password must be at least 8 characters`, keep the form.
+- **Not fixed (server):** a visibility-only PATCH marks a diary entry "edited" (below, "Server issues found by the smoke test").
+- **Tests:** 378 vitest tests in 64 files (370 before). New: `pages/club/ClubDiscussionsPage.test.ts` (the layout and the page: no thread request without a current pick, the thread with one); new cases in `components/BookDiary.test.ts`, `stores/clubs.test.ts` (`syncPick`), `components/NextUpVote.test.ts`, `pages/AuthPages.test.ts` and `authToken.test.ts`. No new user-visible strings.
+
 **Left:** nothing of #48's list, and every optional item, is built. The integrator items below (`backend/app/static` in the root `Dockerfile`, `CLAUDE.md` and `README.md`; the server's zone names; the admin queue's `book: null`) are outside FE's files.
 
 ## Decisions and deviations
@@ -149,6 +159,8 @@ Owner: FE. These notes record what the frontend package built, where it fills ga
 30. **The admin page is FE's minimal one.** endpoint-map §4 gives the admin queue's UI to #54 (Phase 2); the queue, reports and sign-up invites have endpoints since Wave 2 and nothing used them, so FE built the smallest page that lets an instance admin decide: no filters, no history of decided requests (the server lists open ones only), no direct merge or takedown.
 31. **Corrections send only changed fields**, compared after the same normalising the server applies (trimmed text, whole numbers, one subject per line), so an untouched form sends nothing ("Change at least one field first") and no request overwrites a field the reader did not touch with the value they saw.
 32. **A new edition becomes the reader's at once**: "My edition is not listed" lives in the picker, so adding one means "this is mine". Readers without the book on their shelf have no picker and no way to add an edition (the API allows it; the UI does not offer it).
+33. **The discussion page trusts the club answer about the current pick** (smoke-test fix above) instead of asking for a thread that can only answer 404. The cost is staleness: the club answer is read when the club opens, and the SPA updates it only from its own pick answers.
+34. **Only a refused link ends the reset form.** The server gives `That link has expired or was already used` for an unknown, expired, used or voided token, and none of them can succeed on a second try, so the page offers a new link instead. Every other error keeps the form.
 
 ## New user-visible strings (en and de)
 
@@ -187,6 +199,10 @@ Part 4 adds:
 - `GET /api/quotes` has no cursor (`before`) and no `has_more`; `/quotes` asks for the maximum of 500 and says when the answer is full. A reader with more than 500 quotes cannot see or edit the older ones in the UI. A `before=<id>` cursor plus `has_more` on `QuoteListOut` (as `GET /api/diary` has) would page through them.
 - `EditRequestIn.fields` and `EditRequestOut.payload` are objects without a schema (`Record<string, never>`); `editRequests.ts` builds the fields and `admin.ts` reads the payload (`into_work_id` of a merge) by hand. `api.requestWorkEdit`/`requestEditionEdit` take a local `EditFields` type.
 - Sign-up invites (`/api/admin/invites`) cannot be withdrawn: there is no `DELETE /api/admin/invites/{id}`, so the admin page lists them without a "Withdraw" (club invites have one).
+
+## Server issues found by the smoke test
+
+- **A visibility-only change marks a diary entry "edited" for every reader.** Steps: as A, on `/diary`, tick and then untick "Only me" on a public entry (each tick is `PATCH /api/posts/{id}` with `{visibility}` only, decision 27). As another member of A's club, open the book's page: the entry shows "edited" although its text never changed. Cause: `update_post` (`server/src/posts/edit.rs`) runs one `UPDATE posts … updated_at = now()` for every PATCH, whatever it changes, and `PostOut.edited` is `updated_at IS NOT NULL AND NOT deleted` (`server/src/posts/out.rs`), as spec/diary.md has it ("Edited flag: set by any PATCH", R8). Parity rule R8 was written for body and spoiler edits; `visibility` is new in Phase 1. Proposed fix (server and spec, for PAR or the integrator): keep `updated_at` as it is when the PATCH carries only `visibility` (R8 stays as it is for `body` and `spoiler_upto`, no-op edits included). The frontend cannot avoid it: the "Only me" switch has no other endpoint. No workaround in the SPA.
 
 ## For the integrator
 

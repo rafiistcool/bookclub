@@ -80,6 +80,7 @@ async function load() {
       api.clubPickHistory(slug.value),
     ]);
     pick.value = current.pick;
+    clubs.syncPick(slug.value, current.pick);
     timezone.value = current.timezone;
     history.value = past.items;
     error.value = "";
@@ -158,6 +159,7 @@ async function saveMeeting(meetingAt: string | null) {
   if (!pick.value) return;
   try {
     pick.value = await api.patchClubPick(slug.value, { meeting_at: meetingAt });
+    clubs.syncPick(slug.value, pick.value);
     toast.show(meetingAt ? t("home.meetingSaved") : t("home.meetingCleared"));
   } catch (err) {
     toast.show(failed(err, t("home.meetingFailed")));

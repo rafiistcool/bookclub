@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { linkToken } from "./authToken";
+import { ApiError } from "./api/client";
+import { isDeadLink, LINK_EXPIRED, linkToken } from "./authToken";
 
 describe("mail link tokens", () => {
   it("reads the token from the fragment, or from the query", () => {
@@ -8,5 +9,13 @@ describe("mail link tokens", () => {
     expect(linkToken("", "fromQuery")).toBe("fromQuery");
     expect(linkToken("#token=")).toBeNull();
     expect(linkToken("")).toBeNull();
+  });
+
+  it("tells a dead link from an error another try can fix", () => {
+    expect(isDeadLink(new ApiError("Link expired", 400, LINK_EXPIRED))).toBe(true);
+    const short = "New password must be at least 8 characters";
+    expect(isDeadLink(new ApiError(short, 400, short))).toBe(false);
+    expect(isDeadLink(new ApiError("Slow down", 429, LINK_EXPIRED))).toBe(false);
+    expect(isDeadLink(new Error(LINK_EXPIRED))).toBe(false);
   });
 });

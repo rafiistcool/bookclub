@@ -122,6 +122,30 @@ describe("BookDiary", () => {
     expect(wrapper.find(".compose").exists()).toBe(false);
   });
 
+  it("asks for no discussion when the club answer has no current pick", async () => {
+    const wrapper = await mountDiary({ club: { slug: CLUB.slug, pickId: null, currentPickId: null } });
+    expect(api.pickThread).not.toHaveBeenCalled();
+    expect(wrapper.find(".error").exists()).toBe(false);
+    expect(wrapper.text()).toContain("No book is picked right now");
+    expect(wrapper.find(".compose").exists()).toBe(false);
+
+    // A pick set since (or the layout's fresh club answer) brings its discussion.
+    api.pickThread.mockResolvedValue(thread({ items: [post({ id: 6, body: "Started!", club: CLUB, pick_id: 5 })] }));
+    await wrapper.setProps({ club: { slug: CLUB.slug, pickId: null, currentPickId: 5 } });
+    await flushPromises();
+    expect(api.pickThread).toHaveBeenCalledOnce();
+    expect(api.pickThread).toHaveBeenCalledWith(CLUB.slug, null);
+    expect(wrapper.text()).toContain("Started!");
+    expect(wrapper.find(".compose").exists()).toBe(true);
+  });
+
+  it("still opens an earlier pick's discussion in a club without a current pick", async () => {
+    api.pickThread.mockResolvedValue(thread({ can_post: false, items: [post({ id: 3, body: "Old talk", club: CLUB, pick_id: 2 })] }));
+    const wrapper = await mountDiary({ club: { slug: CLUB.slug, pickId: 2, currentPickId: null } });
+    expect(api.pickThread).toHaveBeenCalledWith(CLUB.slug, 2);
+    expect(wrapper.text()).toContain("Old talk");
+  });
+
   it("keeps a diary entry to its author when asked, but never a reply", async () => {
     const root = post({ id: 1, author: "grace", body: "First" });
     api.diary.mockResolvedValue({ work_id: 9, my_progress: null, my_status: null, items: [root], timezone: "UTC" });

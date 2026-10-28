@@ -164,6 +164,38 @@ describe("auth pages", () => {
     expect(wrapper.text()).toContain("Password changed");
   });
 
+  it("offers a new link instead of the form once the server refuses the reset link", async () => {
+    const dead = "That link has expired or was already used";
+    api.confirmPasswordReset.mockRejectedValue(new ApiError(dead, 400, dead));
+    const { wrapper } = await mountAt(ResetPasswordPage, "/reset-password#token=used_1");
+    await wrapper.get("input[name=new-password]").setValue("brand new pw");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(api.confirmPasswordReset).toHaveBeenCalledWith("used_1", "brand new pw");
+    expect(wrapper.get(".error").text()).toBe(dead);
+    expect(wrapper.find("form").exists()).toBe(false);
+    expect(wrapper.get("a[href='/forgot-password']").text()).toBe("Ask for a new link");
+  });
+
+  it("keeps the reset form for a password the reader can fix", async () => {
+    const short = "New password must be at least 8 characters";
+    api.confirmPasswordReset.mockRejectedValue(new ApiError(short, 400, short));
+    const { wrapper } = await mountAt(ResetPasswordPage, "/reset-password#token=reset_2");
+    await wrapper.get("input[name=new-password]").setValue("short");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(wrapper.get(".error").text()).toBe(short);
+    expect(wrapper.find("form").exists()).toBe(true);
+    expect(wrapper.find("a[href='/forgot-password']").exists()).toBe(false);
+
+    api.confirmPasswordReset.mockResolvedValue(undefined);
+    await wrapper.get("input[name=new-password]").setValue("long enough now");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(api.confirmPasswordReset).toHaveBeenLastCalledWith("reset_2", "long enough now");
+    expect(wrapper.text()).toContain("Password changed");
+  });
+
   it("offers a new link when the reset link has no token", async () => {
     const { wrapper } = await mountAt(ResetPasswordPage, "/reset-password");
     expect(wrapper.find("form").exists()).toBe(false);

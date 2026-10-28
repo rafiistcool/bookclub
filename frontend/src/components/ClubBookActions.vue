@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
 import { clubsFor, type ClubAction } from "../clubActions";
+import { useClubs } from "../stores/clubs";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import type { ClubRef, ClubSummary } from "../types";
@@ -16,6 +17,7 @@ const emit = defineEmits<{ picked: [club: ClubRef] }>();
 
 const { t } = useI18n();
 const session = useSession();
+const clubStore = useClubs();
 const toast = useToast();
 
 const action = ref<ClubAction | null>(null);
@@ -61,7 +63,8 @@ async function confirmPick(meetingAt: string | null) {
   pickClub.value = null;
   if (!club || !target) return;
   try {
-    await api.setClubPick(club.slug, { work_id: target.id, meeting_at: meetingAt });
+    const picked = await api.setClubPick(club.slug, { work_id: target.id, meeting_at: meetingAt });
+    clubStore.syncPick(club.slug, picked);
     toast.show(t("book.setPickIn", { club: club.name }));
     emit("picked", { slug: club.slug, name: club.name });
   } catch (err) {

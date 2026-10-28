@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, type ComputedRef } from "vue";
 import { api, ApiError } from "../api/client";
-import type { ClubOut, ClubSummary } from "../types";
+import type { ClubOut, ClubPickSummary, ClubSummary } from "../types";
 import { useSession } from "./session";
 
 /** The club this device opened last (a per-device convenience, like the theme). */
@@ -41,6 +41,11 @@ export function isClubOwner(role: string | null | undefined): boolean {
 /** True when a club request says the viewer is not (or no longer) in that club. */
 export function isClubGone(err: unknown): boolean {
   return err instanceof ApiError && err.status === 404 && err.detail === NO_SUCH_CLUB;
+}
+
+function samePick(a: ClubPickSummary | null, b: ClubPickSummary | null): boolean {
+  if (!a || !b) return a === b;
+  return a.id === b.id && a.meeting_at === b.meeting_at && a.book.id === b.book.id;
 }
 
 export function clubSummary(club: ClubOut): ClubSummary {
@@ -145,6 +150,22 @@ export const useClubs = defineStore("clubs", {
       else this.list = this.list.map((row) => (row.slug === club.slug ? club : row));
       if (this.current?.slug === club.slug) this.current = club;
       if (this.goneSlug === club.slug) this.goneSlug = null;
+    },
+    /**
+     * A pick request answered (`GET`, `PUT` or `PATCH …/pick`, the vote's
+     * apply): keep that club's `current_pick` in step. The club layout reads
+     * the club only when its slug changes, and the discussion page and the
+     * club cards go by `current_pick`.
+     */
+    syncPick(slug: string, pick: ClubPickSummary | null) {
+      // Only what `current_pick` keeps: a `ClubPickOut` carries much more.
+      const next: ClubPickSummary | null = pick
+        ? { id: pick.id, book: pick.book, meeting_at: pick.meeting_at }
+        : null;
+      const sync = (club: ClubOut): ClubOut =>
+        club.slug === slug && !samePick(club.current_pick, next) ? { ...club, current_pick: next } : club;
+      if (this.current) this.current = sync(this.current);
+      if (this.list.some((club) => sync(club) !== club)) this.list = this.list.map(sync);
     },
     /** `GET /api/clubs`. Solo mode makes no club call: no clubs, no request. */
     async loadList(): Promise<ClubOut[]> {
