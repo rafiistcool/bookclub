@@ -95,7 +95,7 @@ VERIFY_LIMITS_CURL_FLAGS=--insecure deploy/hosted/verify-limits.sh https://<host
 - Each 429 must carry `Retry-After` and the app's detail `Too many attempts. Wait a few minutes.`
 - Every request also sends a different forged `X-Forwarded-For`. If the proxy passed it on and the app trusted it, no 429 would come, and the script says so.
 - Exit 0 when every check passes, 1 when one fails, 2 on a usage error.
-- **It uses up the caller's budgets:** sign-up and reset for an hour, login for 10 minutes. Run it once, and do not run it from an address that people need to sign in from right away. A second run within the hour fails at the first check with a hint that the address is already limited.
+- **It uses up the caller's budgets:** sign-up and reset for an hour, login for 10 minutes. Run it once, and do not run it from an address that people need to sign in from right away. A second run within the hour fails at the first check with a hint that the address is already limited. So does a sign-in from the same address in the 10 minutes before: the per-address login check then fails at attempt 30 with that hint.
 - Search is limited per account inside the app, not per address, and is not checked.
 
 ## Q17 (security review §3)
@@ -138,13 +138,52 @@ Recorded in `docs/phase1/security-review.md` §3 as open, with recommendation A 
 - `caddy validate` with the command from the work plan: valid. `caddy fmt` leaves the file unchanged.
 - shellcheck (`koalaman/shellcheck:v0.10.0`) is clean.
 
-## Left for after the Wave 1 merge
+**End to end with DEP's stack** (after the review; `phase-2` has none of the Wave 1 packages yet):
+- **Setup:**
+  - A throwaway local merge, never pushed, of `phase2/gate` 79c0133 with `phase2/dep` 78578a1, `phase2/leg` f42efda and `phase2/adm` 93170d5. It merged without conflicts.
+  - Its image, built with DEP's root `Dockerfile` (`--build-arg CARGO_JOBS=3`, 2 min with the dependency layer cached).
+  - DEP's `deploy/hosted/compose.yaml` as `-p bookclub-gate-e2e`, with a filled copy of `env.example` outside the repo: no `DEV_MODE`, Secure cookies, `PUBLIC_URL=https://agents.lan:8082`, `SIGNUP_MODE=invite`, `SMTP_URL=smtp://localhost:25` (nothing listens; sign-up only logs the failed mail), and `LEGAL_DIR` with LEG's placeholder texts without their marker.
+  - `caddy:2.10` with this commit's `Caddyfile.example` imported under `local_certs` (the issuer of `tls internal` for every site), `BOOKCLUB_HOST=agents.lan:8082`, `BOOKCLUB_UPSTREAM=app:8080`, on the stack's default network and on a second network for client containers, published on 8082.
+  - `TRUSTED_PROXIES=172.24.0.2/32`, the Caddy container's address on the stack's network.
+- **Headers** on `https://agents.lan:8082/`: the shell CSP, `Strict-Transport-Security: max-age=31536000`, the `Permissions-Policy`, `X-Frame-Options: DENY`, `X-Content-Type-Options`, `Referrer-Policy`, `Cache-Control: no-store`, and no `Server` header. `/api/health` carries `frame-ancestors 'none'`. The JS bundle came back zstd-encoded and `/api/config` uncompressed.
+- **Two clients:**
+  - Two `curlimages/curl` containers with fixed addresses (172.21.0.21 and .22) signed up with a real invite code. Each request forged `X-Forwarded-For: 192.0.2.<n>`.
+  - The first got 5 × 201, then 429. The second then got 201 twice, and later 204 for a reset and 204 for a login.
+  - Docker gives a removed container's address to the next one, so the second client needs its own fixed `--ip`. Without one, my first try handed both clients the same address, and the second got 429 correctly.
+- **413:** a 53,000,000-byte multipart avatar upload (between the app's 52,432,896 and Caddy's 53,477,376) got the app's JSON 413 `That picture is too large (50 MB max)` after 0.8 MB had been sent. A chunked 60 MB body got the same app 413 after 1.4 MB.
+- **`verify-limits.sh` through Caddy:**
+  - from fresh client containers: exit 0 under bash 3.2.57 and under bash 5.2.37;
+  - against `python3 -m http.server`: exit 1 at the health check;
+  - from the VM itself: exit 1 at attempt 30 of the per-address login check, with the "already limited" hint. My login for the 413 test, from the same address a minute before, had used 1 of its 30. That is the documented behaviour; the README section below now says it.
+- **Playwright over the stack** (headless Chromium, `ignoreHTTPSErrors`). An init script wrote every `securitypolicyviolation`, and the theme attributes at `<body>` insertion, to `sessionStorage`. As a control at the start and the end, an inserted inline script was blocked and logged.
+  - Signed out: the join link, `/signup?code=…`, `/forgot-password`, `/login?next=/join/<code>`, and `/imprint`, `/privacy` and `/terms`.
+    - LEG's SPA part (`LegalPage.vue`, the routes) is not on `phase2/leg` yet, so these three paths fell through to the sign-in page under the shell CSP.
+    - On each, the page fetched `/api/legal/{doc}?locale=de` and inserted the fragment with `innerHTML`, as `v-html` would. That fragment had an inline `style` attribute.
+  - Signed in through the login form:
+    - a search on `/discover` (Open Library, 23 covers loaded), the Dune book page, marking it Reading, and ADM's "Edit as admin" sheet saved (`PATCH /api/admin/works/95` 200);
+    - a diary note (201), a profile picture in Settings (200, 256 px from `/media/…/a`), and the theme switch (`PATCH /api/auth/me/preferences`);
+    - ADM's `/admin` queue: an edit request card with "Now" beside the proposal, its "Edit as admin" sheet, Approve (200), and the Reports and Invites tabs;
+    - `/shelf`, `/stats`, `/clubs`, `/clubs/new`, `/diary`, `/quotes`, `/u/<name>` and `/`.
+  - Result: **0 CSP violations**. The `blob:` manifest loaded (`Page.getAppManifest`: name "Bookclub E2E"; the `start_url` warning below).
+  - Theme: with ink and dark stored, every signed-in page had `ink dark` when `<body>` was inserted. The app then flips it, see the observation below.
+- **Logs:**
+  - Caddy's log had the invite code 0 times. Every URI with a query ended in `?{redacted}`. No line had a `Referer`, and no line had a cookie value (Caddy logs `Cookie` as `REDACTED`).
+  - The app's log showed `path=/join/{code}` and `/api/invites/{code}`, and the code 0 times.
+- **Cleanup:** `compose down -v`, the Caddy container, both networks, the image, the throwaway merge and the data directories removed, and `docker builder prune -f`.
 
-- The end-to-end run on `agents.lan:8082` with Caddy (`tls internal`) in front of DEP's staging stack and `TRUSTED_PROXIES` set to the Caddy container's IP/32, including two client containers and `verify-limits.sh` there (work plan GATE acceptance).
-- The Playwright CSP run over LEG's `/imprint`, `/privacy`, `/terms` and ADM's new admin pages once they are on `phase-2`. LEG's legal fragments are served as HTML from `/api/legal/{doc}`. If the SPA inserts them with `v-html`, the CSP still applies: inline scripts and `on…` handlers in a fragment would be blocked, and inline `style` attributes stay allowed.
+## Still open
+
+- **The Playwright CSP run over LEG's real `/imprint`, `/privacy` and `/terms` pages** waits for LEG's SPA part (`docs/phase2/notes/leg.md`, "Part 2 (open)"), which no branch has yet. Until then the run above covers the fragments, inserted the way `v-html` inserts them. Inline scripts and `on…` handlers in a fragment would be blocked; inline `style` attributes stay allowed. Once LEG's part is on `phase-2`, open the three pages signed out and signed in, and check that the console shows no "Refused to …".
+- **Moving these notes into the docs** is the integrator's (work plan §0 item 16): the Caddy and `verify-limits.sh` sections into `deploy/hosted/README.md` (DEP's), and the CSP lines into `conventions.md` §3 and `endpoint-map.md` §1. GATE may not edit those files.
+- After the Wave 1 merge, the integrator can repeat the end-to-end run above on `phase-2` itself instead of a local merge.
 
 ## Observations outside GATE's files
 
+- **The app overwrites the stored theme while it boots** (FE's `frontend/src/main.ts` and `frontend/src/stores/service.ts`; seen in the end-to-end run, independent of the CSP).
+  - `main.ts` awaits `useService().load()` before `useTheme().init()`. `load()` ends with `useTheme().apply()`, which paints the store's defaults (`paper`, `system`) and writes them to `localStorage`. `init()` then reads those defaults back.
+  - Signed in: `theme-init.js` paints the reader's palette before `<body>`. The app then flips it to Paper light and back once `GET /api/auth/me` answers. Logged per page: `ink/dark` at 7 ms, `paper/light` at 32 ms, `ink/dark` at 58 ms; on the other pages Paper lasted 15 to 72 ms.
+  - Signed out: the stored choice is gone after the first page load, so a signed-out reader always gets Paper.
+  - Fix (not tried here), two lines in `main.ts`: call `useTheme().init()` before `await useService().load()`. `load()` still calls `apply()` afterwards, so the club accent lands as before. Alternatively, `load()` calls `apply()` only once the theme store is initialised (`useTheme().watching`). Either way, add a test that `bookclub.theme`/`bookclub.mode` survive `load()`.
 - `brand.ts` builds the `blob:` manifest with `start_url: "/"`, which Chrome ignores in a `blob:` manifest ("property 'start_url' ignored, URL is invalid"). An absolute `start_url` (`location.origin + "/"`) and `scope` would fix it. This is for the BRAND task or FE.
 - `/theme-init.js`, like `favicon.svg` and the manifest, is served without `Cache-Control`, so browsers cache it heuristically. That is harmless while its code stays the same. If it ever changes together with the stores' keys, consider `no-cache` for the non-hashed files in `spa.rs`.
 - The dev database's query plans can change sqlx's nullability inference. After the browser run had put data into the worktree's database, `cargo clippy` failed with `Option<…>` mismatches in `auth/mod.rs` (a `LEFT JOIN media` query). `cargo sqlx database reset -y` fixed it. Run `cargo sqlx prepare` against an empty, freshly migrated database.
