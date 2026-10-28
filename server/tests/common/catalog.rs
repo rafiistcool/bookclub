@@ -8,7 +8,7 @@ use bookclub_server::catalog::shared::ingest::{
 };
 use bookclub_server::catalog::shared::isbn::Isbn13;
 use bookclub_server::catalog::shared::lookup::{CatalogLookup, LookupError, Resolved, local_isbn};
-use sqlx::PgConnection;
+use sqlx::{Connection, PgConnection};
 
 /// What a programmed lookup resolves to.
 #[derive(Debug, Clone)]
@@ -200,6 +200,12 @@ impl FakeCatalog {
                         .collect(),
                     ..WorkRecord::new(source, title)
                 };
+                // One transaction (a savepoint inside the caller's), like CAT's
+                // `catalog::service::persist`: ingest's advisory and row locks only serialise
+                // concurrent lookups of one book inside a transaction. On a bare connection two
+                // tasks resolving the same hit at once (two runs of one import job) raced in
+                // `replace_work_authors` and one failed on `work_authors_pkey`.
+                let mut tx = conn.begin().await?;
                 let resolved = match isbn {
                     Some(isbn) => {
                         let edition = EditionRecord {
@@ -207,7 +213,7 @@ impl FakeCatalog {
                             ..EditionRecord::new(source)
                         };
                         let (work_id, edition_id) = ingest::upsert_edition_with_work(
-                            conn,
+                            &mut tx,
                             &work,
                             &edition,
                             WorkGrouping::NewWork,
@@ -220,10 +226,11 @@ impl FakeCatalog {
                         }
                     }
                     None => Resolved {
-                        work_id: ingest::upsert_work(conn, &work, Mode::Refresh).await?,
+                        work_id: ingest::upsert_work(&mut tx, &work, Mode::Refresh).await?,
                         edition_id: None,
                     },
                 };
+                tx.commit().await?;
                 self.remember(&key, resolved);
                 resolved
             }

@@ -1,0 +1,247 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.id, p.author_id, u.username AS \"author?\", m.public_id AS \"author_avatar?\",\n                  p.parent_id, p.club_id, c.slug AS \"club_slug?\", c.name AS \"club_name?\",\n                  c.timezone AS \"club_timezone?\", p.pick_id, p.milestone_id,\n                  p.visibility AS \"visibility: Visibility\", p.body, p.spoiler_upto,\n                  p.progress_at, p.status_at AS \"status_at: ShelfStatus\",\n                  p.deleted_at IS NOT NULL AS \"deleted!\", p.created_at, p.updated_at,\n                  (SELECT s.rating\n                   FROM bc_visible_shelf($1) AS s\n                   WHERE s.user_id = p.author_id AND s.work_id = p.work_id\n                     AND s.status = 'finished') AS author_rating\n           FROM posts p\n           JOIN bc_visible_posts($1) AS v ON v.id = p.id\n           LEFT JOIN users u ON u.id = p.author_id\n           LEFT JOIN media m ON m.id = u.avatar_media_id AND m.removed_at IS NULL\n           LEFT JOIN clubs c ON c.id = p.club_id\n           WHERE p.id = ANY($2)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "author_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "author_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "author?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "username"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "author_avatar?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "public_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "parent_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "parent_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "club_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "club_id"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "club_slug?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "clubs",
+            "name": "slug"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "club_name?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "clubs",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "club_timezone?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "clubs",
+            "name": "timezone"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "pick_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "pick_id"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "milestone_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "milestone_id"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "visibility: Visibility",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "visibility"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "body",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "body"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "spoiler_upto",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "spoiler_upto"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "progress_at",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "progress_at"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "status_at: ShelfStatus",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "status_at"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "deleted!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 17,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 18,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "updated_at"
+          }
+        }
+      },
+      {
+        "ordinal": 19,
+        "name": "author_rating",
+        "type_info": "Int4",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      null,
+      false,
+      true,
+      null
+    ]
+  },
+  "hash": "05c1feda302e98e23bb26186cf2a58408978a225a4f10ba128a02cbaea1cceec"
+}
