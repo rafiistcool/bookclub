@@ -6,6 +6,9 @@
 
 mod common;
 
+use std::time::Duration;
+
+use bookclub_server::catalog::merge::merge_works;
 use bookclub_server::catalog::shared::ingest::{self, CoverTarget};
 use bookclub_server::catalog::shared::isbn::parse_isbn;
 use bookclub_server::catalog::shared::lookup::{Resolved, local_isbn};
@@ -16,6 +19,7 @@ use common::*;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use time::Date;
+use time::macros::date;
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, ResponseTemplate};
@@ -33,6 +37,10 @@ const SET_A: &str = "dnb:reiheA";
 const BONDBREAKER_IDN: &str = "1423074580";
 const BONDBREAKER_ISBN: &str = "9783690513029";
 const FINAL_TITLE: &str = "Bondbreaker – Bund der Schatten";
+/// "Die kleine Glitzerblume" of `reiheA_complete.xml`: one record with two ISBNs, a German and
+/// an Austrian co-publisher edition.
+const GLITZERBLUME_IDN: &str = "1399063251";
+const GLITZERBLUME_ISBNS: [&str; 2] = ["9783693370056", "9783903300989"];
 
 fn xml(body: &str) -> ResponseTemplate {
     ResponseTemplate::new(200).set_body_raw(body.as_bytes().to_vec(), "text/xml;charset=UTF-8")
@@ -272,6 +280,182 @@ async fn a_deleted_record_withdraws_its_edition(db: PgPool) {
     );
 }
 
+/// `reiheA_complete.xml` with the "Glitzerblume" record changed by `edit`, which gets that
+/// record's text from its `<record>` to its closing `</metadata>`.
+fn edit_glitzerblume(edit: impl FnOnce(&str) -> String) -> String {
+    let start = REIHE_A
+        .find(&format!(
+            "<record><header><identifier>oai:dnb.de/dnb:reiheA/{GLITZERBLUME_IDN}<"
+        ))
+        .expect("the record is in the fixture");
+    let end = start + REIHE_A[start..].find("</metadata></record>").unwrap();
+    let edited = edit(&REIHE_A[start..end]);
+    assert_ne!(edited, REIHE_A[start..end], "the edit changed the record");
+    format!("{}{edited}{}", &REIHE_A[..start], &REIHE_A[end..])
+}
+
+/// The "Glitzerblume" record as an announcement (with 263 = March 2027, as in reiheN).
+fn announced_glitzerblume() -> String {
+    edit_glitzerblume(|record| {
+        record.replacen(
+            r#"<datafield tag="264""#,
+            r#"<datafield tag="263" ind1=" " ind2=" ">
+      <subfield code="a">202703</subfield>
+    </datafield>
+    <datafield tag="264""#,
+            1,
+        )
+    })
+}
+
+#[derive(Debug, PartialEq)]
+struct GlitzerEdition {
+    id: i64,
+    work_id: i64,
+    dnb_idn: Option<String>,
+    withdrawn: bool,
+}
+
+/// Both "Glitzerblume" editions, in ISBN order.
+async fn glitzer_editions(app: &TestApp) -> Vec<GlitzerEdition> {
+    let isbns: Vec<String> = GLITZERBLUME_ISBNS.map(str::to_owned).to_vec();
+    sqlx::query_as!(
+        GlitzerEdition,
+        r#"SELECT id, work_id, dnb_idn, withdrawn_at IS NOT NULL AS "withdrawn!"
+           FROM editions WHERE isbn13 = ANY($1) ORDER BY isbn13"#,
+        &isbns
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap()
+}
+
+/// Acceptance (#42) for a record with two ISBNs: only the first ISBN's edition carries the IDN
+/// (conventions §7.5), so the deleted header withdraws only that one. The work still leaves
+/// new-releases, with both editions; other titles stay; a later live record brings it back.
+#[sqlx::test]
+async fn a_deleted_multi_isbn_record_leaves_new_releases(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let (other, _) = release(&app, 1, 10, "ger").await;
+    let announced = announced_glitzerblume();
+    harvest(&app, SET_A, &[&announced]).await;
+    let editions = glitzer_editions(&app).await;
+    assert_eq!(editions.len(), 2);
+    let work_id = editions[0].work_id;
+    assert_eq!(editions[1].work_id, work_id, "one work");
+    assert_eq!(editions[0].dnb_idn.as_deref(), Some(GLITZERBLUME_IDN));
+    assert_eq!(editions[1].dnb_idn, None);
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM editions WHERE work_id = {work_id}
+               AND planned_publication_date = '2027-03-01'
+               AND field_sources->>'planned_publication_date' = 'dnb'"
+        ))
+        .await,
+        2
+    );
+    // Into the window, both on one day, as one 263 gives them.
+    for edition in &editions {
+        plan_in(&app, edition.id, 10).await;
+    }
+    let listed = ids(&ada.get("/api/books/new-releases").await.json());
+    assert!(listed.contains(&work_id), "{listed:?}");
+
+    let deleted =
+        edit_glitzerblume(|record| record.replacen("<header>", r#"<header status="deleted">"#, 1));
+    harvest(&app, SET_A, &[&deleted]).await;
+    let withdrawn: Vec<bool> = glitzer_editions(&app)
+        .await
+        .iter()
+        .map(|edition| edition.withdrawn)
+        .collect();
+    assert_eq!(
+        withdrawn,
+        [true, false],
+        "the deleted header names the first"
+    );
+    let page = ada.get("/api/books/new-releases").await;
+    page.assert_status(200);
+    let listed = ids(&page.json());
+    assert!(!listed.contains(&work_id), "{listed:?}");
+    assert!(listed.contains(&other.id), "{listed:?}");
+
+    // The announcement is delivered again: the work is back.
+    harvest(&app, SET_A, &[&announced]).await;
+    let editions = glitzer_editions(&app).await;
+    assert!(editions.iter().all(|edition| !edition.withdrawn));
+    for edition in &editions {
+        plan_in(&app, edition.id, 10).await;
+    }
+    let listed = ids(&ada.get("/api/books/new-releases").await.json());
+    assert!(listed.contains(&work_id), "{listed:?}");
+}
+
+/// Waits until a session of this test's database waits for a lock.
+async fn until_a_lock_wait(db: &PgPool) {
+    for _ in 0..500 {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity
+             WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .fetch_one(db)
+        .await
+        .unwrap();
+        if waiting > 0 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("nothing waited for a lock");
+}
+
+/// An admin merge that is already moving the loser's editions cannot see an edition the
+/// harvest adds to the loser at the same moment (CAT's rule for writes that store a
+/// `work_id`). The record waits for the merge on the work's row, sees the work merged away and
+/// is ingested again, into the surviving work; nothing stays on the merged-away work.
+#[sqlx::test]
+async fn a_record_ingested_during_a_merge_lands_on_the_surviving_work(db: PgPool) {
+    let app = TestApp::new(db).await;
+    // Two DNB works with the record's title, author and match key, as before an admin merges
+    // duplicates (ingest would group the second into the first, so it is renamed). The
+    // harvest groups by the older one.
+    let (loser, _) = app.dnb_work("Bondbreaker", "Mila Finch", &isbn(1)).await;
+    let (survivor, _) = app
+        .dnb_work("Bondbreaker (Doublette)", "Mila Finch", &isbn(2))
+        .await;
+    sqlx::query!(
+        "UPDATE works SET (title, match_key) = (SELECT title, match_key FROM works WHERE id = $1)
+         WHERE id = $2",
+        loser.id,
+        survivor.id
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+
+    let mut merge = app.db.begin().await.unwrap();
+    merge_works(&mut merge, loser.id, survivor.id)
+        .await
+        .unwrap();
+    let finish_merge = async {
+        until_a_lock_wait(&app.db).await;
+        merge.commit().await.unwrap();
+    };
+    tokio::join!(harvest(&app, SET_N, &[PAGE_1, PAGE_2]), finish_merge);
+
+    let bond = edition_by_idn(&app, BONDBREAKER_IDN).await.unwrap();
+    assert_eq!(bond.work_id, survivor.id);
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM editions WHERE work_id = {}",
+            loser.id
+        ))
+        .await,
+        0
+    );
+}
+
 /// Acceptance (#42): the same IDN re-delivered (here from reiheA, once published) with the
 /// final title finds its edition by IDN and ISBN and replaces the provisional title of the
 /// single-edition DNB work. Without 263 the planned date stays.
@@ -340,10 +524,8 @@ async fn an_announced_title_is_searchable_and_resolvable(db: PgPool) {
     let ada = app.user("ada").await;
     harvest(&app, SET_N, &[PAGE_1, PAGE_2]).await;
     let bond = edition_by_idn(&app, BONDBREAKER_IDN).await.unwrap();
-    assert!(
-        bond.planned_publication_date.unwrap() > time::OffsetDateTime::now_utc().date(),
-        "the fixture title is not out yet"
-    );
+    // Announced for March 2028, after the recording (2026-10-27).
+    assert_eq!(bond.planned_publication_date, Some(date!(2028 - 03 - 01)));
 
     app.upstream.reset().await;
     Mock::given(method("GET"))

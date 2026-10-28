@@ -15,8 +15,11 @@
 //!
 //! Records: a deleted header withdraws its edition (`ingest::withdraw_dnb_edition`) and is never
 //! mapped; every other record goes through `dnb_marc::map_record` and
-//! `ingest::upsert_dnb_record(…, Mode::Replace)`. A record the mapping refuses, or one whose
-//! ingest fails with anything but a deadlock, is skipped with a log line, never the page.
+//! `ingest::upsert_dnb_record(…, Mode::Replace)`, then locks the works it landed on against a
+//! merge in flight ([`MERGED_RETRIES`]). A record the mapping refuses, or one whose ingest fails
+//! with a data error ([`refuses_record`]), is skipped with a log line. Any other error (a
+//! deadlock, a cancelled statement, a lock timeout, a lost connection) fails the page, so the
+//! record is tried again.
 
 use std::time::Duration;
 
@@ -45,6 +48,12 @@ pub const MAX_RESTARTS: u32 = 3;
 /// Harvest runs are never closer together than this, whatever `DNB_HARVEST_INTERVAL_MINUTES`
 /// says (the configuration refuses less, too).
 pub const MIN_INTERVAL: Duration = Duration::from_secs(30 * 60);
+/// After a failure, a run in progress whose resumption token is younger than [`TOKEN_MAX_AGE`]
+/// tries again after this (or after the interval, when that is shorter), so it resumes from its
+/// token before the token goes stale. Every other failure waits a whole interval.
+pub const RESUME_RETRY: Duration = MIN_INTERVAL;
+/// How often a record starts over when a work it landed on was merged away meanwhile.
+pub const MERGED_RETRIES: u32 = 2;
 /// Longest `last_error` stored.
 const MAX_ERROR_CHARS: usize = 1000;
 
@@ -415,34 +424,103 @@ async fn apply_record(
         }
     };
     // A savepoint per record: a record ingest refuses is skipped, not the page (which would
-    // fail every later run at the same place). A deadlock still fails the page, which is
-    // retried as a whole.
-    let mut savepoint = tx.begin().await?;
-    match ingest::upsert_dnb_record(&mut savepoint, &mapped, Mode::Replace).await {
-        Ok(_) => {
-            savepoint.commit().await?;
-            counts.ingested += 1;
+    // fail every later run at the same place). Any other error fails the page; a deadlock
+    // retries it as a whole.
+    let mut attempt = 0;
+    loop {
+        let mut savepoint = tx.begin().await?;
+        let ids = match ingest::upsert_dnb_record(&mut savepoint, &mapped, Mode::Replace).await {
+            Ok(ids) => ids,
+            Err(error) if refuses_record(&error) => {
+                savepoint.rollback().await?;
+                tracing::error!(identifier, %error, "dnb harvest: ingest refused a record");
+                counts.skipped += 1;
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
+        if !lock_current_works(&mut savepoint, &ids).await? {
+            if attempt < MERGED_RETRIES {
+                // The record follows the merge on its next try (ingest skips merged-away works).
+                savepoint.rollback().await?;
+                attempt += 1;
+                continue;
+            }
+            tracing::warn!(
+                identifier,
+                "dnb harvest: a work of the record was merged away during every try"
+            );
         }
-        Err(error) if is_deadlock(&error) => return Err(error),
-        Err(error) => {
-            savepoint.rollback().await?;
-            tracing::error!(identifier, %error, "dnb harvest: ingest refused a record");
-            counts.skipped += 1;
-        }
+        savepoint.commit().await?;
+        counts.ingested += 1;
+        return Ok(());
     }
-    Ok(())
 }
 
-/// Whether the set is due: no failure within the interval, and either a run in progress
-/// (interrupted, so it resumes) or no completed run within the interval.
+/// Locks the works a record's editions landed on `FOR NO KEY UPDATE`, in id order, and says
+/// whether none of them was merged away (CAT's rule for writes that store a `work_id`,
+/// `catalog::custom::insert_user_edition`). A merge in flight cannot see an edition inserted
+/// meanwhile when it moves the loser's editions: the lock waits for it, and a merged-away work
+/// sends the record round again. A merge that starts later waits for the page and moves the
+/// edition itself. The lock comes after ingest's advisory and edition locks, in ingest's order.
+async fn lock_current_works(conn: &mut PgConnection, ids: &[(i64, i64)]) -> sqlx::Result<bool> {
+    let mut works: Vec<i64> = ids.iter().map(|&(work_id, _)| work_id).collect();
+    works.sort_unstable();
+    works.dedup();
+    let current = sqlx::query_scalar!(
+        r#"SELECT merged_into_id IS NULL AS "current!" FROM works WHERE id = ANY($1)
+           ORDER BY id FOR NO KEY UPDATE"#,
+        &works
+    )
+    .fetch_all(conn)
+    .await?;
+    Ok(current.len() == works.len() && current.into_iter().all(|current| current))
+}
+
+/// Whether an ingest error is a property of the record, which every later try would meet again,
+/// so the record is skipped: a data exception (SQLSTATE class 22), an integrity constraint
+/// violation (class 23), a value sqlx cannot decode, ingest's own refusal (`Protocol`), or a row
+/// that ingest's statements should have found and did not (`RowNotFound`; works and editions are
+/// never deleted, and the record's advisory locks keep concurrent ingests out). Everything else
+/// fails the page and keeps the cursor: a deadlock (40P01, the page is retried), a cancelled
+/// statement (57014), a lock timeout (55P03), a lost connection or a full pool.
+pub fn refuses_record(error: &sqlx::Error) -> bool {
+    match error {
+        sqlx::Error::Database(db) => db
+            .code()
+            .is_some_and(|code| code.starts_with("22") || code.starts_with("23")),
+        sqlx::Error::Protocol(_)
+        | sqlx::Error::RowNotFound
+        | sqlx::Error::Decode(_)
+        | sqlx::Error::ColumnDecode { .. } => true,
+        _ => false,
+    }
+}
+
+/// How long a set waits after a failure: [`RESUME_RETRY`] (at most `every`) while its run in
+/// progress holds a resumption token younger than [`TOKEN_MAX_AGE`], else `every`. The SQL of
+/// [`is_due`] and [`next_due_in`] picks between the two.
+fn retry_after(every: Duration) -> Duration {
+    every.min(RESUME_RETRY)
+}
+
+/// Whether the set is due: no failure within its back-off (a whole interval, or
+/// [`RESUME_RETRY`] for a run that can still resume from its token), and either a run in
+/// progress (interrupted, so it resumes) or no completed run within the interval.
 pub async fn is_due(conn: &mut PgConnection, set: &str, every: Duration) -> sqlx::Result<bool> {
     let due = sqlx::query_scalar!(
-        r#"SELECT (last_error_at IS NULL OR last_error_at <= now() - make_interval(secs => $2))
+        r#"SELECT (last_error_at IS NULL
+                   OR last_error_at <= now() - make_interval(secs =>
+                          CASE WHEN run_started_at IS NOT NULL AND resumption_token IS NOT NULL
+                                    AND token_issued_at > now() - make_interval(secs => $4)
+                               THEN $3::float8 ELSE $2::float8 END))
               AND (run_started_at IS NOT NULL OR last_success_at IS NULL
                    OR last_success_at <= now() - make_interval(secs => $2)) AS "due!"
            FROM harvest_state WHERE source = $1"#,
         state_key(set),
-        every.as_secs_f64()
+        every.as_secs_f64(),
+        retry_after(every).as_secs_f64(),
+        TOKEN_MAX_AGE.as_secs_f64()
     )
     .fetch_optional(conn)
     .await?;
@@ -460,14 +538,19 @@ pub async fn next_due_in(
     keys.dedup();
     let waits = sqlx::query_scalar!(
         r#"SELECT GREATEST(
-                      COALESCE(EXTRACT(EPOCH FROM last_error_at + make_interval(secs => $2) - now()), 0),
+                      COALESCE(EXTRACT(EPOCH FROM last_error_at - now() + make_interval(secs =>
+                          CASE WHEN run_started_at IS NOT NULL AND resumption_token IS NOT NULL
+                                    AND token_issued_at > now() - make_interval(secs => $4)
+                               THEN $3::float8 ELSE $2::float8 END)), 0),
                       CASE WHEN run_started_at IS NOT NULL OR last_success_at IS NULL THEN 0
                            ELSE EXTRACT(EPOCH FROM last_success_at + make_interval(secs => $2) - now())
                       END
                   )::float8 AS "wait!"
            FROM harvest_state WHERE source = ANY($1)"#,
         &keys,
-        every.as_secs_f64()
+        every.as_secs_f64(),
+        retry_after(every).as_secs_f64(),
+        TOKEN_MAX_AGE.as_secs_f64()
     )
     .fetch_all(conn)
     .await?;
@@ -505,6 +588,24 @@ mod tests {
         let mut short = config("30");
         short.dnb_harvest_interval = Duration::from_secs(60);
         assert_eq!(interval(&short), MIN_INTERVAL);
+    }
+
+    #[test]
+    fn a_resumable_run_retries_before_its_token_goes_stale() {
+        assert_eq!(retry_after(Duration::from_secs(240 * 60)), RESUME_RETRY);
+        assert_eq!(retry_after(Duration::from_secs(1440 * 60)), RESUME_RETRY);
+        assert_eq!(retry_after(MIN_INTERVAL), MIN_INTERVAL);
+        assert!(RESUME_RETRY < TOKEN_MAX_AGE);
+    }
+
+    #[test]
+    fn only_data_errors_skip_a_record() {
+        assert!(refuses_record(&sqlx::Error::RowNotFound));
+        assert!(refuses_record(&sqlx::Error::Protocol("refused".into())));
+        assert!(!refuses_record(&sqlx::Error::PoolTimedOut));
+        assert!(!refuses_record(&sqlx::Error::Io(std::io::Error::other(
+            "connection reset"
+        ))));
     }
 
     #[test]

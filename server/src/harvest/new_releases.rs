@@ -64,7 +64,8 @@ impl Validate for NewReleasesParams {
 }
 
 /// Upcoming and recent titles: editions planned between today − 30 days and today + 120 days
-/// (today in the caller's time zone), not withdrawn, in the given language; one hit per work
+/// (today in the caller's time zone), not withdrawn (nor another ISBN of a withdrawn DNB record,
+/// see [`new_releases_page`]), in the given language; one hit per work
 /// (its earliest such edition, whose title and cover the hit shows), ordered by that date, then
 /// work id. `planned_publication_date` is that date.
 #[utoipa::path(
@@ -93,6 +94,13 @@ pub async fn new_releases(
 }
 
 /// One page of new releases around `today`, annotated for `viewer` like search hits.
+///
+/// A deleted DNB header withdraws only the edition that carries the record's IDN, the first
+/// ISBN's (conventions §7.5: `editions.dnb_idn` is unique). The record's other editions carry no
+/// IDN and the same 263 date. So an edition without an IDN whose planned date came from the DNB
+/// is left out when an edition of its work with the same planned date is withdrawn: a cancelled
+/// multi-ISBN announcement leaves the list with all its editions. A later live delivery
+/// un-withdraws the first edition, and the others come back with it.
 pub async fn new_releases_page(
     conn: &mut PgConnection,
     viewer: i64,
@@ -113,6 +121,12 @@ pub async fn new_releases_page(
                  AND e.withdrawn_at IS NULL
                  AND e.language = $3
                  AND w.merged_into_id IS NULL
+                 AND NOT (e.dnb_idn IS NULL
+                          AND e.field_sources->>'planned_publication_date' = 'dnb'
+                          AND EXISTS (SELECT 1 FROM editions gone
+                                      WHERE gone.work_id = e.work_id
+                                        AND gone.withdrawn_at IS NOT NULL
+                                        AND gone.planned_publication_date = e.planned_publication_date))
                ORDER BY e.work_id, e.planned_publication_date, e.id
            ) firsts
            ORDER BY planned, work_id

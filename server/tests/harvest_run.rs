@@ -12,8 +12,10 @@ use std::time::{Duration, Instant};
 
 use bookclub_server::error::is_deadlock;
 use bookclub_server::harvest::oai::{self, Answer};
-use bookclub_server::harvest::run::{self, PAGE_ATTEMPTS};
-use bookclub_server::harvest::{HarvestError, SetReport, harvest_due, harvest_set, run_forever};
+use bookclub_server::harvest::run::{self, PAGE_ATTEMPTS, RESUME_RETRY};
+use bookclub_server::harvest::{
+    HarvestError, RECHECK, SetReport, harvest_due, harvest_set, next_wait, run_forever, run_pass,
+};
 use bookclub_server::jobs::lock_ids;
 use bookclub_server::outbound::{HostThrottle, Outbound, UpstreamError};
 use common::*;
@@ -612,6 +614,116 @@ async fn a_page_that_keeps_deadlocking_fails_the_run(db: PgPool) {
     assert_eq!(oai_requests(&app).await.len(), 1);
 }
 
+/// A page's records and its next token (with `token_issued_at` and `records_seen`) commit in
+/// one transaction: when page 1, which carries a token, keeps deadlocking, neither its records
+/// nor its token are stored, so the next run asks for the list again instead of resuming after
+/// a page whose records were never stored.
+#[sqlx::test]
+async fn a_failed_page_stores_neither_its_records_nor_its_token(db: PgPool) {
+    let app = TestApp::new(db).await;
+    mount_reihe_n(&app).await;
+    fake_deadlocks(&app, 1000).await;
+    let error = harvest(&app, SET_N).await.unwrap_err();
+    match &error {
+        HarvestError::Db(db_error) => assert!(is_deadlock(db_error), "{db_error}"),
+        other => panic!("{other}"),
+    }
+    let state = cursor(&app, SET_N).await;
+    assert_eq!(state.resumption_token, None);
+    assert_eq!(state.token_issued_at, None);
+    assert_eq!(state.records_seen, 0);
+    assert!(
+        state.run_started_at.is_some(),
+        "the run is still in progress"
+    );
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM editions").await, 0);
+    assert_eq!(oai_requests(&app).await.len(), 1);
+
+    app.exec("DROP TRIGGER fake_deadlock ON editions").await;
+    app.upstream.reset().await;
+    mount_reihe_n(&app).await;
+    let report = harvest(&app, SET_N).await.unwrap();
+    assert!(report.completed);
+    let requests = oai_requests(&app).await;
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0]["set"], SET_N);
+    assert!(requests[0].contains_key("from"));
+    assert!(!requests[0].contains_key("resumptionToken"));
+    assert_eq!(cursor(&app, SET_N).await.records_seen, 8);
+    assert_eq!(editions_with_idn(&app).await, 7);
+}
+
+/// A page with a token that deadlocks twice and then commits stores its records and its token
+/// once, and counts its records once.
+#[sqlx::test]
+async fn a_retried_page_with_a_token_counts_its_records_once(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let token = token_of(PAGE_1);
+    on_list(&app, SET_N, xml(PAGE_1)).await;
+    // The run stops after page 1.
+    on_token(&app, &token, ResponseTemplate::new(500)).await;
+    fake_deadlocks(&app, 2).await;
+    let error = harvest(&app, SET_N).await.unwrap_err();
+    assert!(
+        matches!(error, HarvestError::Upstream(UpstreamError::Status(500))),
+        "{error}"
+    );
+    let state = cursor(&app, SET_N).await;
+    assert_eq!(state.resumption_token.as_deref(), Some(token.as_str()));
+    assert!(state.token_issued_at.is_some());
+    assert_eq!(state.records_seen, 5);
+    assert_eq!(editions_with_idn(&app).await, 4);
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM editions").await, 4);
+}
+
+/// A record whose ingest fails with an error that is not the record's own (a lock timeout
+/// 55P03, a cancelled statement 57014) fails the page instead of being skipped: the page is
+/// not committed, the cursor stays, and the next run stores the record.
+#[sqlx::test]
+async fn a_passing_ingest_error_fails_the_page(db: PgPool) {
+    let app = TestApp::new(db).await;
+    on_list(&app, SET_A, xml(REIHE_A)).await;
+    for code in ["55P03", "57014"] {
+        app.exec(&format!(
+            r#"CREATE FUNCTION interrupt_feuerwehr() RETURNS trigger LANGUAGE plpgsql AS $$
+               BEGIN
+                   IF NEW.isbn13 = '9783690331821' THEN
+                       RAISE EXCEPTION 'interrupted' USING ERRCODE = '{code}';
+                   END IF;
+                   RETURN NEW;
+               END $$;
+               CREATE TRIGGER interrupt_feuerwehr BEFORE INSERT ON editions
+                   FOR EACH ROW EXECUTE FUNCTION interrupt_feuerwehr();"#
+        ))
+        .await;
+        let error = harvest(&app, SET_A).await.unwrap_err();
+        match &error {
+            HarvestError::Db(db_error) => assert_eq!(
+                db_error
+                    .as_database_error()
+                    .and_then(|db| db.code())
+                    .as_deref(),
+                Some(code)
+            ),
+            other => panic!("{code}: {other}"),
+        }
+        assert_eq!(app.scalar_i64("SELECT count(*) FROM editions").await, 0);
+        let state = cursor(&app, SET_A).await;
+        assert_eq!(state.records_seen, 0);
+        assert_eq!(state.last_success_at, None);
+        assert!(state.last_error.unwrap().contains("interrupted"));
+        app.exec("DROP FUNCTION interrupt_feuerwehr() CASCADE")
+            .await;
+    }
+    // Not a deadlock: each failure asked for the page once and did not retry it.
+    assert_eq!(oai_requests(&app).await.len(), 2);
+
+    let report = harvest(&app, SET_A).await.unwrap();
+    assert!(report.completed);
+    assert_eq!((report.ingested, report.skipped), (3, 0));
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM editions").await, 4);
+}
+
 /// A record the mapping refuses (here: no 001) and a record ingest refuses (here: a trigger
 /// rejects its edition) are skipped with a log line; the rest of the page is stored and the run
 /// completes, so one bad record cannot stop every later run at the same page.
@@ -753,6 +865,100 @@ async fn sets_wait_for_the_interval(db: PgPool) {
     assert!(run::is_due(&mut conn, SET_A, every).await.unwrap());
 }
 
+/// With an interval of 6 h or more, a run that failed in the middle of its list still resumes
+/// from its token: while the run holds a token younger than 6 h, it is due again after 30 min
+/// (`RESUME_RETRY`), not after a whole interval, by which time the token would be stale and the
+/// run would start over. A failed run without a fresh token waits the whole interval.
+#[sqlx::test]
+async fn a_failed_run_resumes_before_its_token_goes_stale(db: PgPool) {
+    let app = TestApp::with_env(
+        db,
+        &[
+            ("DNB_HARVEST_SETS", SET_N),
+            ("DNB_HARVEST_INTERVAL_MINUTES", "480"),
+        ],
+    )
+    .await;
+    let every = run::interval(app.config());
+    assert_eq!(every, Duration::from_secs(8 * 3600));
+    let sets = app.config().dnb_harvest_sets.clone();
+    let pass = || async {
+        let mut conn = app.db.acquire().await.unwrap();
+        harvest_due(&app.state, &mut conn, &CancellationToken::new()).await
+    };
+    let token = token_of(PAGE_1);
+    on_list(&app, SET_N, xml(PAGE_1)).await;
+    on_token(&app, &token, ResponseTemplate::new(502)).await;
+    pass().await.unwrap_err();
+    let mut conn = app.db.acquire().await.unwrap();
+    assert!(!run::is_due(&mut conn, SET_N, every).await.unwrap());
+    let wait = run::next_due_in(&mut conn, &sets, every).await.unwrap();
+    assert!(
+        wait > RESUME_RETRY - Duration::from_secs(60) && wait <= RESUME_RETRY,
+        "{wait:?}"
+    );
+
+    // 31 minutes later the run is due and resumes from its token.
+    app.exec(
+        "UPDATE harvest_state SET last_error_at = last_error_at - interval '31 minutes',
+                token_issued_at = token_issued_at - interval '31 minutes'",
+    )
+    .await;
+    assert!(run::is_due(&mut conn, SET_N, every).await.unwrap());
+    assert_eq!(
+        run::next_due_in(&mut conn, &sets, every).await.unwrap(),
+        Duration::ZERO
+    );
+    app.upstream.reset().await;
+    on_token(&app, &token, xml(PAGE_2)).await;
+    pass().await.unwrap();
+    let requests = oai_requests(&app).await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["resumptionToken"], token);
+    let done = cursor(&app, SET_N).await;
+    assert!(done.last_success_at.is_some());
+    assert_eq!(done.records_seen, 8);
+
+    // A failed run whose token is stale starts over anyway: it waits the whole interval.
+    app.exec(
+        "UPDATE harvest_state
+         SET run_started_at = now() - interval '7 hours', run_from = now() - interval '1 day',
+             resumption_token = 'old', token_issued_at = now() - interval '7 hours',
+             last_error = 'failed', last_error_at = now() - interval '31 minutes'",
+    )
+    .await;
+    assert!(!run::is_due(&mut conn, SET_N, every).await.unwrap());
+    let wait = run::next_due_in(&mut conn, &sets, every).await.unwrap();
+    let left = every - Duration::from_secs(31 * 60);
+    assert!(
+        wait > left - Duration::from_secs(60) && wait <= left,
+        "{wait:?}"
+    );
+    // So does a failed run without a token.
+    app.exec("UPDATE harvest_state SET resumption_token = NULL, token_issued_at = NULL")
+        .await;
+    assert!(!run::is_due(&mut conn, SET_N, every).await.unwrap());
+}
+
+/// After a pass the job sleeps until the next set is due, never less than `RECHECK`: right
+/// after startup, when every set is due, that is a minute, not zero, so a set that cannot run
+/// never makes the job spin. After a pass it is about the interval.
+#[sqlx::test]
+async fn the_job_sleeps_until_the_next_set_is_due(db: PgPool) {
+    let app = TestApp::new(db).await;
+    mount_reihe_n(&app).await;
+    on_list(&app, SET_A, xml(REIHE_A)).await;
+    assert_eq!(next_wait(&app.state).await, RECHECK);
+    assert!(run_pass(&app.state, &CancellationToken::new()).await);
+    assert_eq!(oai_requests(&app).await.len(), 3);
+    let every = run::interval(app.config());
+    let wait = next_wait(&app.state).await;
+    assert!(
+        wait > every - Duration::from_secs(60) && wait <= every,
+        "{wait:?}"
+    );
+}
+
 /// The job harvests every set under the advisory lock and then sleeps until the next set is
 /// due; shutdown stops it.
 #[sqlx::test]
@@ -768,8 +974,7 @@ async fn the_job_harvests_and_stops_on_shutdown(db: PgPool) {
             == 2
     })
     .await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(oai_requests(&app).await.len(), 3, "one pass only");
+    assert_eq!(oai_requests(&app).await.len(), 3, "each page once");
     shutdown.cancel();
     tokio::time::timeout(Duration::from_secs(5), job)
         .await
@@ -786,9 +991,10 @@ async fn the_job_harvests_and_stops_on_shutdown(db: PgPool) {
     assert!(locked);
 }
 
-/// While another instance holds the advisory lock, the job sends nothing.
+/// While another instance holds the advisory lock, a pass sends nothing and leaves every
+/// cursor alone; once the lock is free, the next pass harvests.
 #[sqlx::test]
-async fn the_job_skips_while_another_instance_harvests(db: PgPool) {
+async fn a_pass_skips_while_another_instance_harvests(db: PgPool) {
     let app = TestApp::new(db).await;
     mount_reihe_n(&app).await;
     on_list(&app, SET_A, xml(REIHE_A)).await;
@@ -803,18 +1009,23 @@ async fn the_job_skips_while_another_instance_harvests(db: PgPool) {
     assert!(locked);
 
     let shutdown = CancellationToken::new();
-    let job = tokio::spawn(run_forever(app.state.clone(), shutdown.clone()));
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(!run_pass(&app.state, &shutdown).await);
     assert!(oai_requests(&app).await.is_empty());
-    shutdown.cancel();
-    tokio::time::timeout(Duration::from_secs(5), job)
-        .await
-        .expect("the job stops")
-        .unwrap();
     assert_eq!(
         app.scalar_i64("SELECT count(*) FROM harvest_state").await,
         0
     );
+
+    let unlocked: bool = sqlx::query_scalar!(
+        r#"SELECT pg_advisory_unlock($1) AS "unlocked!""#,
+        lock_ids::DNB_HARVEST
+    )
+    .fetch_one(&mut *other)
+    .await
+    .unwrap();
+    assert!(unlocked);
+    assert!(run_pass(&app.state, &shutdown).await);
+    assert_eq!(oai_requests(&app).await.len(), 3);
 }
 
 /// A shutdown during a page request stops the run at once; the cursor keeps the last

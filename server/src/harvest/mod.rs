@@ -5,8 +5,8 @@
 //! - [`run`]: one harvest of one set with its cursor in `harvest_state`, and the schedule
 //!   (`is_due`, `next_due_in`).
 //! - [`new_releases`]: the Discover row of upcoming German titles, local only.
-//! - [`run_forever`]: the background job (`DNB_HARVEST=true`), under the advisory lock
-//!   `jobs::lock_ids::DNB_HARVEST`.
+//! - [`run_forever`]: the background job (`DNB_HARVEST=true`): a [`run_pass`] under the
+//!   advisory lock `jobs::lock_ids::DNB_HARVEST`, then a sleep of [`next_wait`].
 
 pub mod new_releases;
 pub mod oai;
@@ -68,18 +68,9 @@ pub async fn harvest_due(
 /// When a set is due is read from `harvest_state`, so a restart neither harvests early nor waits
 /// a whole interval, and an interrupted run resumes at once.
 pub async fn run_forever(state: AppState, shutdown: CancellationToken) {
-    let every = run::interval(&state.config);
     loop {
-        let job_state = state.clone();
-        let job_shutdown = shutdown.clone();
-        jobs::run_locked(
-            &state.db,
-            lock_ids::DNB_HARVEST,
-            "dnb harvest",
-            move |conn| Box::pin(async move { harvest_due(&job_state, conn, &job_shutdown).await }),
-        )
-        .await;
-        let wait = next_wait(&state, every).await;
+        run_pass(&state, &shutdown).await;
+        let wait = next_wait(&state).await;
         tokio::select! {
             () = shutdown.cancelled() => return,
             () = tokio::time::sleep(wait) => {}
@@ -87,17 +78,59 @@ pub async fn run_forever(state: AppState, shutdown: CancellationToken) {
     }
 }
 
-/// The time until the next set is due, at least [`RECHECK`] and at most the interval.
-async fn next_wait(state: &AppState, every: Duration) -> Duration {
+/// One pass of [`run_forever`]: [`harvest_due`] under the advisory lock
+/// `jobs::lock_ids::DNB_HARVEST`. False when another instance holds the lock (nothing is sent),
+/// or when the pass failed (`jobs::run_locked` logs why).
+pub async fn run_pass(state: &AppState, shutdown: &CancellationToken) -> bool {
+    let job_state = state.clone();
+    let job_shutdown = shutdown.clone();
+    jobs::run_locked(
+        &state.db,
+        lock_ids::DNB_HARVEST,
+        "dnb harvest",
+        move |conn| Box::pin(async move { harvest_due(&job_state, conn, &job_shutdown).await }),
+    )
+    .await
+}
+
+/// How long [`run_forever`] sleeps after a pass: until the next set is due ([`run::next_due_in`]),
+/// at least [`RECHECK`] and at most the interval ([`wait_after`]); [`RECHECK`] when the schedule
+/// cannot be read.
+pub async fn next_wait(state: &AppState) -> Duration {
+    let every = run::interval(&state.config);
     let due_in = match state.db.acquire().await {
         Ok(mut conn) => run::next_due_in(&mut conn, &state.config.dnb_harvest_sets, every).await,
         Err(error) => Err(error),
     };
     match due_in {
-        Ok(due_in) => due_in.clamp(RECHECK, every.max(RECHECK)),
+        Ok(due_in) => wait_after(due_in, every),
         Err(error) => {
             tracing::error!(%error, "dnb harvest: cannot read the schedule");
             RECHECK
         }
+    }
+}
+
+/// The sleep before the next pass when the next set is due in `due_in`: never shorter than
+/// [`RECHECK`], so a set that is due but cannot run (another instance holds the lock, or it
+/// failed before recording why) never makes the job spin, and never longer than `every`.
+pub fn wait_after(due_in: Duration, every: Duration) -> Duration {
+    due_in.clamp(RECHECK, every.max(RECHECK))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_job_waits_at_least_a_minute_and_at_most_the_interval() {
+        let every = Duration::from_secs(240 * 60);
+        assert_eq!(wait_after(Duration::ZERO, every), RECHECK);
+        assert_eq!(wait_after(Duration::from_secs(1), every), RECHECK);
+        let soon = Duration::from_secs(10 * 60);
+        assert_eq!(wait_after(soon, every), soon);
+        assert_eq!(wait_after(Duration::from_secs(300 * 60), every), every);
+        // An interval below RECHECK (only set in code) still waits RECHECK.
+        assert_eq!(wait_after(Duration::ZERO, Duration::from_secs(1)), RECHECK);
     }
 }
