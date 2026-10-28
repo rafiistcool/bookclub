@@ -687,6 +687,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/books/new-releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Upcoming and recent titles: editions planned between today − 30 days and today + 120 days
+         *     (today in the caller's time zone), not withdrawn (nor another ISBN of a withdrawn DNB record,
+         *     see [`new_releases_page`]), in the given language; one hit per work
+         *     (its earliest such edition, whose title and cover the hit shows), ordered by that date, then
+         *     work id. `planned_publication_date` is that date.
+         */
+        get: operations["harvest_new_releases"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/books/search": {
         parameters: {
             query?: never;
@@ -5449,6 +5472,51 @@ export interface operations {
             };
             /** @description `Could not look that ISBN up right now. Try again.` */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    harvest_new_releases: {
+        parameters: {
+            query?: {
+                /** @description The editions' language, an ISO 639-2/B code such as `ger` (the default) or `eng`. */
+                language?: string;
+                /** @description 1 or more. */
+                page?: number;
+                /** @description 1 to 40, default 24. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of new releases; `has_more` set */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchPage"];
+                };
+            };
+            /** @description A parameter error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
