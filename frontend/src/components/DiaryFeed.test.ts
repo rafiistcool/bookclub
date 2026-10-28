@@ -140,32 +140,32 @@ describe("DiaryFeed (recently written)", () => {
     const own = (id: number, overrides: Partial<DiaryFeedItem["entry"]> = {}) =>
       feedItem({ entry: post({ id, author: "ada", mine: true, body: `Entry ${id}`, ...overrides }) });
 
-    it("lists only the reader's own diary writing, read from the combined feed", async () => {
-      const club = { slug: "readers-ab12", name: "Readers" };
+    it("lists the reader's own diary writing, asked of the server with mine", async () => {
       diaryFeed
         .mockResolvedValueOnce({
-          items: [feedItem(), own(10), own(9, { club }), { ...own(8, { parent_id: 2 }), parent_author: "anni" }],
+          items: [own(10), { ...own(8, { parent_id: 2 }), parent_author: "anni" }],
           has_more: true,
           timezone: "UTC",
         })
         .mockResolvedValueOnce({ items: [own(7, { visibility: "only_me" })], has_more: false, timezone: "UTC" });
-      const wrapper = await mountFeed({ mine: true, pageSize: 3 });
-      // The feed has no author filter: 50-item pages, read on until enough are found.
-      expect(diaryFeed.mock.calls).toEqual([
-        [undefined, 50],
-        [8, 50],
-      ]);
+      const wrapper = await mountFeed({ mine: true, pageSize: 2 });
+      expect(diaryFeed.mock.calls).toEqual([[undefined, 2, undefined, true]]);
+      expect(wrapper.findAll(".feed-body").map((row) => row.text())).toEqual(["Entry 10", "Entry 8"]);
+      // Rows lead with the book; a reply says whom it answered.
+      const reply = wrapper.findAll(".feed-head")[1];
+      expect(reply.text()).toContain("The Wedding People");
+      expect(reply.text()).toContain("your reply to anni");
+      // Roots carry their "Only me" switch; replies have no visibility of their own.
+      expect(wrapper.findAll(".feed-only-me")).toHaveLength(1);
+
+      await wrapper.get(".feed-load-more").trigger("click");
+      await flushPromises();
+      expect(diaryFeed).toHaveBeenLastCalledWith(8, 2, undefined, true);
       expect(wrapper.findAll(".feed-body").map((row) => row.text())).toEqual([
         "Entry 10",
         "Entry 8",
         "Only you Entry 7",
       ]);
-      // Rows lead with the book; a reply says whom it answered.
-      const reply = wrapper.findAll(".feed-head")[1];
-      expect(reply.text()).toContain("The Wedding People");
-      expect(reply.text()).toContain("your reply to anni");
-      expect(wrapper.text()).not.toContain(SECRET);
-      // Roots carry their "Only me" switch; replies have no visibility of their own.
       expect(wrapper.findAll(".feed-only-me")).toHaveLength(2);
       expect(wrapper.find(".feed-load-more").exists()).toBe(false);
     });
@@ -184,19 +184,6 @@ describe("DiaryFeed (recently written)", () => {
       await flushPromises();
       expect(editDiaryEntry).toHaveBeenLastCalledWith(10, { visibility: "audience" });
       expect(wrapper.find(".only-me-badge").exists()).toBe(false);
-    });
-
-    it("offers to look further back when the newest pages hold nothing of the reader's", async () => {
-      diaryFeed.mockResolvedValue({ items: [feedItem()], has_more: true, timezone: "UTC" });
-      const wrapper = await mountFeed({ mine: true });
-      expect(diaryFeed).toHaveBeenCalledTimes(5);
-      expect(wrapper.text()).toContain("Nothing written yet");
-      diaryFeed.mockClear();
-      diaryFeed.mockResolvedValue({ items: [own(3)], has_more: false, timezone: "UTC" });
-      await wrapper.get(".feed-load-more").trigger("click");
-      await flushPromises();
-      expect(diaryFeed).toHaveBeenCalledWith(11, 50);
-      expect(wrapper.get(".feed-body").text()).toBe("Entry 3");
     });
   });
 });

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgConnection;
 use utoipa::ToSchema;
 
+use crate::clubs::extract::Role;
 use crate::media::shared::urls::avatar_url;
 
 /// A shelf entry's status. Stored as text; sorts alphabetically, as the legacy app did.
@@ -185,8 +186,7 @@ pub struct ClubRef {
 pub struct ClubSummary {
     pub slug: String,
     pub name: String,
-    /// `"owner"`, `"admin"` or `"member"`.
-    pub role: String,
+    pub role: Role,
     pub timezone: String,
     pub member_count: i64,
 }

@@ -71,7 +71,7 @@ impl Validate for DiaryEntryIn {
     }
 }
 
-/// `?before=&limit=&club=` of the diary feed.
+/// `?before=&limit=&club=&mine=` of the diary feed.
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct FeedQuery {
@@ -85,6 +85,11 @@ pub struct FeedQuery {
     /// caller is not in is 404 `No such club`. Empty means no filter.
     #[serde(default)]
     pub club: Option<String>,
+    /// `true`: only the caller's own diary writing, their entries and their replies to diary
+    /// entries (no club posts). Lax like every boolean query parameter; default false.
+    #[serde(default, deserialize_with = "crate::extract::lax_bool")]
+    #[param(value_type = Option<bool>)]
+    pub mine: bool,
 }
 
 fn default_limit() -> i64 {
@@ -232,7 +237,8 @@ pub async fn write_entry(
 }
 
 /// The newest posts the caller may see across every work: their own and their audience's diary
-/// entries and their clubs' posts (`?club=`: one club's).
+/// entries and their clubs' posts (`?club=`: one club's; `?mine=true`: only the caller's diary
+/// entries and replies to them).
 #[utoipa::path(
     get,
     path = "/api/diary",
@@ -268,12 +274,14 @@ pub async fn feed(
                   OR (p.club_id IS NULL AND EXISTS (
                           SELECT 1 FROM club_memberships m
                           WHERE m.club_id = $3 AND m.user_id = p.author_id)))
+             AND (NOT $5 OR (p.author_id = $1 AND p.club_id IS NULL))
            ORDER BY p.id DESC
            LIMIT $4"#,
         user.id,
         query.before,
         club_id,
-        query.limit + 1
+        query.limit + 1,
+        query.mine
     )
     .fetch_all(&mut *conn)
     .await?;

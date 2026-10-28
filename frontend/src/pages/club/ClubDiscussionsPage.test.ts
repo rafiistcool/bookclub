@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { bookOut, clubOut, user } from "../../test/fixtures";
+import type { ClubSummary } from "../../types";
 import { memoryStorage } from "../../test/storage";
 
 const api = { club: vi.fn(), pickThread: vi.fn() };
@@ -25,7 +26,7 @@ import ClubLayout from "../../layouts/ClubLayout.vue";
 import { useSession } from "../../stores/session";
 import ClubDiscussionsPage from "./ClubDiscussionsPage.vue";
 
-const READERS = { slug: "readers-ab12", name: "Readers", role: "member", timezone: "Europe/Berlin", member_count: 3 };
+const READERS: ClubSummary = { slug: "readers-ab12", name: "Readers", role: "member", timezone: "Europe/Berlin", member_count: 3 };
 
 async function mountAt(path: string) {
   const pinia = createPinia();

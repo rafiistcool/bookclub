@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.id, p.work_id\n           FROM posts p\n           JOIN bc_visible_posts($1) AS v ON v.id = p.id\n           WHERE p.deleted_at IS NULL\n             AND ($2::int8 IS NULL OR p.id < $2)\n             AND ($3::int8 IS NULL\n                  OR p.club_id = $3\n                  OR (p.club_id IS NULL AND EXISTS (\n                          SELECT 1 FROM club_memberships m\n                          WHERE m.club_id = $3 AND m.user_id = p.author_id)))\n             AND (NOT $5 OR (p.author_id = $1 AND p.club_id IS NULL))\n           ORDER BY p.id DESC\n           LIMIT $4",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "work_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "work_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "7b5f19cfa012207019f59784654868f479ddb943b2cd45f76d149d0683dba0e8"
+}

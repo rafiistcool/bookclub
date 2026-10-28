@@ -7,16 +7,21 @@ use std::collections::HashMap;
 use axum::extract::rejection::RawPathParamsRejection;
 use axum::extract::{FromRequestParts, RawPathParams};
 use axum::http::request::Parts;
+use serde::Serialize;
 use sqlx::PgConnection;
+use utoipa::ToSchema;
 
 use crate::AppState;
 use crate::auth::extract::CurrentUser;
 use crate::dto::ClubRef;
 use crate::error::{ApiResult, AppError, msg};
 
-/// A member's role in a club, ordered `Member < Admin < Owner`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, sqlx::Type)]
+/// A member's role in a club, ordered `member < admin < owner`.
+// The schema is `ClubRole`: `ContributorOut.role` is another kind of role.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, sqlx::Type, Serialize, ToSchema)]
 #[sqlx(type_name = "text", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+#[schema(as = ClubRole)]
 pub enum Role {
     Member,
     Admin,

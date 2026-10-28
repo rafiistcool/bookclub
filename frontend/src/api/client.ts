@@ -293,10 +293,12 @@ export const api = {
   deleteDiaryEntry: (id: number) => request<void>(`/api/posts/${id}`, { method: "DELETE" }),
   reactToEntry: (id: number, emoji: string) =>
     request<PostOut>(`/api/posts/${id}/reactions`, json("POST", { emoji })),
-  diaryFeed: (before?: number | null, limit = 8, club?: string) => {
+  /** `mine`: only the caller's own diary writing (`/diary`). */
+  diaryFeed: (before?: number | null, limit = 8, club?: string, mine = false) => {
     const query = new URLSearchParams({ limit: String(limit) });
     if (before) query.set("before", String(before));
     if (club) query.set("club", club);
+    if (mine) query.set("mine", "true");
     return request<DiaryFeedOut>(`/api/diary?${query}`);
   },
 

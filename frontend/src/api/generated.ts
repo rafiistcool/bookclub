@@ -1427,7 +1427,8 @@ export interface paths {
         };
         /**
          * The newest posts the caller may see across every work: their own and their audience's diary
-         *     entries and their clubs' posts (`?club=`: one club's).
+         *     entries and their clubs' posts (`?club=`: one club's; `?mine=true`: only the caller's diary
+         *     entries and replies to them).
          */
         get: operations["posts_feed"];
         put?: never;
@@ -2010,8 +2011,8 @@ export interface components {
             name: string;
             /** @description IANA zone for the club's times. */
             timezone: string;
-            /** @description The caller's role: `"owner"`, `"admin"` or `"member"`. */
-            role: string;
+            /** @description The caller's role. */
+            role: components["schemas"]["ClubRole"];
             /** Format: int64 */
             member_count: number;
             /** Format: date-time */
@@ -2131,6 +2132,11 @@ export interface components {
             slug: string;
             name: string;
         };
+        /**
+         * @description A member's role in a club, ordered `member < admin < owner`.
+         * @enum {string}
+         */
+        ClubRole: "member" | "admin" | "owner";
         /** @description A club's year in review: the legacy `StatsOut`, over the club's members and picks. */
         ClubStatsOut: {
             /** Format: int32 */
@@ -2158,8 +2164,7 @@ export interface components {
         ClubSummary: {
             slug: string;
             name: string;
-            /** @description `"owner"`, `"admin"` or `"member"`. */
-            role: string;
+            role: components["schemas"]["ClubRole"];
             timezone: string;
             /** Format: int64 */
             member_count: number;
@@ -2557,8 +2562,7 @@ export interface components {
         /** @description One member of a club, as the member list shows them. */
         MemberOut: {
             username: string;
-            /** @description `"owner"`, `"admin"` or `"member"`. */
-            role: string;
+            role: components["schemas"]["ClubRole"];
             /** Format: date-time */
             joined_at: string;
             /** @description This member is the caller. */
@@ -3562,6 +3566,29 @@ export interface components {
              */
             leader_id: number | null;
         };
+        /** @description Why a book is suggested. */
+        VoteReasonOut: {
+            /** @description Sorted. */
+            usernames: string[];
+            /** @enum {string} */
+            code: "wanted";
+        } | {
+            /**
+             * @description Subjects the book shares with the club's past picks: at most 3, in the book's order
+             *     and case.
+             */
+            subjects: string[];
+            /** @enum {string} */
+            code: "like_past_picks";
+        } | {
+            /**
+             * Format: double
+             * @description Unrounded; the English reason shows one decimal.
+             */
+            rating: number;
+            /** @enum {string} */
+            code: "ol_rating";
+        };
         /** @description One candidate. */
         VoteSuggestionOut: {
             book: components["schemas"]["BookOut"];
@@ -3573,6 +3600,11 @@ export interface components {
              *     `Open Library rating 4.4`.
              */
             reasons: string[];
+            /**
+             * @description The same reasons as codes with their values, in the same order, for clients that word
+             *     them themselves.
+             */
+            reason_codes: components["schemas"]["VoteReasonOut"][];
         };
         /** @description Ranked candidates for the next vote. */
         VoteSuggestionsOut: {
@@ -3613,6 +3645,7 @@ export type ClubPickReader = components['schemas']['ClubPickReader'];
 export type ClubPickSetIn = components['schemas']['ClubPickSetIn'];
 export type ClubPickSummary = components['schemas']['ClubPickSummary'];
 export type ClubRef = components['schemas']['ClubRef'];
+export type ClubRole = components['schemas']['ClubRole'];
 export type ClubStatsOut = components['schemas']['ClubStatsOut'];
 export type ClubSummary = components['schemas']['ClubSummary'];
 export type ContributorOut = components['schemas']['ContributorOut'];
@@ -3726,6 +3759,7 @@ export type VoteDeadlineIn = components['schemas']['VoteDeadlineIn'];
 export type VoteNominateIn = components['schemas']['VoteNominateIn'];
 export type VoteNominationOut = components['schemas']['VoteNominationOut'];
 export type VoteOut = components['schemas']['VoteOut'];
+export type VoteReasonOut = components['schemas']['VoteReasonOut'];
 export type VoteSuggestionOut = components['schemas']['VoteSuggestionOut'];
 export type VoteSuggestionsOut = components['schemas']['VoteSuggestionsOut'];
 export type WorkMergeIn = components['schemas']['WorkMergeIn'];
@@ -8232,6 +8266,11 @@ export interface operations {
                  *     caller is not in is 404 `No such club`. Empty means no filter.
                  */
                 club?: string;
+                /**
+                 * @description `true`: only the caller's own diary writing, their entries and their replies to diary
+                 *     entries (no club posts). Lax like every boolean query parameter; default false.
+                 */
+                mine?: boolean;
             };
             header?: never;
             path?: never;

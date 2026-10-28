@@ -2,6 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { user } from "../test/fixtures";
+import type { ClubSummary } from "../types";
 
 const api: Record<string, ReturnType<typeof vi.fn>> = {
   me: vi.fn(),
@@ -157,7 +158,7 @@ describe("deleting the account", () => {
   });
 
   it("names the clubs to hand over first and deletes with the password", async () => {
-    const clubs = [
+    const clubs: ClubSummary[] = [
       { slug: "readers-ab12", name: "Readers", role: "owner", timezone: "UTC", member_count: 3 },
       { slug: "solo-cd34", name: "Just me", role: "owner", timezone: "UTC", member_count: 1 },
       { slug: "owls-ef56", name: "Owls", role: "member", timezone: "UTC", member_count: 5 },

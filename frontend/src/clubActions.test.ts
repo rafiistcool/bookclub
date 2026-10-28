@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { clubsFor } from "./clubActions";
-import type { ClubSummary } from "./types";
+import type { ClubRole, ClubSummary } from "./types";
 
-const club = (slug: string, role: string): ClubSummary => ({ slug, name: slug, role, timezone: "UTC", member_count: 2 });
+const club = (slug: string, role: ClubRole): ClubSummary => ({ slug, name: slug, role, timezone: "UTC", member_count: 2 });
 
 describe("club actions on a book", () => {
   it("lets admins and owners set the pick, and every member nominate", () => {

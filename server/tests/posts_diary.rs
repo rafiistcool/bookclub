@@ -865,6 +865,92 @@ async fn the_club_feed_shows_one_club(db: PgPool) {
         .assert_detail(404, "No such club");
 }
 
+/// `?mine=true` keeps the caller's own diary writing: their entries (private ones too) and their
+/// replies to diary entries, newest first and paged like the whole feed. Club posts and replies
+/// to them, other readers' entries and tombstones stay out; it combines with `?club=`.
+#[sqlx::test]
+async fn the_mine_filter_keeps_the_callers_diary_writing(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let (ada, grace, club) = ada_and_grace(&app).await;
+    let circe = app.work("Circe").await;
+    let achilles = app.work("The Song of Achilles").await;
+    sqlx::query("INSERT INTO club_picks (club_id, work_id) VALUES ($1, $2)")
+        .bind(club.id)
+        .bind(circe.id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let graces = write(&grace, &circe, json!({"body": "Grace's entry"})).await;
+    write(&ada, &circe, json!({"body": "Ada's entry"})).await;
+    write(
+        &ada,
+        &achilles,
+        json!({"body": "Ada's private entry", "visibility": "only_me"}),
+    )
+    .await;
+    write(
+        &ada,
+        &circe,
+        json!({"body": "Ada's reply", "parent_id": graces["id"]}),
+    )
+    .await;
+    let pick_post = ada
+        .post(
+            &format!("/api/clubs/{}/pick/posts", club.slug),
+            json!({"body": "Ada's pick post"}),
+        )
+        .await;
+    pick_post.assert_status(201);
+    write(
+        &ada,
+        &circe,
+        json!({"body": "Ada's club reply", "parent_id": pick_post.json()["id"]}),
+    )
+    .await;
+    let gone = write(&ada, &achilles, json!({"body": "Ada's deleted entry"})).await;
+    ada.delete(&format!("/api/posts/{}", gone["id"]))
+        .await
+        .assert_status(204);
+
+    let mine = ada.get("/api/diary?mine=true").await.json();
+    assert_eq!(
+        feed_bodies(&mine),
+        ["Ada's reply", "Ada's private entry", "Ada's entry"]
+    );
+    assert_eq!(mine["items"][0]["parent_author"], "grace");
+    let page = ada.get("/api/diary?mine=1&limit=2").await.json();
+    assert_eq!(feed_bodies(&page), ["Ada's reply", "Ada's private entry"]);
+    assert_eq!(page["has_more"], true);
+    let last = page["items"][1]["entry"]["id"].as_i64().unwrap();
+    let rest = ada
+        .get(&format!("/api/diary?mine=true&limit=2&before={last}"))
+        .await
+        .json();
+    assert_eq!(feed_bodies(&rest), ["Ada's entry"]);
+    assert_eq!(rest["has_more"], false);
+    assert_eq!(
+        feed_bodies(
+            &ada.get(&format!("/api/diary?mine=true&club={}", club.slug))
+                .await
+                .json()
+        ),
+        ["Ada's reply", "Ada's private entry", "Ada's entry"]
+    );
+    assert_eq!(
+        feed_bodies(&grace.get("/api/diary?mine=true").await.json()),
+        ["Grace's entry"]
+    );
+    // `false` is the whole feed; anything that is not a boolean is refused.
+    assert_eq!(
+        feed_bodies(&ada.get("/api/diary?mine=false").await.json()).len(),
+        6
+    );
+    ada.get("/api/diary?mine=maybe").await.assert_detail(
+        400,
+        "Input should be a valid boolean, unable to interpret input",
+    );
+}
+
 /// parity: test_diary.py::test_club_rating_averages_finished_readers
 ///
 /// The book page (CAT's `GET /api/books/works/{work_id}`) averages the ratings of the

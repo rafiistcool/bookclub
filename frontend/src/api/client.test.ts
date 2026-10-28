@@ -144,6 +144,8 @@ describe("api client", () => {
     expect(fetchMock.mock.calls[6][0]).toBe("/api/diary?limit=5&before=42");
     await api.diaryFeed(null, 8, "book-club-ab12");
     expect(fetchMock.mock.calls[7][0]).toBe("/api/diary?limit=8&club=book-club-ab12");
+    await api.diaryFeed(17, 12, undefined, true);
+    expect(fetchMock.mock.calls[8][0]).toBe("/api/diary?limit=12&before=17&mine=true");
   });
 
   it("replaces and toggles favourites", async () => {

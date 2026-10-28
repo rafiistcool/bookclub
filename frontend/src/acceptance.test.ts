@@ -100,6 +100,7 @@ describe("#48 acceptance", () => {
     await go("/diary");
     expect(app.get("h1").text()).toBe("Diary");
     expect(app.get(".feed-body").text()).toBe("Witches and pigs.");
+    expect(server.requests).toContain("GET /api/diary?limit=12&mine=true");
     await app.get(".feed-only-me input").setValue(true);
     await flushPromises();
     expect(server.requests).toContain("PATCH /api/posts/5");

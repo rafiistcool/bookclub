@@ -26,6 +26,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use crate::AppState;
+use crate::clubs::extract::Role;
 use crate::dto::{ClubSummary, UserOut};
 use crate::error::{ApiResult, AppError};
 use crate::media::shared::urls::avatar_url;
@@ -131,7 +132,7 @@ pub async fn user_out(conn: &mut PgConnection, user_id: i64) -> ApiResult<UserOu
     };
     let clubs = sqlx::query_as!(
         ClubSummary,
-        r#"SELECT c.slug, c.name, m.role, c.timezone,
+        r#"SELECT c.slug, c.name, m.role AS "role: Role", c.timezone,
                   (SELECT count(*) FROM club_memberships x WHERE x.club_id = c.id) AS "member_count!"
            FROM club_memberships m
            JOIN clubs c ON c.id = m.club_id

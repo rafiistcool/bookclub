@@ -25,8 +25,8 @@ pub struct ClubOut {
     pub name: String,
     /// IANA zone for the club's times.
     pub timezone: String,
-    /// The caller's role: `"owner"`, `"admin"` or `"member"`.
-    pub role: String,
+    /// The caller's role.
+    pub role: Role,
     pub member_count: i64,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
@@ -53,8 +53,7 @@ pub struct ClubList {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct MemberOut {
     pub username: String,
-    /// `"owner"`, `"admin"` or `"member"`.
-    pub role: String,
+    pub role: Role,
     #[serde(with = "time::serde::rfc3339")]
     pub joined_at: OffsetDateTime,
     /// This member is the caller.
@@ -152,7 +151,7 @@ pub async fn club_outs(
                 slug: row.slug,
                 name: row.name,
                 timezone: row.timezone,
-                role: row.role.as_str().to_owned(),
+                role: row.role,
                 member_count: row.member_count,
                 created_at: row.created_at,
                 current_pick,
@@ -241,7 +240,7 @@ pub async fn member_outs(
             let (count, preview) = previews.remove(&row.id).unwrap_or_default();
             MemberOut {
                 username: row.username,
-                role: row.role.as_str().to_owned(),
+                role: row.role,
                 joined_at: row.joined_at,
                 you: row.id == viewer,
                 avatar_url: avatar_url(row.avatar_public_id.as_deref()),

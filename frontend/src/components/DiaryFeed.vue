@@ -3,7 +3,7 @@ import { onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
 import { bookPath } from "../constants";
-import { clubFeedPreview, EXCERPT_LENGTH, isOwnDiaryEntry, isShielded, positionMarker, scanFeed } from "../diary";
+import { clubFeedPreview, EXCERPT_LENGTH, isShielded, positionMarker } from "../diary";
 import { formatClubDate } from "../i18n/dates";
 import { isClubGone, useClubs } from "../stores/clubs";
 import { useLocale } from "../stores/locale";
@@ -34,12 +34,8 @@ const session = useSession();
 const clubs = useClubs();
 const toast = useToast();
 
-/** `mine`: the feed has no author filter, so up to this many 50-item pages are read per "Show more". */
-const MINE_PAGES = 5;
-const MINE_PAGE_SIZE = 50;
-
 const feed = ref<DiaryFeedItem[]>([]);
-/** The last entry id read; with `mine` it can be past the last one shown. */
+/** The last entry id read. */
 const cursor = ref<number | undefined>();
 const error = ref("");
 const loaded = ref(false);
@@ -51,21 +47,12 @@ async function load(more = false) {
   busy.value = true;
   try {
     const before = more ? cursor.value : undefined;
-    if (props.mine) {
-      const page = await scanFeed<DiaryFeedItem>((at) => api.diaryFeed(at, MINE_PAGE_SIZE), isOwnDiaryEntry, {
-        before,
-        want: props.pageSize ?? 10,
-        maxPages: MINE_PAGES,
-      });
-      feed.value = more ? [...feed.value, ...page.items] : page.items;
-      hasMore.value = page.hasMore;
-      cursor.value = page.cursor;
-    } else {
-      const page = await api.diaryFeed(before, props.pageSize ?? 8, props.club);
-      feed.value = more ? [...feed.value, ...page.items] : page.items;
-      hasMore.value = page.has_more;
-      cursor.value = page.items[page.items.length - 1]?.entry.id ?? before;
-    }
+    const page = props.mine
+      ? await api.diaryFeed(before, props.pageSize ?? 10, undefined, true)
+      : await api.diaryFeed(before, props.pageSize ?? 8, props.club);
+    feed.value = more ? [...feed.value, ...page.items] : page.items;
+    hasMore.value = page.has_more;
+    cursor.value = page.items[page.items.length - 1]?.entry.id ?? before;
     error.value = "";
   } catch (err) {
     if (props.club && isClubGone(err)) clubs.markGone(props.club);
@@ -155,16 +142,6 @@ defineExpose({ reload: () => load() });
     <div v-else-if="feed.length === 0" class="feed-empty">
       <p class="fine subtle">{{ emptyText ?? t("club.nothingWritten") }}</p>
       <slot name="empty" />
-      <!-- `mine`: nothing of the viewer's in the newest pages, but there is more to read. -->
-      <button
-        v-if="hasMore"
-        class="text-btn feed-load-more"
-        type="button"
-        :disabled="busy"
-        @click="load(true)"
-      >
-        {{ t("diaryPage.lookFurther") }}
-      </button>
     </div>
     <template v-else>
       <ol class="feed-list">

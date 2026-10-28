@@ -90,6 +90,18 @@ async fn suggestions_rank_shared_wants_and_subject_affinity(db: PgPool) {
             "Open Library rating 4.4"
         ])
     );
+    assert_eq!(
+        items[0]["reason_codes"],
+        json!([{"code": "wanted", "usernames": ["ada", "grace"]}])
+    );
+    assert_eq!(
+        achilles_row["reason_codes"],
+        json!([
+            {"code": "wanted", "usernames": ["grace"]},
+            {"code": "like_past_picks", "subjects": ["Science fiction"]},
+            {"code": "ol_rating", "rating": 4.4}
+        ])
+    );
     // Equal scores sort by title: Achilles (3), then Piranesi (1).
     assert_eq!(titles(&body), ["Circe", "The Song of Achilles", "Piranesi"]);
 

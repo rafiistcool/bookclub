@@ -37,6 +37,48 @@ pub struct VoteSuggestionOut {
     /// (`On 2 shelves: ada, grace` or `ada wants to read it`), `Like past picks: …` and
     /// `Open Library rating 4.4`.
     pub reasons: Vec<String>,
+    /// The same reasons as codes with their values, in the same order, for clients that word
+    /// them themselves.
+    pub reason_codes: Vec<VoteReasonOut>,
+}
+
+/// Why a book is suggested.
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+#[serde(tag = "code", rename_all = "snake_case")]
+pub enum VoteReasonOut {
+    /// Members want to read it: `ada wants to read it`, or `On 2 shelves: ada, grace` for two
+    /// or more.
+    Wanted {
+        /// Sorted.
+        usernames: Vec<String>,
+    },
+    /// `Like past picks: …`.
+    LikePastPicks {
+        /// Subjects the book shares with the club's past picks: at most 3, in the book's order
+        /// and case.
+        subjects: Vec<String>,
+    },
+    /// `Open Library rating 4.4`: a rating of 4.0 or more.
+    OlRating {
+        /// Unrounded; the English reason shows one decimal.
+        rating: f64,
+    },
+}
+
+impl VoteReasonOut {
+    /// The English sentence of `VoteSuggestionOut.reasons`.
+    fn english(&self) -> String {
+        match self {
+            VoteReasonOut::Wanted { usernames } => match usernames.as_slice() {
+                [name] => format!("{name} wants to read it"),
+                names => format!("On {} shelves: {}", names.len(), names.join(", ")),
+            },
+            VoteReasonOut::LikePastPicks { subjects } => {
+                format!("Like past picks: {}", subjects.join(", "))
+            }
+            VoteReasonOut::OlRating { rating } => format!("Open Library rating {rating:.1}"),
+        }
+    }
 }
 
 /// A candidate work with what its score is computed from.
@@ -51,16 +93,19 @@ struct Candidate {
 }
 
 /// The score and reasons of a candidate, given the lowercased subjects of the club's past picks.
-fn score(candidate: &Candidate, liked_subjects: &HashSet<String>) -> (i64, Vec<String>) {
+fn score(candidate: &Candidate, liked_subjects: &HashSet<String>) -> (i64, Vec<VoteReasonOut>) {
     let mut score = 0;
     let mut reasons = Vec::new();
     let names = &candidate.wanters;
-    if names.len() >= 2 {
-        score += 3 * names.len() as i64;
-        reasons.push(format!("On {} shelves: {}", names.len(), names.join(", ")));
-    } else if let Some(name) = names.first() {
-        score += 1;
-        reasons.push(format!("{name} wants to read it"));
+    if !names.is_empty() {
+        score += if names.len() >= 2 {
+            3 * names.len() as i64
+        } else {
+            1
+        };
+        reasons.push(VoteReasonOut::Wanted {
+            usernames: names.clone(),
+        });
     }
     let matched: Vec<&str> = candidate
         .subjects
@@ -70,12 +115,13 @@ fn score(candidate: &Candidate, liked_subjects: &HashSet<String>) -> (i64, Vec<S
         .collect();
     if !matched.is_empty() {
         score += matched.len() as i64;
-        let shown: Vec<&str> = matched.iter().take(3).copied().collect();
-        reasons.push(format!("Like past picks: {}", shown.join(", ")));
+        reasons.push(VoteReasonOut::LikePastPicks {
+            subjects: matched.iter().take(3).copied().map(str::to_owned).collect(),
+        });
     }
     if let Some(rating) = candidate.ol_rating.filter(|rating| *rating >= GOOD_RATING) {
         score += 1;
-        reasons.push(format!("Open Library rating {rating:.1}"));
+        reasons.push(VoteReasonOut::OlRating { rating });
     }
     (score, reasons)
 }
@@ -165,7 +211,7 @@ pub async fn suggestions(
 ) -> ApiResult<Json<VoteSuggestionsOut>> {
     let mut conn = state.db.acquire().await?;
     let (candidates, liked) = candidates(&mut conn, member.club.id, member.user.id).await?;
-    let mut scored: Vec<(i64, String, i64, Vec<String>)> = candidates
+    let mut scored: Vec<(i64, String, i64, Vec<VoteReasonOut>)> = candidates
         .iter()
         .map(|candidate| {
             let (score, reasons) = score(candidate, &liked);
@@ -183,11 +229,12 @@ pub async fn suggestions(
     let books = book_outs(&mut conn, &refs).await?;
     let items = scored
         .into_iter()
-        .filter_map(|(score, _, work_id, reasons)| {
+        .filter_map(|(score, _, work_id, reason_codes)| {
             Some(VoteSuggestionOut {
                 book: books.get(&BookRef::work(work_id))?.clone(),
                 score,
-                reasons,
+                reasons: reason_codes.iter().map(VoteReasonOut::english).collect(),
+                reason_codes,
             })
         })
         .collect();
@@ -212,11 +259,38 @@ mod tests {
         subjects.iter().map(|s| s.to_lowercase()).collect()
     }
 
+    /// The score and the English reasons.
+    fn score(candidate: &Candidate, liked_subjects: &HashSet<String>) -> (i64, Vec<String>) {
+        let (score, reasons) = super::score(candidate, liked_subjects);
+        (score, reasons.iter().map(VoteReasonOut::english).collect())
+    }
+
     #[test]
     fn shared_wants_count_three_each() {
         let (score, reasons) = score(&candidate(&["ada", "grace"], &[], None), &liked(&[]));
         assert_eq!(score, 6);
         assert_eq!(reasons, ["On 2 shelves: ada, grace"]);
+    }
+
+    #[test]
+    fn reason_codes_carry_the_values_of_the_english_reasons() {
+        let (_, reasons) = super::score(
+            &candidate(&["ada", "grace", "tom"], &["Myth", "war"], Some(4.25)),
+            &liked(&["myth"]),
+        );
+        assert_eq!(
+            serde_json::to_value(&reasons).unwrap(),
+            serde_json::json!([
+                {"code": "wanted", "usernames": ["ada", "grace", "tom"]},
+                {"code": "like_past_picks", "subjects": ["Myth"]},
+                {"code": "ol_rating", "rating": 4.25}
+            ])
+        );
+        let (_, reasons) = super::score(&candidate(&["ada"], &[], None), &liked(&[]));
+        assert_eq!(
+            serde_json::to_value(&reasons).unwrap(),
+            serde_json::json!([{"code": "wanted", "usernames": ["ada"]}])
+        );
     }
 
     /// The probed example of docs/phase1/spec/club.md §2.9: every match counts, three are

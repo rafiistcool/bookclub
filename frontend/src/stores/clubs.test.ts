@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bookOut, clubOut, clubPick, user } from "../test/fixtures";
+import type { ClubRole, ClubSummary } from "../types";
 import { blockedStorage, memoryStorage } from "../test/storage";
 
 const clubsList = vi.fn();
@@ -32,7 +33,7 @@ import { useSession } from "./session";
 const A = { slug: "readers-ab12", name: "Readers" };
 const B = { slug: "night-owls-cd34", name: "Night owls" };
 
-function summary(club: { slug: string; name: string }, role = "member") {
+function summary(club: { slug: string; name: string }, role: ClubRole = "member"): ClubSummary {
   return { ...club, role, timezone: "Europe/Berlin", member_count: 3 };
 }
 

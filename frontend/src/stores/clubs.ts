@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, type ComputedRef } from "vue";
 import { api, ApiError } from "../api/client";
-import type { ClubOut, ClubPickSummary, ClubSummary } from "../types";
+import type { ClubOut, ClubPickSummary, ClubRole, ClubSummary } from "../types";
 import { useSession } from "./session";
 
 /** The club this device opened last (a per-device convenience, like the theme). */
@@ -9,8 +9,6 @@ export const LAST_CLUB_KEY = "bookclub.club";
 
 /** The detail every `/api/clubs/{slug}/…` route answers a non-member or an unknown slug. */
 export const NO_SUCH_CLUB = "No such club";
-
-export type ClubRole = "owner" | "admin" | "member";
 
 function readLastClub(): string | null {
   try {
@@ -30,11 +28,11 @@ function writeLastClub(slug: string | null) {
 }
 
 /** Admins and the owner run the club: picks, the vote's end, invites, milestones, removals. */
-export function isClubAdmin(role: string | null | undefined): boolean {
+export function isClubAdmin(role: ClubRole | null | undefined): boolean {
   return role === "owner" || role === "admin";
 }
 
-export function isClubOwner(role: string | null | undefined): boolean {
+export function isClubOwner(role: ClubRole | null | undefined): boolean {
   return role === "owner";
 }
 

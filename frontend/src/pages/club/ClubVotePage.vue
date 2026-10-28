@@ -7,12 +7,14 @@ import BookCover from "../../components/BookCover.vue";
 import NextUpVote from "../../components/NextUpVote.vue";
 import { bookPath } from "../../constants";
 import { isClubAdmin, isClubGone, useClubs, useCurrentClub } from "../../stores/clubs";
+import { useLocale } from "../../stores/locale";
 import { useToast } from "../../stores/toast";
 import { suggestionReason } from "../../suggestions";
 import type { VoteSuggestionOut } from "../../types";
 
 const { t } = useI18n();
 const clubs = useClubs();
+const locale = useLocale();
 const toast = useToast();
 const router = useRouter();
 
@@ -75,8 +77,8 @@ onMounted(loadSuggestions);
             <span class="suggestion-meta">
               <strong>{{ row.book.title }}</strong>
               <span v-if="row.book.authors" class="finer subtle">{{ row.book.authors }}</span>
-              <span v-for="reason in row.reasons" :key="reason" class="finer subtle">
-                {{ suggestionReason(reason) }}
+              <span v-for="(reason, index) in row.reason_codes" :key="index" class="finer subtle">
+                {{ suggestionReason(reason, locale.locale) }}
               </span>
             </span>
           </RouterLink>

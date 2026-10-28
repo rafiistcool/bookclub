@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { user } from "./test/fixtures";
+import type { ClubSummary } from "./types";
 import { memoryStorage } from "./test/storage";
 
 const me = vi.fn();
@@ -15,8 +16,8 @@ import { ApiError } from "./api/client";
 import router from "./router";
 import { LAST_CLUB_KEY } from "./stores/clubs";
 
-const READERS = { slug: "readers-ab12", name: "Readers", role: "member", timezone: "UTC", member_count: 3 };
-const OWLS = { slug: "night-owls-cd34", name: "Night owls", role: "admin", timezone: "UTC", member_count: 2 };
+const READERS: ClubSummary = { slug: "readers-ab12", name: "Readers", role: "member", timezone: "UTC", member_count: 3 };
+const OWLS: ClubSummary = { slug: "night-owls-cd34", name: "Night owls", role: "admin", timezone: "UTC", member_count: 2 };
 
 async function landing(path: string, clubs: (typeof READERS)[], lastSlug?: string, isAdmin = false) {
   vi.stubGlobal("localStorage", memoryStorage());

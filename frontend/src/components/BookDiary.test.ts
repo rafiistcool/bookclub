@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { post, user } from "../test/fixtures";
+import type { ClubRole } from "../types";
 import { memoryStorage } from "../test/storage";
 
 const api = {
@@ -35,7 +36,7 @@ import BookDiary from "./BookDiary.vue";
 
 const CLUB = { slug: "readers-ab12", name: "Readers" };
 
-async function mountDiary(props: Record<string, unknown>, role: string | null = "member") {
+async function mountDiary(props: Record<string, unknown>, role: ClubRole | null = "member") {
   const pinia = createPinia();
   setActivePinia(pinia);
   useSession().user = user({

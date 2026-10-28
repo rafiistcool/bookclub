@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { clubOut, user } from "../test/fixtures";
+import type { ClubSummary } from "../types";
 import { memoryStorage } from "../test/storage";
 
 const club = vi.fn();
@@ -26,8 +27,8 @@ import { LAST_CLUB_KEY, useClubs } from "../stores/clubs";
 import { useSession } from "../stores/session";
 import ClubLayout from "./ClubLayout.vue";
 
-const READERS = { slug: "readers-ab12", name: "Readers", role: "admin", timezone: "Europe/Berlin", member_count: 3 };
-const OWLS = { slug: "night-owls-cd34", name: "Night owls", role: "member", timezone: "UTC", member_count: 2 };
+const READERS: ClubSummary = { slug: "readers-ab12", name: "Readers", role: "admin", timezone: "Europe/Berlin", member_count: 3 };
+const OWLS: ClubSummary = { slug: "night-owls-cd34", name: "Night owls", role: "member", timezone: "UTC", member_count: 2 };
 
 async function mountAt(path: string) {
   const pinia = createPinia();

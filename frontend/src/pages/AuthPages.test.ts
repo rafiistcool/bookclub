@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { user } from "../test/fixtures";
+import type { ClubSummary } from "../types";
 import { memoryStorage } from "../test/storage";
 
 const api: Record<string, ReturnType<typeof vi.fn>> = {
@@ -72,7 +73,7 @@ describe("auth pages", () => {
   });
 
   it("signs up with the invite code from the link and opens the club it joined", async () => {
-    const club = { slug: "readers-ab12", name: "Readers", role: "member", timezone: "UTC", member_count: 4 };
+    const club: ClubSummary = { slug: "readers-ab12", name: "Readers", role: "member", timezone: "UTC", member_count: 4 };
     api.register.mockResolvedValue(user({ username: "neu", clubs: [club] }));
     const { wrapper, router } = await mountAt(SignupPage, "/signup?code=7K3M9QX2HD");
     const invite = wrapper.get("input[name=invite]");

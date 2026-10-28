@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
 import type { ClubStatsOut, PersonalStatsOut } from "../api/generated";
 import { bookOut, clubOut, user } from "../test/fixtures";
+import type { ClubSummary } from "../types";
 
 const personalStats = vi.fn();
 const clubStats = vi.fn();
@@ -100,7 +101,7 @@ describe("year in books", () => {
   });
 
   it("shows a club's year: members, picks and the best one", async () => {
-    const readers = { slug: "readers-ab12", name: "Readers", role: "member", timezone: "Europe/Berlin", member_count: 2 };
+    const readers: ClubSummary = { slug: "readers-ab12", name: "Readers", role: "member", timezone: "Europe/Berlin", member_count: 2 };
     useSession().user = user({ username: "ada", clubs: [readers] });
     useClubs().current = clubOut(readers);
     const pick = {

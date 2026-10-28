@@ -2,6 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { activityItem, bookOut, clubOut, favorite, shelfItem, user } from "../test/fixtures";
+import type { ClubSummary } from "../types";
 
 const api = {
   clubs: vi.fn(),
@@ -20,7 +21,7 @@ import { i18n } from "../i18n";
 import { useSession } from "../stores/session";
 import HomePage from "./HomePage.vue";
 
-const SUMMARY = { slug: "readers-ab12", name: "Readers", role: "member", timezone: "Europe/Berlin", member_count: 3 };
+const SUMMARY: ClubSummary = { slug: "readers-ab12", name: "Readers", role: "member", timezone: "Europe/Berlin", member_count: 3 };
 
 async function mountHome(clubs: (typeof SUMMARY)[]) {
   const pinia = createPinia();
