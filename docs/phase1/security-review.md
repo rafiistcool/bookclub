@@ -223,3 +223,65 @@ C §5.5, §10.1; E §2.
 **Tests:**
 - `auth_email.rs::link_floods_do_not_silence_the_security_notices`
 - `auth_reset.rs`: `one_reset_link_is_open_at_a_time`, `a_reset_the_mail_limit_drops_leaves_no_open_link`, and the reworked `requests_are_limited_per_ip_and_silently_per_account` and `a_reset_link_dies_when_another_is_used`
+
+## Phase 2 Wave 1
+
+A security review of branch `phase-2` after Wave 1 (DEP #51, GATE #55, ADM #54, LEG #53, CUT #52), at `325a7a2`, through the endpoint and operations lenses. Three verifiers tried to refute each finding against the code, and two of them reproduced finding 1 on Postgres 17. A finding counts as confirmed when at least two of the three did not refute it. Severity follows the rubric above.
+
+| # | Severity | Finding | Outcome |
+|---|---|---|---|
+| 1 | medium | Repeat reports skipped the rate limit but still locked the picture row, so one account could block a takedown | Fixed in `f3556d6` |
+| 2 | low | The release job held the registry write token and the host's Docker daemon while it ran actions referenced by tags that can be moved | Fixed in `9754dec` (the actions are pinned); the token is Rafael's decision, see below |
+| 3 | low | Root on the app VM can delete every backup | Not fixed: needs Rafael's decision, see below |
+
+### 1. [medium] Repeat reports held off a takedown
+
+`report` locked the picture `FOR SHARE`, then waited on the reader's advisory lock, and a repeat returned before `report_user` counted anything. One account could keep the picture share-locked without a break by keeping enough repeats in flight to fill the 10-connection pool. The verifiers corrected the finding here: 3 open requests are not enough. A new `FOR SHARE` locker joins the holders ahead of a waiting `FOR UPDATE`, so an admin's takedown (`FOR UPDATE`) or dismissal (`FOR NO KEY UPDATE`) waited until the 600 s request deadline, or failed on the pool's acquire timeout. Meanwhile the picture stayed visible and every other request slowed down.
+
+**Fix:**
+- A repeat is answered from one plain read before the transaction, with no lock. A repeat that races a takedown may still answer `open`, and the takedown then resolves that report.
+- A new report takes the reader's advisory lock (`0x6263_0200`) before it locks the picture. Of one reader's requests for one picture, only the one whose turn it is holds the picture.
+- Every report request, repeats and 404s included, counts against `report_request_user` first (30 a minute per account). `report_user` (20 new reports a day) is unchanged.
+- No `lock_timeout` was added: with nothing left that can starve the takedown, it would only turn a report that waits on a slow takedown into a 500.
+
+C §7.2, §10.1; E §6. The commit also regenerates `server/.sqlx/` and `generated.ts`.
+
+**Tests** (`media_reports.rs`), each failing without the fix:
+- `repeat_reports_take_no_lock`: repeats answer while another request of the reader holds its turn, and while a takedown holds the picture.
+- `a_report_waiting_for_its_turn_does_not_hold_off_a_takedown`: also fails when only the old lock order is restored.
+- `every_report_request_counts_against_a_minute_limit`.
+
+### 2. [low] Release actions resolved by tags that can be moved
+
+`publish` passes `REGISTRY_TOKEN` (the owner's token, `write:package`) to `docker/login-action`, and runs on the `docker` runner, whose jobs get the host's Docker daemon. All its actions were referenced by tags, and `dtolnay/rust-toolchain` by a branch. If an upstream tag were moved, the next release would run that code with the token and with root on the host, and could push to `bookclub-server:stable`, which `deploy/hosted/compose.yaml` pulls.
+
+The token path is older than this branch. `phase-2` added the daemon (`runs-on: docker`) and `setup-buildx-action`. One verifier rejected the finding as pre-existing and not exposed yet: no `REGISTRY_TOKEN` and no `docker` runner exist yet. All three agreed that the `rust-toolchain` part is weaker than stated, because the `server` job gets neither the token nor the daemon.
+
+**Fix:** every `uses:` in `.forgejo/workflows/` names a full commit, with its release in a comment. That covers `release.yml`, and `ci.yml` too, because its `image` job runs on the same runner's daemon. `rust-toolchain` names `toolchain: stable` explicitly. `release.yml` explains how to move a pin, and `deploy/hosted/README.md` ("Releases") says pins move only on purpose.
+
+**Test:** `deploy_env.rs::workflows_pin_every_action_to_a_commit` fails on a `uses:` without a commit and a version comment.
+
+**Left for Rafael:**
+- **A dedicated token.** Use one that can write only this image instead of the owner's `write:package` token. Forgejo scopes package tokens per owner, not per package, so this means a bot account in an organisation that owns the image, which moves the image path. Until then, `REGISTRY_TOKEN` can write all of the owner's packages.
+- **Moving tags that are not `uses:`.** These still run by tag: the job image `catthehacker/ubuntu:act-24.04`, the BuildKit image `setup-buildx-action` starts (`moby/buildkit:buildx-stable-1`), and production's pull of `bookclub-server:stable`, which no digest or signature checks.
+- **The GitHub copies.** `.github/workflows/` is disabled on GitHub and stays unpinned.
+
+### 3. [low] The VM can delete its own off-site backups
+
+The VM's Storage Box key (`/root/.ssh/id_ed25519_backup`, mounted into the restic container through `RESTIC_SSH_DIR`) has full SFTP rights on the repository. `backup.sh` relies on that, because it runs `restic forget --prune` every night. With root on the VM, an attacker can wipe the repository, then drop the database volume, and the heartbeats only notice afterwards.
+
+The verifiers corrected two details:
+- The finding's `forget --keep-last 0` is refused, but `forget <ids> --prune`, `--unsafe-allow-remove-all` with a filter, or `rm -r` over SFTP work.
+- Mounting only the backup key instead of all of `/root/.ssh` would not help, because root reads the key on the host.
+
+**Not fixed.** The fix changes the backup design that work-plan Q9 settled, and costs money or a second machine. The options:
+- **(A) Storage Box snapshots.** Automatic snapshots set up in Hetzner's console, which the SFTP user cannot delete. No code changes, but the snapshots use the box's quota.
+- **(B) rest-server `--append-only`.** Runs on a host the VM cannot log in to. `backup.sh` stops pruning, and that host prunes instead.
+- **(C) An S3 bucket with object lock.** Changes `RESTIC_REPOSITORY` and the provider.
+
+(A) is the smallest step. Until one is chosen, the off-site copy protects against losing the VM, not against someone who controls it.
+
+### Rejected
+
+- [medium] The fork gate on CI's `image` job lets AGit pull requests through, and that job gets the host Docker socket: refuted by all three verifiers.
+- [low] The app port is published on all interfaces, and nothing enforces that only the proxy reaches it: refuted by all three verifiers.
