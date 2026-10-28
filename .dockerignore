@@ -1,21 +1,20 @@
-.git
-.github
-.env
-**/.venv
-**/__pycache__
-**/.pytest_cache
-**/.mypy_cache
-**/.ruff_cache
-**/*.egg-info
-**/node_modules
+# Build context of the root Dockerfile (the production image). It needs only frontend/ and
+# server/, so everything else stays out: .git, .cargo (the untracked worktree settings),
+# backend/, docs/, deploy/ and data/.
+*
+!frontend/
+!server/
+
+# Inside frontend/: the image installs the dependencies and builds dist/ itself.
+frontend/node_modules
 frontend/dist
-frontend/e2e
-frontend/test-results
-frontend/playwright-report
-frontend/playwright.config.ts
-backend/app/static
-backend/tests
-data/*
-!data/.gitkeep
-*.md
-.DS_Store
+
+# Inside server/: the build output (many GB on a dev machine) and local settings.
+server/target
+server/.cargo
+server/data
+server/.env
+
+# Anywhere.
+**/.DS_Store
+**/*.log

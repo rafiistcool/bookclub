@@ -1,0 +1,113 @@
+# shellcheck shell=bash
+# Shared by backup.sh and restore-test.sh (README.md, "Backups"); sourced, never run. The caller
+# sets `here` to its own directory first.
+
+# The scripts' settings: backup.env next to them, or the file BACKUP_ENV names.
+load_config() {
+    local file=${BACKUP_ENV:-$here/backup.env}
+    [[ -r $file ]] || die "cannot read $file (copy backup.env.example and fill it in)"
+    set -a
+    # shellcheck source=SCRIPTDIR/backup.env.example disable=SC1091 # followed only with -x
+    . "$file"
+    set +a
+    COMPOSE_DIR=${COMPOSE_DIR:-/opt/bookclub}
+    MEDIA_DIR=${MEDIA_DIR:-/srv/bookclub/media}
+    BACKUP_DIR=${BACKUP_DIR:-/var/lib/bookclub-backup}
+    RESTIC_IMAGE=${RESTIC_IMAGE:-restic/restic:0.17.3}
+    RESTIC_SSH_DIR=${RESTIC_SSH_DIR:-/root/.ssh}
+    BACKUP_HOST=${BACKUP_HOST:-bookclub}
+    CHECK_WEEKDAY=${CHECK_WEEKDAY:-7}
+    BACKUP_HEARTBEAT_URL=${BACKUP_HEARTBEAT_URL-}
+    RESTORE_TEST_HEARTBEAT_URL=${RESTORE_TEST_HEARTBEAT_URL-}
+    RESTORE_POSTGRES_IMAGE=${RESTORE_POSTGRES_IMAGE:-postgres:17}
+    [[ -n ${RESTIC_REPOSITORY-} ]] || die "$file sets no RESTIC_REPOSITORY"
+    [[ -r ${RESTIC_PASSWORD_FILE-} ]] || die "cannot read RESTIC_PASSWORD_FILE ${RESTIC_PASSWORD_FILE-}"
+    local dir
+    for dir in "$COMPOSE_DIR" "$MEDIA_DIR" "$BACKUP_DIR"; do
+        [[ $dir == /?* ]] || die "$dir is not an absolute path"
+    done
+    # What a snapshot holds: the dump with its counts (STAGE_DIR), and the media.
+    # shellcheck disable=SC2034 # used by backup.sh and restore-test.sh
+    STAGE_DIR=$BACKUP_DIR/db
+}
+
+log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
+die() {
+    log "error: $*" >&2
+    exit 1
+}
+
+# restic, from RESTIC_IMAGE, with the caller's uid. The container sees BACKUP_DIR (read-write)
+# and MEDIA_DIR (read-only) at their own paths, so snapshot paths are host paths, and restores
+# go into BACKUP_DIR. Its host name is BACKUP_HOST: snapshots, `forget` and `latest` group by it.
+restic_() {
+    local -a run=(
+        docker run --rm --hostname "$BACKUP_HOST" --user "$(id -u):$(id -g)"
+        -e RESTIC_REPOSITORY -e RESTIC_PASSWORD_FILE -e "RESTIC_CACHE_DIR=$BACKUP_DIR/cache"
+        -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_DEFAULT_REGION
+        -v "$BACKUP_DIR:$BACKUP_DIR" -v "$MEDIA_DIR:$MEDIA_DIR:ro"
+        -v "$RESTIC_PASSWORD_FILE:$RESTIC_PASSWORD_FILE:ro"
+    )
+    case $RESTIC_REPOSITORY in
+        /*) run+=(-v "$RESTIC_REPOSITORY:$RESTIC_REPOSITORY") ;;
+        # ssh reads its key, config and known_hosts there; it needs uid 0 (no passwd entry else).
+        sftp:*) run+=(-v "$RESTIC_SSH_DIR:/root/.ssh:ro") ;;
+    esac
+    # Docker would create a missing BACKUP_DIR owned by root, with the default mode.
+    install -d -m 0700 "$BACKUP_DIR"
+    "${run[@]}" "$RESTIC_IMAGE" --retry-lock 10m "$@"
+}
+
+# The row count of every table in the public schema, then the newest migration, as
+# "name<TAB>count" lines. backup.sh runs it in the dump's snapshot, restore-test.sh on the
+# restored copy, and the two outputs must be equal.
+counts_sql() {
+    cat <<'SQL'
+SELECT format('SELECT %L, count(*) FROM %I.%I', tablename, schemaname, tablename)
+FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename \gexec
+SELECT '(migration)', coalesce(max(version), 0) FROM _sqlx_migrations WHERE success;
+SQL
+}
+
+# psql's options for counts_sql: no psqlrc, quiet, unaligned rows separated by a tab, and an
+# exit status of 3 on the first error.
+# shellcheck disable=SC2034 # used by backup.sh and restore-test.sh
+psql_tsv=(psql -X -q -A -t -F $'\t' -v ON_ERROR_STOP=1 -U bookclub -d bookclub)
+
+# A heartbeat in the style of healthchecks.io: GET <url>/start, or POST <url>/<exit status> with
+# a body file (the end of the log). No URL, no ping; a failed ping is only logged.
+heartbeat() {
+    local url=$1 what=$2 body=${3-}
+    [[ -n $url ]] || return 0
+    local -a data=()
+    [[ -z $body ]] || data=(--data-binary "@$body")
+    curl -fsS -m 10 --retry 3 -o /dev/null "${data[@]}" "${url%/}/$what" ||
+        log "warning: the heartbeat ping ${url%/}/$what failed"
+}
+
+# Runs the function "$3" with its arguments under the lock both scripts share, waiting up to 3 h
+# for it (Sunday's restore test may start while the backup still checks). Its output goes
+# to stdout (the journal) and to BACKUP_DIR/<$1>.log. The heartbeat $2 gets /start first, then
+# the exit status with the last 50 lines of that log. Returns the function's exit status.
+supervise() {
+    local name=$1 url=$2 status
+    shift 2
+    install -d -m 0700 "$BACKUP_DIR"
+    exec 9>"$BACKUP_DIR/.lock"
+    if ! flock -n 9; then
+        log "waiting for the other backup or restore test to finish ($BACKUP_DIR/.lock)"
+        flock -w 10800 9 || die "$BACKUP_DIR/.lock was held for 3 hours"
+    fi
+    heartbeat "$url" start
+    set +e
+    (
+        set -e
+        "$@"
+    ) 2>&1 | tee "$BACKUP_DIR/$name.log"
+    status=${PIPESTATUS[0]}
+    set -e
+    tail -n 50 "$BACKUP_DIR/$name.log" >"$BACKUP_DIR/$name.log.tail"
+    heartbeat "$url" "$status" "$BACKUP_DIR/$name.log.tail"
+    rm -f "$BACKUP_DIR/$name.log.tail"
+    return "$status"
+}

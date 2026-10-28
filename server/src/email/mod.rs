@@ -8,6 +8,7 @@ use lettre::message::Mailbox;
 use lettre::message::header::ContentType;
 use lettre::{Address, AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 
+use crate::auth::random;
 use crate::config::Config;
 
 /// One plain-text message.
@@ -61,21 +62,63 @@ impl SmtpEmail {
             .context("EMAIL_FROM is not a valid mailbox, e.g. Bookclub <noreply@example.com>")?;
         Ok(Self { transport, from })
     }
+
+    /// The message for `msg`, with an explicit `Message-ID` (see [`message_id`]). lettre adds
+    /// the `Date` header itself.
+    fn message(&self, msg: Email) -> anyhow::Result<Message> {
+        // A bare address: a display name or angle brackets in `to` could never pick the
+        // recipient.
+        let to: Address = msg.to.parse().context("invalid recipient address")?;
+        Message::builder()
+            .from(self.from.clone())
+            .to(Mailbox::new(None, to))
+            .message_id(Some(message_id(self.from.email.domain())))
+            .subject(msg.subject)
+            .header(ContentType::TEXT_PLAIN)
+            .body(msg.text)
+            .context("cannot build the email")
+    }
+}
+
+/// A `Message-ID` of `<uuid@domain>`, with the domain of `EMAIL_FROM` and a random version 4
+/// UUID. lettre adds no `Message-ID` by itself, and its own default names the host, which in a
+/// container is the container id; spam filters count both against a message.
+fn message_id(domain: &str) -> String {
+    let mut bytes = [0u8; 16];
+    random::fill(&mut bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+    bytes[8] = (bytes[8] & 0x3f) | 0x80; // the RFC 9562 variant
+    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!(
+        "<{}-{}-{}-{}-{}@{domain}>",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
+
+/// The message `bookclub-server send-test-mail` sends: English, with no link that does
+/// anything. It checks `SMTP_URL`, `EMAIL_FROM` and the sender domain's SPF, DKIM and DMARC.
+pub fn test_mail(config: &Config, to: &str) -> Email {
+    Email {
+        to: to.to_owned(),
+        subject: format!("{} test mail", config.service_name),
+        text: format!(
+            "This is a test mail from {service} at {url}.\n\n\
+             An operator sent it with `bookclub-server send-test-mail` to check the outgoing \
+             mail settings. Nothing needs to be done.\n",
+            service = config.service_name,
+            url = config.public_url,
+        ),
+    }
 }
 
 #[async_trait::async_trait]
 impl EmailSender for SmtpEmail {
     async fn send(&self, msg: Email) -> anyhow::Result<()> {
-        // A bare address: a display name or angle brackets in `to` could never pick the
-        // recipient.
-        let to: Address = msg.to.parse().context("invalid recipient address")?;
-        let message = Message::builder()
-            .from(self.from.clone())
-            .to(Mailbox::new(None, to))
-            .subject(msg.subject)
-            .header(ContentType::TEXT_PLAIN)
-            .body(msg.text)
-            .context("cannot build the email")?;
+        let message = self.message(msg)?;
         self.transport
             .send(message)
             .await
@@ -126,6 +169,59 @@ mod tests {
         assert!(error.to_string().contains("EMAIL_FROM"));
         let error = SmtpEmail::new(&config(&[])).err().unwrap();
         assert!(error.to_string().contains("SMTP_URL"));
+    }
+
+    /// #51: every SMTP message carries a `Message-ID` on the sender's domain (not the
+    /// container's hostname) and a `Date`. (The SMTP pool needs a runtime.)
+    #[tokio::test]
+    async fn smtp_messages_carry_a_message_id_on_the_sender_domain() {
+        let smtp = SmtpEmail::new(&config(&[
+            ("SMTP_URL", "smtp://127.0.0.1:1"),
+            ("EMAIL_FROM", "Bookclub <noreply@mail.example.com>"),
+        ]))
+        .unwrap();
+        let shape = regex::Regex::new(
+            r"^<[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}@mail\.example\.com>$",
+        )
+        .unwrap();
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let message = smtp
+                .message(Email {
+                    to: "ada@example.test".into(),
+                    subject: "Hi".into(),
+                    text: "Body".into(),
+                })
+                .unwrap();
+            let headers = message.headers();
+            let id = headers.get_raw("Message-ID").unwrap().to_owned();
+            assert!(shape.is_match(&id), "{id}");
+            assert!(headers.get_raw("Date").is_some());
+            assert_eq!(
+                headers.get_raw("From"),
+                Some("Bookclub <noreply@mail.example.com>")
+            );
+            ids.push(id);
+        }
+        assert_ne!(ids[0], ids[1]);
+    }
+
+    #[test]
+    fn the_test_mail_names_the_service_and_its_origin() {
+        let config = config(&[
+            ("SERVICE_NAME", "Shelfmates"),
+            ("PUBLIC_URL", "https://books.example.com"),
+        ]);
+        let mail = test_mail(&config, "ada@example.test");
+        assert_eq!(mail.to, "ada@example.test");
+        assert_eq!(mail.subject, "Shelfmates test mail");
+        assert!(
+            mail.text.starts_with(
+                "This is a test mail from Shelfmates at https://books.example.com.\n\n"
+            ),
+            "{}",
+            mail.text
+        );
     }
 
     /// The recipient is parsed as a bare address before anything is sent, so a mailbox

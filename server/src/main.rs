@@ -1,16 +1,22 @@
+use std::io::IsTerminal;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
+use bookclub_server::auth::rules::valid_email;
 use bookclub_server::clubs::out::invite_out;
-use bookclub_server::config::Config;
+use bookclub_server::config::{Config, EmailTransport};
+use bookclub_server::email::{self, EmailSender, LogEmail, SmtpEmail};
 use bookclub_server::importer::{self, ImportError};
+use bookclub_server::media::shared::FsMediaStore;
 use bookclub_server::{AppState, admin, app, jobs, serve};
 use clap::{Parser, Subcommand};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{Connection, PgConnection, PgPool};
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
+
+mod healthcheck;
 
 const CONNECT_RETRY_EVERY: Duration = Duration::from_secs(2);
 const CONNECT_GIVE_UP_AFTER: Duration = Duration::from_secs(60);
@@ -50,6 +56,15 @@ enum Command {
     },
     /// Print the OpenAPI document as JSON. Needs no database.
     Openapi,
+    /// Ask the running server's /api/health on the address BIND_ADDR names (the image's
+    /// HEALTHCHECK). Exits 0 only on 200. Reads no other setting and needs no database.
+    Healthcheck,
+    /// Send one test mail through the configured transport (SMTP_URL, EMAIL_FROM). Exits
+    /// non-zero when sending fails. Needs no database.
+    SendTestMail {
+        /// The recipient address.
+        address: String,
+    },
 }
 
 #[tokio::main]
@@ -58,6 +73,11 @@ async fn main() -> ExitCode {
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
+        // The log goes to stderr, so a command's stdout holds only its result (beta-invite's
+        // code and link, openapi's JSON, the importer's report). Colours only on a terminal:
+        // Docker's log files keep plain text.
+        .with_writer(std::io::stderr)
+        .with_ansi(std::io::stderr().is_terminal())
         .init();
 
     let cli = Cli::parse();
@@ -68,6 +88,8 @@ async fn main() -> ExitCode {
         Command::MakeAdmin { username } => make_admin(&username).await,
         Command::BetaInvite { uses, days } => beta_invite(uses, days).await,
         Command::Openapi => print_openapi(),
+        Command::Healthcheck => healthcheck::run().await,
+        Command::SendTestMail { address } => send_test_mail(&address).await,
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -80,6 +102,7 @@ async fn main() -> ExitCode {
 
 async fn serve() -> Result<()> {
     let config = Config::from_env()?;
+    check_media_dir(&config).await?;
     let db = connect(&config).await?;
     let bind_addr = config.bind_addr;
     let state = AppState::new(db, config)?;
@@ -115,6 +138,14 @@ async fn serve() -> Result<()> {
         background.abort_all();
     }
     Ok(())
+}
+
+/// Fails with `MEDIA_DIR <path> is not writable` unless the media directory can be created and
+/// written. Runs before the database connection, so a wrong mount fails at once.
+async fn check_media_dir(config: &Config) -> Result<()> {
+    FsMediaStore::new(config.media_dir.clone())
+        .check_writable()
+        .await
 }
 
 /// Connects to Postgres, retrying every 2 s for up to 60 s (the database may still be starting),
@@ -154,7 +185,7 @@ async fn connect(config: &Config) -> Result<PgPool> {
 }
 
 async fn import_legacy(args: importer::Args) -> ExitCode {
-    let state = match connected_state().await {
+    let state = match connected_state(Media::Writes).await {
         Ok(state) => state,
         Err(error) => return fail(&error),
     };
@@ -169,18 +200,30 @@ async fn import_legacy(args: importer::Args) -> ExitCode {
 }
 
 async fn rematch_legacy(args: importer::RematchArgs) -> ExitCode {
-    let state = match connected_state().await {
+    let state = match connected_state(Media::Untouched).await {
         Ok(state) => state,
         Err(error) => return fail(&error),
     };
     report(importer::rematch(state.db.clone(), state.lookup.clone(), args).await)
 }
 
-/// The production state for the maintenance commands: the same configuration as `serve`.
-async fn connected_state() -> Result<AppState> {
+/// The production state for the maintenance commands: the same configuration as `serve`. A
+/// command that stores media passes `Media::Writes`, which checks `MEDIA_DIR` first, as `serve`
+/// does.
+async fn connected_state(media: Media) -> Result<AppState> {
     let config = Config::from_env()?;
+    if media == Media::Writes {
+        check_media_dir(&config).await?;
+    }
     let db = connect(&config).await?;
     AppState::new(db, config)
+}
+
+/// Whether a maintenance command stores media.
+#[derive(PartialEq, Eq)]
+enum Media {
+    Writes,
+    Untouched,
 }
 
 /// Prints an importer report; `TargetNotEmpty` exits with 2, other errors with 1.
@@ -230,6 +273,23 @@ async fn beta_invite(uses: Option<i32>, days: Option<i32>) -> Result<()> {
         .map_err(|error| anyhow::anyhow!("cannot read the new invite: {}", error.detail))?;
     println!("{}", invite.code);
     println!("{}", invite.url);
+    Ok(())
+}
+
+/// Sends [`email::test_mail`] to `address` through the configured transport. It reads the full
+/// configuration, as `serve` does, but never connects to the database.
+async fn send_test_mail(address: &str) -> Result<()> {
+    let config = Config::from_env()?;
+    let address = address.trim();
+    if !valid_email(address) {
+        bail!("{address:?} is not a plain email address, e.g. ada@example.com");
+    }
+    let sender: Box<dyn EmailSender> = match config.email_transport {
+        EmailTransport::Log => Box::new(LogEmail),
+        EmailTransport::Smtp => Box::new(SmtpEmail::new(&config)?),
+    };
+    sender.send(email::test_mail(&config, address)).await?;
+    println!("sent a test mail to {address}");
     Ok(())
 }
 
@@ -307,5 +367,18 @@ mod tests {
         assert!(matches!(cli.command, Some(Command::RematchLegacy(args)) if args.dry_run));
         let cli = Cli::try_parse_from(["bookclub-server"]).unwrap();
         assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn the_deploy_commands_parse() {
+        let cli = Cli::try_parse_from(["bookclub-server", "healthcheck"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::Healthcheck)));
+        let cli =
+            Cli::try_parse_from(["bookclub-server", "send-test-mail", "ada@example.com"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::SendTestMail { address }) if address == "ada@example.com"
+        ));
+        assert!(Cli::try_parse_from(["bookclub-server", "send-test-mail"]).is_err());
     }
 }
