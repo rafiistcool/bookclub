@@ -35,7 +35,8 @@ impl Validate for AccountDeleteIn {}
 /// - Personal data, sessions, memberships and the user's activity events go with the account;
 ///   picks, nominations, invites and catalog rows keep existing without the name.
 ///
-/// A wrong password counts as a login failure (429 after ten).
+/// The password is checked under the current-password limits (10 checks per session in ten
+/// minutes, 30 per account an hour; then 429).
 #[utoipa::path(
     delete,
     path = "/api/auth/me",
@@ -48,7 +49,8 @@ impl Validate for AccountDeleteIn {}
         (status = 400, body = ErrorBody, description = "`Current password is wrong`"),
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
         (status = 409, body = ErrorBody, description = "`Transfer or delete your clubs first`"),
-        (status = 429, body = ErrorBody, description = "`Too many attempts. Wait a few minutes.`")
+        (status = 429, body = ErrorBody, description = "`Too many attempts. Wait a few minutes.`"),
+        (status = 503, body = ErrorBody, description = "`The server is busy. Try again in a moment.`")
     )
 )]
 pub async fn delete_account(
@@ -56,7 +58,7 @@ pub async fn delete_account(
     State(state): State<AppState>,
     ApiJson(body): ApiJson<AccountDeleteIn>,
 ) -> ApiResult<Response> {
-    let verified_hash = verify_current_password(&state, user.id, &body.password).await?;
+    let verified_hash = verify_current_password(&state, &user, &body.password).await?;
     let mut tx = state.db.begin().await?;
     let prefixes = delete_user(&mut tx, user.id, &verified_hash).await?;
     tx.commit().await.map_err(|error| {

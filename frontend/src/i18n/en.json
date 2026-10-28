@@ -643,6 +643,7 @@
     "crossSite": "This request came from another site and was refused",
     "bodyTooLarge": "That is too much to send at once",
     "requestTimeout": "That took too long. Try again.",
+    "serverBusy": "The server is busy. Try again in a moment.",
     "noPickYet": "There is no club pick yet",
     "noPickWithId": "That pick does not exist (any more)",
     "pickClosed": "That pick is over",

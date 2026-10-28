@@ -643,6 +643,7 @@
     "crossSite": "Diese Anfrage kam von einer anderen Seite und wurde abgelehnt",
     "bodyTooLarge": "Das ist zu viel auf einmal",
     "requestTimeout": "Das hat zu lange gedauert. Versuch es nochmal.",
+    "serverBusy": "Der Server ist gerade ausgelastet. Versuch es gleich nochmal.",
     "noPickYet": "Es gibt noch kein Club-Buch",
     "noPickWithId": "Dieses Club-Buch gibt es nicht (mehr)",
     "pickClosed": "Dieses Club-Buch ist vorbei",

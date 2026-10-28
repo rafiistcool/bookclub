@@ -121,6 +121,7 @@ const API_ERROR_KEYS: Record<string, string> = {
   "Cross-site request refused": "errors.crossSite",
   "Request body is too large": "errors.bodyTooLarge",
   "The request took too long": "errors.requestTimeout",
+  "The server is busy. Try again in a moment.": "errors.serverBusy",
 };
 
 /** The edit-request field a template names, by the form's label; an unknown key as it is. */

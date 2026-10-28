@@ -57,7 +57,8 @@ pub(crate) struct Authenticated {
         (status = 204, description = "Signed in; `Set-Cookie` carries the session"),
         (status = 400, body = ErrorBody, description = "Malformed body"),
         (status = 401, body = ErrorBody, description = "`Wrong username or password`"),
-        (status = 429, body = ErrorBody, description = "`Too many attempts. Wait a few minutes.`")
+        (status = 429, body = ErrorBody, description = "`Too many attempts. Wait a few minutes.`"),
+        (status = 503, body = ErrorBody, description = "`The server is busy. Try again in a moment.`")
     )
 )]
 pub async fn login(
@@ -145,7 +146,7 @@ pub(crate) async fn authenticate(
     };
     failures.check_and_hit(&key).map_err(too_many)?;
     let stored = account.as_ref().map(|(_, hash)| hash.as_str());
-    let verdict = state.passwords.verify(password, stored).await;
+    let verdict = state.passwords.verify(password, stored).await?;
     let (Verdict::Match { rehash }, Some((user_id, stored))) = (verdict, account) else {
         return Err(AppError::new(
             StatusCode::UNAUTHORIZED,

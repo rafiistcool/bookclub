@@ -470,6 +470,68 @@ async fn change_password_revokes_other_sessions_and_reset_links(db: PgPool) {
     );
 }
 
+/// Security review 2026-10-28 #7: a copy of the session cookie (a shared browser profile, an
+/// extension) is the same `sessions` row, so the session list never shows it, and a change that
+/// kept the current session kept the copy alive. The change now gives the cookie session a new
+/// secret with the same label: the copy is signed out, the device that changed stays signed in.
+#[sqlx::test]
+async fn a_password_change_renews_the_cookie_and_signs_out_copies(db: PgPool) {
+    let app = TestApp::new(db).await;
+    app.user("ada").await;
+    let laptop = app.anon().with_header("user-agent", "Laptop browser");
+    login(&laptop, "ada", PASSWORD).await.assert_status(204);
+    let old = laptop.cookie().unwrap();
+    let copy = app.anon();
+    copy.set_cookie(Some(&old));
+    copy.get("/api/auth/me").await.assert_status(200);
+
+    let changed = laptop
+        .patch("/api/auth/password", change(PASSWORD, "newpassword1"))
+        .await;
+    changed.assert_status(204);
+    assert_eq!(
+        changed.set_cookies().len(),
+        1,
+        "{:?}",
+        changed.set_cookies()
+    );
+    let new = laptop.cookie().unwrap();
+    assert_ne!(new, old);
+    laptop.get("/api/auth/me").await.assert_status(200);
+    copy.get("/api/auth/me").await.assert_status(401);
+    let sessions = laptop.get("/api/auth/sessions").await.json();
+    let items = sessions["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "{sessions}");
+    assert_eq!(items[0]["label"], "Laptop browser");
+    assert_eq!(items[0]["current"], true);
+}
+
+/// A bearer token keeps its secret through a password change (the app holds it); every other
+/// session still goes.
+#[sqlx::test]
+async fn a_password_change_by_bearer_token_keeps_the_token(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let created = app
+        .anon()
+        .post(
+            "/api/auth/tokens",
+            json!({"username": "ada", "password": PASSWORD, "label": "phone"}),
+        )
+        .await;
+    created.assert_status(201);
+    let phone = app
+        .anon()
+        .with_bearer(created.json()["token"].as_str().unwrap());
+    let changed = phone
+        .patch("/api/auth/password", change(PASSWORD, "newpassword1"))
+        .await;
+    changed.assert_status(204);
+    assert!(changed.set_cookies().is_empty());
+    phone.get("/api/auth/me").await.assert_status(200);
+    ada.get("/api/auth/me").await.assert_status(401);
+}
+
 /// An unverified account's open link verifies its own address, not a change someone else
 /// started: a password change leaves it open.
 #[sqlx::test]
@@ -496,21 +558,95 @@ async fn change_password_keeps_the_link_of_an_unverified_address(db: PgPool) {
     );
 }
 
-/// The password change shares the login failure bucket (auth spec §2.3): ten wrong current
-/// passwords block both.
+/// Security review 2026-10-28 #3: the current-password check has buckets of its own. Failed
+/// logins by name, which anyone can send, never block a signed-in owner's password change, and
+/// wrong current passwords no longer block the login.
 #[sqlx::test]
-async fn wrong_current_passwords_share_the_login_limit(db: PgPool) {
+async fn failed_logins_and_current_password_checks_do_not_block_each_other(db: PgPool) {
     let app = TestApp::new(db).await;
     let ada = app.user("ada").await;
     for _ in 0..10 {
+        login(&app.anon(), "ada", "nope-nope")
+            .await
+            .assert_detail(401, "Wrong username or password");
+    }
+    login(&app.anon(), "ada", PASSWORD)
+        .await
+        .assert_detail(429, "Too many attempts. Wait a few minutes.");
+    ada.patch("/api/auth/password", change(PASSWORD, "newpassword1"))
+        .await
+        .assert_status(204);
+
+    let grace = app.user("grace").await;
+    for _ in 0..10 {
+        grace
+            .patch("/api/auth/password", change("nope-nope", "newpassword1"))
+            .await
+            .assert_detail(400, "Current password is wrong");
+    }
+    grace
+        .patch("/api/auth/password", change(PASSWORD, "newpassword1"))
+        .await
+        .assert_detail(429, "Too many attempts. Wait a few minutes.");
+    login(&app.anon(), "grace", PASSWORD)
+        .await
+        .assert_status(204);
+}
+
+/// Security review 2026-10-28 #1: every check counts, right or wrong, and a right password
+/// clears nothing, so a session cannot run argon2 without limit by sending its own password
+/// again and again. Ten checks per session in ten minutes; another session has its own ten.
+#[sqlx::test]
+async fn current_password_checks_count_per_session_and_a_right_one_clears_nothing(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    for _ in 0..5 {
         ada.patch("/api/auth/password", change("nope-nope", "newpassword1"))
             .await
             .assert_detail(400, "Current password is wrong");
     }
-    ada.patch("/api/auth/password", change(PASSWORD, "newpassword1"))
+    for _ in 0..5 {
+        ada.patch("/api/auth/password", change(PASSWORD, PASSWORD))
+            .await
+            .assert_detail(400, "Pick a different password");
+    }
+    let refused = ada
+        .patch("/api/auth/password", change(PASSWORD, "newpassword1"))
+        .await;
+    refused.assert_detail(429, "Too many attempts. Wait a few minutes.");
+    assert!(refused.header("retry-after").is_some());
+    let laptop = app.anon();
+    login(&laptop, "ada", PASSWORD).await.assert_status(204);
+    laptop
+        .patch("/api/auth/password", change(PASSWORD, "newpassword1"))
+        .await
+        .assert_status(204);
+}
+
+/// Security review 2026-10-28 #1: 30 checks per account an hour across its sessions, so new
+/// sessions do not multiply the argon2 work one account can cause.
+#[sqlx::test]
+async fn current_password_checks_are_limited_per_account(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let mut sessions = vec![ada];
+    for _ in 0..3 {
+        let device = app.anon();
+        login(&device, "ada", PASSWORD).await.assert_status(204);
+        sessions.push(device);
+    }
+    for device in &sessions[..3] {
+        for _ in 0..10 {
+            device
+                .patch("/api/auth/password", change(PASSWORD, PASSWORD))
+                .await
+                .assert_detail(400, "Pick a different password");
+        }
+    }
+    sessions[3]
+        .patch("/api/auth/password", change(PASSWORD, "newpassword1"))
         .await
         .assert_detail(429, "Too many attempts. Wait a few minutes.");
-    login(&app.anon(), "ada", PASSWORD).await.assert_status(429);
 }
 
 /// Of many concurrent wrong current passwords, at most ten are verified. No password can be
@@ -547,11 +683,10 @@ async fn concurrent_wrong_current_passwords_verify_at_most_ten(db: PgPool) {
     assert!(pending.next().await.is_none());
 }
 
-/// A right current password clears the failures even when the change is refused with `Pick a
-/// different password` (§5.4). Refused changes leave every session, bearer token and reset
-/// link of the user alone.
+/// Refused changes leave every session, bearer token and reset link of the user alone. A right
+/// current password counts like a wrong one (§5.4): it clears nothing.
 #[sqlx::test]
-async fn refused_changes_keep_sessions_and_a_right_password_clears_failures(db: PgPool) {
+async fn refused_changes_keep_sessions_and_reset_links(db: PgPool) {
     let app = TestApp::new(db).await;
     let ada = app.user("ada").await;
     let laptop = app.anon();
@@ -602,13 +737,9 @@ async fn refused_changes_keep_sessions_and_a_right_password_clears_failures(db: 
     ada.patch("/api/auth/password", change(PASSWORD, "short"))
         .await
         .assert_detail(400, "New password must be at least 8 characters");
-    // The right password cleared the nine failures: ten more are answered, the eleventh not.
-    for _ in 0..10 {
-        ada.patch("/api/auth/password", change("nope-nope", "newpassword1"))
-            .await
-            .assert_detail(400, "Current password is wrong");
-    }
-    ada.patch("/api/auth/password", change("nope-nope", "newpassword1"))
+    // Nine wrong and one right check: the session's ten are used up. The short password was
+    // refused by the body check, before any password was checked.
+    ada.patch("/api/auth/password", change(PASSWORD, "newpassword1"))
         .await
         .assert_detail(429, "Too many attempts. Wait a few minutes.");
 
@@ -635,10 +766,10 @@ async fn a_change_racing_a_reset_does_not_overwrite_it(db: PgPool) {
     let ada = app.user("ada").await;
     let reset = app.state.passwords.hash("resetpassword1").await.unwrap();
     let key = format!("u:{}", ada.id());
-    // Nine earlier failures: the change's own hit blocks the key, which shows that it has read
-    // the old hash.
-    for _ in 0..9 {
-        app.state.limits.login_failures.hit(&key);
+    // 29 earlier checks: the change's own check fills the account's bucket, which shows that it
+    // has read the old hash.
+    for _ in 0..29 {
+        app.state.limits.password_check_user.hit(&key);
     }
     let held = hold_passwords(&app).await;
     let changing = tokio::spawn({
@@ -649,7 +780,7 @@ async fn a_change_racing_a_reset_does_not_overwrite_it(db: PgPool) {
         }
     });
     timeout(WAIT, async {
-        while !app.state.limits.login_failures.is_limited(&key) {
+        while !app.state.limits.password_check_user.is_limited(&key) {
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
     })

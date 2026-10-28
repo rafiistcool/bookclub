@@ -649,8 +649,10 @@ async fn shared_records_outlive_the_account_without_the_name(db: PgPool) {
     );
 }
 
+/// Wrong passwords count against the session's current-password checks (10 in ten minutes),
+/// not against the login (security review 2026-10-28 #3).
 #[sqlx::test]
-async fn a_wrong_password_counts_as_a_login_failure(db: PgPool) {
+async fn a_wrong_password_counts_as_a_password_check(db: PgPool) {
     let app = TestApp::new(db).await;
     let ada = app.user("ada").await;
     app.anon()
@@ -669,6 +671,31 @@ async fn a_wrong_password_counts_as_a_login_failure(db: PgPool) {
         .await
         .assert_detail(429, "Too many attempts. Wait a few minutes.");
     ada.get("/api/auth/me").await.assert_status(200);
+    app.anon()
+        .post(
+            "/api/auth/login",
+            json!({"username": "ada", "password": PASSWORD}),
+        )
+        .await
+        .assert_status(204);
+}
+
+/// Security review 2026-10-28 #3: anyone who knows a username can fill its login failure
+/// bucket; the signed-in owner can still delete the account.
+#[sqlx::test]
+async fn failed_logins_by_others_do_not_block_the_deletion(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    for _ in 0..10 {
+        app.anon()
+            .post(
+                "/api/auth/login",
+                json!({"username": "ada", "password": "guess guess"}),
+            )
+            .await
+            .assert_status(401);
+    }
+    delete_me(&ada, PASSWORD).await.assert_status(204);
 }
 
 /// An app deletes its account with its bearer token; the token dies with it.
@@ -874,10 +901,10 @@ async fn a_deletion_racing_a_reset_deletes_nothing(db: PgPool) {
     let (avatar, prefix) = avatar_of(&app, &ada, Some(ada.id())).await;
     let reset = app.state.passwords.hash("resetpassword1").await.unwrap();
     let key = format!("u:{}", ada.id());
-    // Nine earlier failures: the deletion's own hit blocks the key, which shows that it has
-    // read the old hash.
-    for _ in 0..9 {
-        app.state.limits.login_failures.hit(&key);
+    // 29 earlier checks: the deletion's own check fills the account's bucket, which shows that it
+    // has read the old hash.
+    for _ in 0..29 {
+        app.state.limits.password_check_user.hit(&key);
     }
     let held = hold_passwords(&app).await;
     let deleting = tokio::spawn({
@@ -885,7 +912,7 @@ async fn a_deletion_racing_a_reset_deletes_nothing(db: PgPool) {
         async move { delete_me(&ada, PASSWORD).await }
     });
     timeout(WAIT, async {
-        while !app.state.limits.login_failures.is_limited(&key) {
+        while !app.state.limits.password_check_user.is_limited(&key) {
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
     })

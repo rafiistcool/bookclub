@@ -231,7 +231,8 @@ pub async fn resend_verification(
 
 /// Changes the account's address. The answer is the same whether or not the address is in use.
 ///
-/// - The current password is checked first; a wrong one counts as a login failure.
+/// - The per-account limit (3 an hour) is checked first, then the current password (under the
+///   current-password limits), and only then is the change counted.
 /// - Without an address, or with an unverified one, the new address replaces it at once (still
 ///   unverified) and gets a verification link.
 /// - A verified address stays until the new one is verified: the link goes to the new address,
@@ -256,7 +257,8 @@ pub async fn resend_verification(
         (status = 204, description = "Accepted; a verification link is on its way"),
         (status = 400, body = ErrorBody, description = "`Enter a valid email address`, `Current password is wrong`"),
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
-        (status = 429, body = ErrorBody, description = "`Slow down a little. Try again later.` (3 an hour), or `Too many attempts. Wait a few minutes.` (wrong passwords)")
+        (status = 429, body = ErrorBody, description = "`Slow down a little. Try again later.` (3 an hour), or `Too many attempts. Wait a few minutes.` (current-password checks)"),
+        (status = 503, body = ErrorBody, description = "`The server is busy. Try again in a moment.`")
     )
 )]
 pub async fn change_email(
@@ -264,11 +266,19 @@ pub async fn change_email(
     State(state): State<AppState>,
     ApiJson(body): ApiJson<EmailChangeIn>,
 ) -> ApiResult<StatusCode> {
-    let verified_hash = verify_current_password(&state, user.id, &body.current_password).await?;
+    // Checked first without counting, so a request the limit refuses costs no argon2 work and
+    // a mistyped password does not use up a change; counted once the password is right.
+    let send_key = account_key(user.id);
     state
         .limits
         .email_send_user
-        .check_and_hit(&account_key(user.id))
+        .check(&send_key)
+        .map_err(|wait| wait.into_error(msg::SLOW_DOWN))?;
+    let verified_hash = verify_current_password(&state, &user, &body.current_password).await?;
+    state
+        .limits
+        .email_send_user
+        .check_and_hit(&send_key)
         .map_err(|wait| wait.into_error(msg::SLOW_DOWN))?;
 
     let mut tx = state.db.begin().await?;

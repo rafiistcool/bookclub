@@ -444,8 +444,10 @@ async fn a_taken_address_answers_like_a_free_one(db: PgPool) {
     assert!(to_grace.iter().all(|mail| !mail.text.contains("#token=")));
 }
 
+/// Wrong passwords count against the session's current-password checks, not the login
+/// (security review 2026-10-28 #3).
 #[sqlx::test]
-async fn a_wrong_password_changes_nothing_and_counts_as_a_login_failure(db: PgPool) {
+async fn a_wrong_password_changes_nothing_and_counts_as_a_check(db: PgPool) {
     let app = TestApp::new(db).await;
     let ada = app.user("ada").await;
     let wrong = json!({"email": "new@example.test", "current_password": "wrong password"});
@@ -457,17 +459,45 @@ async fn a_wrong_password_changes_nothing_and_counts_as_a_login_failure(db: PgPo
     let blocked = change_email(&ada, "new@example.test").await;
     blocked.assert_detail(429, "Too many attempts. Wait a few minutes.");
     assert!(blocked.header("retry-after").is_some());
-    // The same bucket as the login.
+    // Not the login's bucket.
     app.anon()
         .post(
             "/api/auth/login",
             json!({"username": "ada", "password": PASSWORD}),
         )
         .await
-        .assert_status(429);
+        .assert_status(204);
     assert_eq!(me(&ada).await["pending_email"], Value::Null);
     assert!(open_tokens(&app, ada.id()).await.is_empty());
     assert!(app.sent_emails().is_empty());
+}
+
+/// Security review 2026-10-28 #1: the per-account limit of 3 changes an hour is checked before
+/// the password, so a refused change costs no argon2 work (the password semaphore is held, and
+/// the answer still comes), and it does not use up a current-password check.
+#[sqlx::test]
+async fn the_change_limit_is_checked_before_the_password(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    for n in 0..3 {
+        change_email(&ada, &format!("new{n}@example.test"))
+            .await
+            .assert_status(204);
+    }
+    let held = hold_passwords(&app).await;
+    for _ in 0..10 {
+        timeout(WAIT, change_email(&ada, "late@example.test"))
+            .await
+            .expect("the refusal waited for the password semaphore")
+            .assert_detail(429, "Slow down a little. Try again later.");
+    }
+    drop(held);
+    ada.patch(
+        "/api/auth/password",
+        json!({"current_password": PASSWORD, "new_password": "newpassword1"}),
+    )
+    .await
+    .assert_status(204);
 }
 
 #[sqlx::test]
@@ -726,10 +756,10 @@ async fn an_email_change_racing_a_reset_changes_nothing(db: PgPool) {
     .await;
     let reset = app.state.passwords.hash("resetpassword1").await.unwrap();
     let key = format!("u:{}", ada.id());
-    // Nine earlier failures: the change's own hit blocks the key, which shows that it has read
-    // the old hash.
-    for _ in 0..9 {
-        app.state.limits.login_failures.hit(&key);
+    // 29 earlier checks: the change's own check fills the account's bucket, which shows that it
+    // has read the old hash.
+    for _ in 0..29 {
+        app.state.limits.password_check_user.hit(&key);
     }
     let held = hold_passwords(&app).await;
     let changing = tokio::spawn({
@@ -737,7 +767,7 @@ async fn an_email_change_racing_a_reset_changes_nothing(db: PgPool) {
         async move { change_email(&ada, "new@example.test").await }
     });
     timeout(WAIT, async {
-        while !app.state.limits.login_failures.is_limited(&key) {
+        while !app.state.limits.password_check_user.is_limited(&key) {
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
     })

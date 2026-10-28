@@ -5,6 +5,7 @@
 //! argon2-cffi hashes (`m=65536,t=3,p=4`) verify unchanged; login rehashes them.
 
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use anyhow::Context;
 use argon2::{Algorithm, Argon2, Params, PasswordHash, PasswordHasher, PasswordVerifier, Version};
@@ -15,6 +16,15 @@ use super::random;
 
 /// Concurrent hash or verify operations; legacy hashes use 64 MiB each.
 const MAX_CONCURRENT: usize = 4;
+/// The longest an operation waits for a permit before it gives up with [`Busy`]. At about
+/// 30 ms per production hash, ten seconds is a queue of over a thousand operations, which
+/// normal load never builds: the queue cannot grow without bound when something floods it.
+const MAX_WAIT: Duration = Duration::from_secs(10);
+
+/// The password semaphore stayed full for the whole wait (503 `SERVER_BUSY`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("every password permit stayed busy")]
+pub struct Busy;
 
 /// argon2 parameters plus the semaphore that bounds concurrent hashing. Held in
 /// `AppState::passwords`.
@@ -25,6 +35,8 @@ pub struct Passwords {
     /// permit into the blocking task, so a cancelled request cannot free the permit while its
     /// hash still runs.
     pub permits: Arc<Semaphore>,
+    /// How long an operation waits for a permit ([`MAX_WAIT`]) before it fails with [`Busy`].
+    max_wait: Duration,
     /// The hash unknown accounts verify against, made on first use with `params`.
     dummy: Arc<OnceLock<String>>,
 }
@@ -61,21 +73,25 @@ impl Passwords {
         Self {
             params,
             permits: Arc::new(Semaphore::new(MAX_CONCURRENT)),
+            max_wait: MAX_WAIT,
             dummy: Arc::new(OnceLock::new()),
         }
     }
 
     /// A new argon2id PHC string for `password` with [`Passwords::params`] and a random salt.
+    /// Fails with [`Busy`] (inside the `anyhow::Error`, which `AppError` answers with 503) when
+    /// no permit frees up within the wait.
     pub async fn hash(&self, password: &str) -> anyhow::Result<String> {
         let params = self.params.clone();
         let password = password.to_owned();
-        self.blocking(move || hash_with(&params, &password)).await
+        self.blocking(move || hash_with(&params, &password)).await?
     }
 
     /// Checks `password` against a stored PHC string. `None` (an unknown account) verifies
     /// against a dummy hash with the current parameters, so the answer takes as long as for a
     /// real account, and is always a mismatch. An unparsable stored hash is a mismatch too.
-    pub async fn verify(&self, password: &str, stored: Option<&str>) -> Verdict {
+    /// [`Busy`] when no permit frees up within the wait.
+    pub async fn verify(&self, password: &str, stored: Option<&str>) -> Result<Verdict, Busy> {
         let password = password.to_owned();
         let params = self.params.clone();
         match stored {
@@ -96,20 +112,22 @@ impl Passwords {
         }
     }
 
-    /// Runs `job` on the blocking pool once a permit is free.
-    async fn blocking<T: Send + 'static>(&self, job: impl FnOnce() -> T + Send + 'static) -> T {
-        let permit = self
-            .permits
-            .clone()
-            .acquire_owned()
+    /// Runs `job` on the blocking pool once a permit is free, or gives up with [`Busy`] after
+    /// `max_wait`.
+    async fn blocking<T: Send + 'static>(
+        &self,
+        job: impl FnOnce() -> T + Send + 'static,
+    ) -> Result<T, Busy> {
+        let permit = tokio::time::timeout(self.max_wait, self.permits.clone().acquire_owned())
             .await
+            .map_err(|_| Busy)?
             .expect("the password semaphore is never closed");
-        tokio::task::spawn_blocking(move || {
+        Ok(tokio::task::spawn_blocking(move || {
             let _permit = permit;
             job()
         })
         .await
-        .expect("password hashing panicked")
+        .expect("password hashing panicked"))
     }
 }
 
@@ -209,11 +227,11 @@ mod tests {
         assert!(hash.starts_with("$argon2id$v=19$m=8,t=1,p=1$"), "{hash}");
         assert_eq!(
             passwords.verify("pässwörd", Some(&hash)).await,
-            Verdict::Match { rehash: false }
+            Ok(Verdict::Match { rehash: false })
         );
         assert_eq!(
             passwords.verify("passwörd", Some(&hash)).await,
-            Verdict::Mismatch
+            Ok(Verdict::Mismatch)
         );
         assert_ne!(
             hash,
@@ -229,13 +247,13 @@ mod tests {
             passwords
                 .verify("correct horse battery staple", Some(LEGACY))
                 .await,
-            Verdict::Match { rehash: true }
+            Ok(Verdict::Match { rehash: true })
         );
         assert_eq!(
             passwords
                 .verify("correct horse battery", Some(LEGACY))
                 .await,
-            Verdict::Mismatch
+            Ok(Verdict::Mismatch)
         );
     }
 
@@ -245,15 +263,43 @@ mod tests {
         for stored in ["hash", "", "$argon2id$v=19$m=8,t=1,p=1$bad", "$2b$12$abc"] {
             assert_eq!(
                 passwords.verify("password1", Some(stored)).await,
-                Verdict::Mismatch,
+                Ok(Verdict::Mismatch),
                 "{stored}"
             );
         }
-        assert_eq!(passwords.verify("password1", None).await, Verdict::Mismatch);
+        assert_eq!(
+            passwords.verify("password1", None).await,
+            Ok(Verdict::Mismatch)
+        );
         // The dummy hash is made once and reused.
         let first = passwords.dummy.get().cloned().unwrap();
         passwords.verify("other", None).await;
         assert_eq!(passwords.dummy.get(), Some(&first));
+    }
+
+    /// Security review 2026-10-28 #1 (backstop): an operation that cannot get a permit gives
+    /// up instead of queueing until the request deadline, so a flood cannot hold every login of
+    /// the instance in an unbounded queue.
+    #[tokio::test]
+    async fn a_full_semaphore_answers_busy_after_the_wait() {
+        let passwords = Passwords {
+            max_wait: Duration::from_millis(50),
+            ..Passwords::for_tests()
+        };
+        let held = passwords
+            .permits
+            .clone()
+            .acquire_many_owned(MAX_CONCURRENT as u32)
+            .await
+            .unwrap();
+        assert_eq!(passwords.verify("password1", None).await, Err(Busy));
+        let error = passwords.hash("password1").await.unwrap_err();
+        assert_eq!(error.downcast_ref::<Busy>(), Some(&Busy));
+        drop(held);
+        assert_eq!(
+            passwords.verify("password1", None).await,
+            Ok(Verdict::Mismatch)
+        );
     }
 
     #[test]

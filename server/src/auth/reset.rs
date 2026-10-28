@@ -127,7 +127,8 @@ async fn reset_mail(state: &AppState, email: &str) -> sqlx::Result<Option<Email>
     request_body = ResetConfirmIn,
     responses(
         (status = 204, description = "The password is set; every session is signed out"),
-        (status = 400, body = ErrorBody, description = "`That link has expired or was already used`, `New password must be at least 8 characters`")
+        (status = 400, body = ErrorBody, description = "`That link has expired or was already used`, `New password must be at least 8 characters`"),
+        (status = 503, body = ErrorBody, description = "`The server is busy. Try again in a moment.`")
     )
 )]
 pub async fn confirm_reset(

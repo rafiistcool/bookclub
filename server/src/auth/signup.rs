@@ -90,7 +90,8 @@ enum Outgoing {
         (status = 201, body = UserOut, description = "Created and signed in; `Set-Cookie` carries the session"),
         (status = 400, body = ErrorBody, description = "Invalid fields, a missing or invalid invite code"),
         (status = 409, body = ErrorBody, description = "`That username is already taken`, or `This club is full`"),
-        (status = 429, body = ErrorBody, description = "Five sign-ups per IP address per hour")
+        (status = 429, body = ErrorBody, description = "Five sign-ups per IP address per hour"),
+        (status = 503, body = ErrorBody, description = "`The server is busy. Try again in a moment.`")
     )
 )]
 pub async fn register(

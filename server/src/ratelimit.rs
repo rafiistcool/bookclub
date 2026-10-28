@@ -53,8 +53,8 @@ impl SlidingWindow {
 
     /// Like [`SlidingWindow::is_limited`], with the wait. Records nothing, so it cannot guard
     /// work that runs concurrently: every request that checks before the first `hit` lands passes.
-    /// Login and password change therefore use [`SlidingWindow::check_and_hit`] before verifying
-    /// and [`SlidingWindow::clear`] on success.
+    /// Login therefore uses [`SlidingWindow::check_and_hit`] before verifying and
+    /// [`SlidingWindow::clear`] on success; the current-password check never clears.
     pub fn check(&self, key: &str) -> Result<(), RetryAfter> {
         self.check_at(key, Instant::now())
     }
@@ -131,10 +131,16 @@ fn lock(entry: &Mutex<VecDeque<Instant>>) -> std::sync::MutexGuard<'_, VecDeque<
 
 /// Every limit of §10.1. Each test gets a fresh set, because the harness builds a fresh `AppState`.
 pub struct RateLimits {
-    /// Login failures per account and identifier kind: `u:<id>` for the username (shared with
-    /// the current-password check of password change, email change and account deletion),
-    /// `u:<id>:email` for the verified address. Cleared on success.
+    /// Login failures per account and identifier kind: `u:<id>` for the username, `u:<id>:email`
+    /// for the verified address. Cleared on success.
     pub login_failures: SlidingWindow,
+    /// Current-password checks (password change, email change, account deletion) per session
+    /// (`s:<session_id>`), right or wrong, counted before the verify and never cleared. Keyed by
+    /// the session, so failed logins by someone else never block a signed-in owner, and a
+    /// right password cannot reopen the bucket for unlimited argon2 work.
+    pub password_check_session: SlidingWindow,
+    /// The same checks per account (`u:<id>`) across all of its sessions; never cleared.
+    pub password_check_user: SlidingWindow,
     /// Login failures per identifier that names no account, keyed by
     /// [`unknown_identifier_key`]. Its own cache, so a flood of made-up names cannot evict the
     /// keys of real accounts.
@@ -165,6 +171,8 @@ impl RateLimits {
     pub fn new() -> Self {
         Self {
             login_failures: SlidingWindow::new(10, 10 * MINUTE),
+            password_check_session: SlidingWindow::new(10, 10 * MINUTE),
+            password_check_user: SlidingWindow::new(30, HOUR),
             login_unknown: SlidingWindow::new(10, 10 * MINUTE),
             login_ip: SlidingWindow::new(30, 10 * MINUTE),
             signup_ip: SlidingWindow::new(5, HOUR),

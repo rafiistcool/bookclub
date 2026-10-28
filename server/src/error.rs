@@ -56,6 +56,8 @@ pub mod msg {
     pub const CROSS_SITE_REFUSED: &str = "Cross-site request refused";
     /// 408 from the request deadline (`serve::REQUEST_DEADLINE`).
     pub const REQUEST_TIMEOUT: &str = "The request took too long";
+    /// 503 when no password permit freed up within its wait (`auth::password::Busy`).
+    pub const SERVER_BUSY: &str = "The server is busy. Try again in a moment.";
     pub const VERIFY_EMAIL_FIRST: &str = "Verify your email address first";
     pub const INVALID_TIME_ZONE: &str = "That is not a valid time zone";
     pub const CLUB_FULL: &str = "This club is full";
@@ -186,7 +188,18 @@ impl From<sqlx::Error> for AppError {
 
 impl From<anyhow::Error> for AppError {
     fn from(error: anyhow::Error) -> Self {
-        Self::internal(format!("{error:#}"))
+        match error.downcast_ref::<crate::auth::password::Busy>() {
+            Some(busy) => (*busy).into(),
+            None => Self::internal(format!("{error:#}")),
+        }
+    }
+}
+
+impl From<crate::auth::password::Busy> for AppError {
+    /// 503 `The server is busy. Try again in a moment.`: every password permit stayed taken.
+    fn from(_: crate::auth::password::Busy) -> Self {
+        tracing::warn!("a password operation gave up waiting for a permit");
+        Self::new(StatusCode::SERVICE_UNAVAILABLE, msg::SERVER_BUSY)
     }
 }
 
