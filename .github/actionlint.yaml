@@ -1,0 +1,5 @@
+# Self-hosted runner labels for actionlint. `docker` is the Forgejo runner that hands job
+# containers the Docker daemon (docs/phase2/notes/dep.md, "The runner").
+self-hosted-runner:
+  labels:
+    - docker

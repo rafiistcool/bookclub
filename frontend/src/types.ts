@@ -66,14 +66,8 @@ export type ThemeId = "paper" | "slate" | "forest" | "ink";
 export type ColorMode = "light" | "dark" | "system";
 export type Locale = "en" | "de";
 
-/**
- * The signed-in user (`GET /api/auth/me`). `needs_terms` (#53) is optional
- * here only because the shared test fixture `user()` (src/test/fixtures.ts,
- * which LEG does not own) does not spell it out yet. Once the integrator adds
- * `needs_terms: false` there, this is `UserOut` again
- * (docs/phase2/notes/leg.md, "Changes for the integrator").
- */
-export type User = Omit<UserOut, "needs_terms"> & Partial<Pick<UserOut, "needs_terms">>;
+/** The signed-in user (`GET /api/auth/me`). */
+export type User = UserOut;
 /** A work as every list shows it; edition-aware where the server has an edition context. */
 export type Book = BookOut;
 export type BookDetail = BookDetailOut;

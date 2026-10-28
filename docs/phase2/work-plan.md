@@ -186,10 +186,10 @@ Cutover CUT-R: branch cutover/remove-python, merged only on cutover day   (#52)
 
 **Status (2026-10-28):** all five are merged into `phase-2`, and their notes are applied to `conventions.md`, `endpoint-map.md`, `CLAUDE.md`, `README.md` and `deploy/hosted/README.md`. Open items are in each notes file.
 - **CUT:** merged (adcd9be). Open: Q6, the `legacy-python` branch and tag (Rafael); the rehearsal is CUT2.
-- **LEG:** merged (4b88ec7). Open: `needs_terms: false` in the shared `user()` fixture so `User` is plain `UserOut` again (integrator), the optional file grants, and the final texts (LEG2, Rafael).
-- **ADM:** merged (bd4e454); the integrator's fix keeps a field an admin clears empty (59443d4). Open: the `errors.*` keys and `apiErrors.ts` lines for `Input should be in the past` and `Only notices about covers can be recorded` (integrator), and ADM2.
-- **DEP:** merged (b88622a); follow-ups dd5d1b4 (shellcheck without `-x`) and fe82997 (the Google scan reads the root `Dockerfile`). Open: `.github/actionlint.yaml` (integrator), the `REGISTRY_TOKEN` secret and the runner labelled `docker` (items 23, 24, Rafael); the `image` job first runs on the Wave 1 PR.
-- **GATE:** merged (89b7da6); the integrator fixed the two FE observations (b42d99f, f604e59). Open: Q17 (Rafael), and the CSP browser run over LEG's `/imprint`, `/privacy` and `/terms` on `phase-2`.
+- **LEG:** merged (4b88ec7). The integrator added `needs_terms: false` to the shared `user()` fixture, so `User` is plain `UserOut` again. Open: the optional file grants, and the final texts (LEG2, Rafael).
+- **ADM:** merged (bd4e454); the integrator's fix keeps a field an admin clears empty (59443d4). The integrator added `errors.receivedInFuture` and `errors.noticeCoversOnly` with their `apiErrors.ts` lines. Open: ADM2.
+- **DEP:** merged (b88622a); follow-ups dd5d1b4 (shellcheck without `-x`) and fe82997 (the Google scan reads the root `Dockerfile`). The integrator added `.github/actionlint.yaml`. Open: the `REGISTRY_TOKEN` secret and the runner labelled `docker` (items 23, 24, Rafael); the `image` job first runs on the Wave 1 PR.
+- **GATE:** merged (89b7da6); the integrator fixed the two FE observations (b42d99f, f604e59). The end-to-end run behind Caddy covered LEG's `/imprint`, `/privacy` and `/terms` and ADM's admin pages with no CSP violation. Open: Q17 (Rafael).
 
 All five run in parallel. They need no answer from Rafael. Where an answer is still open, they build the recommended option, and the alternative changes only a path or a constant. The suggested merge order is **DEP, CUT, LEG, ADM, GATE**:
 

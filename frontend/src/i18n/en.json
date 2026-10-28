@@ -602,6 +602,8 @@
     "noSuchSession": "That session no longer exists",
     "termsChanged": "The terms of use have changed. Have a look at them and try again.",
     "pictureRemoved": "This picture was removed",
+    "receivedInFuture": "The notice cannot have arrived in the future.",
+    "noticeCoversOnly": "Only notices about book covers can be recorded for now.",
     "noSuchClub": "That club does not exist, or you are not a member",
     "adminsOnly": "Only club admins can do that",
     "ownerOnly": "Only the club owner can do that",

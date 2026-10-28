@@ -36,6 +36,8 @@ const API_ERROR_KEYS: Record<string, string> = {
   "That file is not a picture": "errors.notAPicture",
   "This picture was removed": "errors.pictureRemoved",
   "This report was already resolved": "errors.reportResolved",
+  "Input should be in the past": "errors.receivedInFuture",
+  "Only notices about covers can be recorded": "errors.noticeCoversOnly",
 
   // Clubs
   "No such club": "errors.noSuchClub",

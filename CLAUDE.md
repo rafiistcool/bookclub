@@ -39,7 +39,7 @@ Deployment files (CI runs only the image smoke test; run the rest after touching
 ```bash
 CARGO_JOBS=3 deploy/hosted/smoke-test.sh; docker builder prune -f   # CI's image job: build, boot with compose.yaml + ci.env, check, tear down
 docker run --rm -v "$PWD":/mnt -w /mnt koalaman/shellcheck:v0.10.0 deploy/hosted/*.sh deploy/cutover/*.sh
-docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.7 -ignore 'label "docker" is unknown' .forgejo/workflows/*.yml .github/workflows/*.yml
+docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.7 .forgejo/workflows/*.yml .github/workflows/*.yml
 docker compose -f deploy/hosted/compose.yaml --env-file deploy/hosted/env.example config -q
 docker run --rm -v "$PWD/deploy/hosted":/etc/caddy:ro -e BOOKCLUB_HOST=bookclub.test caddy:2.10 caddy validate --config /etc/caddy/Caddyfile.example --adapter caddyfile
 ```

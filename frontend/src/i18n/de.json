@@ -602,6 +602,8 @@
     "noSuchSession": "Diese Sitzung gibt es nicht mehr",
     "termsChanged": "Die Nutzungsbedingungen haben sich geändert. Sieh sie dir an und versuch es nochmal.",
     "pictureRemoved": "Dieses Bild wurde entfernt",
+    "receivedInFuture": "Die Meldung kann nicht in der Zukunft eingegangen sein.",
+    "noticeCoversOnly": "Bisher können nur Meldungen zu Buchcovern festgehalten werden.",
     "noSuchClub": "Diesen Club gibt es nicht, oder du bist kein Mitglied",
     "adminsOnly": "Das können nur Club-Admins",
     "ownerOnly": "Das kann nur die Person, der der Club gehört",

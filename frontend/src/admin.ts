@@ -185,8 +185,8 @@ export function toLocalInput(date: Date): string {
 /**
  * Two 400s of `DELETE /api/admin/media/{public_id}` with a notice, byte for
  * byte as `media::reports` sends them. The takedown form answers them with
- * its own copy: `apiErrors.ts` maps only to `errors.*` keys, which this
- * package does not add (docs/phase2/notes/adm.md hands that to the integrator).
+ * its own copy, which says what to do next; `apiErrors.ts` maps both too
+ * (`errors.receivedInFuture`, `errors.noticeCoversOnly`) for any other caller.
  */
 export const TAKEDOWN_DETAILS = {
   /** `received_at` is more than 5 minutes ahead of the server's clock. */
