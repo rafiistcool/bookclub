@@ -183,7 +183,7 @@ pub enum ImportError { TargetNotEmpty, Source(String), Upstream(String), Db(sqlx
 
 **Layers, outermost first:**
 1. tower-http `SetRequestId` / `PropagateRequestId` (`x-request-id`)
-2. `SetResponseHeader` `Referrer-Policy: same-origin` on every response (no URL of ours leaks to a third party). It sits outside the layers below so their own answers (the panic 500, a CORS preflight, the origin check's 403) carry it too.
+2. `SetResponseHeader` `Referrer-Policy: same-origin` on every response (no URL of ours leaks to a third party), and, overriding too, `Content-Security-Policy: frame-ancestors 'none'`, `X-Frame-Options: DENY` and `X-Content-Type-Options: nosniff` (security review 2026-10-28 #10: a same-site page, such as a sibling subdomain behind the shared proxy, would get the Lax session cookie into a frame of ours and could trick a click on a one-tap action like joining a club). They sit outside the layers below so their own answers (the panic 500, a CORS preflight, the origin check's 403) carry them too. HSTS is the reverse proxy's (#51), which terminates TLS.
 3. `TraceLayer`
 4. `CatchPanicLayer`, answering 500 `{"detail":"Internal Server Error"}`
 4a. the request deadline (`serve::deadline`, `serve::REQUEST_DEADLINE` = 600 s): a request that has not produced its response within 10 minutes, reading its body included, answers 408 `{"detail":"The request took too long"}` and its handler is dropped (the transaction rolls back). Long enough for a 50 MB upload over a slow uplink; a streamed response body (the export) does not count. A client that sends its body one byte at a time holds a task for 10 minutes, not for days.
@@ -192,6 +192,8 @@ pub enum ImportError { TargetNotEmpty, Source(String), Upstream(String), Db(sqlx
 6. the origin check (§5.8)
 7. `auth::session::maintain_cookie`: the session extractor cannot touch the response, so it leaves a note in a per-request slot that this layer reads: a cookie that resolved to no live session gets a clearing `Set-Cookie` on the 401, and a cookie session that slid gets its cookie again (§5.1). A handler that sets the session cookie itself (login, logout) wins.
 8. `DefaultBodyLimit::max(1 MiB)`; upload routes override it per route (§4.6)
+
+A `route_layer` on the API and admin routes (so not the SPA fallback) adds `Cache-Control: no-store` to every answer whose handler set none (security review 2026-10-28 #11): API answers carry personal data (the account, shelves, a club's invite codes) and set no `Vary: Cookie`, so a caching proxy keyed without the cookie would hand one user's answer to the next, and a browser would keep them on disk after a logout. `/media` and the export set their own and keep them.
 
 Apart from the header read timeout and the request deadline, there are no global timeouts; handlers bound their outbound calls (§10.3). Per-IP connection caps and tighter timeouts belong to the reverse proxy (#51); a server that faces clients directly (`TRUSTED_PROXIES=none`) has only the two bounds above.
 

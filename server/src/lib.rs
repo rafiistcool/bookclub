@@ -39,7 +39,10 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::extract::DefaultBodyLimit;
-use axum::http::header::{CONTENT_TYPE, REFERRER_POLICY};
+use axum::http::header::{
+    CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, REFERRER_POLICY, X_CONTENT_TYPE_OPTIONS,
+    X_FRAME_OPTIONS,
+};
 use axum::http::{HeaderValue, Request, StatusCode};
 use axum::middleware;
 use axum::response::{IntoResponse, Response};
@@ -158,6 +161,13 @@ pub fn app(state: AppState) -> Router {
     // Layers run outermost-last: the last `.layer` call wraps all the others.
     let mut router = api
         .merge(admin)
+        // API answers carry personal data (the account, shelves, a club's invite codes): no
+        // shared cache may keep one for the next user, and no browser cache after a logout.
+        // A route that sets its own (`/media`, the export) keeps it.
+        .route_layer(SetResponseHeaderLayer::if_not_present(
+            CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        ))
         .fallback(spa::fallback)
         .method_not_allowed_fallback(spa::method_not_allowed)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
@@ -195,10 +205,24 @@ pub fn app(state: AppState) -> Router {
                 })
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         )
-        // Outside the origin check, CORS and the panic handler, so their answers carry it too.
+        // Outside the origin check, CORS and the panic handler, so their answers carry them too.
         .layer(SetResponseHeaderLayer::overriding(
             REFERRER_POLICY,
             HeaderValue::from_static("same-origin"),
+        ))
+        // No page of ours may be framed: a same-site page (a sibling subdomain) would get the
+        // Lax session cookie into the frame and could trick a click on a one-tap action.
+        .layer(SetResponseHeaderLayer::overriding(
+            CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static("frame-ancestors 'none'"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            X_FRAME_OPTIONS,
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
         ))
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))

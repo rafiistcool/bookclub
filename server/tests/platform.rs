@@ -7,7 +7,7 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use bookclub_server::error::is_unique_violation;
 use bookclub_server::{AppState, app};
-use common::{get, send, test_config, test_state, test_state_with, unreachable_db};
+use common::{TestResponse, get, send, test_config, test_state, test_state_with, unreachable_db};
 use sqlx::PgPool;
 
 fn no_db_state() -> AppState {
@@ -56,10 +56,22 @@ async fn without_static_dir_other_paths_are_json_404s() {
     }
 }
 
+/// The headers every answer carries, whichever layer made it: Referrer-Policy, and (security
+/// review 2026-10-28 #10) no framing and no MIME sniffing.
+fn assert_security_headers(res: &TestResponse) {
+    assert_eq!(res.header("referrer-policy"), Some("same-origin"));
+    assert_eq!(
+        res.header("content-security-policy"),
+        Some("frame-ancestors 'none'")
+    );
+    assert_eq!(res.header("x-frame-options"), Some("DENY"));
+    assert_eq!(res.header("x-content-type-options"), Some("nosniff"));
+}
+
 #[tokio::test]
 async fn every_response_has_referrer_policy_and_a_request_id() {
     let res = get(app(no_db_state()), "/api/nope").await;
-    assert_eq!(res.header("referrer-policy"), Some("same-origin"));
+    assert_security_headers(&res);
     let id = res.header("x-request-id").expect("request id");
     assert!(!id.is_empty());
 
@@ -69,7 +81,7 @@ async fn every_response_has_referrer_policy_and_a_request_id() {
         .unwrap();
     let res = send(app(no_db_state()), given).await;
     assert_eq!(res.header("x-request-id"), Some("abc-123"));
-    assert_eq!(res.header("referrer-policy"), Some("same-origin"));
+    assert_security_headers(&res);
 
     // Answers of the outer layers: the origin check and a CORS preflight.
     let cross_site = Request::post("/api/health")
@@ -79,7 +91,7 @@ async fn every_response_has_referrer_policy_and_a_request_id() {
         .unwrap();
     let res = send(app(no_db_state()), cross_site).await;
     assert_eq!(res.status, StatusCode::FORBIDDEN);
-    assert_eq!(res.header("referrer-policy"), Some("same-origin"));
+    assert_security_headers(&res);
     assert!(res.header("x-request-id").is_some());
 
     let res = send(app(no_db_state()), preflight("http://localhost:5173")).await;
@@ -87,7 +99,28 @@ async fn every_response_has_referrer_policy_and_a_request_id() {
         res.header("access-control-allow-origin"),
         Some("http://localhost:5173")
     );
-    assert_eq!(res.header("referrer-policy"), Some("same-origin"));
+    assert_security_headers(&res);
+}
+
+/// Security review 2026-10-28 #11: an API answer is never stored by a shared cache or kept in
+/// the browser's cache: `no-store` unless the route sets its own (the export, `/media`).
+#[sqlx::test]
+async fn api_answers_are_not_stored(db: PgPool) {
+    let app = common::TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let club = app.club(&ada, "Readers").await;
+    for path in [
+        "/api/auth/me".to_owned(),
+        "/api/shelf".to_owned(),
+        format!("/api/clubs/{}/invites", club.slug),
+        "/api/health".to_owned(),
+    ] {
+        let res = ada.get(&path).await;
+        assert_eq!(res.header("cache-control"), Some("no-store"), "{path}");
+    }
+    let refused = app.anon().get("/api/auth/me").await;
+    assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(refused.header("cache-control"), Some("no-store"));
 }
 
 #[tokio::test]
