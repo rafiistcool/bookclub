@@ -5,7 +5,7 @@ use std::fmt;
 
 use jiff::Timestamp;
 use jiff::civil::{Date as CivilDate, DateTime as CivilDateTime};
-use jiff::tz::{Offset, TimeZone};
+use jiff::tz::{Offset, TimeZone, TimeZoneDatabase};
 use time::{Date, Month, OffsetDateTime};
 
 use crate::error::msg;
@@ -23,21 +23,219 @@ impl fmt::Display for InvalidZone {
 
 impl std::error::Error for InvalidZone {}
 
-/// Validates an IANA zone name on write. Case-sensitive, like Python's `ZoneInfo` on Linux:
-/// only the canonical spelling is accepted, so stored names are always canonical.
+/// Validates an IANA zone name on write, against jiff's bundled tzdb. (`TimeZone::get` reads
+/// the host's tzdb first, and which old names that has varies: without `tzdata-legacy`, Debian
+/// 13, the server image's base, lacks most of them, `Asia/Calcutta` among them.)
+///
+/// Every name the bundled tzdb knows passes, in its exact spelling only: case-sensitive like
+/// Python's `ZoneInfo` on Linux (`Europe/Berlin`, not `europe/berlin`). An old name, a link in
+/// `LINKS` such as `Asia/Calcutta`, passes too, as it did in Python, and the zone returned is
+/// the one it links to: its `iana_name()` is the current name (`Asia/Kolkata`), which callers
+/// store, so stored names are always current ones. [`canonical_zone_name`] returns that name.
 pub fn parse_zone(name: &str) -> Result<TimeZone, InvalidZone> {
-    let zone = TimeZone::get(name).map_err(|_| InvalidZone)?;
-    if zone.iana_name() == Some(name) {
-        Ok(zone)
-    } else {
-        Err(InvalidZone)
+    let db = TimeZoneDatabase::bundled();
+    let zone = db.get(name).map_err(|_| InvalidZone)?;
+    if zone.iana_name() != Some(name) {
+        return Err(InvalidZone);
+    }
+    match link_target(name) {
+        Some(current) => db.get(current).map_err(|_| InvalidZone),
+        None => Ok(zone),
     }
 }
 
-/// The zone for a stored name; a corrupt value falls back to UTC.
-pub fn zone_or_utc(name: &str) -> TimeZone {
-    TimeZone::get(name).unwrap_or(TimeZone::UTC)
+/// The name to store for a zone name from a request or a flag: [`parse_zone`]'s zone's
+/// `iana_name()`, so an old name becomes the current one (`Asia/Calcutta` → `Asia/Kolkata`).
+pub fn canonical_zone_name(name: &str) -> Result<String, InvalidZone> {
+    let zone = parse_zone(name)?;
+    zone.iana_name().map(str::to_owned).ok_or(InvalidZone)
 }
+
+/// The zone for a stored name: the host's tzdb first (`TimeZone::get`), else the bundled one,
+/// which knows every name [`parse_zone`] accepts; a corrupt value falls back to UTC.
+pub fn zone_or_utc(name: &str) -> TimeZone {
+    TimeZone::get(name)
+        .or_else(|_| TimeZoneDatabase::bundled().get(name))
+        .unwrap_or(TimeZone::UTC)
+}
+
+/// The current name an old one links to, if `name` is in [`LINKS`].
+fn link_target(name: &str) -> Option<&'static str> {
+    LINKS
+        .binary_search_by_key(&name, |&(old, _)| old)
+        .ok()
+        .map(|index| LINKS[index].1)
+}
+
+/// Old zone names and the current names they link to, sorted by old name (byte order).
+///
+/// These are the `Link` lines of tzdb 2026e (jiff-tzdb 0.1.9, the bundled copy) as built with
+/// `backzone` for the names in `zone.tab` (`PACKRATLIST=zone.tab`, the `tzdata.zi` Debian
+/// ships), less two kinds of names that stay as they are:
+///
+/// - the 11 links listed in `zone.tab` itself, each a country's own name that browsers report
+///   and every tzdata install has (`Europe/Bratislava`, `Europe/Podgorica`,
+///   `Arctic/Longyearbyen`, …);
+/// - `UTC` (a link to `Etc/UTC`), the column default and the name every client sends.
+///
+/// The build with `backzone` keeps every `zone.tab` name a zone, so `Pacific/Truk` resolves to
+/// `Pacific/Chuuk` (as the SPA's `currentZoneName` maps it), not to `Pacific/Port_Moresby`, and
+/// `Europe/Oslo` stays. After a jiff-tzdb update, compare this list with the new `tzdata.zi`.
+static LINKS: &[(&str, &str)] = &[
+    ("Africa/Asmera", "Africa/Asmara"),
+    ("Africa/Timbuktu", "Africa/Bamako"),
+    (
+        "America/Argentina/ComodRivadavia",
+        "America/Argentina/Catamarca",
+    ),
+    ("America/Atka", "America/Adak"),
+    ("America/Buenos_Aires", "America/Argentina/Buenos_Aires"),
+    ("America/Catamarca", "America/Argentina/Catamarca"),
+    ("America/Coral_Harbour", "America/Atikokan"),
+    ("America/Cordoba", "America/Argentina/Cordoba"),
+    ("America/Ensenada", "America/Tijuana"),
+    ("America/Fort_Wayne", "America/Indiana/Indianapolis"),
+    ("America/Godthab", "America/Nuuk"),
+    ("America/Indianapolis", "America/Indiana/Indianapolis"),
+    ("America/Jujuy", "America/Argentina/Jujuy"),
+    ("America/Knox_IN", "America/Indiana/Knox"),
+    ("America/Louisville", "America/Kentucky/Louisville"),
+    ("America/Mendoza", "America/Argentina/Mendoza"),
+    ("America/Montreal", "America/Toronto"),
+    ("America/Nipigon", "America/Toronto"),
+    ("America/Pangnirtung", "America/Iqaluit"),
+    ("America/Porto_Acre", "America/Rio_Branco"),
+    ("America/Rainy_River", "America/Winnipeg"),
+    ("America/Rosario", "America/Argentina/Cordoba"),
+    ("America/Santa_Isabel", "America/Tijuana"),
+    ("America/Shiprock", "America/Denver"),
+    ("America/Thunder_Bay", "America/Toronto"),
+    ("America/Virgin", "America/St_Thomas"),
+    ("America/Yellowknife", "America/Edmonton"),
+    ("Antarctica/South_Pole", "Antarctica/McMurdo"),
+    ("Asia/Ashkhabad", "Asia/Ashgabat"),
+    ("Asia/Calcutta", "Asia/Kolkata"),
+    ("Asia/Choibalsan", "Asia/Ulaanbaatar"),
+    ("Asia/Chongqing", "Asia/Shanghai"),
+    ("Asia/Chungking", "Asia/Shanghai"),
+    ("Asia/Dacca", "Asia/Dhaka"),
+    ("Asia/Harbin", "Asia/Shanghai"),
+    ("Asia/Istanbul", "Europe/Istanbul"),
+    ("Asia/Kashgar", "Asia/Urumqi"),
+    ("Asia/Katmandu", "Asia/Kathmandu"),
+    ("Asia/Macao", "Asia/Macau"),
+    ("Asia/Rangoon", "Asia/Yangon"),
+    ("Asia/Saigon", "Asia/Ho_Chi_Minh"),
+    ("Asia/Tel_Aviv", "Asia/Jerusalem"),
+    ("Asia/Thimbu", "Asia/Thimphu"),
+    ("Asia/Ujung_Pandang", "Asia/Makassar"),
+    ("Asia/Ulan_Bator", "Asia/Ulaanbaatar"),
+    ("Atlantic/Faeroe", "Atlantic/Faroe"),
+    ("Atlantic/Jan_Mayen", "Europe/Oslo"),
+    ("Australia/ACT", "Australia/Sydney"),
+    ("Australia/Canberra", "Australia/Sydney"),
+    ("Australia/Currie", "Australia/Hobart"),
+    ("Australia/LHI", "Australia/Lord_Howe"),
+    ("Australia/NSW", "Australia/Sydney"),
+    ("Australia/North", "Australia/Darwin"),
+    ("Australia/Queensland", "Australia/Brisbane"),
+    ("Australia/South", "Australia/Adelaide"),
+    ("Australia/Tasmania", "Australia/Hobart"),
+    ("Australia/Victoria", "Australia/Melbourne"),
+    ("Australia/West", "Australia/Perth"),
+    ("Australia/Yancowinna", "Australia/Broken_Hill"),
+    ("Brazil/Acre", "America/Rio_Branco"),
+    ("Brazil/DeNoronha", "America/Noronha"),
+    ("Brazil/East", "America/Sao_Paulo"),
+    ("Brazil/West", "America/Manaus"),
+    ("CET", "Europe/Brussels"),
+    ("CST6CDT", "America/Chicago"),
+    ("Canada/Atlantic", "America/Halifax"),
+    ("Canada/Central", "America/Winnipeg"),
+    ("Canada/Eastern", "America/Toronto"),
+    ("Canada/Mountain", "America/Edmonton"),
+    ("Canada/Newfoundland", "America/St_Johns"),
+    ("Canada/Pacific", "America/Vancouver"),
+    ("Canada/Saskatchewan", "America/Regina"),
+    ("Canada/Yukon", "America/Whitehorse"),
+    ("Chile/Continental", "America/Santiago"),
+    ("Chile/EasterIsland", "Pacific/Easter"),
+    ("Cuba", "America/Havana"),
+    ("EET", "Europe/Athens"),
+    ("EST", "America/Panama"),
+    ("EST5EDT", "America/New_York"),
+    ("Egypt", "Africa/Cairo"),
+    ("Eire", "Europe/Dublin"),
+    ("Etc/GMT+0", "Etc/GMT"),
+    ("Etc/GMT-0", "Etc/GMT"),
+    ("Etc/GMT0", "Etc/GMT"),
+    ("Etc/Greenwich", "Etc/GMT"),
+    ("Etc/UCT", "Etc/UTC"),
+    ("Etc/Universal", "Etc/UTC"),
+    ("Etc/Zulu", "Etc/UTC"),
+    ("Europe/Belfast", "Europe/London"),
+    ("Europe/Kiev", "Europe/Kyiv"),
+    ("Europe/Nicosia", "Asia/Nicosia"),
+    ("Europe/Tiraspol", "Europe/Chisinau"),
+    ("Europe/Uzhgorod", "Europe/Kyiv"),
+    ("Europe/Zaporozhye", "Europe/Kyiv"),
+    ("GB", "Europe/London"),
+    ("GB-Eire", "Europe/London"),
+    ("GMT", "Etc/GMT"),
+    ("GMT+0", "Etc/GMT"),
+    ("GMT-0", "Etc/GMT"),
+    ("GMT0", "Etc/GMT"),
+    ("Greenwich", "Etc/GMT"),
+    ("HST", "Pacific/Honolulu"),
+    ("Hongkong", "Asia/Hong_Kong"),
+    ("Iceland", "Atlantic/Reykjavik"),
+    ("Iran", "Asia/Tehran"),
+    ("Israel", "Asia/Jerusalem"),
+    ("Jamaica", "America/Jamaica"),
+    ("Japan", "Asia/Tokyo"),
+    ("Kwajalein", "Pacific/Kwajalein"),
+    ("Libya", "Africa/Tripoli"),
+    ("MET", "Europe/Brussels"),
+    ("MST", "America/Phoenix"),
+    ("MST7MDT", "America/Denver"),
+    ("Mexico/BajaNorte", "America/Tijuana"),
+    ("Mexico/BajaSur", "America/Mazatlan"),
+    ("Mexico/General", "America/Mexico_City"),
+    ("NZ", "Pacific/Auckland"),
+    ("NZ-CHAT", "Pacific/Chatham"),
+    ("Navajo", "America/Denver"),
+    ("PRC", "Asia/Shanghai"),
+    ("PST8PDT", "America/Los_Angeles"),
+    ("Pacific/Enderbury", "Pacific/Kanton"),
+    ("Pacific/Johnston", "Pacific/Honolulu"),
+    ("Pacific/Ponape", "Pacific/Pohnpei"),
+    ("Pacific/Samoa", "Pacific/Pago_Pago"),
+    ("Pacific/Truk", "Pacific/Chuuk"),
+    ("Pacific/Yap", "Pacific/Chuuk"),
+    ("Poland", "Europe/Warsaw"),
+    ("Portugal", "Europe/Lisbon"),
+    ("ROC", "Asia/Taipei"),
+    ("ROK", "Asia/Seoul"),
+    ("Singapore", "Asia/Singapore"),
+    ("Turkey", "Europe/Istanbul"),
+    ("UCT", "Etc/UTC"),
+    ("US/Alaska", "America/Anchorage"),
+    ("US/Aleutian", "America/Adak"),
+    ("US/Arizona", "America/Phoenix"),
+    ("US/Central", "America/Chicago"),
+    ("US/East-Indiana", "America/Indiana/Indianapolis"),
+    ("US/Eastern", "America/New_York"),
+    ("US/Hawaii", "Pacific/Honolulu"),
+    ("US/Indiana-Starke", "America/Indiana/Knox"),
+    ("US/Michigan", "America/Detroit"),
+    ("US/Mountain", "America/Denver"),
+    ("US/Pacific", "America/Los_Angeles"),
+    ("US/Samoa", "Pacific/Pago_Pago"),
+    ("Universal", "Etc/UTC"),
+    ("W-SU", "Europe/Moscow"),
+    ("WET", "Europe/Lisbon"),
+    ("Zulu", "Etc/UTC"),
+];
 
 /// Parses `meeting_at`, `closes_at` and `due_at`.
 ///
@@ -293,6 +491,94 @@ mod tests {
             zone_or_utc("Asia/Kolkata").iana_name(),
             Some("Asia/Kolkata")
         );
+    }
+
+    /// An old name (a tzdb link such as `Asia/Calcutta`, which ICU browsers still report) is
+    /// accepted, as Python's `ZoneInfo` accepted it, and resolves to the zone it names, so
+    /// callers store the current name. Case still matters, and made-up names stay refused.
+    #[test]
+    fn old_names_resolve_to_the_current_name() {
+        for (old, current) in [
+            ("Asia/Calcutta", "Asia/Kolkata"),
+            ("Europe/Kiev", "Europe/Kyiv"),
+            ("America/Buenos_Aires", "America/Argentina/Buenos_Aires"),
+            ("Pacific/Truk", "Pacific/Chuuk"),
+            ("US/Eastern", "America/New_York"),
+            ("Etc/Zulu", "Etc/UTC"),
+        ] {
+            assert_eq!(parse_zone(old).unwrap().iana_name(), Some(current), "{old}");
+            assert_eq!(canonical_zone_name(old).as_deref(), Ok(current), "{old}");
+        }
+        // Current names, a country's own name in zone.tab (a tzdb link to Europe/Prague) and
+        // `UTC` (the default, a link to Etc/UTC) are stored as they are.
+        for name in [
+            "Asia/Kolkata",
+            "Europe/Berlin",
+            "Europe/Oslo",
+            "Europe/Bratislava",
+            "Arctic/Longyearbyen",
+            "UTC",
+            "Etc/UTC",
+        ] {
+            assert_eq!(canonical_zone_name(name).as_deref(), Ok(name), "{name}");
+        }
+        for bad in [
+            "asia/calcutta",
+            "ASIA/CALCUTTA",
+            "europe/kiev",
+            "us/eastern",
+            "Asia/Atlantis",
+            "Etc/Unknown",
+        ] {
+            assert_eq!(parse_zone(bad).err(), Some(InvalidZone), "{bad:?}");
+            assert_eq!(canonical_zone_name(bad), Err(InvalidZone), "{bad:?}");
+        }
+    }
+
+    /// A stored name the host's tzdb lacks (Debian 13 installs no old names without
+    /// `tzdata-legacy`) still reads as that zone, not as UTC.
+    #[test]
+    fn stored_names_fall_back_to_the_bundled_tzdb() {
+        assert_eq!(
+            zone_or_utc("Asia/Calcutta").iana_name(),
+            Some("Asia/Calcutta")
+        );
+        assert_eq!(
+            zone_or_utc("asia/kolkata").iana_name(),
+            Some("Asia/Kolkata")
+        );
+    }
+
+    /// [`LINKS`] is sorted for the binary search, and every old name and its target exist in
+    /// the bundled tzdb with that spelling, are the same zone (same offsets from 1970 on), and
+    /// the target is a current name itself.
+    #[test]
+    fn the_link_table_matches_the_bundled_tzdb() {
+        let db = TimeZoneDatabase::bundled();
+        assert!(LINKS.windows(2).all(|pair| pair[0].0 < pair[1].0));
+        for &(old, current) in LINKS {
+            let old_zone = db.get(old).unwrap();
+            let current_zone = db.get(current).unwrap();
+            assert_eq!(old_zone.iana_name(), Some(old));
+            assert_eq!(current_zone.iana_name(), Some(current));
+            assert_eq!(link_target(current), None, "{old} -> {current}");
+            for year in 1970..2040 {
+                for month in [1, 7] {
+                    let at = CivilDate::new(year, month, 1)
+                        .unwrap()
+                        .at(12, 0, 0, 0)
+                        .to_zoned(TimeZone::UTC)
+                        .unwrap()
+                        .timestamp();
+                    assert_eq!(
+                        old_zone.to_offset(at),
+                        current_zone.to_offset(at),
+                        "{old} -> {current} at {at}"
+                    );
+                }
+            }
+        }
+        assert_eq!(LINKS.len(), 150);
     }
 
     #[test]

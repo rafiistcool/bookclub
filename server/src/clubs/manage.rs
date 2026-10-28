@@ -37,7 +37,8 @@ pub struct ClubIn {
     /// 1 to 80 characters; surrounding whitespace is removed and inner runs collapse to one
     /// space.
     pub name: String,
-    /// IANA zone for the club's times (canonical spelling); default: the creator's zone.
+    /// IANA zone for the club's times (exact spelling; an old name such as `Asia/Calcutta` is
+    /// stored as the current one, `Asia/Kolkata`); default: the creator's zone.
     #[serde(default)]
     pub timezone: Option<String>,
 }
@@ -79,10 +80,14 @@ fn club_name(raw: &str, v: &mut Validator) -> String {
     name
 }
 
+/// Validates the zone and stores an old name (`Asia/Calcutta`) as the current one
+/// (`Asia/Kolkata`).
 fn validate_zone(zone: &mut Option<String>, v: &mut Validator) {
     if let Some(zone) = zone {
-        *zone = py_strip(zone).to_owned();
-        v.check(tz::parse_zone(zone).is_ok(), msg::INVALID_TIME_ZONE);
+        match tz::canonical_zone_name(py_strip(zone)) {
+            Ok(name) => *zone = name,
+            Err(_) => v.fail(msg::INVALID_TIME_ZONE),
+        }
     }
 }
 
@@ -189,7 +194,8 @@ async fn insert_club(
 }
 
 /// The name as a slug: German umlauts and ß transliterated, other accents dropped, every run of
-/// other characters one `-`, cut to 50 characters; `club` when nothing is left.
+/// other characters one `-`, cut to 50 characters; `club` when nothing is left. The legacy
+/// importer slugs its club with this and `slug_suffix` too.
 pub fn slug_base(name: &str) -> String {
     let mut slug = String::new();
     let mut pending_dash = false;
@@ -226,7 +232,7 @@ pub fn slug_base(name: &str) -> String {
 }
 
 /// Four random characters from `[a-z0-9]`.
-fn slug_suffix() -> String {
+pub(crate) fn slug_suffix() -> String {
     let mut bytes = [0u8; 4];
     random::fill(&mut bytes);
     bytes

@@ -114,7 +114,7 @@ pub async fn edit_request_outs(
             })
         })
         .collect();
-    let mut books = book_outs(conn, &refs).await?;
+    let books = book_outs(conn, &refs).await?;
     let user_ids: Vec<i64> = rows
         .iter()
         .flat_map(|row| [row.created_by, row.decided_by])
@@ -124,11 +124,14 @@ pub async fn edit_request_outs(
     let mut by_id: HashMap<i64, EditRequestOut> = rows
         .into_iter()
         .map(|row| {
+            // Cloned, not removed: several requests can name the same work and edition.
             let book = row.work_id.and_then(|work_id| {
-                books.remove(&BookRef {
-                    work_id,
-                    edition_id: row.edition_id,
-                })
+                books
+                    .get(&BookRef {
+                        work_id,
+                        edition_id: row.edition_id,
+                    })
+                    .cloned()
             });
             let (cover_url, cover_thumb_url) = cover_urls(row.cover.as_deref());
             let out = EditRequestOut {

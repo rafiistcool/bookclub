@@ -650,6 +650,29 @@ async fn everyone_joins_the_club_and_the_owner_owns_it(db: PgPool) {
     assert_eq!(members, expected);
 }
 
+/// An old `--timezone` name (the legacy BOOKCLUB_TZ was read by Python's `ZoneInfo`, which took
+/// tzdb links) imports under the current name, for the club and every user; a wrong-case one is
+/// refused like a made-up one.
+#[sqlx::test]
+async fn an_old_zone_name_is_imported_as_the_current_one(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let legacy = load("fresh.sql");
+    let mut args = legacy.args("demo");
+    args.timezone = "europe/kiev".into();
+    assert!(import(&app, args).await.is_err());
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM users").await, 0);
+
+    let mut args = legacy.args("demo");
+    args.timezone = "Europe/Kiev".into();
+    import_ok(&app, args).await;
+    let zones: Vec<String> =
+        sqlx::query_scalar("SELECT timezone FROM clubs UNION SELECT timezone FROM users")
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(zones, ["Europe/Kyiv"]);
+}
+
 /// Invites keep id, code, creator and creation time in the club; every one is single-use
 /// without expiry. A used one has its redemption (a missing `used_at` is the redeemer's
 /// sign-up); an unused one is revoked.

@@ -5,7 +5,10 @@
 //! club's post, a stranger's entry, someone else's `only_me` entry) is 404 `No entry with that
 //! id`, so no answer reveals or returns a body the caller may not see.
 //!
-//! - **Edit:** the author only (403 otherwise); `updated_at` moves on every edit.
+//! - **Edit:** the author only (403 otherwise). `updated_at` (the `edited` flag) moves on every
+//!   PATCH that sends `body` or `spoiler_upto`, even with unchanged values (R8); a PATCH that
+//!   only changes `visibility` leaves it as it is, so turning an entry `only_me` and back does
+//!   not show it as edited.
 //! - **Delete:** the author, or an admin or the owner of **the post's own club** on a club post
 //!   (moderation). The row is locked first; a post with replies becomes a tombstone, any other
 //!   is deleted. Its reactions go either way.
@@ -85,7 +88,8 @@ impl Validate for ReactionIn {
     }
 }
 
-/// Edits one of the caller's posts.
+/// Edits one of the caller's posts. Sending `body` or `spoiler_upto` marks it `edited`, even
+/// with the same values; changing only `visibility` does not.
 #[utoipa::path(
     patch,
     path = "/api/posts/{post_id}",
@@ -125,12 +129,14 @@ pub async fn update_post(
         Patch::Null => (true, None),
         Patch::Value(value) => (true, spoiler(Some(value))),
     };
+    // Only the text and the spoiler flag are edits; who sees the entry is not.
+    let edits_content = body.body.is_some() || spoiler_sent;
     let updated = sqlx::query_scalar!(
         "UPDATE posts
          SET body = coalesce($3, body),
              spoiler_upto = CASE WHEN $4 THEN $5 ELSE spoiler_upto END,
              visibility = coalesce($6, visibility),
-             updated_at = now()
+             updated_at = CASE WHEN $7 THEN now() ELSE updated_at END
          WHERE id = $1 AND author_id = $2 AND deleted_at IS NULL
          RETURNING id",
         post_id,
@@ -138,7 +144,8 @@ pub async fn update_post(
         body.body,
         spoiler_sent,
         spoiler_upto,
-        body.visibility.map(visibility_text)
+        body.visibility.map(visibility_text),
+        edits_content
     )
     .fetch_optional(&mut *tx)
     .await?;

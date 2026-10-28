@@ -38,7 +38,8 @@ pub struct RegisterIn {
     /// invite. Whitespace and `-` are ignored, case does not matter.
     #[serde(default)]
     pub invite_code: Option<String>,
-    /// IANA zone for personal dates, e.g. from the browser; default `UTC`.
+    /// IANA zone for personal dates, e.g. from the browser; default `UTC`. Exact spelling; an
+    /// old name such as `Asia/Calcutta` is stored as the current one (`Asia/Kolkata`).
     #[serde(default)]
     pub timezone: Option<String>,
     /// `en` or `de`; default `en`.
@@ -54,8 +55,11 @@ impl Validate for RegisterIn {
         v.check(rules::valid_email(&self.email), rules::INVALID_EMAIL);
         v.check(rules::long_enough(&self.password), rules::PASSWORD_RULE);
         if let Some(zone) = &mut self.timezone {
-            *zone = py_strip(zone).to_owned();
-            v.check(tz::parse_zone(zone).is_ok(), msg::INVALID_TIME_ZONE);
+            // An old name (`Asia/Calcutta`) is stored as the current one (`Asia/Kolkata`).
+            match tz::canonical_zone_name(py_strip(zone)) {
+                Ok(name) => *zone = name,
+                Err(_) => v.fail(msg::INVALID_TIME_ZONE),
+            }
         }
         if let Some(locale) = &mut self.locale {
             v.check(

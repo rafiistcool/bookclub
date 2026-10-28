@@ -1589,7 +1589,10 @@ export interface paths {
         delete: operations["posts_delete"];
         options?: never;
         head?: never;
-        /** Edits one of the caller's posts. */
+        /**
+         * Edits one of the caller's posts. Sending `body` or `spoiler_upto` marks it `edited`, even
+         *     with the same values; changing only `visibility` does not.
+         */
         patch: operations["posts_update"];
         trace?: never;
     };
@@ -2029,7 +2032,10 @@ export interface components {
              *     space.
              */
             name: string;
-            /** @description IANA zone for the club's times (canonical spelling); default: the creator's zone. */
+            /**
+             * @description IANA zone for the club's times (exact spelling; an old name such as `Asia/Calcutta` is
+             *     stored as the current one, `Asia/Kolkata`); default: the creator's zone.
+             */
             timezone?: string | null;
         };
         /** @description The caller's clubs, newest join first. */
@@ -3022,7 +3028,10 @@ export interface components {
             color_mode?: string | null;
             /** @description `en` or `de`. */
             locale?: string | null;
-            /** @description IANA zone for personal dates, canonical spelling (`Europe/Berlin`). */
+            /**
+             * @description IANA zone for personal dates, exact spelling (`Europe/Berlin`); an old name such as
+             *     `Asia/Calcutta` is stored as the current one (`Asia/Kolkata`).
+             */
             timezone?: string | null;
         };
         /** @description A new quote. */
@@ -3118,7 +3127,10 @@ export interface components {
              *     invite. Whitespace and `-` are ignored, case does not matter.
              */
             invite_code?: string | null;
-            /** @description IANA zone for personal dates, e.g. from the browser; default `UTC`. */
+            /**
+             * @description IANA zone for personal dates, e.g. from the browser; default `UTC`. Exact spelling; an
+             *     old name such as `Asia/Calcutta` is stored as the current one (`Asia/Kolkata`).
+             */
             timezone?: string | null;
             /** @description `en` or `de`; default `en`. */
             locale?: string | null;

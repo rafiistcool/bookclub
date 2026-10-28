@@ -58,6 +58,8 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 
 ## Develop
 
+> **In transition.** `frontend/` on this branch already speaks the API of the new Rust server in `server/`, which is not released yet (the cutover is #52): Vite proxies `/api` and `/media` to it on `127.0.0.1:8080`, and `npm run build` writes `frontend/dist/` for it. [CLAUDE.md](CLAUDE.md) lists its setup. The Python steps below run the released app's API and tests; the current frontend no longer works against it.
+
 Day-to-day work is **two processes**: FastAPI on `:8000` and Vite on `:5173`. Vite proxies `/api` to the backend, so the browser only talks to `localhost:5173`.
 
 Needs Python **3.12+**, Node **20+**, and two terminals. On Homebrew macOS, `python3` may be older than 3.12 — use `python3.12` (or newer) if so.
@@ -129,7 +131,7 @@ same password. The unused invite `DEMOTEST2026` can register an extra test
 member. These credentials and settings are for a local demo only. Vue changes
 update through Vite; Python changes reload the API.
 
-One-process run without Docker (build the Vue app, then serve API + UI from uvicorn):
+One-process run without Docker, from a release tag (build the Vue app, then serve API + UI from uvicorn; on this branch the build goes to `frontend/dist/` instead):
 
 ```bash
 cd frontend && npm install && npm run build
@@ -189,13 +191,14 @@ using its bin button; all its books and decorations move to an adjacent shelf.
 At least one shelf remains, and Undo restores the last successful change.
 
 ```
-backend/           FastAPI, tests
+backend/           FastAPI, tests (the released app)
 frontend/          Vue 3 + Vite + Pinia
+server/            Rust server and Postgres schema that replace backend/ (not released yet)
 deploy/            Entrypoint, systemd unit, env example
 data/              SQLite (gitignored except .gitkeep)
 ```
 
-`npm run build` writes into `backend/app/static/` (gitignored). Uvicorn serves that folder in “run” mode.
+In a release, `npm run build` writes into `backend/app/static/` (gitignored), and uvicorn serves that folder in “run” mode. On this branch it writes `frontend/dist/` (gitignored) for the Rust server, which serves it as `STATIC_DIR`.
 
 ---
 

@@ -27,11 +27,13 @@ Checks (CI runs all of them). The Python backend and the frontend have no linter
 
 ```bash
 cd backend && .venv/bin/python -m pytest -q
-cd frontend && npm run typecheck && npm test && npm run build
+cd frontend && npm run typecheck && npm test && npm run build && npm run check:api
 cd server && cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked && cargo sqlx prepare --check -- --all-targets
 ```
 
 After adding or changing a `query!` macro, run `cargo sqlx prepare -- --all-targets` in `server/` and commit `server/.sqlx/`. With `SQLX_OFFLINE=true` (set in the Dockerfile) the server builds from that data without a database.
+
+`frontend/src/api/generated.ts` is written from the server's OpenAPI document, never by hand: after changing a DTO or a utoipa description, run `npm run gen:api` in `frontend/` and commit the file (`check:api` fails otherwise).
 
 Run a single test:
 
@@ -49,16 +51,16 @@ Dev servers:
   - Behind Vite, which forwards the browser's `Origin` unchanged: `PUBLIC_URL=http://agents.lan:5173`.
   - Sign-up needs an invite unless `SIGNUP_MODE=open`. For the first account, `DEV_MODE=true cargo run -- beta-invite` (the same environment as the server) prints a sign-up invite code and its join link (single-use, 30 days; `--uses N --days D` change that). `DEV_MODE=true cargo run -- make-admin <username>` makes an instance admin, who can mint more under `/api/admin/invites`.
 
-Vite on `:5173` proxies `/api` to `127.0.0.1:8000`. On the `agents` VM, add `-- --host` to the Vite command and open `http://agents.lan:5173`. The backend can stay on 127.0.0.1. First login on an empty DB uses invite `DEV-ONLY`, which needs `DEBUG=1`.
+Vite on `:5173` proxies `/api` and `/media` to the Rust server on `127.0.0.1:8080`. On the `agents` VM: `cd frontend && npm run dev -- --host`, the server started as `PUBLIC_URL=http://agents.lan:5173 DEV_MODE=true cargo run`, then open `http://agents.lan:5173`. The server can stay on 127.0.0.1. The first account needs a `beta-invite` code (above).
 
 ## Architecture
 
 ### Request flow
 
-The Vue app always calls relative `/api`; there is never a separate API origin.
+The Vue app always calls relative `/api` and `/media`; there is never a separate API origin. It speaks only the Rust server's API: running the Python backend with the current SPA is not supported.
 
-- In production, uvicorn serves both the API and the built SPA. `npm run build` writes into `backend/app/static/` (gitignored; `emptyOutDir` wipes it).
-- The catch-all in `app/main.py` serves `index.html` with `Cache-Control: no-store`, so clients never keep a shell that points to old hashed assets.
+- `npm run build` writes `frontend/dist/` (gitignored; `emptyOutDir` wipes it). The Rust server serves it as `STATIC_DIR`; its fallback (`server/src/spa.rs`) answers every other non-`/api`, non-`/media` path with `index.html` and `Cache-Control: no-store`, so clients never keep a shell that points to old hashed assets.
+- Production still runs the Python app until the cutover (#52), with the SPA its image was built with. The catch-all in `app/main.py` serves that `index.html` the same way. Do not cut a Python release from `phase-1`: the root `Dockerfile` still copies `backend/app/static`, which the build no longer writes.
 
 ### Backend (`backend/app/`)
 
@@ -98,12 +100,12 @@ The Vue app always calls relative `/api`; there is never a separate API origin.
 
 ### Backend features without a frontend
 
-The editorial-redesign merge (PR #3) removed the service worker (`frontend/public/sw.js`), the Web Push settings, and the password-change form. Their backend endpoints still exist and are tested: `routers/push.py` and `PATCH /api/auth/password`. The README no longer advertises either feature.
+The editorial-redesign merge (PR #3) removed the service worker (`frontend/public/sw.js`) and the Web Push settings. The Python push endpoints (`routers/push.py`) still exist and are tested; the Rust server drops `/api/push/*` until Phase 4 (#60). Settings keeps the notification switches (`/api/auth/notifications`) for that, but nothing sends a push. The password-change form is back in Settings (`PATCH /api/auth/password` on the Rust server). The README does not advertise push.
 
 ## Cross-cutting rules enforced by tests
 
 - **UI copy:** every string goes into both `i18n/en.json` and `i18n/de.json`. `i18n/messages.test.ts` requires identical keys and `{placeholders}` in both. Web Push copy lives in `backend/app/i18n.py`.
-- **API errors:** the backend returns English `detail` strings, and `frontend/src/i18n/apiErrors.ts` maps exact strings to i18n keys. If you change a mapped backend message, update the mapping too. `backend/tests/test_api_error_copy.py` fails if a mapped string no longer appears in `backend/app`, and `server/tests/api_error_copy.rs` if it no longer appears as a string literal in `server/src` (shared strings are `error::msg` constants).
+- **API errors:** the server returns English `detail` strings, and `frontend/src/i18n/apiErrors.ts` maps exact strings to i18n keys. If you change a mapped server message, update the mapping too. `server/tests/api_error_copy.rs` fails if a mapped string no longer appears as a string literal in `server/src` (shared strings are `error::msg` constants).
 - **Backend test isolation:** each test that uses the `client` fixture (`tests/conftest.py`) gets a fresh app and a temp DB. Outbound HTTP is faked by monkeypatching `httpx.AsyncClient` on the module under test, and the fixture resets the module-level caches and rate limits. A new module-level cache needs a reset in that fixture.
 - **Dependencies:** the Docker image installs from `backend/requirements.txt`, while local setup and CI install from `pyproject.toml`. Add a new runtime dependency to both files. No test catches a dependency missing from `requirements.txt`: CI stays green, and the image only breaks when it is built on a release tag.
 

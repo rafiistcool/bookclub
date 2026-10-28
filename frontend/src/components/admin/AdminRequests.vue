@@ -32,10 +32,8 @@ const busyId = ref<number | null>(null);
 const rejecting = ref<number | null>(null);
 const rejectNote = ref("");
 /**
- * Books the answer does not carry, by work id: a merge's target, and a
- * request whose `book` is null although its work exists (the server fills
- * `book` for only one of several open requests on the same edition). Null
- * when the work is gone.
+ * Books the answer does not carry, by work id: a merge's target. Null when
+ * the work is gone.
  */
 const extraBooks = ref<Record<number, BookDetailOut | null>>({});
 
@@ -43,11 +41,10 @@ function failed(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback;
 }
 
-/** Reads the books the queue names but does not carry, one request each. */
+/** Reads the merge targets the queue names but does not carry, one request each. */
 async function loadExtraBooks() {
   const ids = new Set<number>();
   for (const request of items.value) {
-    if (!request.book && request.work_id != null) ids.add(request.work_id);
     const target = mergeTarget(request);
     if (target != null) ids.add(target);
   }
@@ -60,11 +57,6 @@ async function loadExtraBooks() {
       }
     }),
   );
-}
-
-/** The book a request is about: the answer's, else the one read by its work id. */
-function bookOf(request: EditRequestOut) {
-  return request.book ?? (request.work_id != null ? extraBooks.value[request.work_id] ?? null : null);
 }
 
 async function load() {
@@ -156,16 +148,13 @@ onMounted(load);
         </p>
 
         <div class="admin-book">
-          <RouterLink v-if="bookOf(request)" :to="bookPath(bookOf(request)!)" class="admin-book-link">
-            <BookCover :book="bookOf(request)!" size="sm" />
+          <RouterLink v-if="request.book" :to="bookPath(request.book)" class="admin-book-link">
+            <BookCover :book="request.book" size="sm" />
             <span>
-              <strong>{{ bookOf(request)!.title }}</strong>
-              <span v-if="bookOf(request)!.authors" class="fine subtle">{{ bookOf(request)!.authors }}</span>
+              <strong>{{ request.book.title }}</strong>
+              <span v-if="request.book.authors" class="fine subtle">{{ request.book.authors }}</span>
               <span v-if="request.edition_id" class="finer subtle">{{ t("admin.edition", { id: request.edition_id }) }}</span>
             </span>
-          </RouterLink>
-          <RouterLink v-else-if="request.work_id != null && extraBooks[request.work_id] === undefined" :to="bookPath(request.work_id)" class="fine">
-            {{ t("admin.bookN", { id: request.work_id }) }}
           </RouterLink>
           <p v-else class="fine subtle">{{ t("admin.bookGone") }}</p>
 

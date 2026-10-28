@@ -340,12 +340,15 @@ pub async fn update_quote(
         Patch::Null => (true, None),
         Patch::Value(page) => (true, Some(page)),
     };
+    // `updated_at` records edits of the text and the page, as for diary entries
+    // (`posts::edit`): a visibility change alone leaves it as it is.
+    let edits_content = body.body.is_some() || page_sent;
     let updated = sqlx::query_scalar!(
         "UPDATE quotes
          SET body = coalesce($3, body),
              page = CASE WHEN $4 THEN $5 ELSE page END,
              visibility = coalesce($6, visibility),
-             updated_at = now()
+             updated_at = CASE WHEN $7 THEN now() ELSE updated_at END
          WHERE id = $1 AND user_id = $2
          RETURNING id",
         quote_id,
@@ -353,7 +356,8 @@ pub async fn update_quote(
         body.body,
         page_sent,
         page,
-        body.visibility.map(visibility_text)
+        body.visibility.map(visibility_text),
+        edits_content
     )
     .fetch_optional(&mut *tx)
     .await?;

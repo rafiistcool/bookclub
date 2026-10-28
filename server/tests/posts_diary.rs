@@ -403,14 +403,57 @@ async fn edits_mark_the_entry_and_change_its_visibility(db: PgPool) {
         )
         .await
         .assert_detail(400, "Replies and club posts cannot be private");
-    // "audience" on a reply is a harmless edit.
-    grace
+    // "audience" on a reply is harmless, and no edit.
+    let reply = grace
         .patch(
             &format!("/api/posts/{}", reply["id"]),
             json!({"visibility": "audience"}),
         )
-        .await
-        .assert_status(200);
+        .await;
+    reply.assert_status(200);
+    assert_eq!(reply.json()["edited"], false);
+}
+
+/// Changing only who sees an entry is no edit: `updated_at` stays as it is, so the entry does
+/// not show "edited" to its readers (fe.md, "Server issues found by the smoke test"). A body or
+/// spoiler change still is one, with or without a visibility change beside it (R8).
+#[sqlx::test]
+async fn a_visibility_change_alone_is_no_edit(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let (ada, grace, _) = ada_and_grace(&app).await;
+    let circe = app.work("Circe").await;
+    let entry = write(&ada, &circe, json!({"body": "Mine"})).await;
+    let path = format!("/api/posts/{}", entry["id"]);
+    let updated_at = async || -> Option<time::OffsetDateTime> {
+        sqlx::query_scalar("SELECT updated_at FROM posts WHERE id = $1")
+            .bind(entry["id"].as_i64().unwrap())
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
+
+    for visibility in ["only_me", "audience"] {
+        let res = ada.patch(&path, json!({"visibility": visibility})).await;
+        res.assert_status(200);
+        assert_eq!(res.json()["visibility"], visibility);
+        assert_eq!(res.json()["edited"], false, "{visibility}");
+    }
+    assert_eq!(updated_at().await, None);
+    let seen = grace.get(&thread(&circe)).await.json();
+    assert_eq!(seen["items"][0]["edited"], false);
+
+    let res = ada.patch(&path, json!({"spoiler_upto": 40})).await;
+    assert_eq!(res.json()["edited"], true);
+    let edited_at = updated_at().await.expect("a spoiler change is an edit");
+    let res = ada.patch(&path, json!({"visibility": "only_me"})).await;
+    assert_eq!(res.json()["edited"], true);
+    assert_eq!(updated_at().await, Some(edited_at));
+    let res = ada
+        .patch(&path, json!({"body": "Mine", "visibility": "audience"}))
+        .await;
+    assert_eq!(res.json()["visibility"], "audience");
+    assert_eq!(res.json()["edited"], true);
+    assert!(updated_at().await > Some(edited_at));
 }
 
 /// parity: test_diary.py::test_deleting_an_entry_with_replies_leaves_a_tombstone

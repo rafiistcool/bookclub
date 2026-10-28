@@ -388,6 +388,42 @@ async fn visibility_can_be_changed(db: PgPool) {
     assert_eq!(list(&ada, "").await[0]["visibility"], "only_me");
 }
 
+/// As with diary entries, `updated_at` (kept in the account export, not in `QuoteOut`) records
+/// edits of the text and the page; changing only the visibility leaves it as it is.
+#[sqlx::test]
+async fn a_visibility_change_alone_is_no_edit(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let (ada, _) = friends(&app).await;
+    let circe = app.work("Circe").await;
+    let id = quote(&ada, json!({"work_id": circe.id, "body": "Mine"})).await["id"]
+        .as_i64()
+        .unwrap();
+    let path = format!("/api/quotes/{id}");
+    let updated_at = async || -> Option<time::OffsetDateTime> {
+        sqlx::query_scalar("SELECT updated_at FROM quotes WHERE id = $1")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
+    ada.patch(&path, json!({"visibility": "only_me"}))
+        .await
+        .assert_status(200);
+    assert_eq!(updated_at().await, None);
+    ada.patch(&path, json!({"page": 12}))
+        .await
+        .assert_status(200);
+    let edited_at = updated_at().await.expect("a page change is an edit");
+    ada.patch(&path, json!({"visibility": "audience"}))
+        .await
+        .assert_status(200);
+    assert_eq!(updated_at().await, Some(edited_at));
+    ada.patch(&path, json!({"body": "Mine", "visibility": "only_me"}))
+        .await
+        .assert_status(200);
+    assert!(updated_at().await > Some(edited_at));
+}
+
 #[sqlx::test]
 async fn quotes_require_sign_in(db: PgPool) {
     let app = TestApp::new(db).await;
