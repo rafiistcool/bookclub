@@ -5,6 +5,7 @@
 use bookclub_server::catalog::shared::books::{
     self, BookRef, book_outs, edition_outs, require_edition_of, require_work,
 };
+use bookclub_server::catalog::shared::dnb_marc::DnbRecord;
 use bookclub_server::catalog::shared::ingest::{
     self, AuthorRecord, ContributorRole, CoverTarget, EditionRecord, Format, Mode, Source,
     WorkGrouping, WorkRecord,
@@ -1374,6 +1375,181 @@ async fn the_newest_record_owns_the_idn(db: PgPool) {
     .unwrap();
     assert_eq!(found.1, c_id);
     assert_eq!(row(&db, "editions", c_id).await["isbn13"], ISBN_C);
+}
+
+/// A DNB record `idn` with one edition per ISBN, as `map_record` gives it: the first edition
+/// carries the IDN as `dnb_idn`, every edition carries it as `dnb_record_idn`.
+fn dnb_record(idn: &str, isbns: &[&str]) -> DnbRecord {
+    DnbRecord {
+        idn: idn.into(),
+        work: dnb_work("Titel", &[("Ada Autorin", "Autorin, Ada", None)]),
+        editions: isbns
+            .iter()
+            .enumerate()
+            .map(|(i, raw)| EditionRecord {
+                dnb_idn: (i == 0).then(|| idn.into()),
+                dnb_record_idn: Some(idn.into()),
+                ..dnb_edition(raw, idn, "Titel")
+            })
+            .collect(),
+    }
+}
+
+/// `(dnb_idn, dnb_record_idn, withdrawn)` of an edition.
+async fn dnb_ids(db: &PgPool, edition: i64) -> (Value, Value, bool) {
+    let e = row(db, "editions", edition).await;
+    (
+        e["dnb_idn"].clone(),
+        e["dnb_record_idn"].clone(),
+        !e["withdrawn_at"].is_null(),
+    )
+}
+
+/// A deleted header withdraws every edition whose newest delivering record it names
+/// (`editions.dnb_record_idn`): all ISBNs of a multi-ISBN record, but not an edition a newer
+/// record delivered again. Re-delivering a record brings its editions back, one per ISBN.
+#[sqlx::test]
+async fn a_deleted_record_withdraws_the_editions_it_delivered_last(db: PgPool) {
+    let mut c = conn(&db).await;
+    let first =
+        ingest::upsert_dnb_record(&mut c, &dnb_record("100", &[ISBN_A, ISBN_B]), Mode::Replace)
+            .await
+            .unwrap();
+    let (a, b) = (first[0].1, first[1].1);
+    assert_eq!(first[1].0, first[0].0, "one work");
+    assert_eq!(dnb_ids(&db, a).await, (json!("100"), json!("100"), false));
+    assert_eq!(dnb_ids(&db, b).await, (Value::Null, json!("100"), false));
+
+    // A newer record delivers B first and a new ISBN C second.
+    let second =
+        ingest::upsert_dnb_record(&mut c, &dnb_record("200", &[ISBN_B, ISBN_C]), Mode::Replace)
+            .await
+            .unwrap();
+    assert_eq!(second[0], (first[0].0, b));
+    let c_id = second[1].1;
+    assert_eq!(dnb_ids(&db, b).await, (json!("200"), json!("200"), false));
+    assert_eq!(dnb_ids(&db, c_id).await, (Value::Null, json!("200"), false));
+
+    // Deleting the older record withdraws only what it delivered last.
+    ingest::withdraw_dnb_edition(&mut c, "100").await.unwrap();
+    assert_eq!(dnb_ids(&db, a).await, (json!("100"), json!("100"), true));
+    assert!(!dnb_ids(&db, b).await.2);
+    assert!(!dnb_ids(&db, c_id).await.2);
+    // Deleting the newer one withdraws both of its editions.
+    ingest::withdraw_dnb_edition(&mut c, "200").await.unwrap();
+    assert!(dnb_ids(&db, b).await.2);
+    assert!(dnb_ids(&db, c_id).await.2);
+
+    // The first record again: A and B are live and its own again; C stays withdrawn.
+    let again =
+        ingest::upsert_dnb_record(&mut c, &dnb_record("100", &[ISBN_A, ISBN_B]), Mode::Replace)
+            .await
+            .unwrap();
+    assert_eq!(again, first);
+    assert_eq!(dnb_ids(&db, a).await, (json!("100"), json!("100"), false));
+    assert_eq!(dnb_ids(&db, b).await, (json!("200"), json!("100"), false));
+    assert_eq!(dnb_ids(&db, c_id).await, (Value::Null, json!("200"), true));
+    assert_eq!(scalar_i64(&db, "SELECT count(*) FROM editions").await, 3);
+}
+
+/// An edition that a newer record lists as a later ISBN keeps the older record's `dnb_idn`
+/// (only a record that names it first moves that), but its `dnb_record_idn` becomes the newer
+/// record's, even when nothing else about it changes. So deleting the older record leaves it
+/// live, and deleting the newer one withdraws it (int.md decision 1: the rule
+/// `dnb_idn = $1 OR dnb_record_idn = $1` would withdraw it with the older record).
+#[sqlx::test]
+async fn an_edition_relisted_second_by_a_newer_record_follows_that_record(db: PgPool) {
+    const ISBN_D: &str = "9783161484100";
+    let mut c = conn(&db).await;
+    let first =
+        ingest::upsert_dnb_record(&mut c, &dnb_record("100", &[ISBN_A, ISBN_B]), Mode::Replace)
+            .await
+            .unwrap();
+    let (a, b) = (first[0].1, first[1].1);
+
+    // Record 300 lists D first and A second, with the data A already has.
+    let newer =
+        ingest::upsert_dnb_record(&mut c, &dnb_record("300", &[ISBN_D, ISBN_A]), Mode::Replace)
+            .await
+            .unwrap();
+    assert_eq!(newer[1], (first[0].0, a), "A is found by its ISBN");
+    let d = newer[0].1;
+    assert_eq!(dnb_ids(&db, a).await, (json!("100"), json!("300"), false));
+    assert_eq!(dnb_ids(&db, d).await, (json!("300"), json!("300"), false));
+
+    // Deleting the older record withdraws only B, which it still delivered last.
+    ingest::withdraw_dnb_edition(&mut c, "100").await.unwrap();
+    assert_eq!(dnb_ids(&db, a).await, (json!("100"), json!("300"), false));
+    assert!(dnb_ids(&db, b).await.2);
+    assert!(!dnb_ids(&db, d).await.2);
+    // Deleting the newer one withdraws A with D.
+    ingest::withdraw_dnb_edition(&mut c, "300").await.unwrap();
+    assert!(dnb_ids(&db, a).await.2);
+    assert!(dnb_ids(&db, d).await.2);
+    assert_eq!(scalar_i64(&db, "SELECT count(*) FROM editions").await, 3);
+}
+
+/// Applies, in order, the migrations whose version `pick` selects, without sqlx's bookkeeping,
+/// so that a test can write rows in the shape an older schema left them.
+async fn apply_migrations(db: &PgPool, pick: impl Fn(i64) -> bool) {
+    for migration in sqlx::migrate!("./migrations")
+        .iter()
+        .filter(|m| pick(m.version))
+    {
+        sqlx::raw_sql(migration.sql.clone())
+            .execute(db)
+            .await
+            .unwrap_or_else(|error| panic!("migration {}: {error}", migration.version));
+    }
+}
+
+/// Migration 1200 on rows written before it, when only the first ISBN's edition of a DNB record
+/// carried the IDN. The other editions of the record (no IDN, the record's 263 date) get the IDN
+/// of the one edition of their work that carries an IDN and has their date, and are withdrawn
+/// when an edition of their work with that date is withdrawn, as new-releases hid them before
+/// (HAR decision 15). An edition whose date is not the DNB's, or whose date two records share,
+/// keeps no record IDN.
+#[sqlx::test(migrations = false)]
+async fn migration_1200_backfills_the_other_isbns_of_a_record(db: PgPool) {
+    apply_migrations(&db, |version| version < 1200).await;
+    sqlx::raw_sql(
+        r#"INSERT INTO works (id, title, source) VALUES (1, 'Titel', 'dnb'), (2, 'Zwei', 'dnb');
+           INSERT INTO editions (id, work_id, dnb_idn, planned_publication_date, field_sources,
+                                 source, withdrawn_at)
+           VALUES (1, 1, '100', '2026-11-01', '{"planned_publication_date": "dnb"}', 'dnb', NULL),
+                  (2, 1, NULL, '2026-11-01', '{"planned_publication_date": "dnb"}', 'dnb', NULL),
+                  (3, 1, '200', '2026-12-01', '{"planned_publication_date": "dnb"}', 'dnb', now()),
+                  (4, 1, NULL, '2026-12-01', '{"planned_publication_date": "dnb"}', 'dnb', NULL),
+                  (5, 1, NULL, '2026-12-01', '{"planned_publication_date": "user"}', 'user', NULL),
+                  (6, 1, NULL, NULL, '{}', 'dnb', NULL),
+                  (7, 2, '300', '2027-01-01', '{"planned_publication_date": "dnb"}', 'dnb', NULL),
+                  (8, 2, '301', '2027-01-01', '{"planned_publication_date": "dnb"}', 'dnb', NULL),
+                  (9, 2, NULL, '2027-01-01', '{"planned_publication_date": "dnb"}', 'dnb', NULL);"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    apply_migrations(&db, |version| version >= 1200).await;
+
+    let expected = [
+        (1, (json!("100"), json!("100"), false)),
+        (2, (Value::Null, json!("100"), false)),
+        (3, (json!("200"), json!("200"), true)),
+        (4, (Value::Null, json!("200"), true)),
+        (5, (Value::Null, Value::Null, false)),
+        (6, (Value::Null, Value::Null, false)),
+        (7, (json!("300"), json!("300"), false)),
+        (8, (json!("301"), json!("301"), false)),
+        (9, (Value::Null, Value::Null, false)),
+    ];
+    for (edition, ids) in expected {
+        assert_eq!(dnb_ids(&db, edition).await, ids, "edition {edition}");
+    }
+    // From now on a deleted header takes the backfilled editions with the first one.
+    let mut c = conn(&db).await;
+    ingest::withdraw_dnb_edition(&mut c, "100").await.unwrap();
+    assert!(dnb_ids(&db, 1).await.2);
+    assert!(dnb_ids(&db, 2).await.2);
 }
 
 #[sqlx::test]

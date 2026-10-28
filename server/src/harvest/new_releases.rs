@@ -1,8 +1,6 @@
 //! `GET /api/books/new-releases` (endpoint-map §5): upcoming and recent titles from the local
 //! catalog, which the harvester fills. No remote calls.
 
-use std::collections::HashMap;
-
 use axum::Json;
 use axum::extract::State;
 use serde::Deserialize;
@@ -12,8 +10,9 @@ use utoipa::IntoParams;
 
 use crate::AppState;
 use crate::auth::extract::CurrentUser;
-use crate::catalog::shared::books::{BookRef, book_outs};
-use crate::dto::{ClubRef, SearchHit, SearchPage};
+use crate::catalog::hits::{ListedHit, annotated_hits};
+use crate::catalog::shared::books::BookRef;
+use crate::dto::SearchPage;
 use crate::error::{ApiResult, ErrorBody};
 use crate::extract::{ApiQuery, Validate, Validator};
 use crate::tz;
@@ -64,8 +63,7 @@ impl Validate for NewReleasesParams {
 }
 
 /// Upcoming and recent titles: editions planned between today − 30 days and today + 120 days
-/// (today in the caller's time zone), not withdrawn (nor another ISBN of a withdrawn DNB record,
-/// see [`new_releases_page`]), in the given language; one hit per work
+/// (today in the caller's time zone), not withdrawn, in the given language; one hit per work
 /// (its earliest such edition, whose title and cover the hit shows), ordered by that date, then
 /// work id. `planned_publication_date` is that date.
 #[utoipa::path(
@@ -93,14 +91,10 @@ pub async fn new_releases(
     ))
 }
 
-/// One page of new releases around `today`, annotated for `viewer` like search hits.
-///
-/// A deleted DNB header withdraws only the edition that carries the record's IDN, the first
-/// ISBN's (conventions §7.5: `editions.dnb_idn` is unique). The record's other editions carry no
-/// IDN and the same 263 date. So an edition without an IDN whose planned date came from the DNB
-/// is left out when an edition of its work with the same planned date is withdrawn: a cancelled
-/// multi-ISBN announcement leaves the list with all its editions. A later live delivery
-/// un-withdraws the first edition, and the others come back with it.
+/// One page of new releases around `today`, annotated for `viewer` like search hits
+/// (`catalog::hits::annotated_hits`). A deleted DNB header withdraws every edition of its record
+/// (`ingest::withdraw_dnb_edition`), so a cancelled multi-ISBN announcement leaves the list with
+/// all its editions.
 pub async fn new_releases_page(
     conn: &mut PgConnection,
     viewer: i64,
@@ -121,12 +115,6 @@ pub async fn new_releases_page(
                  AND e.withdrawn_at IS NULL
                  AND e.language = $3
                  AND w.merged_into_id IS NULL
-                 AND NOT (e.dnb_idn IS NULL
-                          AND e.field_sources->>'planned_publication_date' = 'dnb'
-                          AND EXISTS (SELECT 1 FROM editions gone
-                                      WHERE gone.work_id = e.work_id
-                                        AND gone.withdrawn_at IS NOT NULL
-                                        AND gone.planned_publication_date = e.planned_publication_date))
                ORDER BY e.work_id, e.planned_publication_date, e.id
            ) firsts
            ORDER BY planned, work_id
@@ -142,90 +130,21 @@ pub async fn new_releases_page(
     let has_more = rows.len() as i64 > limit;
     let rows = &rows[..rows.len().min(params.limit as usize)];
 
-    let refs: Vec<BookRef> = rows
+    let hits: Vec<ListedHit> = rows
         .iter()
-        .map(|row| BookRef {
-            work_id: row.work_id,
-            edition_id: Some(row.edition_id),
+        .map(|row| ListedHit {
+            book: BookRef {
+                work_id: row.work_id,
+                edition_id: Some(row.edition_id),
+            },
+            isbn: row.isbn13.clone(),
+            planned_publication_date: Some(row.planned),
         })
         .collect();
-    let work_ids: Vec<i64> = rows.iter().map(|row| row.work_id).collect();
-    let mut books = book_outs(conn, &refs).await?;
-    let shelf = shelf_entries(conn, viewer, &work_ids).await?;
-    let mut picks = club_picks(conn, viewer, &work_ids).await?;
-    let items = rows
-        .iter()
-        .zip(&refs)
-        .filter_map(|(row, book_ref)| {
-            let book = books.remove(book_ref)?;
-            let shelf_id = shelf.get(&row.work_id).copied();
-            Some(SearchHit {
-                id: book.id,
-                ol_work_key: book.ol_work_key,
-                title: book.title,
-                authors: book.authors,
-                year: book.year,
-                cover_url: book.cover_url,
-                cover_thumb_url: book.cover_thumb_url,
-                cover_public_id: book.cover_public_id,
-                isbn: row.isbn13.clone(),
-                source: book.source,
-                custom: book.custom,
-                on_shelf: shelf_id.is_some(),
-                shelf_id,
-                club_picks: picks.remove(&row.work_id).unwrap_or_default(),
-                planned_publication_date: Some(row.planned),
-            })
-        })
-        .collect();
+    let items = annotated_hits(conn, viewer, &hits).await?;
     Ok(SearchPage {
         items,
         page: params.page,
         has_more,
     })
-}
-
-/// The viewer's shelf entry id per work.
-async fn shelf_entries(
-    conn: &mut PgConnection,
-    viewer: i64,
-    work_ids: &[i64],
-) -> sqlx::Result<HashMap<i64, i64>> {
-    let rows = sqlx::query!(
-        "SELECT work_id, id FROM shelf_entries WHERE user_id = $1 AND work_id = ANY($2)",
-        viewer,
-        work_ids
-    )
-    .fetch_all(conn)
-    .await?;
-    Ok(rows.into_iter().map(|row| (row.work_id, row.id)).collect())
-}
-
-/// Per work, the viewer's clubs (`bc_member_clubs`) whose current pick it is, newest membership
-/// first: the same annotation as search hits.
-async fn club_picks(
-    conn: &mut PgConnection,
-    viewer: i64,
-    work_ids: &[i64],
-) -> sqlx::Result<HashMap<i64, Vec<ClubRef>>> {
-    let rows = sqlx::query!(
-        r#"SELECT p.work_id, c.slug, c.name
-           FROM club_picks p
-           JOIN bc_member_clubs($1) AS mc ON mc.club_id = p.club_id
-           JOIN clubs c ON c.id = p.club_id
-           WHERE p.ended_at IS NULL AND p.work_id = ANY($2)
-           ORDER BY mc.joined_at DESC, c.id"#,
-        viewer,
-        work_ids
-    )
-    .fetch_all(conn)
-    .await?;
-    let mut picks: HashMap<i64, Vec<ClubRef>> = HashMap::new();
-    for row in rows {
-        picks.entry(row.work_id).or_default().push(ClubRef {
-            slug: row.slug,
-            name: row.name,
-        });
-    }
-    Ok(picks)
 }

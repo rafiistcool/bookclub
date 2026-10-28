@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE editions SET isbn13 = $2, title = $3, subtitle = $4, publisher = $5,\n                    language = $6, format = $7, pages = $8, publication_year = $9,\n                    planned_publication_date = $10, ol_edition_id = $11, dnb_idn = $12,\n                    dnb_record_idn = $13, source = $14, cover_media_id = $15,\n                    field_sources = $16, withdrawn_at = NULL, updated_at = now()\n             WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Int4",
+        "Int4",
+        "Date",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Int8",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "21058e737839d52f67608b2e551d4a0cb4f8443b3f6fdd9e4f8d34d75b338064"
+}

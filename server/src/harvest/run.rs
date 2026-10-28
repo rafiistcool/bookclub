@@ -13,13 +13,13 @@
 //! - **Failure.** The cursor stays where the last committed page left it, and `last_error` says
 //!   why; the next run resumes or restarts the same run.
 //!
-//! Records: a deleted header withdraws its edition (`ingest::withdraw_dnb_edition`) and is never
-//! mapped; every other record goes through `dnb_marc::map_record` and
-//! `ingest::upsert_dnb_record(…, Mode::Replace)`, then locks the works it landed on against a
-//! merge in flight ([`MERGED_RETRIES`]). A record the mapping refuses, or one whose ingest fails
-//! with a data error ([`refuses_record`]), is skipped with a log line. Any other error (a
-//! deadlock, a cancelled statement, a lock timeout, a lost connection) fails the page, so the
-//! record is tried again.
+//! Records: a deleted header withdraws its record's editions, every ISBN
+//! (`ingest::withdraw_dnb_edition`), and is never mapped; every other record goes through
+//! `dnb_marc::map_record` and `ingest::upsert_dnb_record(…, Mode::Replace)`, then locks the works
+//! it landed on against a merge in flight ([`MERGED_RETRIES`]). A record the mapping refuses, or
+//! one whose ingest fails with a data error ([`refuses_record`]), is skipped with a log line. Any
+//! other error (a deadlock, a cancelled statement, a lock timeout, a lost connection) fails the
+//! page, so the record is tried again.
 
 use std::time::Duration;
 
@@ -76,7 +76,7 @@ pub struct SetReport {
     pub records: u64,
     /// Records ingested through `upsert_dnb_record`.
     pub ingested: u64,
-    /// Deleted headers (each withdraws its edition, if there is one).
+    /// Deleted headers (each withdraws its record's editions, if there are any).
     pub withdrawn: u64,
     /// Records skipped: refused by the mapping, refused by ingest, or without metadata or IDN.
     pub skipped: u64,

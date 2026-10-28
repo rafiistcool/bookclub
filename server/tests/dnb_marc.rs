@@ -226,6 +226,16 @@ fn a_multi_isbn_record_gives_one_edition_per_isbn() {
     assert_eq!(formats, [Some(Format::Paperback), Some(Format::Paperback)]);
     let idns: Vec<Option<&str>> = rec.editions.iter().map(|e| e.dnb_idn.as_deref()).collect();
     assert_eq!(idns, [Some("850639050"), None]);
+    let record_idns: Vec<Option<&str>> = rec
+        .editions
+        .iter()
+        .map(|e| e.dnb_record_idn.as_deref())
+        .collect();
+    assert_eq!(
+        record_idns,
+        [Some("850639050"); 2],
+        "the record's IDN on both"
+    );
     assert_eq!(rec.editions[1].pages, Some(337), "XXI, 337 S.");
     assert_eq!(rec.editions[1].publication_year, Some(1985));
     assert_eq!(rec.work.author_names, "Ignaz Paul Vital Troxler");
@@ -392,4 +402,67 @@ async fn a_deleted_header_withdraws_the_edition(db: PgPool) {
             .await
             .unwrap();
     assert!(withdrawn);
+}
+
+/// Withdrawn flags and record IDNs of the editions with these ISBNs, in ISBN order.
+async fn withdrawn_by_isbn(db: &PgPool, isbns: &[String]) -> Vec<(String, Option<String>, bool)> {
+    sqlx::query_as(
+        "SELECT isbn13, dnb_record_idn, withdrawn_at IS NOT NULL FROM editions
+         WHERE isbn13 = ANY($1) ORDER BY isbn13",
+    )
+    .bind(isbns)
+    .fetch_all(db)
+    .await
+    .unwrap()
+}
+
+/// A deleted header names the record's IDN, which only the first ISBN's edition carries as
+/// `dnb_idn`; every edition of the record carries it as `dnb_record_idn`, so all of them are
+/// withdrawn. Ingesting the record again keeps one edition per ISBN and brings both back.
+#[sqlx::test]
+async fn a_deleted_multi_isbn_record_withdraws_every_edition(db: PgPool) {
+    let rec = map("multi_isbn.xml");
+    let isbns: Vec<String> = isbns(&rec).iter().map(|i| i.to_string()).collect();
+    assert_eq!(isbns.len(), 2);
+    let mut conn = db.acquire().await.unwrap();
+    ingest::upsert_dnb_record(&mut conn, &rec, Mode::Replace)
+        .await
+        .unwrap();
+    let idn = Some(rec.idn.clone());
+    assert_eq!(
+        withdrawn_by_isbn(&db, &isbns).await,
+        [
+            (isbns[0].clone(), idn.clone(), false),
+            (isbns[1].clone(), idn.clone(), false)
+        ]
+    );
+
+    ingest::withdraw_dnb_edition(&mut conn, &rec.idn)
+        .await
+        .unwrap();
+    assert_eq!(
+        withdrawn_by_isbn(&db, &isbns).await,
+        [
+            (isbns[0].clone(), idn.clone(), true),
+            (isbns[1].clone(), idn.clone(), true)
+        ]
+    );
+
+    for _ in 0..2 {
+        ingest::upsert_dnb_record(&mut conn, &rec, Mode::Replace)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        withdrawn_by_isbn(&db, &isbns).await,
+        [
+            (isbns[0].clone(), idn.clone(), false),
+            (isbns[1].clone(), idn, false)
+        ]
+    );
+    let editions: i64 = sqlx::query_scalar("SELECT count(*) FROM editions")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(editions, 2, "one edition per ISBN");
 }
