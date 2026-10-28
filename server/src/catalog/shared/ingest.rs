@@ -393,11 +393,12 @@ enum Action {
     Clear,
 }
 
-/// The provenance rules for one field: an empty field may always be filled; a value overwrites
-/// a field of equal or lower rank; under Replace, a missing value clears the source's own field.
+/// The provenance rules for one field: an empty field may be filled, unless an admin cleared it
+/// (provenance `admin` without a value: only an admin fills it again); a value overwrites a field
+/// of equal or lower rank; under Replace, a missing value clears the source's own field.
 fn decide(has_value: bool, owner: Source, incoming: bool, by: Source, mode: Mode) -> Action {
     if incoming {
-        if !has_value || owner.rank() <= by.rank() {
+        if (!has_value && owner != Source::Admin) || owner.rank() <= by.rank() {
             Action::Write
         } else {
             Action::Keep
@@ -409,7 +410,8 @@ fn decide(has_value: bool, owner: Source, incoming: bool, by: Source, mode: Mode
     }
 }
 
-/// `field_sources`: which source wrote each field that holds a value.
+/// `field_sources`: which source wrote each field that holds a value, and `admin` for a field an
+/// admin cleared (it stays empty until an admin sets it).
 #[derive(Debug, Clone, Default)]
 struct Provenance(Map<String, Value>);
 
@@ -2178,20 +2180,18 @@ fn admin_int(
     }
 }
 
-/// Records `admin` provenance for a written value, or drops it for a cleared one.
-fn admin_mark(prov: &mut Provenance, field: &str, present: bool) {
-    if present {
-        prov.set(field, Source::Admin);
-    } else {
-        prov.remove(field);
-    }
+/// Records `admin` provenance for a written value and for a cleared one: no source fills a field
+/// an admin cleared (`decide`), so a description removed on notice stays removed.
+fn admin_mark(prov: &mut Provenance, field: &str) {
+    prov.set(field, Source::Admin);
 }
 
 /// An approved edit request: writes the fields and marks them `admin`. `fields` uses the
 /// edit-request keys: works `title`, `subtitle`, `authors`, `year`, `description`, `subjects`,
 /// `pages`; editions `title`, `subtitle`, `publisher`, `language`, `format`, `pages`,
 /// `publication_year`, `planned_publication_date` (`YYYY-MM-DD`). Null clears a field (not a work
-/// title). 404 `No such book.` for a missing target; 400 for an unknown key or a bad value.
+/// title) and keeps it `admin`, so no source fills it again. 404 `No such book.` for a missing
+/// target; 400 for an unknown key or a bad value.
 pub async fn apply_admin_fields(
     conn: &mut PgConnection,
     target: CoverTarget,
@@ -2217,29 +2217,25 @@ async fn apply_admin_work(
         match key.as_str() {
             "title" => {
                 row.title = admin_text(key, value, 1000)?.ok_or_else(|| invalid(key))?;
-                admin_mark(&mut prov, "title", true);
+                admin_mark(&mut prov, "title");
             }
             "subtitle" => {
                 row.subtitle = admin_text(key, value, 1000)?.unwrap_or_default();
-                admin_mark(&mut prov, "subtitle", !row.subtitle.is_empty());
+                admin_mark(&mut prov, "subtitle");
             }
             "authors" => {
                 let names = admin_text(key, value, 2000)?.unwrap_or_default();
                 authors_changed |= names != row.author_names;
                 row.author_names = names;
-                admin_mark(&mut prov, "author_names", !row.author_names.is_empty());
+                admin_mark(&mut prov, "author_names");
             }
             "year" => {
                 row.first_publish_year = admin_int(key, value, YEARS)?;
-                admin_mark(
-                    &mut prov,
-                    "first_publish_year",
-                    row.first_publish_year.is_some(),
-                );
+                admin_mark(&mut prov, "first_publish_year");
             }
             "description" => {
                 row.description = admin_text(key, value, 50_000)?.unwrap_or_default();
-                admin_mark(&mut prov, "description", !row.description.is_empty());
+                admin_mark(&mut prov, "description");
             }
             "subjects" => {
                 row.subjects = match value {
@@ -2253,11 +2249,11 @@ async fn apply_admin_work(
                         .collect(),
                     _ => return Err(invalid(key)),
                 };
-                admin_mark(&mut prov, "subjects", !row.subjects.is_empty());
+                admin_mark(&mut prov, "subjects");
             }
             "pages" => {
                 row.pages = admin_int(key, value, 1..=100_000)?;
-                admin_mark(&mut prov, "pages", row.pages.is_some());
+                admin_mark(&mut prov, "pages");
             }
             _ => return Err(AppError::bad_request(format!("Unknown field: {key}"))),
         }
@@ -2309,22 +2305,22 @@ async fn apply_admin_edition(
         match key.as_str() {
             "title" => {
                 title = admin_text(key, value, 1000)?;
-                admin_mark(&mut prov, "title", title.is_some());
+                admin_mark(&mut prov, "title");
             }
             "subtitle" => {
                 subtitle = admin_text(key, value, 1000)?;
-                admin_mark(&mut prov, "subtitle", subtitle.is_some());
+                admin_mark(&mut prov, "subtitle");
             }
             "publisher" => {
                 publisher = admin_text(key, value, 300)?.unwrap_or_default();
-                admin_mark(&mut prov, "publisher", !publisher.is_empty());
+                admin_mark(&mut prov, "publisher");
             }
             "language" => {
                 language = match admin_text(key, value, 3)? {
                     None => None,
                     Some(code) => Some(clean_language(Some(&code)).ok_or_else(|| invalid(key))?),
                 };
-                admin_mark(&mut prov, "language", language.is_some());
+                admin_mark(&mut prov, "language");
             }
             "format" => {
                 format = match admin_text(key, value, 20)? {
@@ -2336,15 +2332,15 @@ async fn apply_admin_edition(
                             .to_owned(),
                     ),
                 };
-                admin_mark(&mut prov, "format", format.is_some());
+                admin_mark(&mut prov, "format");
             }
             "pages" => {
                 pages = admin_int(key, value, 1..=100_000)?;
-                admin_mark(&mut prov, "pages", pages.is_some());
+                admin_mark(&mut prov, "pages");
             }
             "publication_year" => {
                 year = admin_int(key, value, YEARS)?;
-                admin_mark(&mut prov, "publication_year", year.is_some());
+                admin_mark(&mut prov, "publication_year");
             }
             "planned_publication_date" => {
                 planned = match admin_text(key, value, 10)? {
@@ -2356,7 +2352,7 @@ async fn apply_admin_edition(
                             .ok_or_else(|| invalid(key))?,
                     ),
                 };
-                admin_mark(&mut prov, "planned_publication_date", planned.is_some());
+                admin_mark(&mut prov, "planned_publication_date");
             }
             _ => return Err(AppError::bad_request(format!("Unknown field: {key}"))),
         }
@@ -2408,8 +2404,14 @@ mod tests {
     fn decide_follows_the_rank_rules() {
         use Action::*;
         use Source::*;
-        // An empty field is always filled.
-        assert_eq!(decide(false, Admin, true, Legacy, Mode::Refresh), Write);
+        // An empty field is filled, whoever wrote it before ...
+        assert_eq!(decide(false, User, true, Legacy, Mode::Refresh), Write);
+        assert_eq!(decide(false, Dnb, true, OpenLibrary, Mode::Replace), Write);
+        // ... unless an admin cleared it: then only an admin fills it again.
+        assert_eq!(decide(false, Admin, true, Legacy, Mode::Refresh), Keep);
+        assert_eq!(decide(false, Admin, true, User, Mode::Refresh), Keep);
+        assert_eq!(decide(false, Admin, true, Dnb, Mode::Replace), Keep);
+        assert_eq!(decide(false, Admin, true, Admin, Mode::Refresh), Write);
         // Equal or lower rank is overwritten, higher rank never.
         assert_eq!(decide(true, Legacy, true, Dnb, Mode::Refresh), Write);
         assert_eq!(decide(true, OpenLibrary, true, Dnb, Mode::Refresh), Write);

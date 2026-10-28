@@ -1165,10 +1165,10 @@ async fn admin_fields_win_over_every_source(db: PgPool) {
     )
     .await
     .unwrap();
-    // Null clears the field and drops its provenance.
+    // Null clears the field and keeps it the admin's.
     let w = row(&db, "works", work_id).await;
     assert_eq!(w["first_publish_year"], Value::Null);
-    assert_eq!(w["field_sources"].get("first_publish_year"), None);
+    assert_eq!(w["field_sources"]["first_publish_year"], "admin");
     assert_eq!(w["field_sources"]["pages"], "admin");
     ingest::upsert_work(&mut c, &rec, Mode::Replace)
         .await
@@ -1179,9 +1179,9 @@ async fn admin_fields_win_over_every_source(db: PgPool) {
     assert_eq!(w["author_names"], "M. Miller");
     assert_eq!(w["subjects"], json!(["Greek myth"]));
     assert_eq!(w["field_sources"]["title"], "admin");
-    // A cleared field may be filled again by any source.
-    assert_eq!(w["first_publish_year"], 2018);
-    assert_eq!(w["field_sources"]["first_publish_year"], "openlibrary");
+    // No source fills a field an admin cleared.
+    assert_eq!(w["first_publish_year"], Value::Null);
+    assert_eq!(w["field_sources"]["first_publish_year"], "admin");
     assert_eq!(
         scalar_i64(&db, "SELECT count(*) FROM work_authors").await,
         0
@@ -1257,9 +1257,26 @@ async fn admin_fields_win_over_every_source(db: PgPool) {
     assert_eq!(e["planned_publication_date"], "2026-09-01");
     assert_eq!(e["field_sources"]["format"], "admin");
     assert_eq!((&e["publisher"], &e["pages"]), (&json!(""), &Value::Null));
-    assert_eq!(e["field_sources"].get("publisher"), None);
-    assert_eq!(e["field_sources"].get("pages"), None);
+    assert_eq!(e["field_sources"]["publisher"], "admin");
+    assert_eq!(e["field_sources"]["pages"], "admin");
     assert_eq!(row(&db, "works", work_id).await["search_extra"], "Kirke");
+    // A refresh of the record the admin corrected leaves the cleared fields empty.
+    ingest::upsert_edition(
+        &mut c,
+        work_id,
+        &EditionRecord {
+            isbn13: Some(isbn(ISBN_A)),
+            publisher: Some("Bloomsbury".into()),
+            pages: Some(400),
+            ..EditionRecord::new(Source::OpenLibrary)
+        },
+        Mode::Refresh,
+    )
+    .await
+    .unwrap();
+    let e = row(&db, "editions", edition).await;
+    assert_eq!((&e["publisher"], &e["pages"]), (&json!(""), &Value::Null));
+    assert_eq!(e["field_sources"]["publisher"], "admin");
     let before = row(&db, "editions", edition).await;
     for (body, detail) in [
         (json!({"format": "scroll"}), "Invalid value for format"),

@@ -827,8 +827,9 @@ pub fn registration_group(isbn: &Isbn13) -> &str;      // prefix + group, e.g. "
 
 Every catalog field of `works`, `editions`, `authors`, `work_authors` and `edition_contributors` is written by `ingest`. Three narrow exceptions write through dedicated functions with the same rules: covers (`set_cover`/`clear_media`, used by MED and CAT), admin edits (`apply_admin_fields`, CAT's approve) and merges (`catalog::merge_works`, CAT). The importer may also set `works.details_fetched_at` directly (the legacy value).
 
-**Provenance.** `works.field_sources` and `editions.field_sources` record, per field that holds a value, which source wrote it. Ranks: `admin` (an approved edit request) > `user` (entered by a reader) > `dnb` = `openlibrary` > `legacy` (bare facts from the legacy import).
-- An empty field (NULL, `''`, `{}`) may always be filled; the new provenance is the writer's.
+**Provenance.** `works.field_sources` and `editions.field_sources` record, per field that holds a value, which source wrote it. Ranks: `admin` (an approved edit request or a direct admin edit) > `user` (entered by a reader) > `dnb` = `openlibrary` > `legacy` (bare facts from the legacy import).
+- An empty field (NULL, `''`, `{}`) may be filled; the new provenance is the writer's.
+- **An admin's cleared field stays empty** (Phase 2, ADM #54, Q18): `apply_admin_fields` records `admin` for a field it clears too, and no source fills an empty field whose provenance is `admin`; only another admin edit sets it again. That is how a description is removed on notice (`docs/legal/takedown.md`). Two writers outside `decide` can still fill such a field: `fill_work_from_edition` (a work's NULL `pages` and `first_publish_year`, from an edition) and a merge (`catalog::merge_works` takes the loser's value into an empty winner field).
 - A source may overwrite a field whose provenance rank is **equal or lower** than its own; never a `user` or `admin` field.
 - `Mode` decides what a record does to fields it has no value for (see below).
 - `works.source`/`editions.source` is the row's origin. A `legacy` work becomes `dnb` or `openlibrary` the first time a record of that source is ingested into it (an ISBN hit on its edition, or a merge target); `user` rows keep `user`.
@@ -942,8 +943,8 @@ pub async fn clear_media(conn: &mut PgConnection, media_id: i64) -> sqlx::Result
 /// works title, subtitle, authors, year, description, subjects, pages; editions title, subtitle, publisher,
 /// language, format, pages, publication_year, planned_publication_date ("YYYY-MM-DD", year -5000..=3000 like
 /// the work year it may fill). There is no `isbn` key
-/// (identity, not an editable field). Null clears a field (not a work title) and drops its provenance, so a
-/// source may fill it again. Changing `authors` drops the work_authors links. Every key is checked before
+/// (identity, not an editable field). Null clears a field (not a work title) and records `admin` for it, so no
+/// source fills it again (§7.2 "Provenance"). Changing `authors` drops the work_authors links. Every key is checked before
 /// anything is written. 404 NO_SUCH_BOOK for a missing
 /// target; 400 `Unknown field: <key>` / `Invalid value for <key>` (admin-only strings, not mapped by the app).
 pub async fn apply_admin_fields(conn: &mut PgConnection, target: CoverTarget, fields: &serde_json::Map<String, Value>)

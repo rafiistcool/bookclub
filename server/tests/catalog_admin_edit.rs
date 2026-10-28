@@ -138,6 +138,56 @@ async fn an_admin_edit_of_a_work_survives_a_refresh(db: PgPool) {
     assert_eq!(body["subjects"], json!(["Witches"]));
 }
 
+/// Q18 option A: an admin removes an Open Library description on notice with the direct edit, and
+/// no refresh brings it back. The cleared field keeps provenance `admin`; an admin can set it
+/// again.
+#[sqlx::test]
+async fn a_description_an_admin_clears_stays_cleared(db: PgPool) {
+    let app = TestApp::with_real_lookup(db).await;
+    mount_circe(&app, json!(["Mythology"])).await;
+    let ada = app.user("ada").await;
+    let root = app.admin("root").await;
+    let work = ada.get("/api/books/works/OL1W").await.json()["id"]
+        .as_i64()
+        .unwrap();
+
+    let res = root
+        .patch(
+            &format!("/api/admin/works/{work}"),
+            json!({"fields": {"description": null}}),
+        )
+        .await;
+    res.assert_status(200);
+    assert_eq!(res.json()["description"], "");
+    assert_eq!(
+        source_of(&app, "works", work, "description")
+            .await
+            .as_deref(),
+        Some("admin")
+    );
+
+    let res = ada
+        .post(&format!("/api/books/works/{work}/refresh"), json!({}))
+        .await;
+    res.assert_status(200);
+    assert_eq!(res.json()["description"], "");
+    assert_eq!(
+        source_of(&app, "works", work, "description")
+            .await
+            .as_deref(),
+        Some("admin")
+    );
+
+    let res = root
+        .patch(
+            &format!("/api/admin/works/{work}"),
+            json!({"fields": {"description": "The admin's own words."}}),
+        )
+        .await;
+    res.assert_status(200);
+    assert_eq!(res.json()["description"], "The admin's own words.");
+}
+
 /// Acceptance (#54): an admin's values on an edition and its work outlast a DNB harvest of the
 /// same record, which still updates the fields nobody edited. The edition answer is the edition.
 #[sqlx::test]
