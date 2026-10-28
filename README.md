@@ -48,11 +48,13 @@ Put your own reverse proxy (Caddy, nginx, Tailscale Serve, Cloudflare Tunnel) on
 
 Proxy, LAN, NAS `PUID`/`PGID`, bare metal, backup, systemd, and release tags: **[SELFHOST.md](SELFHOST.md)**.
 
-Building from source, from a release tag (contributors; turns on debug docs and invite `DEV-ONLY` — not for a shared host). On this branch the root `Dockerfile` fails on purpose until the Rust server replaces it (#52):
+Building this app from source works only from a release tag up to `v0.10.x` (contributors; turns on debug docs and invite `DEV-ONLY` — not for a shared host):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
+
+On this branch the root `Dockerfile` builds the image of the new Rust server instead (`docker build -t bookclub:local .`), which this Compose setup cannot run, so the overlay above no longer works here. That image runs with Postgres from [`deploy/hosted/`](deploy/hosted/README.md), and the next `v*` release publishes it as `git.tillhome.de/rafiistcool/bookclub-server`; `rafiistcool/bookclub` gets no new versions.
 
 ---
 
@@ -194,7 +196,7 @@ At least one shelf remains, and Undo restores the last successful change.
 backend/           FastAPI, tests (the released app)
 frontend/          Vue 3 + Vite + Pinia
 server/            Rust server and Postgres schema that replace backend/ (not released yet)
-deploy/            Entrypoint, systemd unit, env example
+deploy/            Entrypoint, systemd unit, env example (this app); hosted/ runs the Rust server (deploy/hosted/README.md)
 data/              SQLite (gitignored except .gitkeep)
 ```
 

@@ -1,0 +1,32 @@
+# The old public hostname after the cutover (#52). Paste this site block into the Caddyfile of
+# the Caddy that serves the old host, replace the two host names, copy sw.js (next to this
+# file) to /srv/bookclub-legacy-origin/sw.js on that machine, then `caddy reload`.
+#
+# Every path redirects permanently (301) to the same path and query on the new host. /sw.js is
+# the exception: a browser does not follow a redirect when it checks its service worker for
+# updates, so the old offline worker of installed apps would stay. /sw.js serves a worker that
+# deletes the old caches and unregisters itself (docs/phase1/spec/platform.md, risk R22).
+#
+# `redir` sits inside `handle`: Caddy orders the redir directive before handle, so a bare redir
+# at the top of the block would also redirect /sw.js.
+#
+# Check it before the reload:
+#   caddy validate --config Caddyfile --adapter caddyfile
+# and afterwards (docs/phase2/cutover.md):
+#   curl -sI https://old.example/shelf?x=1   301, Location: https://new.example/shelf?x=1
+#   curl -sI https://old.example/sw.js       200, text/javascript, Cache-Control: no-store
+#
+# The {$VAR:default} placeholders let `caddy validate` and the local check run as they are;
+# for the local check, BOOKCLUB_OLD_HOST=http://:8085 serves the block over plain HTTP.
+
+{$BOOKCLUB_OLD_HOST:old.example} {
+	handle /sw.js {
+		root * /srv/bookclub-legacy-origin
+		header Content-Type "text/javascript; charset=utf-8"
+		header Cache-Control "no-store"
+		file_server
+	}
+	handle {
+		redir https://{$BOOKCLUB_NEW_HOST:new.example}{uri} permanent
+	}
+}

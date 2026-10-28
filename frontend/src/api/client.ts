@@ -1,5 +1,6 @@
 import type {
   ActivityOut,
+  AdminSummary,
   BookDetailOut,
   ClubIn,
   ClubList,
@@ -28,6 +29,8 @@ import type {
   InviteList,
   InviteOut,
   InvitePreview,
+  LegalDoc,
+  LegalDocumentOut,
   LoginIn,
   MemberList,
   MemberOut,
@@ -63,6 +66,7 @@ import type {
   ShelfPatchIn,
   SignupInviteIn,
   SpineColorsOut,
+  TakeDownIn,
   UserOut,
   VerifyEmailPreview,
   VoteApplyOut,
@@ -198,6 +202,12 @@ export const api = {
   changeEmail: (email: string, currentPassword: string) =>
     request<void>("/api/auth/me/email", json("PUT", { email, current_password: currentPassword })),
   dismissEmailPrompt: () => request<void>("/api/auth/me/email-prompt/dismiss", { method: "POST" }),
+  /** Accepts the current terms (`/api/config.terms_version`); the account no longer `needs_terms`. */
+  acceptTerms: (termsVersion: string) =>
+    request<UserOut>("/api/auth/terms", json("POST", { terms_version: termsVersion })),
+  /** An imprint, privacy policy or terms of use, in `locale` or, failing that, the other language. Public. */
+  legal: (doc: LegalDoc, locale: string) =>
+    request<LegalDocumentOut>(`/api/legal/${enc(doc)}?locale=${enc(locale)}`),
   /** Always 204, whether or not the address belongs to an account. */
   requestPasswordReset: (email: string) =>
     request<void>("/api/auth/password-reset", json("POST", { email })),
@@ -400,6 +410,8 @@ export const api = {
     ),
   /** Every edition of a work, oldest first. */
   editions: (workId: number) => request<EditionList>(`${workPath(workId)}/editions`),
+  /** One edition. */
+  edition: (editionId: number) => request<EditionOut>(`/api/books/editions/${editionId}`),
   /** A missing edition (201). A known ISBN is 409 with `work_id` and `edition_id` in the body. */
   addEdition: (workId: number, body: NewEditionIn) =>
     request<EditionOut>(`${workPath(workId)}/editions`, json("POST", body)),
@@ -431,6 +443,26 @@ export const api = {
   /** `remove` takes the picture down everywhere; `dismiss` keeps it. */
   resolveReport: (id: number, action: "remove" | "dismiss") =>
     request<ReportOut>(`/api/admin/reports/${id}/resolve`, json("POST", { action })),
+  /** Both queues at a glance: open and overdue counts, the oldest item, 90-day report statistics. */
+  adminSummary: () => request<AdminSummary>("/api/admin/summary"),
+  /** A page of the report queue: `open` oldest first, `resolved` newest decision first; 50 a page. */
+  adminReportPage: (status: "open" | "resolved", page = 1) =>
+    request<ReportList>(`/api/admin/reports?status=${status}&page=${page}`),
+  /** A page of the catalog queue, the same way. */
+  adminEditRequestPage: (status: "open" | "resolved", page = 1) =>
+    request<EditRequestList>(`/api/admin/edit-requests?status=${status}&page=${page}`),
+  /**
+   * Takes a picture down directly. With `notice` (an emailed notice), the
+   * takedown is recorded as a resolved report that arrived at `received_at`.
+   */
+  adminTakeDown: (publicId: string, notice?: TakeDownIn) =>
+    request<void>(`/api/admin/media/${enc(publicId)}`, notice ? json("DELETE", notice) : { method: "DELETE" }),
+  /** Sets a book's facts at once (provenance `admin`: no catalog source overwrites them). Null clears a field. */
+  adminEditWork: (workId: number | string, fields: EditFields) =>
+    request<BookDetailOut>(`/api/admin/works/${enc(String(workId))}`, json("PATCH", { fields })),
+  /** The same for one edition. */
+  adminEditEdition: (editionId: number, fields: EditFields) =>
+    request<EditionOut>(`/api/admin/editions/${editionId}`, json("PATCH", { fields })),
   /** Club-less sign-up invites, newest first. */
   adminInvites: () => request<InviteList>("/api/admin/invites"),
   createSignupInvite: (body: SignupInviteIn) =>

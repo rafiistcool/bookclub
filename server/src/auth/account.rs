@@ -1,5 +1,5 @@
 //! The signed-in user's own account (endpoint-map §2): `GET /api/auth/me`, preferences,
-//! notification preferences and the password change.
+//! notification preferences, the password change and the acceptance of the terms (#53).
 
 use axum::Json;
 use axum::extract::State;
@@ -18,6 +18,7 @@ use crate::AppState;
 use crate::dto::UserOut;
 use crate::error::{ApiResult, AppError, ErrorBody, msg};
 use crate::extract::{ApiJson, Validate, Validator};
+use crate::legal;
 use crate::text::py_strip;
 use crate::tz;
 
@@ -106,6 +107,15 @@ impl Validate for PasswordChangeIn {
         );
     }
 }
+
+/// The version of the operator's terms the user accepts.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct TermsIn {
+    /// The version the page showed: `/api/config.terms_version`.
+    pub terms_version: String,
+}
+
+impl Validate for TermsIn {}
 
 /// The signed-in user's account.
 #[utoipa::path(
@@ -313,6 +323,41 @@ pub async fn change_password(
         }
         None => StatusCode::NO_CONTENT.into_response(),
     })
+}
+
+/// Accepts the current version of the operator's terms: the one-time prompt of imported
+/// accounts, and of everyone after a new version (`UserOut.needs_terms`). Stores the version
+/// and the time; accepting the version already accepted keeps the first time.
+#[utoipa::path(
+    post,
+    path = "/api/auth/terms",
+    operation_id = "auth_accept_terms",
+    tag = "auth",
+    security(("bookclub_session" = []), ("bearer" = [])),
+    request_body = TermsIn,
+    responses(
+        (status = 200, body = UserOut, description = "The account, `needs_terms` false"),
+        (status = 400, body = ErrorBody, description = "`The terms of use have changed. Reload the page and try again.` (not the current version, or no terms configured)"),
+        (status = 401, body = ErrorBody, description = "`Not signed in`")
+    )
+)]
+pub async fn accept_terms(
+    user: CurrentUser,
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<TermsIn>,
+) -> ApiResult<Json<UserOut>> {
+    let version = legal::accepted_terms(&state.config, Some(&body.terms_version))?
+        .ok_or_else(|| AppError::bad_request(msg::TERMS_CHANGED))?;
+    let mut conn = state.db.acquire().await?;
+    sqlx::query!(
+        "UPDATE users SET terms_version = $2, terms_accepted_at = now()
+         WHERE id = $1 AND terms_version IS DISTINCT FROM $2",
+        user.id,
+        version
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(Json(user_out(&mut conn, user.id).await?))
 }
 
 /// Checks the signed-in user's password before a sensitive change (password, email address,

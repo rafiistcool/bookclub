@@ -82,6 +82,12 @@ The current-password check used the same `login_failures` key `u:<id>` that anon
 
 **Not changed (product decision):** the login lockout itself. The finding notes that the attacker also locks the owner out of logging in on a new device. That is the per-account login limit of C §10.1, a documented trade-off carried over from the legacy app (auth spec §2.3, and Wave 1 security #2). Counting failures per account and client address, under a higher ceiling per account, would keep one remote address from locking the owner out. It would also give a distributed guesser more tries per account. That trade-off is Rafael's to decide. A password reset already clears both login keys.
 
+**Decision record (Q17 in `docs/phase2/work-plan.md` §4, #55):** open, waiting for Rafael.
+- **A, recommended for launch:** keep counting per account, as today: 10 failures per 10 minutes, with the username and the verified address in separate buckets (`u:<id>`, `u:<id>:email`). Strangers cannot see usernames, and a password reset clears both buckets.
+- **B:** count per account and client address (`ip_key`, so an IPv6 /64), under a ceiling per account of about 100 failures an hour. One remote address could then no longer lock the owner out, but a guesser with many addresses would get up to the ceiling instead of 10 tries per 10 minutes.
+- Under A the code stays as it is. Under B, ADM2 changes the login limits (`server/src/auth/login.rs`, `server/src/ratelimit.rs`, C §10.1) and their tests in `server/tests/auth_login.rs`.
+- When Rafael answers, record the option and the date here.
+
 ### 4. [medium] Avatar uploads monopolised the picture pipeline
 
 `PUT /api/auth/me/avatar` had no rate limit, and every picture shares one pipeline of two permits: uploads, Open Library cover fetches, prefetch and spine colours. Small 25 Mpx PNGs cost about a second of CPU each. A body was buffered (up to 50 MiB) before the semaphore. The permit was also borrowed in the async function, so a client that disconnected freed it while its decode kept running.
@@ -177,7 +183,7 @@ C §5.3, §13; E §3.
 **Test:** `platform.rs::every_response_has_referrer_policy_and_a_request_id` asserts the headers on every kind of answer.
 
 **Not taken:**
-- A baseline CSP for the SPA shell (script sources and the like). It needs a hash of the inline theme script and care with the Vite build, and framing was the defect.
+- A baseline CSP for the SPA shell (script sources and the like). It needs a hash of the inline theme script and care with the Vite build, and framing was the defect. Phase 2 adds it (#55): every answer of the SPA fallback carries `spa::SHELL_CSP`, the theme script moved to `frontend/public/theme-init.js`, and this layer became `if_not_present`, so it no longer replaces the shell's policy. API answers keep `frame-ancestors 'none'`. Tests: `platform.rs::the_spa_carries_the_shell_policy`, `frontend/src/thirdParty.test.ts`.
 - HSTS. It belongs to the reverse proxy that terminates TLS (#51), as C §3 records.
 
 ### 11. [low] API answers carried no `Cache-Control`
@@ -217,3 +223,65 @@ C §5.5, §10.1; E §2.
 **Tests:**
 - `auth_email.rs::link_floods_do_not_silence_the_security_notices`
 - `auth_reset.rs`: `one_reset_link_is_open_at_a_time`, `a_reset_the_mail_limit_drops_leaves_no_open_link`, and the reworked `requests_are_limited_per_ip_and_silently_per_account` and `a_reset_link_dies_when_another_is_used`
+
+## Phase 2 Wave 1
+
+A security review of branch `phase-2` after Wave 1 (DEP #51, GATE #55, ADM #54, LEG #53, CUT #52), at `325a7a2`, through the endpoint and operations lenses. Three verifiers tried to refute each finding against the code, and two of them reproduced finding 1 on Postgres 17. A finding counts as confirmed when at least two of the three did not refute it. Severity follows the rubric above.
+
+| # | Severity | Finding | Outcome |
+|---|---|---|---|
+| 1 | medium | Repeat reports skipped the rate limit but still locked the picture row, so one account could block a takedown | Fixed in `f3556d6` |
+| 2 | low | The release job held the registry write token and the host's Docker daemon while it ran actions referenced by tags that can be moved | Fixed in `9754dec` (the actions are pinned); the token is Rafael's decision, see below |
+| 3 | low | Root on the app VM can delete every backup | Not fixed: needs Rafael's decision, see below |
+
+### 1. [medium] Repeat reports held off a takedown
+
+`report` locked the picture `FOR SHARE`, then waited on the reader's advisory lock, and a repeat returned before `report_user` counted anything. One account could keep the picture share-locked without a break by keeping enough repeats in flight to fill the 10-connection pool. The verifiers corrected the finding here: 3 open requests are not enough. A new `FOR SHARE` locker joins the holders ahead of a waiting `FOR UPDATE`, so an admin's takedown (`FOR UPDATE`) or dismissal (`FOR NO KEY UPDATE`) waited until the 600 s request deadline, or failed on the pool's acquire timeout. Meanwhile the picture stayed visible and every other request slowed down.
+
+**Fix:**
+- A repeat is answered from one plain read before the transaction, with no lock. A repeat that races a takedown may still answer `open`, and the takedown then resolves that report.
+- A new report takes the reader's advisory lock (`0x6263_0200`) before it locks the picture. Of one reader's requests for one picture, only the one whose turn it is holds the picture.
+- Every report request, repeats and 404s included, counts against `report_request_user` first (30 a minute per account). `report_user` (20 new reports a day) is unchanged.
+- No `lock_timeout` was added: with nothing left that can starve the takedown, it would only turn a report that waits on a slow takedown into a 500.
+
+C §7.2, §10.1; E §6. The commit also regenerates `server/.sqlx/` and `generated.ts`.
+
+**Tests** (`media_reports.rs`), each failing without the fix:
+- `repeat_reports_take_no_lock`: repeats answer while another request of the reader holds its turn, and while a takedown holds the picture.
+- `a_report_waiting_for_its_turn_does_not_hold_off_a_takedown`: also fails when only the old lock order is restored.
+- `every_report_request_counts_against_a_minute_limit`.
+
+### 2. [low] Release actions resolved by tags that can be moved
+
+`publish` passes `REGISTRY_TOKEN` (the owner's token, `write:package`) to `docker/login-action`, and runs on the `docker` runner, whose jobs get the host's Docker daemon. All its actions were referenced by tags, and `dtolnay/rust-toolchain` by a branch. If an upstream tag were moved, the next release would run that code with the token and with root on the host, and could push to `bookclub-server:stable`, which `deploy/hosted/compose.yaml` pulls.
+
+The token path is older than this branch. `phase-2` added the daemon (`runs-on: docker`) and `setup-buildx-action`. One verifier rejected the finding as pre-existing and not exposed yet: no `REGISTRY_TOKEN` and no `docker` runner exist yet. All three agreed that the `rust-toolchain` part is weaker than stated, because the `server` job gets neither the token nor the daemon.
+
+**Fix:** every `uses:` in `.forgejo/workflows/` names a full commit, with its release in a comment. That covers `release.yml`, and `ci.yml` too, because its `image` job runs on the same runner's daemon. `rust-toolchain` names `toolchain: stable` explicitly. `release.yml` explains how to move a pin, and `deploy/hosted/README.md` ("Releases") says pins move only on purpose.
+
+**Test:** `deploy_env.rs::workflows_pin_every_action_to_a_commit` fails on a `uses:` without a commit and a version comment.
+
+**Left for Rafael:**
+- **A dedicated token.** Use one that can write only this image instead of the owner's `write:package` token. Forgejo scopes package tokens per owner, not per package, so this means a bot account in an organisation that owns the image, which moves the image path. Until then, `REGISTRY_TOKEN` can write all of the owner's packages.
+- **Moving tags that are not `uses:`.** These still run by tag: the job image `catthehacker/ubuntu:act-24.04`, the BuildKit image `setup-buildx-action` starts (`moby/buildkit:buildx-stable-1`), and production's pull of `bookclub-server:stable`, which no digest or signature checks.
+- **The GitHub copies.** `.github/workflows/` is disabled on GitHub and stays unpinned.
+
+### 3. [low] The VM can delete its own off-site backups
+
+The VM's Storage Box key (`/root/.ssh/id_ed25519_backup`, mounted into the restic container through `RESTIC_SSH_DIR`) has full SFTP rights on the repository. `backup.sh` relies on that, because it runs `restic forget --prune` every night. With root on the VM, an attacker can wipe the repository, then drop the database volume, and the heartbeats only notice afterwards.
+
+The verifiers corrected two details:
+- The finding's `forget --keep-last 0` is refused, but `forget <ids> --prune`, `--unsafe-allow-remove-all` with a filter, or `rm -r` over SFTP work.
+- Mounting only the backup key instead of all of `/root/.ssh` would not help, because root reads the key on the host.
+
+**Not fixed.** The fix changes the backup design that work-plan Q9 settled, and costs money or a second machine. The options:
+- **(A) Storage Box snapshots.** Automatic snapshots set up in Hetzner's console, which the SFTP user cannot delete. No code changes, but the snapshots use the box's quota.
+- **(B) rest-server `--append-only`.** Runs on a host the VM cannot log in to. `backup.sh` stops pruning, and that host prunes instead.
+- **(C) An S3 bucket with object lock.** Changes `RESTIC_REPOSITORY` and the provider.
+
+(A) is the smallest step. Until one is chosen, the off-site copy protects against losing the VM, not against someone who controls it.
+
+### Rejected
+
+- [medium] The fork gate on CI's `image` job lets AGit pull requests through, and that job gets the host Docker socket: refuted by all three verifiers.
+- [low] The app port is published on all interfaces, and nothing enforces that only the proxy reaches it: refuted by all three verifiers.

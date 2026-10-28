@@ -31,6 +31,24 @@ impl FsMediaStore {
         Self { root: root.into() }
     }
 
+    /// Creates the root, then writes and removes a probe file in it. `serve` and `import-legacy`
+    /// call this at startup, so a wrong mount (read-only, or owned by another user) fails there
+    /// with `MEDIA_DIR <path> is not writable` instead of at the first upload.
+    pub async fn check_writable(&self) -> anyhow::Result<()> {
+        let root = &self.root;
+        let probe = async {
+            tokio::fs::create_dir_all(root).await?;
+            let mut suffix = [0u8; 8];
+            random::fill(&mut suffix);
+            let file = root.join(format!(".write-probe.{:016x}", u64::from_le_bytes(suffix)));
+            tokio::fs::write(&file, b"probe").await?;
+            tokio::fs::remove_file(&file).await
+        };
+        probe
+            .await
+            .with_context(|| format!("MEDIA_DIR {} is not writable", root.display()))
+    }
+
     /// The file for `key`.
     fn path(&self, key: &str) -> anyhow::Result<PathBuf> {
         check_key(key)?;
@@ -258,6 +276,41 @@ mod tests {
         );
         assert!(store.put("../x", Bytes::new(), "image/webp").await.is_err());
         assert!(store.get("/etc/passwd").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn the_writability_check_creates_the_root_and_leaves_nothing_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("data/media");
+        FsMediaStore::new(&root).check_writable().await.unwrap();
+        assert!(root.is_dir());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+    }
+
+    /// A root below a regular file can never be created, not even by root (CI may run as root,
+    /// which ignores permission bits).
+    #[tokio::test]
+    async fn the_writability_check_names_the_variable_and_the_path() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let root = file.path().join("media");
+        let error = FsMediaStore::new(&root).check_writable().await.unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("MEDIA_DIR {} is not writable", root.display())
+        );
+    }
+
+    /// A root that exists but takes no new file, as a root-owned bind mount is for uid 1000:
+    /// `create_dir_all` succeeds there, so only the probe file catches it. `/proc` refuses new
+    /// files even to uid 0, which a mode-0555 directory would not (CI may run as root).
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn the_writability_check_writes_into_an_existing_root() {
+        let error = FsMediaStore::new("/proc")
+            .check_writable()
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "MEDIA_DIR /proc is not writable");
     }
 
     #[tokio::test]

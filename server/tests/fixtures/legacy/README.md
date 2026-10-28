@@ -33,9 +33,33 @@ Run it whenever the fixture needs new rows or the Python models change, check th
 the same bytes, then run the importer tests:
 
 ```bash
-cd server && cargo test --test importer_run --test importer_books --test importer_data --test importer_posts
+cd server && cargo test --test importer_run --test importer_books --test importer_data --test importer_posts --test cutover_counts
 ```
 
 Tests that need an extra edge case (an x/X key pair, a bad username or timestamp) load a fixture
 and change the SQLite copy with `Legacy::exec` instead of growing the fixture. CI needs no Python:
-the tests load the SQL text with `rusqlite`.
+the tests load the SQL text with `rusqlite`. `cutover_counts.rs` also runs the cutover's count
+queries (`deploy/cutover/*.sql`) on `fresh.sql` and `migrated.sql`, so new rows can change the
+per-user differences it expects.
+
+### After the cutover: the Python app on `legacy-python`
+
+The cutover (#52) deletes `backend/` from `main`. The Python app stays on the branch
+`legacy-python` (annotated tag `legacy-python-final`, commit 1c5efe3, v0.10.0-3; created as in
+`docs/phase2/cutover.md` §6). Its `backend/` is the one these fixtures were generated with. That
+branch predates `server/`, so run this directory's `generate.py` inside a checkout of it and copy
+the dumps back:
+
+```bash
+git worktree add ../bookclub-legacy legacy-python
+cd ../bookclub-legacy
+mise exec python@3.12 -- python -m venv backend/.venv   # or: python3 -m venv backend/.venv
+backend/.venv/bin/pip install -e "backend[dev]"
+mkdir -p server/tests/fixtures/legacy
+cp ../bookclub/server/tests/fixtures/legacy/generate.py server/tests/fixtures/legacy/
+backend/.venv/bin/python server/tests/fixtures/legacy/generate.py
+cp server/tests/fixtures/legacy/*.sql ../bookclub/server/tests/fixtures/legacy/
+cd ../bookclub && git worktree remove --force ../bookclub-legacy
+```
+
+Then check that two runs give the same bytes and run the importer tests as above.

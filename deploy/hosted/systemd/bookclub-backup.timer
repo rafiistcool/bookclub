@@ -1,0 +1,12 @@
+# Starts bookclub-backup.service every night. Persistent: a night the VM was off is made up at
+# the next boot.
+[Unit]
+Description=Nightly Bookclub backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

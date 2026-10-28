@@ -12,13 +12,14 @@ use tokio::task::JoinSet;
 use tokio::time::{Instant, MissedTickBehavior};
 use tokio_util::sync::CancellationToken;
 
-use crate::{AppState, auth, harvest, media, shelf};
+use crate::{AppState, admin, auth, harvest, media, shelf};
 
 /// `pg_try_advisory_lock` keys, one per periodic job, so a second instance never runs the same
 /// job at the same time. Packages with a periodic job reserve a key here.
 pub mod lock_ids {
     pub const AUTH_CLEANUP: i64 = 0x6263_0001;
     pub const DNB_HARVEST: i64 = 0x6263_0002;
+    pub const ADMIN_NOTIFY: i64 = 0x6263_0003;
 }
 
 const CLEANUP_EVERY: Duration = Duration::from_secs(3600);
@@ -28,6 +29,7 @@ const CLEANUP_EVERY: Duration = Duration::from_secs(3600);
 pub fn spawn_all(state: AppState, shutdown: CancellationToken) -> JoinSet<()> {
     let mut jobs = JoinSet::new();
     jobs.spawn(auth_cleanup_loop(state.clone(), shutdown.clone()));
+    jobs.spawn(admin_notify_loop(state.clone(), shutdown.clone()));
     if state.config.dnb_harvest {
         jobs.spawn(harvest::run_forever(state.clone(), shutdown.clone()));
     }
@@ -48,6 +50,39 @@ async fn auth_cleanup_loop(state: AppState, shutdown: CancellationToken) {
         run_locked(&state.db, lock_ids::AUTH_CLEANUP, "auth cleanup", |conn| {
             Box::pin(async move { Ok(auth::cleanup(conn).await?) })
         })
+        .await;
+    }
+}
+
+/// Runs `admin::notify::run` every five minutes until `shutdown`: new reports reach the instance
+/// admins within minutes, at most hourly, and catalog requests at most daily.
+async fn admin_notify_loop(state: AppState, shutdown: CancellationToken) {
+    let mut every = tokio::time::interval(admin::notify::RUN_EVERY);
+    every.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            () = shutdown.cancelled() => return,
+            _ = every.tick() => {}
+        }
+        let job_state = state.clone();
+        run_locked(
+            &state.db,
+            lock_ids::ADMIN_NOTIFY,
+            "admin notify",
+            move |conn| {
+                Box::pin(async move {
+                    let sent = admin::notify::run(&job_state, conn).await?;
+                    if sent != admin::notify::NotifyRun::default() {
+                        tracing::info!(
+                            reports = sent.report_mails,
+                            digests = sent.digest_mails,
+                            "admin notify: mails sent"
+                        );
+                    }
+                    Ok(())
+                })
+            },
+        )
         .await;
     }
 }

@@ -11,6 +11,22 @@ import { useTheme } from "./theme";
 
 const INVALID_TIME_ZONE = "That is not a valid time zone";
 
+/**
+ * The server's 400 when a sign-up or `POST /api/auth/terms` sent a terms
+ * version that is no longer the current one (`msg::TERMS_CHANGED`).
+ */
+export const TERMS_CHANGED = "The terms of use have changed. Reload the page and try again.";
+
+/** True for the 400 that says the terms changed since the page loaded them. */
+export function isTermsChanged(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    (error as { status?: unknown }).status === 400 &&
+    (error as { detail?: unknown }).detail === TERMS_CHANGED
+  );
+}
+
 /** The server refused the zone (one message of a 400 joined by "; "). */
 function refusedZone(error: unknown): boolean {
   return (
@@ -51,7 +67,19 @@ export const useSession = defineStore("session", {
         this.ready = true;
       }
     },
-    async register(body: { username: string; email: string; password: string; inviteCode: string }) {
+    /**
+     * Creates the account and signs it in. `termsVersion` is the version of
+     * the terms the sign-up page showed (`/api/config.terms_version`); the
+     * server stores it as the acceptance, and refuses a missing or old one
+     * while terms are configured.
+     */
+    async register(body: {
+      username: string;
+      email: string;
+      password: string;
+      inviteCode: string;
+      termsVersion?: string | null;
+    }) {
       const locale = useLocale();
       const request: RegisterIn = {
         username: body.username,
@@ -60,6 +88,7 @@ export const useSession = defineStore("session", {
         invite_code: body.inviteCode || null,
         timezone: browserTimeZone(),
         locale: locale.locale,
+        terms_version: body.termsVersion ?? null,
       };
       try {
         this.user = await api.register(request);
@@ -77,6 +106,10 @@ export const useSession = defineStore("session", {
       const theme = useTheme();
       void theme.persist({ theme: theme.theme, color_mode: theme.mode });
       void useLocale().persist();
+    },
+    /** Accepts `termsVersion`, the current terms, for the signed-in account (`UserOut.needs_terms`). */
+    async acceptTerms(termsVersion: string) {
+      this.user = await api.acceptTerms(termsVersion);
     },
     async login(username: string, password: string) {
       await api.login({ username, password });

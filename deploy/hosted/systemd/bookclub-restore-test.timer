@@ -1,0 +1,11 @@
+# Starts bookclub-restore-test.service every Sunday morning, after the night's backup.
+[Unit]
+Description=Weekly Bookclub restore test
+
+[Timer]
+OnCalendar=Sun *-*-* 05:30:00
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

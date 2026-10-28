@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET terms_version = $2, terms_accepted_at = now()\n         WHERE id = $1 AND terms_version IS DISTINCT FROM $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ddba7ff4e375301cacaca0c97c14783b617ca5492139274edec982f12a59062d"
+}

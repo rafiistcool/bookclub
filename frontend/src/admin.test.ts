@@ -1,5 +1,16 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mergeTarget, proposedFields, requestKindLabel } from "./admin";
+import {
+  formatAge,
+  fromLocalInput,
+  hoursBetween,
+  isOverdue,
+  mergeTarget,
+  nextQueuePage,
+  pictureRef,
+  proposedFields,
+  requestKindLabel,
+  toLocalInput,
+} from "./admin";
 import { i18n } from "./i18n";
 import { languageName, languageOptions } from "./languages";
 
@@ -18,14 +29,38 @@ describe("the admin queue", () => {
       request("edition_edit", { pages: 401, format: "paperback", language: "ger", subtitle: null, subjects: ["A", "B"] }),
       "en",
     );
+    const unknown = { before: null, wasEmpty: false, same: false };
     expect(fields).toEqual([
-      { key: "pages", label: "Pages", value: "401", cleared: false },
-      { key: "format", label: "Format", value: "Paperback", cleared: false },
-      { key: "language", label: "Language", value: "German", cleared: false },
-      { key: "subtitle", label: "Subtitle", value: "(clear it)", cleared: true },
-      { key: "subjects", label: "Subjects", value: "A, B", cleared: false },
+      { key: "pages", label: "Pages", value: "401", cleared: false, ...unknown },
+      { key: "format", label: "Format", value: "Paperback", cleared: false, ...unknown },
+      { key: "language", label: "Language", value: "German", cleared: false, ...unknown },
+      { key: "subtitle", label: "Subtitle", value: "(clear it)", cleared: true, ...unknown },
+      { key: "subjects", label: "Subjects", value: "A, B", cleared: false, ...unknown },
     ]);
     expect(proposedFields(request("cover_replace", {}), "en")).toEqual([]);
+  });
+
+  it("puts the record's value now beside each proposed one", () => {
+    const fields = proposedFields(
+      {
+        ...request("edition_edit", { pages: 401, format: "paperback", language: "ger", subtitle: null, publisher: "Klett" }),
+        current: { pages: 380, format: null, language: "eng", subtitle: "Roman", publisher: "Klett" } as never,
+      },
+      "en",
+    );
+    expect(fields.map(({ key, before, wasEmpty, same }) => ({ key, before, wasEmpty, same }))).toEqual([
+      { key: "pages", before: "380", wasEmpty: false, same: false },
+      { key: "format", before: "(empty)", wasEmpty: true, same: false },
+      { key: "language", before: "English", wasEmpty: false, same: false },
+      { key: "subtitle", before: "Roman", wasEmpty: false, same: false },
+      { key: "publisher", before: "Klett", wasEmpty: false, same: true },
+    ]);
+    i18n.global.locale.value = "de";
+    const [subjects] = proposedFields(
+      { ...request("work_edit", { subjects: [] }), current: { subjects: [] } as never },
+      "de",
+    );
+    expect(subjects).toMatchObject({ value: "(leeren)", before: "(leer)", wasEmpty: true, same: true });
   });
 
   it("names the request kinds in both languages, and the merge target", () => {
@@ -44,5 +79,56 @@ describe("the admin queue", () => {
     const options = languageOptions("en", "xyz");
     expect(options.map((row) => row.code)).toContain("xyz");
     expect(options[0]!.name.localeCompare(options[1]!.name)).toBeLessThan(0);
+  });
+
+  it("reads a picture's address, a bare picture id or a book page", () => {
+    const id = "abcdefghijklmnopqrstuvwxyz";
+    expect(pictureRef(`https://books.example.com/media/${id}/l`)).toEqual({ kind: "media", publicId: id });
+    expect(pictureRef(`/media/${id}/s?v=2`)).toEqual({ kind: "media", publicId: id });
+    expect(pictureRef(`  ${id}  `)).toEqual({ kind: "media", publicId: id });
+    expect(pictureRef("https://books.example.com/book/42")).toEqual({ kind: "book", book: 42 });
+    expect(pictureRef("https://books.example.com/book/OL1W/")).toEqual({ kind: "book", book: "OL1W" });
+    expect(pictureRef("https://books.example.com/book/42/notes")).toBeNull();
+    expect(pictureRef("https://books.example.com/media/short/l")).toBeNull();
+    expect(pictureRef(`https://books.example.com/media/${id.toUpperCase()}/l`)).toBeNull();
+    expect(pictureRef("https://books.example.com/club/readers")).toBeNull();
+    expect(pictureRef("")).toBeNull();
+    expect(pictureRef("not a link")).toBeNull();
+  });
+
+  it("tells ages in hours below 72, then in days, in both languages", () => {
+    expect(formatAge(0.5)).toBe("less than an hour");
+    expect(formatAge(1.2)).toBe("an hour");
+    expect(formatAge(71.9)).toBe("71 hours");
+    expect(formatAge(72)).toBe("3 days");
+    i18n.global.locale.value = "de";
+    expect(formatAge(0)).toBe("weniger als einer Stunde");
+    expect(formatAge(1)).toBe("einer Stunde");
+    expect(formatAge(5)).toBe("5 Stunden");
+    expect(formatAge(100)).toBe("4 Tagen");
+  });
+
+  it("measures waits and flags an item once it reaches the target", () => {
+    const now = Date.parse("2026-10-28T12:00:00Z");
+    expect(hoursBetween("2026-10-28T09:30:00Z", now)).toBe(2.5);
+    expect(hoursBetween("2026-10-26T12:00:00Z", "2026-10-28T12:00:00Z")).toBe(48);
+    expect(hoursBetween("not a time", now)).toBe(0);
+    expect(hoursBetween("2026-10-29T12:00:00Z", now)).toBe(0);
+    expect(isOverdue("2026-10-25T12:00:01Z", 72, now)).toBe(false);
+    expect(isOverdue("2026-10-25T12:00:00Z", 72, now)).toBe(true);
+  });
+
+  it("asks for the first page not yet complete, so a decision skips nothing", () => {
+    expect(nextQueuePage(50)).toBe(2);
+    expect(nextQueuePage(49)).toBe(1);
+    expect(nextQueuePage(100)).toBe(3);
+  });
+
+  it("turns a datetime-local value into an instant and back", () => {
+    const date = new Date(2026, 9, 28, 9, 5);
+    expect(toLocalInput(date)).toBe("2026-10-28T09:05");
+    expect(fromLocalInput("2026-10-28T09:05")).toBe(date.toISOString());
+    expect(fromLocalInput("")).toBeNull();
+    expect(fromLocalInput("soon")).toBeNull();
   });
 });

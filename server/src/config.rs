@@ -2,11 +2,14 @@
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use ipnet::IpNet;
 use url::Url;
+
+use crate::legal::LegalTexts;
 
 const DEFAULT_BIND_ADDR: &str = "127.0.0.1:8080";
 /// The Vite dev server origins, allowed for CORS and the origin check in DEV_MODE.
@@ -83,8 +86,12 @@ pub struct Config {
     pub smtp_url: Option<String>,
     /// `EMAIL_FROM`, the sender mailbox, required for the smtp transport.
     pub email_from: Option<String>,
-    /// Contact address in the outbound User-Agent (`CONTACT_EMAIL`, required unless DEV_MODE).
+    /// The public contact and takedown address (`CONTACT_EMAIL`, required unless DEV_MODE): in
+    /// `/api/config` and the outbound User-Agent.
     pub contact_email: Option<String>,
+    /// The legal texts, read at startup from `LEGAL_DIR` (DEV_MODE: the placeholders when it is
+    /// unset). Outside DEV_MODE, `SIGNUP_MODE=open` needs all six files (`crate::legal`).
+    pub legal: Arc<LegalTexts>,
     /// Open Library API base URL (`OPENLIBRARY_URL`).
     pub openlibrary_url: Url,
     /// Open Library covers base URL (`OPENLIBRARY_COVERS_URL`).
@@ -188,8 +195,16 @@ impl Config {
         }
         let contact_email = get("CONTACT_EMAIL");
         if contact_email.is_none() && !dev_mode {
-            bail!("CONTACT_EMAIL is not set (it goes into the User-Agent of catalog requests)");
+            bail!(
+                "CONTACT_EMAIL is not set (the public contact address, also in the User-Agent of catalog requests)"
+            );
         }
+        let legal_dir = get("LEGAL_DIR").map(PathBuf::from);
+        let legal = Arc::new(LegalTexts::configure(
+            legal_dir.as_deref(),
+            dev_mode,
+            signup_mode,
+        )?);
 
         let dnb_harvest = parse_bool("DNB_HARVEST", get("DNB_HARVEST"))?.unwrap_or(false);
         let interval_minutes = match get("DNB_HARVEST_INTERVAL_MINUTES") {
@@ -241,6 +256,7 @@ impl Config {
             smtp_url,
             email_from,
             contact_email,
+            legal,
             openlibrary_url: parse_url(
                 "OPENLIBRARY_URL",
                 get("OPENLIBRARY_URL"),
@@ -627,9 +643,96 @@ mod tests {
             let error = with(PROD, &[(key, value)]).unwrap_err();
             assert!(error.to_string().contains(key), "{key}: {error}");
         }
-        let config = with(PROD, &[("SIGNUP_MODE", "open"), ("COOKIE_SECURE", "false")]).unwrap();
-        assert_eq!(config.signup_mode, SignupMode::Open);
+        let config = with(
+            PROD,
+            &[("SIGNUP_MODE", "invite"), ("COOKIE_SECURE", "false")],
+        )
+        .unwrap();
+        assert_eq!(config.signup_mode, SignupMode::Invite);
         assert!(!config.cookie_secure);
+    }
+
+    /// #53: strangers sign up only once the imprint, the privacy policy and the terms are
+    /// online. DEV_MODE serves the placeholders instead.
+    #[test]
+    fn open_sign_up_needs_the_legal_texts_outside_dev_mode() {
+        let error = with(PROD, &[("SIGNUP_MODE", "open")]).unwrap_err();
+        assert!(error.to_string().contains("SIGNUP_MODE=open"), "{error}");
+        assert!(with(PROD, &[]).unwrap().legal.documents().is_empty());
+
+        let dir = tempfile::tempdir().unwrap();
+        for doc in ["imprint", "privacy", "terms"] {
+            for locale in ["de", "en"] {
+                let file = dir.path().join(format!("{doc}.{locale}.html"));
+                std::fs::write(file, "<p>Text</p>").unwrap();
+            }
+        }
+        std::fs::write(
+            dir.path().join("manifest.json"),
+            r#"{"terms_version": "1"}"#,
+        )
+        .unwrap();
+        let path = dir.path().to_str().unwrap();
+        let mut pairs = PROD.to_vec();
+        pairs.extend([("SIGNUP_MODE", "open"), ("LEGAL_DIR", path)]);
+        let config = Config::from_lookup(lookup_from(&pairs)).unwrap();
+        assert_eq!(config.signup_mode, SignupMode::Open);
+        assert_eq!(config.legal.terms_version(), Some("1"));
+
+        std::fs::remove_file(dir.path().join("terms.en.html")).unwrap();
+        let error = Config::from_lookup(lookup_from(&pairs)).unwrap_err();
+        assert!(error.to_string().contains("terms.en.html"), "{error}");
+
+        let dev = Config::from_lookup(lookup_from(&[
+            ("DATABASE_URL", "postgres://x"),
+            ("DEV_MODE", "true"),
+            ("SIGNUP_MODE", "open"),
+        ]))
+        .unwrap();
+        assert_eq!(dev.legal.documents().len(), 3);
+        assert_eq!(dev.legal.terms_version(), None);
+    }
+
+    /// The deployment sets `LEGAL_DIR` and mounts the directory before the texts exist
+    /// (`deploy/hosted/env.example`): an empty or absent directory starts invite mode with no
+    /// texts and refuses open sign-up. A file in its place, or texts without a manifest, do not
+    /// start.
+    #[test]
+    fn an_empty_or_absent_legal_dir_serves_no_texts() {
+        let prod_with = |extra: &[(&str, &str)]| {
+            let mut pairs = PROD.to_vec();
+            pairs.extend_from_slice(extra);
+            Config::from_lookup(lookup_from(&pairs))
+        };
+        let root = tempfile::tempdir().unwrap();
+        let empty = root.path().join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        let absent = root.path().join("absent");
+        for dir in [&empty, &absent] {
+            let path = dir.to_str().unwrap();
+            let config = prod_with(&[("SIGNUP_MODE", "invite"), ("LEGAL_DIR", path)]).unwrap();
+            assert!(config.legal.documents().is_empty(), "{path}");
+            assert_eq!(config.legal.terms_version(), None);
+
+            let error = prod_with(&[("SIGNUP_MODE", "open"), ("LEGAL_DIR", path)]).unwrap_err();
+            let message = error.to_string();
+            assert!(message.contains("SIGNUP_MODE=open"), "{message}");
+            for doc in ["imprint", "privacy", "terms"] {
+                for locale in ["de", "en"] {
+                    let file = format!("{doc}.{locale}.html");
+                    assert!(message.contains(&file), "{file}: {message}");
+                }
+            }
+        }
+
+        let file = root.path().join("file");
+        std::fs::write(&file, "x").unwrap();
+        let error = prod_with(&[("LEGAL_DIR", file.to_str().unwrap())]).unwrap_err();
+        assert!(error.to_string().contains("LEGAL_DIR"), "{error}");
+
+        std::fs::write(empty.join("imprint.de.html"), "<p>Impressum</p>").unwrap();
+        let error = prod_with(&[("LEGAL_DIR", empty.to_str().unwrap())]).unwrap_err();
+        assert!(format!("{error:#}").contains("manifest.json"), "{error:#}");
     }
 
     #[test]

@@ -11,7 +11,7 @@ use sqlx::PgPool;
 
 /// The operations an anonymous caller may use (§17.7). Entries a later package adds are
 /// skipped until their route exists.
-const PUBLIC: [&str; 13] = [
+const PUBLIC: [&str; 14] = [
     "GET /api/health",
     "GET /api/config",
     "GET /api/openapi.json",
@@ -25,6 +25,7 @@ const PUBLIC: [&str; 13] = [
     "POST /api/auth/password-reset/confirm",
     "GET /api/invites/{code}",
     "GET /media/{public_id}/{variant}",
+    "GET /api/legal/{doc}",
 ];
 
 /// Operations of Wave 1 that must be in the walk, so it can never pass vacuously.

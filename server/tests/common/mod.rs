@@ -545,3 +545,25 @@ pub async fn send(app: Router, request: Request<Body>) -> TestResponse {
 pub async fn get(app: Router, path: &str) -> TestResponse {
     send(app, Request::get(path).body(Body::empty()).unwrap()).await
 }
+
+/// LEG (#53): a `LEGAL_DIR` with all six texts (`<p>{doc} {locale}</p>`) and a `manifest.json`
+/// whose `terms_version` is `terms_version`, every document `updated` on 2026-11-01. Pass it as
+/// `("LEGAL_DIR", dir.path().to_str().unwrap())`; the texts are read when the app is built.
+pub fn legal_dir(terms_version: &str) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("temporary LEGAL_DIR");
+    for doc in ["imprint", "privacy", "terms"] {
+        for locale in ["de", "en"] {
+            std::fs::write(
+                dir.path().join(format!("{doc}.{locale}.html")),
+                format!("<p>{doc} {locale}</p>"),
+            )
+            .unwrap();
+        }
+    }
+    let manifest = serde_json::json!({
+        "terms_version": terms_version,
+        "updated": {"imprint": "2026-11-01", "privacy": "2026-11-01", "terms": "2026-11-01"},
+    });
+    std::fs::write(dir.path().join("manifest.json"), manifest.to_string()).unwrap();
+    dir
+}

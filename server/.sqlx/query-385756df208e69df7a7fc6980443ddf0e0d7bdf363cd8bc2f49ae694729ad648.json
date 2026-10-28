@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE reports SET notified_at = now() WHERE id = ANY($1) AND notified_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "385756df208e69df7a7fc6980443ddf0e0d7bdf363cd8bc2f49ae694729ad648"
+}

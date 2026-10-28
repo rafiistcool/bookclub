@@ -1,6 +1,7 @@
 //! #41 acceptance: no Google Books code or data under `server/` (legacy-mapping.md §0). Scans
-//! `server/src` and `server/tests` for Google Books API hosts, cover hosts and settings, except
-//! the importer (code that recognises and drops Google fields) and the synthetic legacy fixture.
+//! `server/src`, `server/tests` and `server/migrations`, plus the image (the root `Dockerfile`)
+//! and the compose files, for Google Books API hosts, cover hosts and settings, except the
+//! importer (code that recognises and drops Google fields) and the synthetic legacy fixture.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -47,8 +48,16 @@ fn no_google_books_code_or_data_in_the_server() {
     for dir in ["src", "tests", "migrations"] {
         files(&root.join(dir), &mut all);
     }
-    for extra in ["Cargo.toml", "Dockerfile", "compose.yaml"] {
-        all.push(root.join(extra));
+    // Relative to `server/`. These must exist: a renamed file would otherwise drop out unseen.
+    for extra in [
+        "Cargo.toml",
+        "compose.yaml",
+        "../Dockerfile",
+        "../deploy/hosted/compose.yaml",
+    ] {
+        let path = root.join(extra);
+        assert!(path.is_file(), "{extra} is missing; update the scan list");
+        all.push(path);
     }
     let needles = needles();
     let mut scanned = 0;

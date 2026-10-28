@@ -23,9 +23,13 @@ import BottomSheet from "./BottomSheet.vue";
  * "Suggest a correction": the catalog's facts of a book, or of one edition,
  * as a form. Only the changed fields go to the admin queue; an admin applies
  * them, and no catalog source overwrites them afterwards.
+ *
+ * With `admin` (an instance admin's "Edit as admin"), the same form writes the
+ * changed fields at once (`PATCH /api/admin/works/…` or `/editions/…`) and
+ * emits `saved` with the book or edition as it is now.
  */
-const props = defineProps<{ book?: BookDetailOut; edition?: EditionOut }>();
-const emit = defineEmits<{ close: [] }>();
+const props = defineProps<{ book?: BookDetailOut; edition?: EditionOut; admin?: boolean }>();
+const emit = defineEmits<{ close: []; saved: [value: BookDetailOut | EditionOut] }>();
 
 const { t } = useI18n();
 const locale = useLocale();
@@ -61,24 +65,43 @@ async function send() {
   busy.value = true;
   error.value = "";
   try {
-    if (props.edition) {
-      await api.requestEditionEdit(props.edition.id, changes.fields, note.value.trim());
-    } else if (props.book) {
-      await api.requestWorkEdit(props.book.id, changes.fields, note.value.trim());
+    if (props.admin) {
+      await save(changes.fields);
+    } else {
+      if (props.edition) {
+        await api.requestEditionEdit(props.edition.id, changes.fields, note.value.trim());
+      } else if (props.book) {
+        await api.requestWorkEdit(props.book.id, changes.fields, note.value.trim());
+      }
+      toast.show(t("editRequest.sent"));
     }
-    toast.show(t("editRequest.sent"));
     emit("close");
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : t("editRequest.failed");
+    error.value = err instanceof ApiError ? err.message : t(props.admin ? "admin.edit.failed" : "editRequest.failed");
   } finally {
     busy.value = false;
   }
 }
+
+/** The admin's values, written at once. */
+async function save(fields: Parameters<typeof api.adminEditWork>[1]) {
+  if (props.edition) {
+    emit("saved", await api.adminEditEdition(props.edition.id, fields));
+  } else if (props.book) {
+    emit("saved", await api.adminEditWork(props.book.id, fields));
+  }
+  toast.show(t("admin.edit.saved"));
+}
+
+const title = computed(() => {
+  if (props.admin) return props.edition ? t("admin.edit.editionTitle") : t("admin.edit.title");
+  return props.edition ? t("editRequest.editionTitle") : t("editRequest.title");
+});
 </script>
 
 <template>
-  <BottomSheet :title="edition ? t('editRequest.editionTitle') : t('editRequest.title')" @close="emit('close')">
-    <p class="fine muted">{{ t("editRequest.blurb", { title: subject }) }}</p>
+  <BottomSheet :title="title" @close="emit('close')">
+    <p class="fine muted">{{ admin ? t("admin.edit.blurb", { title: subject }) : t("editRequest.blurb", { title: subject }) }}</p>
     <form class="stack edit-request" @submit.prevent="send">
       <label v-for="def in defs" :key="def.key" class="field" :class="{ invalid: invalid.includes(def.key) }">
         <span>{{ label(def) }}</span>
@@ -122,12 +145,14 @@ async function send() {
         />
         <span v-if="def.kind === 'subjects'" class="field-hint">{{ t("editRequest.subjectsHint") }}</span>
       </label>
-      <label class="field">
+      <label v-if="!admin" class="field">
         <span>{{ t("editRequest.note") }}</span>
         <textarea v-model="note" name="note" rows="2" maxlength="2000" :placeholder="t('common.optional')" :disabled="busy" />
       </label>
       <p v-if="error" class="error">{{ error }}</p>
-      <button class="btn btn-primary btn-block" type="submit" :disabled="busy">{{ t("editRequest.send") }}</button>
+      <button class="btn btn-primary btn-block" type="submit" :disabled="busy">
+        {{ admin ? t("admin.edit.save") : t("editRequest.send") }}
+      </button>
       <button class="btn btn-ghost btn-block" type="button" :disabled="busy" @click="emit('close')">
         {{ t("common.cancel") }}
       </button>

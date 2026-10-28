@@ -29,7 +29,7 @@ import {
 import { tp } from "../i18n";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
-import type { BookOut } from "../api/generated";
+import type { BookDetailOut, BookOut, EditionOut } from "../api/generated";
 import type { BookDetail, ClubRef, ShelfItem, Visibility } from "../types";
 
 const { t } = useI18n();
@@ -51,6 +51,11 @@ const expanded = ref(false);
 const reportingCover = ref(false);
 const requestingMerge = ref(false);
 const requestingEdit = ref(false);
+/** An instance admin's direct edit: of the book, or of the viewer's edition (read fresh). */
+const adminEditing = ref<"work" | "edition" | null>(null);
+const adminEdition = ref<EditionOut | null>(null);
+/** Bumped after an edition edit, so the edition picker reads the editions again. */
+const editionsVersion = ref(0);
 
 const takeDraft = ref("");
 const reasonDraft = ref("");
@@ -309,6 +314,38 @@ async function refreshDetails() {
   }
 }
 
+/** The admin's values are saved: the answer is the book as it is now. */
+function adoptAdminEdit(value: BookDetailOut | EditionOut) {
+  if (!("readers" in value)) return;
+  book.value = value;
+  syncDrafts(value);
+}
+
+async function editEditionAsAdmin() {
+  const editionId = book.value?.edition_id;
+  if (editionId == null) return;
+  try {
+    adminEdition.value = await api.edition(editionId);
+    adminEditing.value = "edition";
+  } catch (err) {
+    toast.show(err instanceof ApiError ? err.message : t("admin.edit.loadFailed"));
+  }
+}
+
+/** An edition changed: its title, pages or cover may be what the page shows. */
+async function adminEditionSaved() {
+  editionsVersion.value += 1;
+  const detail = book.value;
+  if (!detail) return;
+  try {
+    const fresh = await api.book(detail.id);
+    book.value = fresh;
+    syncDrafts(fresh);
+  } catch {
+    /* Cosmetic; the next load catches up. */
+  }
+}
+
 async function toggleFavorite() {
   const detail = book.value;
   if (!detail || busy.value) return;
@@ -434,6 +471,13 @@ watch(param, load);
               <span class="subtle" aria-hidden="true"> · </span>
               <button class="text-btn" type="button" @click="requestingMerge = true">{{ t("merge.open") }}</button>
             </p>
+            <p v-if="session.user?.is_admin" class="fine catalog-requests admin-edit-links">
+              <button class="text-btn" type="button" @click="adminEditing = 'work'">{{ t("admin.editAsAdmin") }}</button>
+              <template v-if="book.edition_id != null">
+                <span class="subtle" aria-hidden="true"> · </span>
+                <button class="text-btn" type="button" @click="editEditionAsAdmin">{{ t("admin.editEditionAsAdmin") }}</button>
+              </template>
+            </p>
           </div>
 
           <div class="panel shelf-panel">
@@ -542,6 +586,7 @@ watch(param, load);
 
             <EditionPicker
               v-if="book.shelf_id"
+              :key="editionsVersion"
               :work-id="book.id"
               :edition-id="book.edition_id"
               :disabled="busy"
@@ -665,6 +710,20 @@ watch(param, load);
       @close="requestingMerge = false"
     />
     <EditRequestSheet v-if="requestingEdit && book" :book="book" @close="requestingEdit = false" />
+    <EditRequestSheet
+      v-if="adminEditing === 'work' && book"
+      admin
+      :book="book"
+      @saved="adoptAdminEdit"
+      @close="adminEditing = null"
+    />
+    <EditRequestSheet
+      v-if="adminEditing === 'edition' && adminEdition"
+      admin
+      :edition="adminEdition"
+      @saved="adminEditionSaved"
+      @close="adminEditing = null"
+    />
     <ReportCoverSheet
       v-if="reportingCover && book?.cover_public_id"
       :public-id="book.cover_public_id"

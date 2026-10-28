@@ -61,6 +61,7 @@ async fn me_is_the_full_user_out(db: PgPool) {
             "email_verified": true,
             "pending_email": null,
             "needs_email_prompt": false,
+            "needs_terms": false,
             "theme": "paper",
             "color_mode": "system",
             "locale": "en",
@@ -835,4 +836,77 @@ async fn a_change_racing_a_reset_does_not_overwrite_it(db: PgPool) {
     login(&app.anon(), "ada", "newpassword1")
         .await
         .assert_status(401);
+}
+
+const TERMS_CHANGED: &str = "The terms of use have changed. Reload the page and try again.";
+
+/// #53: an account that has not accepted the current terms (an imported one, or one from
+/// before a new version) gets `needs_terms` on every `UserOut`, also from other modules' routes,
+/// until `POST /api/auth/terms` records the current version.
+#[sqlx::test]
+async fn needs_terms_flips_after_accepting_the_terms(db: PgPool) {
+    let legal = legal_dir("2");
+    let app = TestApp::with_env(db, &[("LEGAL_DIR", legal.path().to_str().unwrap())]).await;
+    let ada = app.user("ada").await;
+    assert_eq!(ada.get("/api/auth/me").await.json()["needs_terms"], true);
+    let preferences = ada
+        .patch("/api/auth/me/preferences", json!({"locale": "de"}))
+        .await;
+    assert_eq!(preferences.json()["needs_terms"], true);
+    // MED's avatar route builds its UserOut with the same function.
+    let avatar = ada.delete("/api/auth/me/avatar").await;
+    avatar.assert_status(200);
+    assert_eq!(avatar.json()["needs_terms"], true);
+
+    for stale in [json!({"terms_version": "1"}), json!({"terms_version": ""})] {
+        ada.post("/api/auth/terms", stale)
+            .await
+            .assert_detail(400, TERMS_CHANGED);
+    }
+    ada.post("/api/auth/terms", json!({}))
+        .await
+        .assert_detail(400, "Field required");
+    let accepted = ada
+        .post("/api/auth/terms", json!({"terms_version": "2"}))
+        .await;
+    accepted.assert_status(200);
+    assert_eq!(accepted.json()["needs_terms"], false);
+    assert_eq!(accepted.json()["username"], "ada");
+    assert_eq!(ada.get("/api/auth/me").await.json()["needs_terms"], false);
+
+    // Accepting again keeps the first time.
+    app.exec("UPDATE users SET terms_accepted_at = '2026-11-01T00:00:00Z' WHERE username = 'ada'")
+        .await;
+    ada.post("/api/auth/terms", json!({"terms_version": "2"}))
+        .await
+        .assert_status(200);
+    assert_eq!(
+        app.scalar_i64(
+            "SELECT count(*) FROM users
+             WHERE terms_version = '2' AND terms_accepted_at = '2026-11-01T00:00:00Z'"
+        )
+        .await,
+        1
+    );
+
+    // An account that accepted an older version is asked again.
+    app.exec("UPDATE users SET terms_version = '1' WHERE username = 'ada'")
+        .await;
+    assert_eq!(ada.get("/api/auth/me").await.json()["needs_terms"], true);
+}
+
+/// #53: without the operator's terms nothing is asked, and there is nothing to accept.
+#[sqlx::test]
+async fn without_terms_nobody_is_asked(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    assert_eq!(ada.get("/api/auth/me").await.json()["needs_terms"], false);
+    ada.post("/api/auth/terms", json!({"terms_version": "placeholder"}))
+        .await
+        .assert_detail(400, TERMS_CHANGED);
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM users WHERE terms_version IS NOT NULL")
+            .await,
+        0
+    );
 }

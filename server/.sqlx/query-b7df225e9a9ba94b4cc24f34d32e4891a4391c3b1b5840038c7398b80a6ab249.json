@@ -1,0 +1,45 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH decided AS (\n               SELECT extract(epoch FROM resolved_at - created_at)::float8 / 3600 AS hours\n               FROM reports\n               -- Not closed on arrival (see `media::reports::report_outs`). `resolved_by` alone\n               -- cannot tell: account deletion sets it to null on an admin's decisions too.\n               WHERE status <> 'open'\n                 AND NOT (status = 'removed' AND resolved_by IS NULL\n                          AND resolved_at = created_at)\n                 AND resolved_at >= now() - make_interval(days => $1)\n           )\n           SELECT count(*) AS \"resolved!\",\n                  round((percentile_cont(0.5) WITHIN GROUP (ORDER BY hours))::numeric, 1)::float8\n                      AS median_hours,\n                  round(max(hours)::numeric, 1)::float8 AS max_hours,\n                  count(*) FILTER (WHERE hours > $2) AS \"over_target!\"\n           FROM decided",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "resolved!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "median_hours",
+        "type_info": "Float8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "max_hours",
+        "type_info": "Float8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "over_target!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "b7df225e9a9ba94b4cc24f34d32e4891a4391c3b1b5840038c7398b80a6ab249"
+}

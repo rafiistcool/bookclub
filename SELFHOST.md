@@ -38,8 +38,10 @@ tailnet hostname at whatever machine you have.
   bundle one.
 
 The image is published for amd64 only. On arm64 (Raspberry Pi, many NAS boxes),
-build it from a clone with `docker build -t bookclub .` and set `image: bookclub`
-in your compose file.
+build it from a clone of a release tag up to `v0.10.x` with `docker build -t bookclub .`
+and set `image: bookclub` in your compose file. After `v0.10.x`, the root
+`Dockerfile` builds the new Rust server's image (`deploy/hosted/README.md`), which this
+setup cannot run.
 
 ## 2. Docker Compose (recommended)
 
@@ -236,6 +238,11 @@ Production rules:
   extra sidecars that write into that directory as root unless you chown.
 
 ## 7. Releases
+
+> **Changed after `v0.10.0`:** a `v*` tag now publishes the Rust server's image
+> `git.tillhome.de/rafiistcool/bookclub-server` with the tags `X.Y.Z`, `X.Y` and
+> `stable` (see `deploy/hosted/README.md`, "Releases"). `rafiistcool/bookclub`
+> gets no new versions. The rest of this section describes how its releases were made.
 
 Images are built by `.forgejo/workflows/release.yml` on the Forgejo runner only
 when a `v*` git tag is pushed to Forgejo — branch pushes and pull requests never

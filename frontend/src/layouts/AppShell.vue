@@ -4,7 +4,9 @@ import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import Avatar from "../components/Avatar.vue";
 import EmailPrompt from "../components/EmailPrompt.vue";
+import LegalLinks from "../components/LegalLinks.vue";
 import NavIcon from "../components/NavIcon.vue";
+import TermsPrompt from "../components/TermsPrompt.vue";
 import { NAV_ITEMS, isActive } from "../nav";
 import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
@@ -57,8 +59,13 @@ const avatarUrl = computed(() => session.user?.avatar_url ?? null);
     </aside>
 
     <main class="main">
+      <TermsPrompt />
       <EmailPrompt />
       <RouterView />
+      <!-- Settings lists the same texts in its Legal section. -->
+      <footer v-if="service.legal.length && route.path !== '/settings'" class="shell-footer">
+        <LegalLinks />
+      </footer>
     </main>
 
     <nav class="bottom-nav" :aria-label="t('nav.main')">
@@ -111,6 +118,10 @@ const avatarUrl = computed(() => session.user?.avatar_url ?? null);
   margin: 0 auto;
   padding: calc(var(--header-h) + env(safe-area-inset-top) + var(--space-4))
     var(--space-4) calc(var(--nav-h) + env(safe-area-inset-bottom) + var(--space-7));
+}
+
+.shell-footer {
+  margin-top: var(--space-8);
 }
 
 .bottom-nav {

@@ -6,6 +6,7 @@ import { api, ApiError } from "../api/client";
 import type { VerifyEmailPreview } from "../api/generated";
 import { linkToken } from "../authToken";
 import LanguageSwitch from "../components/LanguageSwitch.vue";
+import LegalLinks from "../components/LegalLinks.vue";
 import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
 
@@ -96,6 +97,7 @@ async function confirm() {
     <div class="auth-locale">
       <LanguageSwitch compact />
     </div>
+    <LegalLinks class="auth-legal" />
   </main>
 </template>
 
@@ -113,5 +115,9 @@ async function confirm() {
 .auth-next,
 .auth-locale {
   margin-top: var(--space-5);
+}
+
+.auth-legal {
+  margin-top: var(--space-4);
 }
 </style>

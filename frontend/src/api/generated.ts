@@ -31,7 +31,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The open catalog requests (edits, cover replacements, merges), oldest first. */
+        /**
+         * A page of the catalog queue (edits, cover replacements, merges): `?status=open` (the
+         *     default) lists the open requests oldest first, `?status=resolved` the approved and rejected
+         *     ones, the newest decision first. 50 a page.
+         */
         get: operations["catalog_admin_list_edit_requests"];
         put?: never;
         post?: never;
@@ -78,6 +82,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/editions/{edition_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Sets an edition's facts directly, without a request: the fields get provenance `admin`, like
+         *     a book's. Same keys, rules and 400s as an approved edit request. Answers with the edition as
+         *     it is now.
+         */
+        patch: operations["catalog_admin_edit_edition"];
+        trace?: never;
+    };
     "/api/admin/invites": {
         parameters: {
             query?: never;
@@ -108,7 +133,13 @@ export interface paths {
         post?: never;
         /**
          * Takes a picture down directly, without a report: same effect as resolving one with
-         *     `remove`. Taking down a removed picture changes nothing.
+         *     `remove`. Taking down a removed picture changes nothing. With a body (a notice that arrived
+         *     by email, D2), the takedown is recorded as a resolved `removed` report of the picture:
+         *     `created_at` is when the notice arrived, `created_by` is null (the sender has no account
+         *     here), `resolved_by` the admin. A picture that was down already gets the record too, closed
+         *     when it came down (or on arrival, with no `resolved_by`, when it was down before the notice
+         *     arrived). A notice about an avatar is refused before anything changes (400, as
+         *     `reports.target_kind` knows only covers until ADM2); without a body an avatar is taken down.
          */
         delete: operations["media_admin_take_down"];
         options?: never;
@@ -123,7 +154,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The open reports, oldest first. */
+        /**
+         * A page of the report queue: `?status=open` (the default) lists the open reports oldest
+         *     first, `?status=resolved` the removed and dismissed ones, the newest decision first (a report
+         *     of a picture already taken down is `closed_on_arrival`, with no `resolved_by`). 50 a page.
+         */
         get: operations["media_admin_list_reports"];
         put?: never;
         post?: never;
@@ -142,12 +177,56 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Removes the reported picture (everywhere it is shown, for good) or dismisses the report. */
+        /**
+         * Removes the reported picture (everywhere it is shown, for good) or dismisses the report.
+         *     Either way every open report of the picture is resolved with it.
+         */
         post: operations["media_admin_resolve_report"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/admin/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Open counts, overdue counts and the oldest open item of both queues, and the 90-day report
+         *     statistics.
+         */
+        get: operations["admin_summary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/works/{work_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Sets a book's facts directly, without a request: the fields get provenance `admin`, so no
+         *     refresh, enrichment or harvest overwrites them afterwards. Same keys, rules and 400s as an
+         *     approved edit request. Answers with the book as it is now.
+         */
+        patch: operations["catalog_admin_edit_work"];
         trace?: never;
     };
     "/api/admin/works/{work_id}/merge": {
@@ -504,6 +583,8 @@ export interface paths {
          *     new account keeps the unverified address, no link is sent, and the holder gets the "someone
          *     tried to use your address" notice. A club invite also joins the club; a sign-up invite only
          *     unlocks sign-up. Called while signed in, it switches the session (the old one is deleted).
+         *     Whenever the operator's terms are configured, the body must carry their current version,
+         *     which is stored with the time of the sign-up.
          */
         post: operations["auth_register"];
         delete?: never;
@@ -544,6 +625,27 @@ export interface paths {
          *     cleared).
          */
         delete: operations["auth_revoke_session"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/terms": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accepts the current version of the operator's terms: the one-time prompt of imported
+         *     accounts, and of everyone after a new version (`UserOut.needs_terms`). Stores the version
+         *     and the time; accepting the version already accepted keeps the first time.
+         */
+        post: operations["auth_accept_terms"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1438,8 +1540,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The service name, accent colours, public origin and sign-up mode. Public; answers from
-         *     memory.
+         * The service name, accent colours, public origin, sign-up mode and legal settings. Public;
+         *     answers from memory.
          */
         get: operations["auth_get_config"];
         put?: never;
@@ -1535,6 +1637,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/legal/{doc}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The imprint, the privacy policy or the terms of use, in German or English. Public: these
+         *     pages must open signed out. The DEV_MODE placeholders are marked as such.
+         */
+        get: operations["legal_get_document"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/media/{public_id}/reports": {
         parameters: {
             query?: never;
@@ -1546,7 +1668,10 @@ export interface paths {
         put?: never;
         /**
          * Reports a cover (`cover_public_id` of a book or edition): copyright, the wrong book,
-         *     offensive, or something else. 20 per day.
+         *     offensive, or something else. 20 new reports per day, and 30 requests per minute, repeats
+         *     included. Idempotent per reader and picture: a repeat answers with the reader's open report,
+         *     and a picture already taken down gets a closed record (`status` `removed`); neither counts
+         *     against the daily limit again.
          */
         post: operations["media_report"];
         delete?: never;
@@ -1905,6 +2030,88 @@ export interface components {
             has_more: boolean;
             /** @description The club's zone (club feed) or the caller's (home feed). */
             timezone: string;
+        };
+        /** @description Fields an instance admin sets directly. */
+        AdminEditIn: {
+            /**
+             * @description The new values, with the keys and rules of an edit request (`EditRequestIn.fields`).
+             *     Works: `title`, `subtitle`, `authors`, `year`, `description`, `subjects`, `pages`.
+             *     Editions: `title`, `subtitle`, `publisher`, `language`, `format`, `pages`,
+             *     `publication_year`, `planned_publication_date` (`YYYY-MM-DD`). Null clears a field.
+             */
+            fields: Record<string, never>;
+        };
+        /** @description The item that has waited longest. */
+        AdminOldestItem: {
+            /**
+             * Format: int64
+             * @description The report's or request's id.
+             */
+            id: number;
+            /** Format: date-time */
+            created_at: string;
+        };
+        /** @description The open part of one queue. */
+        AdminQueueSummary: {
+            /**
+             * Format: int64
+             * @description Open items.
+             */
+            open: number;
+            /**
+             * Format: int64
+             * @description Open items older than `target_hours`.
+             */
+            overdue: number;
+            oldest: components["schemas"]["AdminOldestItem"] | null;
+        };
+        /**
+         * @description Time to a decision of the reports resolved in the last `days` days (by `resolved_at`). A
+         *     report closed on arrival (the picture was down already, so no admin decided it:
+         *     `ReportOut.closed_on_arrival`) is not counted; a decision whose admin has since deleted the
+         *     account is.
+         */
+        AdminReportStats: {
+            /**
+             * Format: int64
+             * @description The window: 90.
+             */
+            days: number;
+            /**
+             * Format: int64
+             * @description Reports resolved in the window.
+             */
+            resolved: number;
+            /**
+             * Format: double
+             * @description The median hours from report (or a notice's arrival) to decision, to 0.1 h; null when
+             *     none was resolved.
+             */
+            median_hours: number | null;
+            /**
+             * Format: double
+             * @description The longest, to 0.1 h; null when none was resolved.
+             */
+            max_hours: number | null;
+            /**
+             * Format: int64
+             * @description Resolved later than `target_hours` after they arrived.
+             */
+            over_target: number;
+        };
+        /** @description Both queues at a glance. */
+        AdminSummary: {
+            /**
+             * Format: int64
+             * @description Hours after which an open item is overdue (72 until the takedown targets are settled).
+             */
+            target_hours: number;
+            /** @description Reports of pictures. */
+            reports: components["schemas"]["AdminQueueSummary"];
+            /** @description Catalog requests: edits, cover photos, merges. */
+            edit_requests: components["schemas"]["AdminQueueSummary"];
+            /** @description How reports were decided in the last 90 days. */
+            report_stats: components["schemas"]["AdminReportStats"];
         };
         /** @description One work with the viewer's shelf state, their audience's readers and the catalog facts. */
         BookDetailOut: {
@@ -2343,9 +2550,19 @@ export interface components {
             /** @description Why; at most 2000 characters. */
             note?: string;
         };
-        /** @description The open requests, oldest first. */
+        /**
+         * @description A page of the catalog queue: the open requests oldest first, or the decided ones newest
+         *     decision first.
+         */
         EditRequestList: {
             items: components["schemas"]["EditRequestOut"][];
+            /**
+             * Format: int64
+             * @description The page these items are (1-based).
+             */
+            page: number;
+            /** @description Another page follows. */
+            has_more: boolean;
         };
         /** @description One request of the catalog queue. */
         EditRequestOut: {
@@ -2368,6 +2585,12 @@ export interface components {
              *     `cover_replace`: `{}`.
              */
             payload: Record<string, never>;
+            /**
+             * @description `work_edit`/`edition_edit`: the record's value now for each proposed field, keyed like
+             *     `payload` (an empty text is null, a list of subjects an array); `{}` for the other kinds
+             *     and when the record is gone. A `work_edit` reads the work its book was merged into.
+             */
+            current: Record<string, never>;
             /** @description `cover_replace`: the proposed picture (null once it was taken down). */
             cover_url: string | null;
             cover_thumb_url: string | null;
@@ -2586,6 +2809,30 @@ export interface components {
             on_shelf: boolean;
             /** Format: int64 */
             shelf_id: number | null;
+        };
+        /**
+         * @description A legal document. A fixed list: `{doc}` never names a file outside it.
+         * @enum {string}
+         */
+        LegalDoc: "imprint" | "privacy" | "terms";
+        /** @description A legal document as the operator provided it. */
+        LegalDocumentOut: {
+            doc: components["schemas"]["LegalDoc"];
+            /**
+             * @description The language served, `de` or `en`: the requested one, or the other when the operator has
+             *     the document in that language only.
+             */
+            locale: string;
+            /** @description True when `locale` is not the language the request asked for. */
+            fallback: boolean;
+            /**
+             * Format: date
+             * @description When the operator last changed the document (`manifest.json`), `YYYY-MM-DD`; null when
+             *     not given.
+             */
+            updated: string | null;
+            /** @description The document as an HTML fragment, exactly as the operator's file holds it. */
+            html: string;
         };
         /** @description Username or verified email address, and password. */
         LoginIn: {
@@ -3134,11 +3381,25 @@ export interface components {
             timezone?: string | null;
             /** @description `en` or `de`; default `en`. */
             locale?: string | null;
+            /**
+             * @description The version of the operator's terms the sign-up page showed (`/api/config.terms_version`).
+             *     Required, and must be the current one, whenever the terms are configured; it is stored
+             *     with the time as the acceptance. Ignored while no terms are configured.
+             */
+            terms_version?: string | null;
         };
-        /** @description The report is in the admin queue. */
+        /** @description The report is in the admin queue, or the picture is gone already. */
         ReportCreated: {
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description The report; a repeat names the reader's earlier report.
+             */
             id: number;
+            /**
+             * @description `open`: an admin will look at it; `removed`: the picture was already taken down, and
+             *     nothing waits in the queue.
+             */
+            status: string;
         };
         /** @description A reader's report of a cover. */
         ReportIn: {
@@ -3147,9 +3408,19 @@ export interface components {
             /** @description What is wrong; at most 2000 characters. */
             details?: string | null;
         };
-        /** @description The open reports, oldest first. */
+        /**
+         * @description A page of the report queue: the open reports oldest first, or the resolved ones newest
+         *     decision first.
+         */
         ReportList: {
             items: components["schemas"]["ReportOut"][];
+            /**
+             * Format: int64
+             * @description The page these items are (1-based).
+             */
+            page: number;
+            /** @description Another page follows. */
+            has_more: boolean;
         };
         /** @description A report in the admin queue. */
         ReportOut: {
@@ -3174,6 +3445,12 @@ export interface components {
             resolved_by: components["schemas"]["UserSummary"] | null;
             /** Format: date-time */
             resolved_at: string | null;
+            /**
+             * @description The picture was down already when the report arrived, so it was closed at once and no
+             *     admin decided it. A decided report whose admin deleted the account has no `resolved_by`
+             *     either, but is not closed on arrival.
+             */
+            closed_on_arrival: boolean;
         };
         /** @description What the admin decided. */
         ReportResolveIn: {
@@ -3243,7 +3520,7 @@ export interface components {
             page: number;
             has_more: boolean;
         };
-        /** @description Public service branding for the SPA. */
+        /** @description Public service branding and legal settings for the SPA. */
         ServiceConfig: {
             /** @description `SERVICE_NAME`. */
             name: string;
@@ -3255,6 +3532,18 @@ export interface components {
             public_url: string;
             /** @description `"invite"` (sign-up needs an invite code) or `"open"`. */
             signup: string;
+            /**
+             * @description The documents `GET /api/legal/{doc}` serves: the operator's (`LEGAL_DIR`), or the
+             *     DEV_MODE placeholders. Empty when there are none.
+             */
+            legal: components["schemas"]["LegalDoc"][];
+            /**
+             * @description The current version of the operator's terms. A sign-up must send it as `terms_version`;
+             *     null when no terms are configured (nothing to accept).
+             */
+            terms_version: string | null;
+            /** @description `CONTACT_EMAIL`: the public contact and takedown address. Null when unset (DEV_MODE). */
+            contact_email: string | null;
         };
         /**
          * @description How a session authenticates.
@@ -3443,6 +3732,26 @@ export interface components {
          * @enum {string}
          */
         SpineDisplay: "spine" | "flat" | "cover";
+        /**
+         * @description The notice a direct takedown answers (`DELETE /api/admin/media/{public_id}` with a body):
+         *     how emailed notices from people without an account enter the record (D2).
+         */
+        TakeDownIn: {
+            /** @description What the notice said and who sent it; at most 2000 characters (silently cut). */
+            details?: string | null;
+            /**
+             * Format: date-time
+             * @description When the notice arrived (RFC 3339); default now. Not in the future.
+             */
+            received_at?: string | null;
+            /** @description `copyright`, `wrong_book`, `offensive` or `other` (the default). */
+            reason?: string | null;
+        };
+        /** @description The version of the operator's terms the user accepts. */
+        TermsIn: {
+            /** @description The version the page showed: `/api/config.terms_version`. */
+            terms_version: string;
+        };
         /** @description Credentials for a new bearer token. */
         TokenIn: {
             /** @description A username, or a verified email address. */
@@ -3475,6 +3784,12 @@ export interface components {
              */
             pending_email: string | null;
             needs_email_prompt: boolean;
+            /**
+             * @description The operator's terms are configured and the account has not accepted their current
+             *     version (imported accounts, and everyone after a new version): the app asks once and
+             *     records the answer with `POST /api/auth/terms`.
+             */
+            needs_terms: boolean;
             theme: string;
             color_mode: string;
             locale: string;
@@ -3680,6 +3995,11 @@ export interface components {
 export type AccountDeleteIn = components['schemas']['AccountDeleteIn'];
 export type ActivityItem = components['schemas']['ActivityItem'];
 export type ActivityOut = components['schemas']['ActivityOut'];
+export type AdminEditIn = components['schemas']['AdminEditIn'];
+export type AdminOldestItem = components['schemas']['AdminOldestItem'];
+export type AdminQueueSummary = components['schemas']['AdminQueueSummary'];
+export type AdminReportStats = components['schemas']['AdminReportStats'];
+export type AdminSummary = components['schemas']['AdminSummary'];
 export type BookDetailOut = components['schemas']['BookDetailOut'];
 export type BookOut = components['schemas']['BookOut'];
 export type BookReader = components['schemas']['BookReader'];
@@ -3734,6 +4054,8 @@ export type InviteOut = components['schemas']['InviteOut'];
 export type InvitePreview = components['schemas']['InvitePreview'];
 export type InviteTarget = components['schemas']['InviteTarget'];
 export type IsbnHitOut = components['schemas']['IsbnHitOut'];
+export type LegalDoc = components['schemas']['LegalDoc'];
+export type LegalDocumentOut = components['schemas']['LegalDocumentOut'];
 export type LoginIn = components['schemas']['LoginIn'];
 export type MemberList = components['schemas']['MemberList'];
 export type MemberOut = components['schemas']['MemberOut'];
@@ -3796,6 +4118,8 @@ export type ShelfStatus = components['schemas']['ShelfStatus'];
 export type SignupInviteIn = components['schemas']['SignupInviteIn'];
 export type SpineColorsOut = components['schemas']['SpineColorsOut'];
 export type SpineDisplay = components['schemas']['SpineDisplay'];
+export type TakeDownIn = components['schemas']['TakeDownIn'];
+export type TermsIn = components['schemas']['TermsIn'];
 export type TokenIn = components['schemas']['TokenIn'];
 export type TokenOut = components['schemas']['TokenOut'];
 export type TransferIn = components['schemas']['TransferIn'];
@@ -3868,20 +4192,37 @@ export interface operations {
     };
     catalog_admin_list_edit_requests: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description `open` (the default): waiting for a decision, oldest first. `resolved`: decided, the
+                 *     newest decision first.
+                 */
+                status?: string;
+                /** @description 1-based, 50 items a page; default 1. */
+                page?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The open requests */
+            /** @description A page of the open or the decided requests */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["EditRequestList"];
+                };
+            };
+            /** @description `Input should be 'open' or 'resolved'`, `Input should be greater than or equal to 1`, `Input should be less than or equal to 1000`, `Input should be a valid integer, unable to parse string as an integer` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
             /** @description `Not signed in` */
@@ -4026,6 +4367,60 @@ export interface operations {
             };
         };
     };
+    catalog_admin_edit_edition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The edition id */
+                edition_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminEditIn"];
+            };
+        };
+        responses: {
+            /** @description The edition with the new values */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionOut"];
+                };
+            };
+            /** @description `Field required` (no fields), `Unknown field: <key>` or `Invalid value for <key>` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such book.`, or `Not found` (not an instance admin) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     admin_list_invites: {
         parameters: {
             query?: never;
@@ -4125,14 +4520,28 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        /** @description Optional: the notice this takedown answers, recorded as a resolved report. No body, or `null`, takes the picture down without a record */
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["TakeDownIn"] | null;
+            };
+        };
         responses: {
-            /** @description The picture is removed */
+            /** @description The picture is removed (and the notice recorded) */
             204: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description `Input should be 'copyright', 'wrong_book', 'offensive' or 'other'`, `Input should be in the past` (`received_at`), `Invalid value`; `Only notices about covers can be recorded` (a notice about an avatar: nothing is taken down) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
             };
             /** @description `Not signed in` */
             401: {
@@ -4156,20 +4565,37 @@ export interface operations {
     };
     media_admin_list_reports: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description `open` (the default): waiting for a decision, oldest first. `resolved`: decided, the
+                 *     newest decision first.
+                 */
+                status?: string;
+                /** @description 1-based, 50 items a page; default 1. */
+                page?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The open reports, oldest first */
+            /** @description A page of the open or the resolved reports */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ReportList"];
+                };
+            };
+            /** @description `Input should be 'open' or 'resolved'`, `Input should be greater than or equal to 1`, `Input should be less than or equal to 1000`, `Input should be a valid integer, unable to parse string as an integer` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
             /** @description `Not signed in` */
@@ -4246,6 +4672,98 @@ export interface operations {
             };
             /** @description `This report was already resolved` */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_summary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Both queues at a glance */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminSummary"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not found` for everyone but instance admins */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    catalog_admin_edit_work: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A work id, `OL…W`, or a legacy key */
+                work_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminEditIn"];
+            };
+        };
+        responses: {
+            /** @description The book with the new values */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookDetailOut"];
+                };
+            };
+            /** @description `Field required` (no fields), `Unknown field: <key>` or `Invalid value for <key>` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such book.`, or `Not found` (not an instance admin) */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5128,7 +5646,7 @@ export interface operations {
                     "application/json": components["schemas"]["UserOut"];
                 };
             };
-            /** @description Invalid fields, a missing or invalid invite code */
+            /** @description Invalid fields, a missing or invalid invite code, or `The terms of use have changed. Reload the page and try again.` (a missing or old `terms_version` while terms are configured) */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -5234,6 +5752,48 @@ export interface operations {
             };
             /** @description `No such session` (also another user's) */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    auth_accept_terms: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TermsIn"];
+            };
+        };
+        responses: {
+            /** @description The account, `needs_terms` false */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserOut"];
+                };
+            };
+            /** @description `The terms of use have changed. Reload the page and try again.` (not the current version, or no terms configured) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8602,6 +9162,50 @@ export interface operations {
             };
         };
     };
+    legal_get_document: {
+        parameters: {
+            query?: {
+                /** @description `de` or `en` (default `en`). */
+                locale?: string;
+            };
+            header?: never;
+            path: {
+                /** @description `imprint`, `privacy` or `terms` */
+                doc: components["schemas"]["LegalDoc"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The document; `fallback` when it is served in the other language */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalDocumentOut"];
+                };
+            };
+            /** @description `locale must be one of: en, de` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not found`: no such document, or the operator has not provided it */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     media_report: {
         parameters: {
             query?: never;
@@ -8618,7 +9222,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The report is in the admin queue */
+            /** @description The report is in the admin queue (`open`), or the picture was already taken down (`removed`); a repeat names the same report */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -8654,7 +9258,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description `Slow down a little. Try again later.` (20 per day) */
+            /** @description `Slow down a little. Try again later.` (20 new reports per day; 30 requests per minute, repeats included) */
             429: {
                 headers: {
                     [name: string]: unknown;

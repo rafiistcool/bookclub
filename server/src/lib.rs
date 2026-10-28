@@ -17,6 +17,7 @@ pub mod harvest;
 mod health;
 pub mod importer;
 pub mod jobs;
+pub mod legal;
 pub mod media;
 pub mod openapi;
 pub mod outbound;
@@ -131,12 +132,13 @@ fn api_router() -> OpenApiRouter<AppState> {
         .merge(votes::routes())
         .merge(overlap::routes())
         .merge(activity::routes())
+        .merge(legal::routes())
 }
 
 /// Every `/api/admin/*` route.
 fn admin_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
-        .merge(admin::invites::admin_routes())
+        .merge(admin::admin_routes())
         .merge(catalog::admin_routes())
         .merge(media::admin_routes())
 }
@@ -151,7 +153,7 @@ pub fn app(state: AppState) -> Router {
     let (api, _) = api_router().split_for_parts();
     let (admin, _) = admin_router().split_for_parts();
     // One guard for every admin route: a handler that forgets its InstanceAdmin argument is
-    // still guarded. (`admin::invites` always has routes; axum panics on a route layer over an
+    // still guarded. (`admin::admin_routes` always has routes; axum panics on a route layer over an
     // empty router.)
     let admin = admin.route_layer(middleware::from_extractor_with_state::<
         InstanceAdmin,
@@ -171,6 +173,11 @@ pub fn app(state: AppState) -> Router {
         .fallback(spa::fallback)
         .method_not_allowed_fallback(spa::method_not_allowed)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
+        // `UserOut.needs_terms` needs the current terms version (`legal::terms_scope`).
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            legal::terms_scope,
+        ))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::session::maintain_cookie,
@@ -212,7 +219,9 @@ pub fn app(state: AppState) -> Router {
         ))
         // No page of ours may be framed: a same-site page (a sibling subdomain) would get the
         // Lax session cookie into the frame and could trick a click on a one-tap action.
-        .layer(SetResponseHeaderLayer::overriding(
+        // `if_not_present`: the SPA's answers carry the full policy (`spa::SHELL_CSP`, which
+        // also says `frame-ancestors 'none'`); every other answer gets this one.
+        .layer(SetResponseHeaderLayer::if_not_present(
             CONTENT_SECURITY_POLICY,
             HeaderValue::from_static("frame-ancestors 'none'"),
         ))

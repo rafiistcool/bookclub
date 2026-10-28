@@ -68,6 +68,7 @@ async fn register_consumes_the_invite_and_signs_in(db: PgPool) {
             "email_verified": false,
             "pending_email": null,
             "needs_email_prompt": false,
+            "needs_terms": false,
             "theme": "paper",
             "color_mode": "system",
             "locale": "en",
@@ -775,4 +776,80 @@ async fn a_full_club_rolls_the_sign_up_back(db: PgPool) {
     ] {
         assert_eq!(app.scalar_i64(sql).await, expected, "{sql}");
     }
+}
+
+const TERMS_CHANGED: &str = "The terms of use have changed. Reload the page and try again.";
+
+/// #53: whenever the operator's terms are configured, a sign-up must send their current
+/// version; a missing or old one is 400 and creates nothing. The accepted version is stored
+/// with the time of the sign-up.
+#[sqlx::test]
+async fn a_sign_up_accepts_the_current_terms(db: PgPool) {
+    let legal = legal_dir("2026-11-01");
+    let app = TestApp::with_env(
+        db,
+        &[
+            ("SIGNUP_MODE", "open"),
+            ("LEGAL_DIR", legal.path().to_str().unwrap()),
+        ],
+    )
+    .await;
+    let mut sign_up = body("ada", "");
+    sign_up.as_object_mut().unwrap().remove("invite_code");
+    for terms in [
+        None,
+        Some(json!("2026-10-01")),
+        Some(json!("")),
+        Some(Value::Null),
+    ] {
+        let mut attempt = sign_up.clone();
+        if let Some(terms) = terms {
+            attempt["terms_version"] = terms;
+        }
+        app.anon()
+            .with_ip(ip(1))
+            .post("/api/auth/register", attempt)
+            .await
+            .assert_detail(400, TERMS_CHANGED);
+    }
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM users").await, 0);
+    assert!(app.sent_emails().is_empty());
+
+    sign_up["terms_version"] = json!("2026-11-01");
+    let res = app
+        .anon()
+        .with_ip(ip(2))
+        .post("/api/auth/register", sign_up)
+        .await;
+    res.assert_status(201);
+    assert_eq!(res.json()["needs_terms"], false);
+    assert_eq!(
+        app.scalar_i64(
+            "SELECT count(*) FROM users
+             WHERE username = 'ada' AND terms_version = '2026-11-01'
+               AND terms_accepted_at > now() - interval '1 minute'"
+        )
+        .await,
+        1
+    );
+}
+
+/// #53: without the operator's terms (here the DEV_MODE placeholders) there is nothing to
+/// accept: a given version is ignored and nothing is stored.
+#[sqlx::test]
+async fn without_terms_a_sign_up_stores_no_acceptance(db: PgPool) {
+    let app = TestApp::with_env(db, &[("SIGNUP_MODE", "open")]).await;
+    let mut sign_up = body("ada", "");
+    sign_up.as_object_mut().unwrap().remove("invite_code");
+    sign_up["terms_version"] = json!("placeholder");
+    let res = app.anon().post("/api/auth/register", sign_up).await;
+    res.assert_status(201);
+    assert_eq!(res.json()["needs_terms"], false);
+    assert_eq!(
+        app.scalar_i64(
+            "SELECT count(*) FROM users WHERE terms_version IS NULL AND terms_accepted_at IS NULL"
+        )
+        .await,
+        1
+    );
 }

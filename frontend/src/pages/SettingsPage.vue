@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { api, ApiError } from "../api/client";
 import AccountSettings from "../components/AccountSettings.vue";
+import AdminLink from "../components/admin/AdminLink.vue";
 import Avatar from "../components/Avatar.vue";
 import DeleteAccount from "../components/DeleteAccount.vue";
 import FavoritesEditor from "../components/FavoritesEditor.vue";
@@ -11,6 +12,7 @@ import GoodreadsImport from "../components/GoodreadsImport.vue";
 import LanguageSwitch from "../components/LanguageSwitch.vue";
 import TimeZoneSetting from "../components/TimeZoneSetting.vue";
 import { MODES, THEMES, useTheme } from "../stores/theme";
+import { LEGAL_DOCS, legalPath, useService } from "../stores/service";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import type { Favorite } from "../types";
@@ -21,6 +23,8 @@ const theme = useTheme();
 const session = useSession();
 const toast = useToast();
 const avatarBusy = ref(false);
+const service = useService();
+const legalDocs = computed(() => LEGAL_DOCS.filter((doc) => service.hasLegal(doc)));
 
 
 const username = computed(() => session.user?.username ?? "");
@@ -240,7 +244,7 @@ onMounted(() => {
         <h2 id="instance-admin">{{ t("admin.title") }}</h2>
       </div>
       <p class="fine muted">{{ t("admin.settingsBlurb") }}</p>
-      <RouterLink class="btn btn-ghost" to="/admin">{{ t("admin.open") }}</RouterLink>
+      <AdminLink />
     </section>
 
     <DeleteAccount @deleted="toLogin(t('account.deleted'))" />
@@ -248,6 +252,25 @@ onMounted(() => {
     <hr class="divider" />
 
     <button class="btn btn-danger" type="button" @click="logout">{{ t("settings.logOut") }}</button>
+
+    <section v-if="legalDocs.length || service.contact_email" class="section" aria-labelledby="legal">
+      <div class="section-head">
+        <h2 id="legal">{{ t("legal.settingsTitle") }}</h2>
+      </div>
+      <p v-if="legalDocs.length" class="fine muted">{{ t("legal.settingsBlurb", { name: service.name }) }}</p>
+      <ul v-if="legalDocs.length" class="legal-list">
+        <li v-for="doc in legalDocs" :key="doc">
+          <RouterLink :to="legalPath(doc)">{{ t(`legal.title.${doc}`) }}</RouterLink>
+        </li>
+      </ul>
+      <p v-if="service.contact_email" class="fine muted legal-contact">
+        <i18n-t keypath="legal.contact" tag="span" scope="global">
+          <template #email>
+            <a :href="`mailto:${service.contact_email}`">{{ service.contact_email }}</a>
+          </template>
+        </i18n-t>
+      </p>
+    </section>
   </section>
 </template>
 
@@ -398,6 +421,18 @@ onMounted(() => {
 
 .backup-btn {
   margin-top: var(--space-3);
+}
+
+.legal-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.legal-contact {
+  overflow-wrap: anywhere;
 }
 
 @media (min-width: 720px) {
