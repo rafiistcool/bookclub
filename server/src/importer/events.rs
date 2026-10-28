@@ -9,7 +9,7 @@ use time::{Duration, OffsetDateTime};
 
 use super::personal::QuoteFacts;
 use super::{ImportError, Importer, detail_after};
-use crate::activity::EventKind;
+use crate::activity::{EventKind, hide_finished_ratings};
 
 /// A `quote_added` event and the quote it was written with lie at most this far apart.
 const QUOTE_WINDOW: Duration = Duration::seconds(5);
@@ -209,6 +209,12 @@ impl Importer {
                 personal += 1;
             }
         }
+        // A finished event keeps its rating and take only while its entry is audience (the
+        // feeds' invariant, `activity::hide_finished_ratings`): the legacy app redacted only at
+        // read time, so an only-me or removed entry's rating is still in its payload.
+        let hidden = hide_finished_ratings(&mut self.tx, None, None).await?;
+        self.report
+            .normalised_by("events.payload.rating_take", hidden);
         self.report.entity(
             "events",
             Some(events.len() as u64),

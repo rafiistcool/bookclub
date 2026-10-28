@@ -36,8 +36,9 @@ pub const EDIT_OWN_QUOTES: &str = "You can only edit your own quotes";
 pub const DELETE_OWN_QUOTES: &str = "You can only delete your own quotes";
 const MAX_BODY_CHARS: usize = 1000;
 const MAX_PAGE: i64 = 20_000;
-/// The `quote_added` excerpt: the first 80 characters of the body.
-const EXCERPT_CHARS: usize = 80;
+/// The `quote_added` excerpt: the first 80 characters of the body (stored, and served from
+/// the current body by the feeds).
+pub const EXCERPT_CHARS: usize = 80;
 
 /// One quote as the viewer sees it.
 #[derive(Debug, Clone, Serialize, ToSchema)]

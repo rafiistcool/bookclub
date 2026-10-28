@@ -223,7 +223,9 @@ async fn feed_item(viewer: &TestClient, path: &str, id: i64) -> Option<Value> {
 
 /// `shelf_finished` payloads lose `rating` and `take` for everyone but the actor while the
 /// actor's entry is "only me" or gone; viewers who do not share a club with the actor never see
-/// the event (conventions §6.4).
+/// the event (conventions §6.4). This is the read-time backstop: the events and visibilities
+/// here are written with SQL, past the write paths that keep an only-me rating out of every
+/// stored payload (the tests below).
 #[sqlx::test]
 async fn finished_ratings_in_the_feeds_follow_the_entry(db: PgPool) {
     let app = TestApp::new(db).await;
@@ -287,6 +289,256 @@ async fn finished_ratings_in_the_feeds_follow_the_entry(db: PgPool) {
     assert_eq!(seen["payload"], json!({}));
     let own = feed_item(&v.owner, "/api/activity", id).await.unwrap();
     assert_eq!(own["payload"], full);
+}
+
+/// The stored payloads of `who`'s finished events on `work`, oldest first, with their ids.
+async fn finished_events(app: &TestApp, who: &TestClient, work: &TestWork) -> Vec<(i64, Value)> {
+    sqlx::query_as(
+        "SELECT id, payload FROM events
+         WHERE kind = 'shelf_finished' AND actor_id = $1 AND work_id = $2 ORDER BY id",
+    )
+    .bind(who.id())
+    .bind(work.id)
+    .fetch_all(&app.db)
+    .await
+    .unwrap()
+}
+
+/// What `viewer` sees of event `id` in both feeds of the shared club.
+async fn seen_payloads(v: &Viewers, viewer: &TestClient, id: i64) -> Vec<Value> {
+    let club_feed = format!("/api/clubs/{}/activity", v.shared.slug);
+    let mut seen = Vec::new();
+    for path in [club_feed.as_str(), "/api/activity"] {
+        seen.push(feed_item(viewer, path, id).await.unwrap()["payload"].clone());
+    }
+    seen
+}
+
+/// Security review 2026-10-28 #2: an event outlives its entry. An only-me rating and take never
+/// enter the payload, and a removed entry's events lose theirs, so adding the work again (as
+/// "start reading" on the club page does, audience by default) brings nothing back.
+#[sqlx::test]
+async fn a_private_rating_stays_hidden_when_the_work_comes_back(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let v = Viewers::new(&app).await;
+    let circe = app.work("Circe").await;
+    let added = v
+        .owner
+        .post(
+            "/api/shelf",
+            json!({"work_id": circe.id, "status": "finished", "rating": 1,
+                   "take": "A gift I hated", "rating_visibility": "only_me"}),
+        )
+        .await;
+    added.assert_status(201);
+    let entry = added.json()["id"].clone();
+    let events = finished_events(&app, &v.owner, &circe).await;
+    assert_eq!(events.len(), 1);
+    let (id, payload) = events[0].clone();
+    assert_eq!(payload, json!({}));
+
+    v.owner
+        .delete(&format!("/api/shelf/{entry}"))
+        .await
+        .assert_status(204);
+    v.owner
+        .post(
+            "/api/shelf",
+            json!({"work_id": circe.id, "status": "currently_reading"}),
+        )
+        .await
+        .assert_status(201);
+    assert_eq!(
+        seen_payloads(&v, &v.co_member, id).await,
+        [json!({}), json!({})]
+    );
+}
+
+/// A removed entry's events lose a rating that was public too: whatever the reader shows of the
+/// work from now on comes from the new entry.
+#[sqlx::test]
+async fn a_removed_entry_takes_its_ratings_out_of_its_events(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let v = Viewers::new(&app).await;
+    let circe = app.work("Circe").await;
+    let added = v
+        .owner
+        .post(
+            "/api/shelf",
+            json!({"work_id": circe.id, "status": "finished", "rating": 4, "take": "Fine"}),
+        )
+        .await;
+    added.assert_status(201);
+    let (id, payload) = finished_events(&app, &v.owner, &circe).await[0].clone();
+    assert_eq!(payload, json!({"rating": 4, "take": "Fine"}));
+    assert_eq!(
+        seen_payloads(&v, &v.co_member, id).await,
+        [payload.clone(), payload]
+    );
+    v.owner
+        .delete(&format!("/api/shelf/{}", added.json()["id"]))
+        .await
+        .assert_status(204);
+    assert_eq!(
+        finished_events(&app, &v.owner, &circe).await[0].1,
+        json!({})
+    );
+}
+
+/// A take written while the rating was only-me stays hidden when the reader later rewrites the
+/// take and shares the entry: the feed never serves the old, private text.
+#[sqlx::test]
+async fn a_take_written_while_only_me_stays_hidden_after_the_entry_opens_up(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let v = Viewers::new(&app).await;
+    let circe = app.work("Circe").await;
+    let added = v
+        .owner
+        .post(
+            "/api/shelf",
+            json!({"work_id": circe.id, "status": "finished", "rating": 2,
+                   "take": "Only for me", "rating_visibility": "only_me"}),
+        )
+        .await;
+    added.assert_status(201);
+    v.owner
+        .patch(
+            &format!("/api/shelf/{}", added.json()["id"]),
+            json!({"take": "Worth a read", "rating_visibility": "audience"}),
+        )
+        .await
+        .assert_status(200);
+    let (id, _) = finished_events(&app, &v.owner, &circe).await[0].clone();
+    assert_eq!(
+        seen_payloads(&v, &v.co_member, id).await,
+        [json!({}), json!({})]
+    );
+}
+
+/// Making a shared rating only-me takes it out of the stored events too, so no later change (a
+/// merge onto an audience entry, a visibility flip) can show it again.
+#[sqlx::test]
+async fn making_a_rating_only_me_takes_it_out_of_the_events(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let v = Viewers::new(&app).await;
+    let circe = app.work("Circe").await;
+    let added = v
+        .owner
+        .post(
+            "/api/shelf",
+            json!({"work_id": circe.id, "status": "finished", "rating": 5, "take": "Loved it"}),
+        )
+        .await;
+    added.assert_status(201);
+    v.owner
+        .patch(
+            &format!("/api/shelf/{}", added.json()["id"]),
+            json!({"rating_visibility": "only_me"}),
+        )
+        .await
+        .assert_status(200);
+    assert_eq!(
+        finished_events(&app, &v.owner, &circe).await[0].1,
+        json!({})
+    );
+}
+
+/// A work merge moves the loser's events to the winner. An event of an only-me entry (here as a
+/// legacy event would carry its rating) must not show once it hangs off the user's audience
+/// entry of the winner.
+#[sqlx::test]
+async fn a_merge_does_not_show_the_rating_of_an_only_me_entry(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let v = Viewers::new(&app).await;
+    let winner = app.work("Circe").await;
+    let loser = app.work("Circe (duplicate)").await;
+    shelve(
+        &app,
+        &v.owner,
+        &winner,
+        "status, rating, rating_visibility, take",
+        "'finished', 4, 'audience', 'Good'",
+    )
+    .await;
+    shelve(
+        &app,
+        &v.owner,
+        &loser,
+        "status, rating, rating_visibility, take, updated_at",
+        "'finished', 1, 'only_me', 'Secret', now() - interval '1 day'",
+    )
+    .await;
+    let id = event(
+        &app,
+        None,
+        &v.owner,
+        "shelf_finished",
+        &loser,
+        json!({"rating": 1, "take": "Secret"}),
+    )
+    .await;
+    let mut conn = app.db.acquire().await.unwrap();
+    bookclub_server::catalog::merge_works(&mut conn, loser.id, winner.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM shelf_entries
+             WHERE user_id = {} AND work_id = {} AND rating_visibility = 'audience'",
+            v.owner.id(),
+            winner.id
+        ))
+        .await,
+        1
+    );
+    assert_eq!(
+        seen_payloads(&v, &v.co_member, id).await,
+        [json!({}), json!({})]
+    );
+}
+
+/// A quote added only-me with one text, then rewritten and shared, shows the text it has now:
+/// the feed reads the quote, not the excerpt stored when it was added.
+#[sqlx::test]
+async fn a_shared_quote_shows_its_current_text(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let v = Viewers::new(&app).await;
+    let circe = app.work("Circe").await;
+    let created = v
+        .owner
+        .post(
+            "/api/quotes",
+            json!({"work_id": circe.id, "body": "A note only for me", "page": 12,
+                   "visibility": "only_me"}),
+        )
+        .await;
+    created.assert_status(201);
+    let quote_id = created.json()["id"].as_i64().unwrap();
+    let body =
+        "Witches are not known for their humility, it is said; that is why we are good at it";
+    v.owner
+        .patch(
+            &format!("/api/quotes/{quote_id}"),
+            json!({"body": body, "page": 40, "visibility": "audience"}),
+        )
+        .await
+        .assert_status(200);
+    let id = app
+        .scalar_i64(&format!(
+            "SELECT id FROM events WHERE kind = 'quote_added' AND actor_id = {}",
+            v.owner.id()
+        ))
+        .await;
+    let excerpt: String = body.chars().take(80).collect();
+    let shown = json!({"excerpt": excerpt, "page": 40, "quote_id": quote_id});
+    assert_eq!(
+        seen_payloads(&v, &v.co_member, id).await,
+        [shown.clone(), shown.clone()]
+    );
+    assert_eq!(
+        seen_payloads(&v, &v.owner, id).await,
+        [shown.clone(), shown]
+    );
 }
 
 /// `quote_added` is shown to others only while its quote exists and is not "only me"; a legacy

@@ -34,6 +34,7 @@ use time::OffsetDateTime;
 
 use super::shared::ingest::{Source, author_surname, match_key, search_extra};
 use super::shared::merge_rules::{ShelfFacts, merge_shelf_fields, remap_layout, shelf_winner};
+use crate::activity::hide_finished_ratings;
 use crate::dto::{ShelfStatus, Visibility};
 
 /// What a merge changed.
@@ -152,11 +153,16 @@ async fn merge_in(
     .fetch_all(&mut *conn)
     .await?;
 
+    // A finished event moves with its work below. Its rating and take must not reach an entry
+    // that shows them when the entry it was written for hid them (only-me, or gone): scrubbed
+    // before the entries merge, and again once the kept entry's visibility is final.
+    hide_finished_ratings(conn, None, Some(&pair[..])).await?;
     merge_shelves(conn, loser, winner, &mut report).await?;
     merge_favourites(conn, loser, winner, &mut report).await?;
     merge_nominations(conn, loser, winner, &mut report).await?;
     merge_fields(conn, loser, winner, &covers, &mut report).await?;
     move_references(conn, loser, winner, &mut report).await?;
+    hide_finished_ratings(conn, None, Some(&[winner])).await?;
     settle_requests(conn, loser, winner, &mut report).await?;
     sqlx::query!(
         "UPDATE works SET merged_into_id = $2, updated_at = now() WHERE id = $1",

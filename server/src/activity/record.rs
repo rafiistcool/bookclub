@@ -128,6 +128,39 @@ pub async fn record(conn: &mut PgConnection, ev: NewEvent) -> sqlx::Result<i64> 
     .await
 }
 
+/// Drops `rating` and `take` from every `shelf_finished` event (of `actor`, when given, on
+/// `work_ids`, when given) whose actor has no `audience` shelf entry for the event's work.
+///
+/// The invariant it keeps: a stored `shelf_finished` payload carries a rating or take only while
+/// its actor's entry for that work exists and is `audience` (security review 2026-10-28 #2).
+/// The feeds also redact by the current entry at read time, but a payload outlives its entry:
+/// without this, a rating written while only-me (or before a removal) came back the moment the
+/// actor added the work again with the default visibility, or a merge moved the event onto an
+/// audience entry. The shelf calls it when an entry goes or becomes only-me, the work merge
+/// before and after it moves the events, and the importer once for every event.
+pub async fn hide_finished_ratings(
+    conn: &mut PgConnection,
+    actor: Option<i64>,
+    work_ids: Option<&[i64]>,
+) -> sqlx::Result<u64> {
+    let done = sqlx::query!(
+        "UPDATE events e SET payload = e.payload - 'rating' - 'take'
+         WHERE e.kind = 'shelf_finished'
+           AND (e.payload ? 'rating' OR e.payload ? 'take')
+           AND ($1::int8 IS NULL OR e.actor_id = $1)
+           AND ($2::int8[] IS NULL OR e.work_id = ANY($2))
+           AND NOT EXISTS (
+               SELECT 1 FROM shelf_entries s
+               WHERE s.user_id = e.actor_id AND s.work_id = e.work_id
+                 AND s.rating_visibility = 'audience')",
+        actor,
+        work_ids as Option<&[i64]>
+    )
+    .execute(conn)
+    .await?;
+    Ok(done.rows_affected())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

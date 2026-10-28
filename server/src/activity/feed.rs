@@ -35,6 +35,8 @@ use crate::dto::{BookOut, ClubRef};
 use crate::error::{ApiResult, ErrorBody};
 use crate::extract::{ApiQuery, Validate, Validator};
 use crate::picks::club_zone;
+use crate::shelf::quotes::EXCERPT_CHARS;
+use crate::text::truncate_chars;
 use crate::tz;
 
 /// The default page size.
@@ -138,6 +140,9 @@ struct EventRow {
     pick_id: Option<i64>,
     payload: Value,
     created_at: OffsetDateTime,
+    /// The current body and page of a `quote_added` event's quote, when it still exists.
+    quote_body: Option<String>,
+    quote_page: Option<i32>,
     /// A `shelf_finished` whose rating and take the caller may not see.
     hide_rating: bool,
 }
@@ -201,7 +206,8 @@ pub async fn home_feed(
     let rows = sqlx::query_as!(
         EventRow,
         r#"SELECT e.id, e.club_id, e.actor_id, u.username AS "actor?", e.kind, e.work_id,
-                  e.pick_id, e.payload, e.created_at,
+                  e.pick_id, e.payload, e.created_at, q.body AS "quote_body?",
+                  q.page AS "quote_page?",
                   (e.kind = 'shelf_finished' AND e.actor_id IS DISTINCT FROM $1
                    AND NOT EXISTS (
                        SELECT 1 FROM shelf_entries s
@@ -209,6 +215,10 @@ pub async fn home_feed(
                          AND bc_can_see_item($1, s.user_id, s.rating_visibility))) AS "hide_rating!"
            FROM events e
            LEFT JOIN users u ON u.id = e.actor_id
+           LEFT JOIN quotes q ON e.kind = 'quote_added' AND q.user_id = e.actor_id
+                AND q.id = CASE WHEN jsonb_typeof(e.payload -> 'quote_id') = 'number'
+                                     AND e.payload ->> 'quote_id' ~ '^[0-9]{1,18}$'
+                                THEN (e.payload ->> 'quote_id')::int8 END
            WHERE (e.club_id IN (SELECT mc.club_id FROM bc_member_clubs($1) mc)
                   OR (e.club_id IS NULL
                       AND (e.actor_id = $1 OR EXISTS (
@@ -315,7 +325,8 @@ pub async fn club_feed(
     let rows = sqlx::query_as!(
         EventRow,
         r#"SELECT e.id, e.club_id, e.actor_id, u.username AS "actor?", e.kind, e.work_id,
-                  e.pick_id, e.payload, e.created_at,
+                  e.pick_id, e.payload, e.created_at, q.body AS "quote_body?",
+                  q.page AS "quote_page?",
                   (e.kind = 'shelf_finished' AND e.actor_id IS DISTINCT FROM $1
                    AND NOT EXISTS (
                        SELECT 1 FROM shelf_entries s
@@ -323,6 +334,10 @@ pub async fn club_feed(
                          AND bc_can_see_item($1, s.user_id, s.rating_visibility))) AS "hide_rating!"
            FROM events e
            LEFT JOIN users u ON u.id = e.actor_id
+           LEFT JOIN quotes q ON e.kind = 'quote_added' AND q.user_id = e.actor_id
+                AND q.id = CASE WHEN jsonb_typeof(e.payload -> 'quote_id') = 'number'
+                                     AND e.payload ->> 'quote_id' ~ '^[0-9]{1,18}$'
+                                THEN (e.payload ->> 'quote_id')::int8 END
            WHERE (e.club_id = $2
                   OR (e.club_id IS NULL AND EXISTS (
                       SELECT 1 FROM club_memberships m
@@ -431,7 +446,9 @@ async fn items(
 }
 
 /// The payload as the API serves it: `reaction` names its post's author (`author`, from
-/// `author_id`), and a `shelf_finished` the caller may not rate loses `rating` and `take`.
+/// `author_id`), a `shelf_finished` the caller may not rate loses `rating` and `take`, and a
+/// `quote_added` shows the quote as it is now (`excerpt`, `page`), never the text it was added
+/// with: that text may have been only-me, and an edit made the quote what its owner shares.
 fn served_payload(row: &EventRow, authors: &HashMap<i64, String>) -> Value {
     let Value::Object(mut payload) = row.payload.clone() else {
         return Value::Object(serde_json::Map::new());
@@ -447,6 +464,15 @@ fn served_payload(row: &EventRow, authors: &HashMap<i64, String>) -> Value {
         "shelf_finished" if row.hide_rating => {
             payload.remove("rating");
             payload.remove("take");
+        }
+        "quote_added" => {
+            if let Some(body) = &row.quote_body {
+                payload.insert("excerpt".into(), truncate_chars(body, EXCERPT_CHARS).into());
+                match row.quote_page {
+                    Some(page) => payload.insert("page".into(), page.into()),
+                    None => payload.remove("page"),
+                };
+            }
         }
         _ => {}
     }
@@ -470,6 +496,8 @@ mod tests {
             pick_id: None,
             payload,
             created_at: OffsetDateTime::UNIX_EPOCH,
+            quote_body: None,
+            quote_page: None,
             hide_rating,
         }
     }
