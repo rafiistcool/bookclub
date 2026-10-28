@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.id, u.username\n           FROM posts p\n           JOIN posts parent ON parent.id = p.parent_id\n           JOIN users u ON u.id = parent.author_id\n           JOIN bc_visible_owners($1) AS o ON o.user_id = parent.author_id\n           WHERE p.id = ANY($2)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "username",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "username"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "bd91fd5cc47fd85efde3e6f9395dad4775e4041878377b81374f66f7cfbeab82"
+}
