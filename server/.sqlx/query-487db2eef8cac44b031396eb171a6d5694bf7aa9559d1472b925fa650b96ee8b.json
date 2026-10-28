@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE media SET fetch_failed_at = now(), dominant_color = COALESCE(dominant_color, '')\n         WHERE id = $1 AND removed_at IS NULL AND storage_key IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "487db2eef8cac44b031396eb171a6d5694bf7aa9559d1472b925fa650b96ee8b"
+}

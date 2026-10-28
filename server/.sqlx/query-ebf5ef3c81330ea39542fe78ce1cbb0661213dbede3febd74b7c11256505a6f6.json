@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.work_id, m.id AS media_id, m.storage_key\n               FROM shelf_entries s\n               JOIN works w ON w.id = s.work_id\n               LEFT JOIN editions e ON e.id = s.edition_id AND e.work_id = s.work_id\n               LEFT JOIN media em ON em.id = e.cover_media_id AND em.removed_at IS NULL\n               LEFT JOIN media wm ON wm.id = w.cover_media_id AND wm.removed_at IS NULL\n               JOIN media m ON m.id = COALESCE(em.id, wm.id)\n               WHERE s.user_id = $1 AND m.dominant_color IS NULL\n               ORDER BY s.work_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "work_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "shelf_entries",
+            "name": "work_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "media_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "storage_key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "storage_key"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "ebf5ef3c81330ea39542fe78ce1cbb0661213dbede3febd74b7c11256505a6f6"
+}

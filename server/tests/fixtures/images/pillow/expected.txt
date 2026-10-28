@@ -1,0 +1,12 @@
+0.png #4dca18 exact
+1.png #d6237b exact
+2.png #9d5c34 exact
+3.png #fee923 exact
+4.png #8e46dc exact
+5.png #024ad6 exact
+6.png #f5520b exact
+7.png #8463b0 exact
+8.png #57410e exact
+9.png #e15d02 differs
+10.png #e306c6 differs
+11.png #972039 exact

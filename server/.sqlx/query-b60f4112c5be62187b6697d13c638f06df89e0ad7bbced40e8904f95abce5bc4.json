@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO media_removed_hashes (sha256, media_id, variant)\n         SELECT sha256, $1, variant FROM UNNEST($2::bytea[], $3::text[]) AS h (sha256, variant)\n         ON CONFLICT (sha256) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "ByteaArray",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b60f4112c5be62187b6697d13c638f06df89e0ad7bbced40e8904f95abce5bc4"
+}

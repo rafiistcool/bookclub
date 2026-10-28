@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE media SET storage_key = $2, content_type = 'image/webp', variants = $3,\n                    width = $4, height = $5, byte_size = $6, sha256 = $7, dominant_color = $8,\n                    fetch_failed_at = NULL\n             WHERE id = $1 AND removed_at IS NULL AND storage_key IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "TextArray",
+        "Int4",
+        "Int4",
+        "Int8",
+        "Bytea",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "97edf977b745d79d129324d4bd5e77fec10560497fe7794fa1e0e0a2ac79b728"
+}
