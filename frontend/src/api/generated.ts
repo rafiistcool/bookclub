@@ -696,8 +696,7 @@ export interface paths {
         };
         /**
          * Upcoming and recent titles: editions planned between today − 30 days and today + 120 days
-         *     (today in the caller's time zone), not withdrawn (nor another ISBN of a withdrawn DNB record,
-         *     see [`new_releases_page`]), in the given language; one hit per work
+         *     (today in the caller's time zone), not withdrawn, in the given language; one hit per work
          *     (its earliest such edition, whose title and cover the hit shows), ordered by that date, then
          *     work id. `planned_publication_date` is that date.
          */
