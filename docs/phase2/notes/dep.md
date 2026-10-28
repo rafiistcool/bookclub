@@ -288,7 +288,7 @@ No routes, DTOs, `error::msg` strings, migrations, server code or frontend files
   - A `vX.Y.Z` tag publishes `git.tillhome.de/rafiistcool/bookclub-server` with `X.Y.Z`; `deploy/hosted/release-tags.sh` then moves `X.Y` and `stable` only when the tag is the highest release of its minor line or of all (`X.Y.Z-rc.N`: only the exact tag), never `latest`. The secret is `REGISTRY_TOKEN`.
   - "Older releases are still on GHCR" stays true for the Python image.
 - **`CLAUDE.md`, "Request flow":** replace "Do not cut a Python release from `phase-1`…" with: a `v*` tag now publishes the Rust image `bookclub-server`, and the Python image `bookclub` gets no new versions.
-- **`CLAUDE.md`, deployment pointer:** `deploy/hosted/README.md` is the operator runbook (backups, restore, import, open sign-up); the scripts are shellcheck-clean (`koalaman/shellcheck:v0.10.0 -x deploy/hosted/*.sh`), the workflows actionlint-clean (`rhysd/actionlint:1.7.7`, which needs the runner label `docker` declared; see the next item).
+- **`CLAUDE.md`, deployment pointer:** `deploy/hosted/README.md` is the operator runbook (backups, restore, import, open sign-up); the scripts are shellcheck-clean (`koalaman/shellcheck:v0.10.0 deploy/hosted/*.sh`, with or without `-x`), the workflows actionlint-clean (`rhysd/actionlint:1.7.7`, which needs the runner label `docker` declared; see the next item).
 - **New file for the integrator: `.github/actionlint.yaml`.** actionlint knows only GitHub's runner labels and reports `label "docker" is unknown` for `runs-on: docker`. It reads its list of self-hosted labels from `.github/actionlint.yaml`, which is not among DEP's files, so DEP did not add it. Content:
 
   ```yaml
@@ -304,7 +304,7 @@ No routes, DTOs, `error::msg` strings, migrations, server code or frontend files
 ### Verified by hand (part 2, on the agents VM)
 
 **Lint**
-- `koalaman/shellcheck:v0.10.0 -x` on `backup.sh`, `restore-test.sh`, `backup-lib.sh` and `smoke-test.sh`: clean, run both from the repo root and from `deploy/hosted/` (`source=SCRIPTDIR/…`).
+- `koalaman/shellcheck:v0.10.0` on `backup.sh`, `restore-test.sh`, `backup-lib.sh` and `smoke-test.sh`: clean with and without `-x`, run both from the repo root and from `deploy/hosted/` (`source=SCRIPTDIR/…`).
 - `rhysd/actionlint:1.7.7` on all four workflow files: clean.
 - `systemd-analyze verify` (systemd 257) on the four units, with `ExecStart` pointed at the worktree's scripts: clean. `systemd-analyze calendar` gives the next runs as Thu 03:30 and Sun 05:30.
 
@@ -437,7 +437,7 @@ Docker 29.9.2, Compose v5.6.1, buildx v0.38.1.
 - The README's commands as written: `cp deploy/hosted/systemd/bookclub-* /etc/systemd/system/`, `systemctl daemon-reload`, `systemctl enable --now bookclub-backup.timer bookclub-restore-test.timer`, `systemctl list-timers 'bookclub-*'` (next runs Thu 03:30 and Sun 05:30 plus the random delay), `systemctl start bookclub-backup`, `systemctl start bookclub-restore-test` (both exit 0; `Result=success`, `PrivateTmp=yes`, `ProtectSystem=full`, `NoNewPrivileges=yes`, `Nice=10`, I/O priority 7), and `journalctl -u bookclub-backup -u bookclub-restore-test`, which showed the dump, the snapshot, `backup done` and `restore test passed`.
 
 **Lint**
-- shellcheck v0.10.0 `-x` on all five scripts, from the repo root and from `deploy/hosted/`: clean.
+- shellcheck v0.10.0 on all five scripts, with and without `-x`, from the repo root and from `deploy/hosted/`: clean. Without `-x`, shellcheck follows only files given as input; `backup.sh` and `restore-test.sh` source `backup-lib.sh`, which the `*.sh` glob passes, but `backup-lib.sh` sources `backup.env.example`, which it does not. That `.` line therefore carries `disable=SC1091` next to `source=SCRIPTDIR/backup.env.example`: with `-x` shellcheck still parses the example (a syntax error in it fails the check), and the plain `deploy/hosted/*.sh` stays clean. Each of `backup.sh` and `restore-test.sh` alone still needs `-x` or `backup-lib.sh` beside it on the command line.
 - actionlint 1.7.7 on all four workflows: clean with the proposed `.github/actionlint.yaml` (passed as `-config-file`) and with `-ignore 'label "docker" is unknown'`.
 - `docker compose -f deploy/hosted/compose.yaml --env-file deploy/hosted/env.example config -q`: exit 0; with `ci.env` both services get `restart: "no"`.
 

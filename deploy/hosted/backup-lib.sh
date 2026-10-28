@@ -7,7 +7,7 @@ load_config() {
     local file=${BACKUP_ENV:-$here/backup.env}
     [[ -r $file ]] || die "cannot read $file (copy backup.env.example and fill it in)"
     set -a
-    # shellcheck source=SCRIPTDIR/backup.env.example
+    # shellcheck source=SCRIPTDIR/backup.env.example disable=SC1091 # followed only with -x
     . "$file"
     set +a
     COMPOSE_DIR=${COMPOSE_DIR:-/opt/bookclub}
