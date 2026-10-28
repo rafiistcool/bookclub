@@ -229,7 +229,6 @@ Anything else → 400 `"Pick one of the club reactions"`. A bare U+2764 without 
   2. If `author_id != me` → 403 `"You can only edit your own entries"`. This runs before the empty-body check, so a non-author's `{}` gets 403.
   3. If `body` is null and `spoiler_upto` is absent → 400 `"Nothing to update"`. This includes `{"body": null}` (probed).
   4. Apply the fields. Set `updated_at = now` **unconditionally**, even when the values did not change. Commit.
-     - **Phase 1:** this holds for `body` and `spoiler_upto`. The new `visibility` (§5.1) alone does not move `updated_at`, so switching an entry to "Only me" and back does not mark it edited (`docs/phase1/notes/fup.md` item C).
 - **Response 200** `DiaryEntryOut`. For a top-level entry it includes the full `replies` list (`created_at, id` ascending); for a reply, `replies: []`.
 - **Not changed:** progress_at, status_at, pick_id. There is no activity event.
 
@@ -384,7 +383,7 @@ The response is **204**. The `quote_added` event stays in `events`.
 - **`best_pick`:** among picks with a non-null `average_rating`, the maximum by `(average_rating, len(ratings))`. On a full tie the first in `id DESC` order wins, i.e. the newest pick.
 - **`year_of(entry)`:** the UTC year of `finished_at`, else of `updated_at` (NOT NULL, so the `now()` fallback is dead code).
   - DNF entries always have `finished_at = NULL`, so they count by `updated_at`.
-  - `updated_at` is bumped by almost every shelf PATCH, through `place_item`; only a pure `shelf_position` change skips it (Phase 1: and a pure `rating_visibility` change, `docs/phase1/notes/fup.md` decision 8).
+  - `updated_at` is bumped by almost every shelf PATCH, through `place_item`; only a pure `shelf_position` change skips it.
   - So editing an old DNF entry's reason moves it into the current year.
 - **Rounding:** Python's `round(x, 2)` rounds half to even on the binary value (probed: 33/8 → `4.12`, 37/8 → `4.62`, 35/8 → `4.38`). JSON prints `5.0` for an integral float.
 - **Side effects:** none.
@@ -1001,7 +1000,6 @@ A non-author sending `{}` gets **403**, not 400.
 - In serde use `Option<Option<i32>>` with `#[serde(default, deserialize_with = …)]` (or `serde_with::rust::double_option`). Plain `Option` loses the distinction, and test 7 (`{"spoiler_upto": null}` clears) and the quotes test (`{"page": null}` clears) fail.
 
 **R8. PATCH entry bumps `updated_at` unconditionally**, so `edited` becomes true even when nothing changed. Reactions never touch `updated_at`.
-- **Phase 1:** R8 holds for every PATCH that sends `body` or `spoiler_upto`. A PATCH with only `visibility` (new in Phase 1) leaves `updated_at` as it is (`docs/phase1/notes/fup.md` item C).
 
 **R9. Response shape differs by endpoint.**
 - PATCH and reaction on a **top-level** entry return its full `replies`; on a reply, `[]`.

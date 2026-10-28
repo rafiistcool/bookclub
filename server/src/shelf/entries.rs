@@ -163,7 +163,6 @@ pub struct ShelfPatchIn {
     #[serde(default)]
     #[schema(value_type = Option<i64>)]
     pub edition_id: Patch<i64>,
-    /// Who sees the rating and the take. Alone it changes nothing else, not even `updated_at`.
     #[serde(default)]
     pub rating_visibility: Option<Visibility>,
 }
@@ -204,24 +203,6 @@ impl ShelfPatchIn {
             && self.finished_on.is_missing()
             && self.edition_id.is_missing()
             && self.rating_visibility.is_none()
-    }
-
-    /// Whether `place_item` runs, which renumbers the column and moves `updated_at`: on every
-    /// PATCH (spec/shelf.md §1.7 step 8) but one whose only placement is `shelf_position`, and
-    /// one that sets nothing but `rating_visibility` (new in Phase 1): hiding or showing a
-    /// rating changes nothing about the reading, so an abandoned book keeps the year of its
-    /// last change in the stats.
-    fn places_item(&self) -> bool {
-        if self.status.is_some() || self.position.is_some() {
-            return true;
-        }
-        self.shelf_position.is_none()
-            && !(self.rating.is_missing()
-                && self.take.is_missing()
-                && self.dnf_reason.is_missing()
-                && self.progress.is_missing()
-                && self.finished_on.is_missing()
-                && self.edition_id.is_missing())
     }
 }
 
@@ -472,7 +453,6 @@ async fn patch_entry(
     let previous_progress = entry.fields.progress;
     let status = body.status.unwrap_or(entry.status);
     let position = body.position.unwrap_or(entry.position.into());
-    let places_item = body.places_item();
 
     if let Some(finished_on) = body.finished_on.as_option() {
         if status != ShelfStatus::Finished {
@@ -517,7 +497,7 @@ async fn patch_entry(
     if let Some(shelf_position) = body.shelf_position {
         place_on_shelf(conn, &mut entry, shelf_position).await?;
     }
-    if places_item {
+    if body.shelf_position.is_none() || body.status.is_some() || body.position.is_some() {
         place_item(conn, &mut entry, status, position).await?;
     }
     if let Some(finished_on) = body.finished_on.into_option() {
