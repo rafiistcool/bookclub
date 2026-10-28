@@ -212,7 +212,9 @@ pub fn app(state: AppState) -> Router {
         ))
         // No page of ours may be framed: a same-site page (a sibling subdomain) would get the
         // Lax session cookie into the frame and could trick a click on a one-tap action.
-        .layer(SetResponseHeaderLayer::overriding(
+        // `if_not_present`: the SPA's answers carry the full policy (`spa::SHELL_CSP`, which
+        // also says `frame-ancestors 'none'`); every other answer gets this one.
+        .layer(SetResponseHeaderLayer::if_not_present(
             CONTENT_SECURITY_POLICY,
             HeaderValue::from_static("frame-ancestors 'none'"),
         ))

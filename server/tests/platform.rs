@@ -57,16 +57,31 @@ async fn without_static_dir_other_paths_are_json_404s() {
 }
 
 /// The headers every answer carries, whichever layer made it: Referrer-Policy, and (security
-/// review 2026-10-28 #10) no framing and no MIME sniffing.
+/// review 2026-10-28 #10) no framing and no MIME sniffing. The SPA's answers carry the full
+/// policy instead ([`SHELL_CSP`]).
 fn assert_security_headers(res: &TestResponse) {
     assert_eq!(res.header("referrer-policy"), Some("same-origin"));
-    assert_eq!(
-        res.header("content-security-policy"),
-        Some("frame-ancestors 'none'")
-    );
+    assert_eq!(policies(res), ["frame-ancestors 'none'"]);
     assert_eq!(res.header("x-frame-options"), Some("DENY"));
     assert_eq!(res.header("x-content-type-options"), Some("nosniff"));
 }
+
+/// Every `Content-Security-Policy` header of an answer: a browser enforces each one, so a
+/// second header could only narrow the first.
+fn policies(res: &TestResponse) -> Vec<&str> {
+    res.headers
+        .get_all("content-security-policy")
+        .iter()
+        .map(|value| value.to_str().unwrap())
+        .collect()
+}
+
+/// The policy of the SPA's answers (`spa::SHELL_CSP`, #55): nothing from another origin, no
+/// inline script, the `blob:` manifest and pictures of the app, and no framing.
+const SHELL_CSP: &str = "default-src 'self'; script-src 'self'; \
+    style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; \
+    connect-src 'self'; manifest-src 'self' blob:; object-src 'none'; base-uri 'self'; \
+    form-action 'self'; frame-ancestors 'none'";
 
 #[tokio::test]
 async fn every_response_has_referrer_policy_and_a_request_id() {
@@ -204,6 +219,39 @@ async fn spa_assets_are_immutable_and_misses_are_json() {
     assert_eq!(res.status, StatusCode::OK);
     assert_eq!(res.text(), "<svg/>");
     assert_eq!(res.header("cache-control"), None);
+}
+
+/// #55: every answer of the SPA fallback carries the shell's policy, once. The outer layer's
+/// `frame-ancestors 'none'` neither replaces it nor adds a second header; the policy says the
+/// same about framing. API answers keep the framing-only policy, also with `STATIC_DIR` set.
+#[tokio::test]
+async fn the_spa_carries_the_shell_policy() {
+    let dir = spa_dir();
+    for (path, status) in [
+        ("/", 200),
+        ("/index.html", 200),
+        ("/discover", 200),
+        ("/nested/index.html", 200),
+        ("/favicon.svg", 200),
+        ("/assets/current.js", 200),
+        ("/assets/missing.js", 404),
+    ] {
+        let res = get(app(spa_state(&dir)), path).await;
+        assert_eq!(res.status.as_u16(), status, "{path}");
+        assert_eq!(policies(&res), [SHELL_CSP], "{path}");
+        assert_eq!(res.header("x-frame-options"), Some("DENY"), "{path}");
+        assert_eq!(res.header("x-content-type-options"), Some("nosniff"));
+        assert_eq!(res.header("referrer-policy"), Some("same-origin"));
+    }
+    let res = send(app(spa_state(&dir)), request(Method::HEAD, "/discover")).await;
+    assert_eq!(policies(&res), [SHELL_CSP]);
+
+    for path in ["/api/health", "/api/nope", "/media/abc/l"] {
+        assert_security_headers(&get(app(spa_state(&dir)), path).await);
+    }
+    let res = send(app(spa_state(&dir)), request(Method::POST, "/discover")).await;
+    res.assert_detail(405, "Method Not Allowed");
+    assert_security_headers(&res);
 }
 
 #[tokio::test]
