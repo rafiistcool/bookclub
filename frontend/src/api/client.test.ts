@@ -72,6 +72,49 @@ describe("api client", () => {
     expect(fetchMock.mock.calls[1][0]).toBe("/api/shelf/import/7");
   });
 
+  it("scopes club calls by slug", async () => {
+    const calls = () => fetchMock.mock.calls.map(([url, init]) => `${init.method ?? "GET"} ${url}`);
+    await api.club("readers-ab12");
+    await api.clubPick("readers-ab12");
+    await api.patchClubPick("readers-ab12", { meeting_at: null });
+    await api.pickThread("readers-ab12");
+    await api.pickThread("readers-ab12", 3);
+    await api.addPickPost("readers-ab12", null, { body: "Hi" });
+    await api.overlap("readers-ab12", true);
+    await api.vote("readers-ab12");
+    await api.castVote("readers-ab12", 2);
+    await api.clubMembers("readers-ab12");
+    await api.removeMember("readers-ab12", "max mustermann");
+    await api.createInvite("readers-ab12", { kind: "single_use" });
+    await api.revokeInvite("readers-ab12", 9);
+    await api.acceptInvite("7K3M9QX2HD");
+    expect(calls()).toEqual([
+      "GET /api/clubs/readers-ab12",
+      "GET /api/clubs/readers-ab12/pick",
+      "PATCH /api/clubs/readers-ab12/pick",
+      "GET /api/clubs/readers-ab12/pick/posts",
+      "GET /api/clubs/readers-ab12/picks/3/posts",
+      "POST /api/clubs/readers-ab12/pick/posts",
+      "GET /api/clubs/readers-ab12/overlap?include_reading=true",
+      "GET /api/clubs/readers-ab12/vote",
+      "POST /api/clubs/readers-ab12/vote/cast",
+      "GET /api/clubs/readers-ab12/members",
+      "DELETE /api/clubs/readers-ab12/members/max%20mustermann",
+      "POST /api/clubs/readers-ab12/invites",
+      "DELETE /api/clubs/readers-ab12/invites/9",
+      "POST /api/invites/7K3M9QX2HD/accept",
+    ]);
+    // The meeting edit sends only the meeting: an explicit null clears it.
+    expect(fetchMock.mock.calls[2][1].body).toBe(JSON.stringify({ meeting_at: null }));
+  });
+
+  it("pages the home and club activity feeds", async () => {
+    await api.activity();
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/activity?limit=20");
+    await api.activity({ club: "readers-ab12", before: 40, limit: 30 });
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/clubs/readers-ab12/activity?limit=30&before=40");
+  });
+
   it("reports a cover by its media id", async () => {
     await api.reportCover("abc2def", { reason: "wrong_book", details: null });
     const [url, init] = fetchMock.mock.calls[0];

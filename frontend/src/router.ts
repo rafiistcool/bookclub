@@ -1,7 +1,23 @@
-import { createRouter, createWebHistory } from "vue-router";
+import { createRouter, createWebHistory, type RouteLocationRaw } from "vue-router";
 import { loginRoute } from "./nextPath";
 import { installSessionExpiry } from "./sessionExpiry";
+import { clubLanding, useClubs } from "./stores/clubs";
 import { useSession } from "./stores/session";
+
+const ClubsPage = () => import("./pages/ClubsPage.vue");
+
+/**
+ * A club link without a slug (the Club tab, `/club`, the old single-club
+ * paths): `sub` of the last-used or only club, else the club list. It runs as
+ * `beforeEnter`, after the session (and with it the viewer's clubs) is loaded.
+ */
+function toClub(sub = "", withoutClub?: string) {
+  return (): RouteLocationRaw => {
+    const clubs = useClubs();
+    if (withoutClub && !clubs.defaultSlug) return withoutClub;
+    return clubLanding(clubs.items, clubs.lastSlug, sub);
+  };
+}
 
 const router = createRouter({
   history: createWebHistory(),
@@ -21,6 +37,11 @@ const router = createRouter({
       meta: { guest: true },
     },
     {
+      // An invite link. Public: a reader who is signed out signs in or up first.
+      path: "/join/:code",
+      component: () => import("./pages/JoinPage.vue"),
+    },
+    {
       path: "/",
       component: () => import("./layouts/AppShell.vue"),
       meta: { auth: true },
@@ -29,7 +50,22 @@ const router = createRouter({
         { path: "discover", component: () => import("./pages/DiscoverPage.vue") },
         { path: "shelf", component: () => import("./pages/ShelfPage.vue") },
         { path: "shelf/physical", component: () => import("./pages/PhysicalShelfPage.vue") },
-        { path: "club", component: () => import("./pages/ClubPage.vue") },
+        { path: "clubs", component: ClubsPage },
+        { path: "clubs/new", component: () => import("./pages/NewClubPage.vue") },
+        {
+          path: "c/:slug",
+          component: () => import("./layouts/ClubLayout.vue"),
+          children: [
+            { path: "", component: () => import("./pages/club/ClubHomePage.vue") },
+            { path: "discussions", component: () => import("./pages/club/ClubDiscussionsPage.vue") },
+            { path: "vote", component: () => import("./pages/club/ClubVotePage.vue") },
+            { path: "members", component: () => import("./pages/club/ClubMembersPage.vue") },
+            { path: "overlap", component: () => import("./pages/club/ClubOverlapPage.vue") },
+            { path: "events", component: () => import("./pages/club/ClubEventsPage.vue") },
+          ],
+        },
+        // The Club tab: never rendered itself, it always leads on.
+        { path: "club", component: ClubsPage, beforeEnter: toClub() },
         // Another reader's shelves. Personal data follows the audience, not a club.
         {
           path: "u/:username/shelf",
@@ -53,9 +89,10 @@ const router = createRouter({
         { path: "friends/:username", redirect: (to) => `/u/${to.params.username}` },
         { path: "club/:username/shelf", redirect: (to) => `/u/${to.params.username}/shelf` },
         { path: "club/:username", redirect: (to) => `/u/${to.params.username}` },
-        { path: "overlap", redirect: "/club" },
-        { path: "invites", redirect: "/settings" },
-        { path: "pick", redirect: "/" },
+        { path: "overlap", component: ClubsPage, beforeEnter: toClub("/overlap") },
+        { path: "invites", component: ClubsPage, beforeEnter: toClub("/members") },
+        // The pick was the old Home; without a club to show it in, Home it is.
+        { path: "pick", component: ClubsPage, beforeEnter: toClub("", "/") },
       ],
     },
   ],

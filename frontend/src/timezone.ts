@@ -18,3 +18,18 @@ export function postTimeZone(
   }
   return user?.timezone || "UTC";
 }
+
+/** The IANA zones this browser knows, for a time-zone picker; `current` is always among them. */
+export function timeZoneOptions(current?: string | null): string[] {
+  let zones: string[] = [];
+  try {
+    const intl = Intl as unknown as { supportedValuesOf?: (key: string) => string[] };
+    zones = intl.supportedValuesOf?.("timeZone") ?? [];
+  } catch {
+    zones = [];
+  }
+  const all = new Set(zones);
+  if (current) all.add(current);
+  all.add("UTC");
+  return [...all].sort((a, b) => a.localeCompare(b));
+}

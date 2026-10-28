@@ -51,6 +51,26 @@ const API_ERROR_KEYS: Record<string, string> = {
   "A range needs a unit": "errors.rangeNeedsUnit",
   "Replies and club posts cannot be private": "errors.repliesNotPrivate",
 
+  // Club picks, milestones and the next-up vote
+  "No club pick yet": "errors.noPickYet",
+  "No club pick with that id": "errors.noPickWithId",
+  "That pick is closed": "errors.pickClosed",
+  "No meeting scheduled": "errors.noMeeting",
+  "note must be 280 characters or fewer": "errors.noteTooLong",
+  "meeting_at must be a date and time": "errors.meetingFormat",
+  "No milestone with that id": "errors.noMilestone",
+  "Give the milestone a title": "errors.milestoneTitle",
+  "Keep the title to 120 characters": "errors.milestoneTitleLong",
+  "Chapter range is backwards": "errors.rangeBackwards",
+  "That milestone is not on this pick": "errors.milestoneNotOnPick",
+  "Nominate a book first": "errors.nominateFirst",
+  "The deadline has to be in the future": "errors.deadlineFuture",
+  "This vote already has enough books": "errors.voteFull",
+  "That book is already the club pick": "errors.alreadyPick",
+  "That book is already nominated": "errors.alreadyNominated",
+  "No open next-up vote": "errors.noOpenVote",
+  "No nomination with that id": "errors.noNomination",
+
   // Catalog
   "No such book.": "errors.noSuchBook",
   "That book is not in the catalog": "errors.bookNotInCatalog",

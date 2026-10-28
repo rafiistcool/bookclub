@@ -33,13 +33,13 @@ const avatarUrl = computed(() => session.user?.avatar_url ?? null);
 
     <aside class="sidebar">
       <RouterLink class="wordmark sidebar-mark" to="/">{{ service.name }}</RouterLink>
-      <nav class="sidebar-nav" aria-label="Main">
+      <nav class="sidebar-nav" :aria-label="t('nav.main')">
         <RouterLink
           v-for="item in NAV_ITEMS"
           :key="item.to"
           class="side-link"
-          :class="{ active: isActive(route.path, item.to) }"
-          :aria-current="isActive(route.path, item.to) ? 'page' : undefined"
+          :class="{ active: isActive(route.path, item) }"
+          :aria-current="isActive(route.path, item) ? 'page' : undefined"
           :to="item.to"
         >
           <NavIcon :name="item.icon" :size="20" />
@@ -59,13 +59,13 @@ const avatarUrl = computed(() => session.user?.avatar_url ?? null);
       <RouterView />
     </main>
 
-    <nav class="bottom-nav" aria-label="Main">
+    <nav class="bottom-nav" :aria-label="t('nav.main')">
       <RouterLink
         v-for="item in bottomItems"
         :key="item.to"
         :to="item.to"
-        :class="{ active: isActive(route.path, item.to) }"
-        :aria-current="isActive(route.path, item.to) ? 'page' : undefined"
+        :class="{ active: isActive(route.path, item) }"
+        :aria-current="isActive(route.path, item) ? 'page' : undefined"
       >
         <NavIcon :name="item.icon" />
         {{ t(item.shortLabelKey ?? item.labelKey) }}

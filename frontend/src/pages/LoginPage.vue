@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { ApiError } from "../api/client";
 import LanguageSwitch from "../components/LanguageSwitch.vue";
+import { joinCodeFromNext, pendingJoinCode } from "../invites";
 import { safeNextPath } from "../nextPath";
 import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
@@ -19,6 +20,11 @@ const password = ref("");
 const show = ref(false);
 const error = ref("");
 const pending = ref(false);
+/** Coming from an invite link: sign-up keeps the code. */
+const signupLink = computed(() => {
+  const code = joinCodeFromNext(route.query.next) ?? pendingJoinCode();
+  return code ? { path: "/register", query: { code } } : "/register";
+});
 
 async function submit() {
   error.value = "";
@@ -65,7 +71,7 @@ async function submit() {
     </form>
     <p class="muted fine auth-alt">
       {{ t("auth.haveInvite") }}
-      <RouterLink to="/register">{{ t("auth.createAccount") }}</RouterLink>
+      <RouterLink :to="signupLink">{{ t("auth.createAccount") }}</RouterLink>
     </p>
     <div class="auth-locale">
       <LanguageSwitch compact />

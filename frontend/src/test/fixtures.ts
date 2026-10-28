@@ -1,8 +1,15 @@
 // Complete API objects for tests, so each test only spells out what it is about.
 import type {
+  ActivityItem,
   BookDetail,
   Book as BookOut,
+  ClubOut,
+  ClubPick,
   DiaryEntry,
+  Invite,
+  Member,
+  NextUpVote,
+  VoteNomination,
   Favorite,
   GoodreadsImport,
   SearchHit,
@@ -174,5 +181,120 @@ export function importJob(overrides: Partial<GoodreadsImport> = {}): GoodreadsIm
     skips: [],
     error: null,
     ...overrides,
+  };
+}
+
+export function clubOut(overrides: Partial<ClubOut> = {}): ClubOut {
+  return {
+    slug: "readers-ab12",
+    name: "Readers",
+    timezone: "Europe/Berlin",
+    role: "member",
+    member_count: 3,
+    created_at: "2026-01-01T00:00:00Z",
+    current_pick: null,
+    ...overrides,
+  };
+}
+
+export function member(overrides: Partial<Member> = {}): Member {
+  return {
+    username: "ada",
+    role: "member",
+    joined_at: "2026-01-01T00:00:00Z",
+    you: false,
+    avatar_url: null,
+    currently_reading_count: 0,
+    currently_reading_preview: [],
+    ...overrides,
+  };
+}
+
+export function invite(overrides: Partial<Invite> = {}): Invite {
+  const code = overrides.code ?? "7K3M9QX2HD";
+  return {
+    id: 1,
+    code,
+    url: `http://localhost/join/${code}`,
+    created_by: "ada",
+    created_at: "2026-01-01T00:00:00Z",
+    expires_at: "2026-01-31T00:00:00Z",
+    max_uses: 1,
+    use_count: 0,
+    used_by: [],
+    revoked: false,
+    active: true,
+    ...overrides,
+  };
+}
+
+export function clubPick(overrides: Partial<ClubPick> = {}): ClubPick {
+  return {
+    id: 1,
+    book: bookOut(),
+    set_by: "ada",
+    note: "",
+    started_at: "2026-01-01T00:00:00Z",
+    ended_at: null,
+    meeting_at: null,
+    meeting_local: null,
+    meeting_label: null,
+    on_shelf: null,
+    shelf_id: null,
+    readers: [],
+    reading: [],
+    finished: [],
+    ...overrides,
+  };
+}
+
+export function nomination(overrides: Partial<VoteNomination> = {}): VoteNomination {
+  const id = overrides.id ?? 1;
+  return {
+    id,
+    book: bookOut({ id }),
+    nominated_by: "ada",
+    votes: 0,
+    voters: [],
+    mine: false,
+    ...overrides,
+  };
+}
+
+export function vote(overrides: Partial<NextUpVote> = {}): NextUpVote {
+  return {
+    vote_id: null,
+    nominations: [],
+    my_vote_id: null,
+    nomination_limit: 6,
+    can_nominate: true,
+    timezone: "Europe/Berlin",
+    closes_at: null,
+    closes_local: null,
+    closes_label: null,
+    not_voted: [],
+    voted_count: 0,
+    member_count: 3,
+    leader_id: null,
+    ...overrides,
+  };
+}
+
+export function activityItem(
+  overrides: Omit<Partial<ActivityItem>, "payload"> & { payload?: Record<string, unknown> } = {},
+): ActivityItem {
+  const { payload, ...rest } = overrides;
+  return {
+    id: 1,
+    kind: "note_posted",
+    actor: "ada",
+    mine: false,
+    book: bookOut(),
+    pick_id: null,
+    club: null,
+    created_at: "2026-01-01T00:00:00Z",
+    created_label: "Jan 1",
+    ...rest,
+    payload: (payload ?? {}) as ActivityItem["payload"],
   };
 }

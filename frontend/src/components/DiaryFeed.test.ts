@@ -5,22 +5,16 @@ import { bookOut, post } from "../test/fixtures";
 import type { DiaryFeedItem } from "../types";
 
 const diaryFeed = vi.fn();
-const members = vi.fn();
-const overlap = vi.fn();
 
 vi.mock("../api/client", () => ({
   ApiError: class ApiError extends Error {},
   api: {
     diaryFeed: (...args: unknown[]) => diaryFeed(...args),
   },
-  legacyApi: {
-    members: (...args: unknown[]) => members(...args),
-    overlap: (...args: unknown[]) => overlap(...args),
-  },
 }));
 
 import { i18n } from "../i18n";
-import ClubPage from "./ClubPage.vue";
+import DiaryFeed from "./DiaryFeed.vue";
 
 const SECRET = "The coconut pillow on p. 237 is a tell.";
 
@@ -45,26 +39,23 @@ function feedItem(overrides: Partial<DiaryFeedItem> = {}): DiaryFeedItem {
   };
 }
 
-async function mountClub(items: DiaryFeedItem[]) {
-  members.mockResolvedValue([]);
-  overlap.mockResolvedValue({ items: [] });
+async function mountClub(items: DiaryFeedItem[], props: { club?: string } = {}) {
   diaryFeed.mockResolvedValue({ items, has_more: false, timezone: "UTC" });
-  const wrapper = mount(ClubPage, {
+  const wrapper = mount(DiaryFeed, {
+    props,
     global: {
       plugins: [createPinia(), i18n],
-      stubs: { NextUpVote: true, BookCover: true },
+      stubs: { BookCover: true },
     },
   });
   await flushPromises();
   return wrapper;
 }
 
-describe("ClubPage recently written", () => {
+describe("DiaryFeed (recently written)", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     diaryFeed.mockReset();
-    members.mockReset();
-    overlap.mockReset();
   });
 
   it("does not leak a spoiler-flagged excerpt when the viewer is behind", async () => {
@@ -118,5 +109,23 @@ describe("ClubPage recently written", () => {
     const shielded = await mountClub([feedItem({ entry: { ...feedItem().entry, body: long } })]);
     expect(shielded.find(".feed-more").exists()).toBe(false);
     expect(shielded.html()).not.toContain(SECRET);
+  });
+
+  it("asks for one club's feed, or the combined one without a slug", async () => {
+    await mountClub([], { club: "readers-ab12" });
+    expect(diaryFeed).toHaveBeenLastCalledWith(undefined, 8, "readers-ab12");
+    await mountClub([]);
+    expect(diaryFeed).toHaveBeenLastCalledWith(undefined, 8, undefined);
+  });
+
+  it("names the club of a club post in the combined feed only", async () => {
+    const club = { slug: "readers-ab12", name: "Readers" };
+    const combined = await mountClub([feedItem({ club, entry: { ...feedItem().entry, club } })]);
+    expect(combined.get(".feed-club").text()).toBe("Readers");
+    expect(combined.get(".feed-club").attributes("href")).toBe("/c/readers-ab12");
+    const scoped = await mountClub([feedItem({ club, entry: { ...feedItem().entry, club } })], {
+      club: "readers-ab12",
+    });
+    expect(scoped.find(".feed-club").exists()).toBe(false);
   });
 });

@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { api, ApiError } from "../api/client";
 import type { User } from "../types";
+import { useClubs } from "./clubs";
 import { useLocale } from "./locale";
 import { browserTimeZone } from "../timezone";
 import { useTheme } from "./theme";
@@ -36,6 +37,7 @@ export const useSession = defineStore("session", {
         timezone: browserTimeZone(),
         locale: locale.locale,
       });
+      useClubs().clear();
       // A new account has no stored preference yet, so push the one this
       // browser has been using rather than snapping back to the default.
       const theme = useTheme();
@@ -44,6 +46,7 @@ export const useSession = defineStore("session", {
     },
     async login(username: string, password: string) {
       await api.login({ username, password });
+      useClubs().clear();
       this.user = await api.me();
       useTheme().adopt(this.user);
       const locale = useLocale();
@@ -65,6 +68,7 @@ export const useSession = defineStore("session", {
     /** Forget the signed-in user, after a logout or when the server ended the session. */
     reset() {
       this.user = null;
+      useClubs().clear();
       useLocale().clearExplicit();
     },
   },

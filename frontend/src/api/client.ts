@@ -1,6 +1,10 @@
 import type {
+  ActivityOut,
   BookDetailOut,
+  ClubIn,
   ClubList,
+  ClubOut,
+  ClubPatchIn,
   ClubPickCurrentOut,
   ClubPickHistoryOut,
   ClubPickOut,
@@ -12,9 +16,19 @@ import type {
   DiaryOut,
   FavoritesOut,
   ImportJobOut,
+  InviteIn,
+  InviteList,
+  InviteOut,
+  InvitePreview,
   LoginIn,
+  MemberList,
   MemberOut,
+  MilestoneIn,
+  MilestoneListOut,
+  MilestoneOut,
   OverlapOut,
+  PickPostIn,
+  PickThreadOut,
   PostOut,
   PostPatchIn,
   PreferencesIn,
@@ -32,6 +46,7 @@ import type {
   UserOut,
   VoteApplyOut,
   VoteOut,
+  VoteSuggestionsOut,
 } from "./generated";
 import type { SearchParams } from "../types";
 import { t } from "../i18n";
@@ -221,35 +236,80 @@ export const api = {
     return request<DiaryFeedOut>(`/api/diary?${query}`);
   },
 
+  /** The home feed (every club of the viewer and their own events), or one club's feed. */
+  activity: (params: { before?: number | null; limit?: number; club?: string } = {}) => {
+    const query = new URLSearchParams({ limit: String(params.limit ?? 20) });
+    if (params.before) query.set("before", String(params.before));
+    const base = params.club ? `${clubPath(params.club)}/activity` : "/api/activity";
+    return request<ActivityOut>(`${base}?${query}`);
+  },
+
   clubs: () => request<ClubList>("/api/clubs"),
+  club: (slug: string) => request<ClubOut>(clubPath(slug)),
+  createClub: (body: ClubIn) => request<ClubOut>("/api/clubs", json("POST", body)),
+  updateClub: (slug: string, body: ClubPatchIn) =>
+    request<ClubOut>(clubPath(slug), json("PATCH", body)),
+  deleteClub: (slug: string) => request<void>(clubPath(slug), { method: "DELETE" }),
+  clubMembers: (slug: string) => request<MemberList>(`${clubPath(slug)}/members`),
+  changeMemberRole: (slug: string, username: string, role: "admin" | "member") =>
+    request<MemberOut>(`${clubPath(slug)}/members/${enc(username)}`, json("PATCH", { role })),
+  removeMember: (slug: string, username: string) =>
+    request<void>(`${clubPath(slug)}/members/${enc(username)}`, { method: "DELETE" }),
+  leaveClub: (slug: string) => request<void>(`${clubPath(slug)}/leave`, { method: "POST" }),
+  transferClub: (slug: string, username: string) =>
+    request<ClubOut>(`${clubPath(slug)}/transfer`, json("POST", { username })),
+  clubInvites: (slug: string) => request<InviteList>(`${clubPath(slug)}/invites`),
+  createInvite: (slug: string, body: InviteIn) =>
+    request<InviteOut>(`${clubPath(slug)}/invites`, json("POST", body)),
+  revokeInvite: (slug: string, id: number) =>
+    request<void>(`${clubPath(slug)}/invites/${id}`, { method: "DELETE" }),
+  /** Public: which club an invite code leads to. */
+  previewInvite: (code: string) => request<InvitePreview>(`/api/invites/${enc(code)}`),
+  acceptInvite: (code: string) =>
+    request<ClubOut>(`/api/invites/${enc(code)}/accept`, { method: "POST" }),
+
+  clubPick: (slug: string) => request<ClubPickCurrentOut>(`${clubPath(slug)}/pick`),
+  clubPickHistory: (slug: string) => request<ClubPickHistoryOut>(`${clubPath(slug)}/pick/history`),
   setClubPick: (slug: string, body: ClubPickSetIn) =>
     request<ClubPickOut>(`${clubPath(slug)}/pick`, json("PUT", body)),
+  /** The meeting edit: only the keys present change (`meeting_at: null` clears it). */
   patchClubPick: (slug: string, body: ClubPickPatchIn) =>
     request<ClubPickOut>(`${clubPath(slug)}/pick`, json("PATCH", body)),
+  /** The calendar file of the current meeting, as a same-origin download link. */
+  meetingIcsPath: (slug: string) => `${clubPath(slug)}/pick/meeting.ics`,
+  milestones: (slug: string, pickId: number) =>
+    request<MilestoneListOut>(`${clubPath(slug)}/picks/${pickId}/milestones`),
+  addMilestone: (slug: string, pickId: number, body: MilestoneIn) =>
+    request<MilestoneOut>(`${clubPath(slug)}/picks/${pickId}/milestones`, json("POST", body)),
+  deleteMilestone: (slug: string, pickId: number, id: number) =>
+    request<void>(`${clubPath(slug)}/picks/${pickId}/milestones/${id}`, { method: "DELETE" }),
+  /** The discussion of the current pick, or of an earlier one by id. */
+  pickThread: (slug: string, pickId?: number | null) =>
+    request<PickThreadOut>(
+      pickId ? `${clubPath(slug)}/picks/${pickId}/posts` : `${clubPath(slug)}/pick/posts`,
+    ),
+  addPickPost: (slug: string, pickId: number | null | undefined, body: PickPostIn) =>
+    request<PostOut>(
+      pickId ? `${clubPath(slug)}/picks/${pickId}/posts` : `${clubPath(slug)}/pick/posts`,
+      json("POST", body),
+    ),
+
+  vote: (slug: string) => request<VoteOut>(`${clubPath(slug)}/vote`),
   nominate: (slug: string, workId: number) =>
     request<VoteOut>(`${clubPath(slug)}/vote/nominations`, json("POST", { work_id: workId })),
-};
-
-/**
- * The single-club paths of the legacy app. The Rust server has none of them:
- * its club routes live under `/api/clubs/{slug}/…`. Only the club pages that
- * the club context (#48, part 2) rewrites still call these.
- */
-export const legacyApi = {
-  members: () => request<MemberOut[]>("/api/members"),
-  clubPick: () => request<ClubPickCurrentOut>("/api/pick"),
-  clubPickHistory: () => request<ClubPickHistoryOut>("/api/pick/history"),
-  setClubPick: (body: ClubPickSetIn) => request<ClubPickOut>("/api/pick", json("PUT", body)),
-  overlap: (includeReading = false) =>
-    request<OverlapOut>(`/api/overlap${includeReading ? "?include_reading=true" : ""}`),
-  nextUp: () => request<VoteOut>("/api/vote"),
-  nominate: (workId: number) =>
-    request<VoteOut>("/api/vote/nominations", json("POST", { work_id: workId })),
-  castVote: (nominationId: number) =>
-    request<VoteOut>("/api/vote/cast", json("POST", { nomination_id: nominationId })),
-  applyWinner: (nominationId: number, meetingAt?: string | null) =>
+  castVote: (slug: string, nominationId: number) =>
+    request<VoteOut>(`${clubPath(slug)}/vote/cast`, json("POST", { nomination_id: nominationId })),
+  applyVote: (slug: string, nominationId: number, meetingAt?: string | null) =>
     request<VoteApplyOut>(
-      "/api/vote/apply",
+      `${clubPath(slug)}/vote/apply`,
       json("POST", { nomination_id: nominationId, meeting_at: meetingAt ?? null }),
+    ),
+  setVoteDeadline: (slug: string, closesAt: string | null) =>
+    request<VoteOut>(`${clubPath(slug)}/vote`, json("PATCH", { closes_at: closesAt })),
+  voteSuggestions: (slug: string) =>
+    request<VoteSuggestionsOut>(`${clubPath(slug)}/vote/suggestions`),
+  overlap: (slug: string, includeReading = false) =>
+    request<OverlapOut>(
+      `${clubPath(slug)}/overlap${includeReading ? "?include_reading=true" : ""}`,
     ),
 };

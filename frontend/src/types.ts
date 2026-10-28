@@ -31,10 +31,18 @@ import type {
 } from "./api/generated";
 
 export type {
+  ActivityItem,
+  ActivityOut,
   BookReader,
+  ClubOut,
   ClubPickReader,
   ClubRef,
   ClubSummary,
+  InvitePreview,
+  MilestoneOut,
+  MilestoneUnit,
+  PickThreadOut,
+  VoteSuggestionOut,
   CustomBookIn,
   DiaryEntryIn,
   EditionOut,

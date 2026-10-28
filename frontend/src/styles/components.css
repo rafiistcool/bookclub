@@ -243,6 +243,10 @@
   font-weight: 600;
 }
 
+.text-btn.danger {
+  color: var(--danger);
+}
+
 .icon-btn {
   display: inline-grid;
   place-items: center;

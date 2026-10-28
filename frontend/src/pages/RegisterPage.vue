@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { ApiError } from "../api/client";
 import LanguageSwitch from "../components/LanguageSwitch.vue";
+import { clearJoinCode, parseInviteCode, pendingJoinCode } from "../invites";
+import { useClubs } from "../stores/clubs";
 import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
 
@@ -13,10 +15,15 @@ const service = useService();
 
 const session = useSession();
 const router = useRouter();
+const route = useRoute();
+const clubs = useClubs();
 const username = ref("");
 const email = ref("");
 const password = ref("");
-const invite = ref("");
+// An invite link (`/join/<code>`) sends its code along; it also waits in this tab.
+const invite = ref(
+  typeof route.query.code === "string" ? parseInviteCode(route.query.code) : pendingJoinCode() ?? "",
+);
 const show = ref(false);
 const error = ref("");
 const pending = ref(false);
@@ -31,7 +38,15 @@ async function submit() {
       password: password.value,
       inviteCode: invite.value,
     });
-    await router.replace("/");
+    clearJoinCode();
+    // A club invite made the new account a member: open that club.
+    const joined = session.user?.clubs[0];
+    if (joined) {
+      clubs.remember(joined.slug);
+      await router.replace(`/c/${joined.slug}`);
+    } else {
+      await router.replace("/");
+    }
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : t("auth.couldNotCreate");
   } finally {
