@@ -2,14 +2,17 @@
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
+import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 
 /**
  * The one-time prompt for accounts without an email address (imported from
  * the old app): add one, or dismiss the prompt for good (`needs_email_prompt`).
+ * It links the privacy policy, since it collects a new piece of personal data.
  */
 const { t } = useI18n();
+const service = useService();
 const session = useSession();
 const toast = useToast();
 
@@ -47,7 +50,14 @@ async function dismiss() {
 <template>
   <section v-if="session.user?.needs_email_prompt" class="panel email-prompt" aria-labelledby="email-prompt">
     <h2 id="email-prompt">{{ t("emailPrompt.title") }}</h2>
-    <p class="fine muted">{{ t("emailPrompt.body") }}</p>
+    <p class="fine muted">
+      {{ t("emailPrompt.body") }}
+      <i18n-t v-if="service.hasLegal('privacy')" keypath="legal.privacyNote" tag="span" scope="global">
+        <template #privacy>
+          <RouterLink to="/privacy">{{ t("legal.inline.privacy") }}</RouterLink>
+        </template>
+      </i18n-t>
+    </p>
     <form v-if="open" class="email-prompt-form" @submit.prevent="save">
       <p v-if="error" class="error">{{ error }}</p>
       <label class="field">

@@ -29,6 +29,7 @@ use crate::AppState;
 use crate::clubs::extract::Role;
 use crate::dto::{ClubSummary, UserOut};
 use crate::error::{ApiResult, AppError};
+use crate::legal::{self, LegalDoc};
 use crate::media::shared::urls::avatar_url;
 
 /// Name of the session cookie when it is not `Secure` (`COOKIE_SECURE=false`, the DEV_MODE
@@ -52,6 +53,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(account::me, deletion::delete_account))
         .routes(routes!(account::update_preferences))
         .routes(routes!(account::change_password))
+        .routes(routes!(account::accept_terms))
         .routes(routes!(address::verify_email))
         .routes(routes!(address::preview_verification))
         .routes(routes!(address::resend_verification))
@@ -69,7 +71,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(tokens::revoke_session))
 }
 
-/// Public service branding for the SPA.
+/// Public service branding and legal settings for the SPA.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ServiceConfig {
     /// `SERVICE_NAME`.
@@ -82,10 +84,18 @@ pub struct ServiceConfig {
     pub public_url: String,
     /// `"invite"` (sign-up needs an invite code) or `"open"`.
     pub signup: String,
+    /// The documents `GET /api/legal/{doc}` serves: the operator's (`LEGAL_DIR`), or the
+    /// DEV_MODE placeholders. Empty when there are none.
+    pub legal: Vec<LegalDoc>,
+    /// The current version of the operator's terms. A sign-up must send it as `terms_version`;
+    /// null when no terms are configured (nothing to accept).
+    pub terms_version: Option<String>,
+    /// `CONTACT_EMAIL`: the public contact and takedown address. Null when unset (DEV_MODE).
+    pub contact_email: Option<String>,
 }
 
-/// The service name, accent colours, public origin and sign-up mode. Public; answers from
-/// memory.
+/// The service name, accent colours, public origin, sign-up mode and legal settings. Public;
+/// answers from memory.
 #[utoipa::path(
     get,
     path = "/api/config",
@@ -101,6 +111,9 @@ pub async fn service_config(State(state): State<AppState>) -> Json<ServiceConfig
         theme_dark: THEME_DARK.to_owned(),
         public_url: config.public_url.clone(),
         signup: config.signup_mode.as_str().to_owned(),
+        legal: config.legal.documents(),
+        terms_version: config.legal.terms_version().map(str::to_owned),
+        contact_email: config.contact_email.clone(),
     })
 }
 
@@ -110,6 +123,8 @@ pub async fn service_config(State(state): State<AppState>) -> Json<ServiceConfig
 /// - `pending_email` is the address of the open verification link of an account whose own
 ///   address is verified (an email change waiting for confirmation); null otherwise.
 /// - `needs_email_prompt` is `email IS NULL AND email_prompt_dismissed_at IS NULL`.
+/// - `needs_terms` compares `terms_version` with the current terms of the configuration serving
+///   the request (`legal::needs_terms`); false outside a request.
 /// - `clubs` are ordered newest join first.
 pub async fn user_out(conn: &mut PgConnection, user_id: i64) -> ApiResult<UserOut> {
     let Some(row) = sqlx::query!(
@@ -119,7 +134,7 @@ pub async fn user_out(conn: &mut PgConnection, user_id: i64) -> ApiResult<UserOu
                      AND t.used_at IS NULL AND t.expires_at > now()
                    ORDER BY t.id DESC LIMIT 1) AS open_verification,
                   (u.email IS NULL AND u.email_prompt_dismissed_at IS NULL) AS "needs_email_prompt!",
-                  u.theme, u.color_mode, u.locale, u.timezone, u.is_admin,
+                  u.terms_version, u.theme, u.color_mode, u.locale, u.timezone, u.is_admin,
                   m.public_id AS "avatar_public_id?"
            FROM users u
            LEFT JOIN media m ON m.id = u.avatar_media_id AND m.removed_at IS NULL
@@ -150,6 +165,7 @@ pub async fn user_out(conn: &mut PgConnection, user_id: i64) -> ApiResult<UserOu
         email: row.email,
         email_verified: row.email_verified,
         needs_email_prompt: row.needs_email_prompt,
+        needs_terms: legal::needs_terms(row.terms_version.as_deref()),
         theme: row.theme,
         color_mode: row.color_mode,
         locale: row.locale,

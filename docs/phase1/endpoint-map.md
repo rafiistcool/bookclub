@@ -88,6 +88,7 @@ SearchHit { id, ol_work_key|null, title, authors, year, cover_url, cover_thumb_u
 SearchPage { items: SearchHit[], page, has_more }             // CAT (search, trending, subjects) and HAR (new-releases)
 
 UserOut (self only) { id, username, email|null, email_verified: bool, pending_email|null, needs_email_prompt: bool,
+                      needs_terms: bool,   // LEG (#53): the operator's terms are configured and not accepted in their current version
                       theme, color_mode, locale, timezone, avatar_url|null, is_admin: bool,
                       clubs: ClubSummary[] }
 UserSummary (anyone else, and the owner block of a shelf) { id, username, avatar_url|null }

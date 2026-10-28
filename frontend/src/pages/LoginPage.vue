@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { ApiError } from "../api/client";
 import LanguageSwitch from "../components/LanguageSwitch.vue";
+import LegalLinks from "../components/LegalLinks.vue";
 import { joinCodeFromNext, pendingJoinCode } from "../invites";
 import { safeNextPath } from "../nextPath";
 import { useService } from "../stores/service";
@@ -80,6 +81,7 @@ async function submit() {
     <div class="auth-locale">
       <LanguageSwitch compact />
     </div>
+    <LegalLinks class="auth-legal" />
   </main>
 </template>
 
@@ -98,5 +100,9 @@ async function submit() {
 
 .auth-locale {
   margin-top: var(--space-5);
+}
+
+.auth-legal {
+  margin-top: var(--space-4);
 }
 </style>

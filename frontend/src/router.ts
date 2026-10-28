@@ -5,6 +5,7 @@ import { clubLanding, useClubs } from "./stores/clubs";
 import { useSession } from "./stores/session";
 
 const ClubsPage = () => import("./pages/ClubsPage.vue");
+const LegalPage = () => import("./pages/LegalPage.vue");
 
 /**
  * A club link without a slug (the Club tab, `/club`, the old single-club
@@ -51,6 +52,15 @@ const router = createRouter({
       path: "/join/:code",
       component: () => import("./pages/JoinPage.vue"),
     },
+    // The operator's legal texts (#53). Public and outside the app shell, whose
+    // catch-all would send a signed-out visitor to the login page.
+    { path: "/imprint", component: LegalPage, props: { doc: "imprint" } },
+    { path: "/privacy", component: LegalPage, props: { doc: "privacy" } },
+    { path: "/terms", component: LegalPage, props: { doc: "terms" } },
+    // The German names people type or link (Impressum, Datenschutz).
+    { path: "/impressum", redirect: "/imprint" },
+    { path: "/datenschutz", redirect: "/privacy" },
+    { path: "/nutzungsbedingungen", redirect: "/terms" },
     {
       path: "/",
       component: () => import("./layouts/AppShell.vue"),

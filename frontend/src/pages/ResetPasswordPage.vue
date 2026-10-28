@@ -5,6 +5,7 @@ import { useRoute, useRouter } from "vue-router";
 import { api, ApiError } from "../api/client";
 import { isDeadLink, linkToken } from "../authToken";
 import LanguageSwitch from "../components/LanguageSwitch.vue";
+import LegalLinks from "../components/LegalLinks.vue";
 import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
 
@@ -94,6 +95,7 @@ async function submit() {
     <div class="auth-locale">
       <LanguageSwitch compact />
     </div>
+    <LegalLinks class="auth-legal" />
   </main>
 </template>
 
@@ -109,5 +111,9 @@ async function submit() {
 
 .auth-locale {
   margin-top: var(--space-5);
+}
+
+.auth-legal {
+  margin-top: var(--space-4);
 }
 </style>

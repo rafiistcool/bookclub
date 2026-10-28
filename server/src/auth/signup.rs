@@ -20,6 +20,7 @@ use crate::dto::UserOut;
 use crate::email::templates::{self, Attempt, Recipient};
 use crate::error::{ApiResult, AppError, ErrorBody, is_unique_violation, msg};
 use crate::extract::{ApiJson, Validate, Validator};
+use crate::legal;
 use crate::ratelimit::ip_key;
 use crate::text::py_strip;
 use crate::tz;
@@ -45,6 +46,11 @@ pub struct RegisterIn {
     /// `en` or `de`; default `en`.
     #[serde(default)]
     pub locale: Option<String>,
+    /// The version of the operator's terms the sign-up page showed (`/api/config.terms_version`).
+    /// Required, and must be the current one, whenever the terms are configured; it is stored
+    /// with the time as the acceptance. Ignored while no terms are configured.
+    #[serde(default)]
+    pub terms_version: Option<String>,
 }
 
 impl Validate for RegisterIn {
@@ -84,6 +90,8 @@ enum Outgoing {
 /// new account keeps the unverified address, no link is sent, and the holder gets the "someone
 /// tried to use your address" notice. A club invite also joins the club; a sign-up invite only
 /// unlocks sign-up. Called while signed in, it switches the session (the old one is deleted).
+/// Whenever the operator's terms are configured, the body must carry their current version,
+/// which is stored with the time of the sign-up.
 #[utoipa::path(
     post,
     path = "/api/auth/register",
@@ -92,7 +100,7 @@ enum Outgoing {
     request_body = RegisterIn,
     responses(
         (status = 201, body = UserOut, description = "Created and signed in; `Set-Cookie` carries the session"),
-        (status = 400, body = ErrorBody, description = "Invalid fields, a missing or invalid invite code"),
+        (status = 400, body = ErrorBody, description = "Invalid fields, a missing or invalid invite code, or `The terms of use have changed. Reload the page and try again.` (a missing or old `terms_version` while terms are configured)"),
         (status = 409, body = ErrorBody, description = "`That username is already taken`, or `This club is full`"),
         (status = 429, body = ErrorBody, description = "Five sign-ups per IP address per hour"),
         (status = 503, body = ErrorBody, description = "`The server is busy. Try again in a moment.`")
@@ -112,6 +120,7 @@ pub async fn register(
     if username_taken(&mut *state.db.acquire().await?, &body.username).await? {
         return Err(AppError::conflict(msg::USERNAME_TAKEN));
     }
+    let terms_version = legal::accepted_terms(&state.config, body.terms_version.as_deref())?;
     let code = body
         .invite_code
         .as_deref()
@@ -123,7 +132,7 @@ pub async fn register(
     let password_hash = state.passwords.hash(&body.password).await?;
 
     let mut tx = state.db.begin().await?;
-    let user_id = insert_user(&mut tx, &body, &password_hash).await?;
+    let user_id = insert_user(&mut tx, &body, &password_hash, terms_version).await?;
     if let Some(code) = &code {
         let invite = invites::consume(&mut tx, code, user_id)
             .await?
@@ -193,22 +202,25 @@ async fn username_taken(conn: &mut PgConnection, username: &str) -> sqlx::Result
     .await
 }
 
-/// Inserts the account with an unverified address. A concurrent sign-up of the same name is
-/// 409, not 500.
+/// Inserts the account with an unverified address, and the accepted terms version (if any)
+/// with the time. A concurrent sign-up of the same name is 409, not 500.
 async fn insert_user(
     conn: &mut PgConnection,
     body: &RegisterIn,
     password_hash: &str,
+    terms_version: Option<&str>,
 ) -> ApiResult<i64> {
     sqlx::query_scalar!(
-        "INSERT INTO users (username, email, password_hash, timezone, locale)
-         VALUES ($1, $2, $3, $4, $5)
+        "INSERT INTO users (username, email, password_hash, timezone, locale,
+                            terms_version, terms_accepted_at)
+         VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $6::text IS NOT NULL THEN now() END)
          RETURNING id",
         body.username,
         body.email,
         password_hash,
         body.timezone.as_deref().unwrap_or("UTC"),
-        body.locale.as_deref().unwrap_or("en")
+        body.locale.as_deref().unwrap_or("en"),
+        terms_version
     )
     .fetch_one(conn)
     .await

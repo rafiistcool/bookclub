@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { api, ApiError } from "../api/client";
 import LanguageSwitch from "../components/LanguageSwitch.vue";
+import LegalLinks from "../components/LegalLinks.vue";
 import { clearJoinCode, parseInviteCode, rememberJoinCode } from "../invites";
 import { useClubs } from "../stores/clubs";
 import { useService } from "../stores/service";
@@ -133,6 +134,7 @@ onMounted(load);
     <div class="auth-locale">
       <LanguageSwitch compact />
     </div>
+    <LegalLinks class="auth-legal" />
   </main>
 </template>
 
@@ -161,5 +163,9 @@ onMounted(load);
 
 .auth-locale {
   margin-top: var(--space-5);
+}
+
+.auth-legal {
+  margin-top: var(--space-4);
 }
 </style>

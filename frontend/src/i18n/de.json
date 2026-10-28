@@ -599,6 +599,7 @@
     "invalidTimeZone": "Das ist keine gültige Zeitzone",
     "transferClubsFirst": "Übergib oder lösche zuerst deine Clubs",
     "noSuchSession": "Diese Sitzung gibt es nicht mehr",
+    "termsChanged": "Die Nutzungsbedingungen haben sich geändert. Sieh sie dir an und versuch es nochmal.",
     "pictureRemoved": "Dieses Bild wurde entfernt",
     "noSuchClub": "Diesen Club gibt es nicht, oder du bist kein Mitglied",
     "adminsOnly": "Das können nur Club-Admins",
@@ -1249,5 +1250,43 @@
     "body": "Unter dieser Adresse gibt es nichts. Vielleicht ist der Link alt oder vertippt.",
     "toHome": "Start",
     "toDiscover": "Entdecken"
+  },
+  "legal": {
+    "nav": "Rechtliches",
+    "short": {
+      "imprint": "Impressum",
+      "privacy": "Datenschutz",
+      "terms": "Nutzungsbedingungen"
+    },
+    "title": {
+      "imprint": "Impressum",
+      "privacy": "Datenschutzerklärung",
+      "terms": "Nutzungsbedingungen"
+    },
+    "inline": {
+      "privacy": "Datenschutzerklärung",
+      "terms": "Nutzungsbedingungen"
+    },
+    "privacyNote": "Die {privacy} erklärt, was wir über dich speichern.",
+    "updated": "Zuletzt geändert am {date}",
+    "onlyIn": {
+      "de": "Diesen Text gibt es nur auf Deutsch.",
+      "en": "Diesen Text gibt es nur auf Englisch."
+    },
+    "missing": "Dieser Text ist noch nicht online.",
+    "failed": "Der Text konnte nicht geladen werden.",
+    "back": "← Zurück",
+    "contact": "Fragen zu deinen Daten oder Inhalte, die du melden willst? Schreib an {email}.",
+    "settingsTitle": "Rechtliches",
+    "settingsBlurb": "Wer {name} betreibt, was über dich gespeichert wird und die Regeln für die Nutzung."
+  },
+  "terms": {
+    "signup": "Mit dem Erstellen des Kontos akzeptierst du die {terms}.",
+    "promptTitle": "Nutzungsbedingungen",
+    "promptBody": "Die {terms} von {name} sind neu oder haben sich geändert. Bitte lies sie und akzeptiere sie.",
+    "accept": "Nutzungsbedingungen akzeptieren",
+    "accepting": "Wird gespeichert…",
+    "accepted": "Danke! Du hast die Nutzungsbedingungen akzeptiert.",
+    "failed": "Deine Antwort konnte nicht gespeichert werden"
   }
 }

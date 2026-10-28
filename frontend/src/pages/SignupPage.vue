@@ -4,10 +4,11 @@ import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { ApiError } from "../api/client";
 import LanguageSwitch from "../components/LanguageSwitch.vue";
+import LegalLinks from "../components/LegalLinks.vue";
 import { clearJoinCode, parseInviteCode, pendingJoinCode } from "../invites";
 import { useClubs } from "../stores/clubs";
 import { useService } from "../stores/service";
-import { useSession } from "../stores/session";
+import { isTermsChanged, useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 
 /**
@@ -15,6 +16,11 @@ import { useToast } from "../stores/toast";
  * account and an invite code is optional (a club invite also joins the
  * club); in `invite` mode the code is required. The browser's time zone and
  * the UI language go along.
+ *
+ * Above the button, one sentence links the terms and the privacy policy
+ * (Q13 option A: no checkbox). Creating the account accepts the terms
+ * version this page loaded (`terms_version`), which the server stores with
+ * the time.
  */
 const { t } = useI18n();
 const service = useService();
@@ -46,6 +52,7 @@ async function submit() {
       email: email.value.trim(),
       password: password.value,
       inviteCode: parseInviteCode(invite.value),
+      termsVersion: service.terms_version,
     });
     clearJoinCode();
     toast.show(t("auth.checkInbox", { email: email.value.trim() }));
@@ -58,6 +65,8 @@ async function submit() {
       await router.replace("/");
     }
   } catch (err) {
+    // New terms came online while the form was open: the next try accepts them.
+    if (isTermsChanged(err)) await service.reloadLegal();
     error.value = err instanceof ApiError ? err.message : t("auth.couldNotCreate");
   } finally {
     pending.value = false;
@@ -124,6 +133,20 @@ async function submit() {
           </button>
         </div>
       </label>
+      <!-- The links open in a new tab, so the form keeps what was typed. -->
+      <p v-if="service.hasLegal('terms') || service.hasLegal('privacy')" class="fine muted signup-terms">
+        <i18n-t v-if="service.hasLegal('terms')" keypath="terms.signup" tag="span" scope="global">
+          <template #terms>
+            <RouterLink to="/terms" target="_blank">{{ t("legal.inline.terms") }}</RouterLink>
+          </template>
+        </i18n-t>
+        {{ " " }}
+        <i18n-t v-if="service.hasLegal('privacy')" keypath="legal.privacyNote" tag="span" scope="global">
+          <template #privacy>
+            <RouterLink to="/privacy" target="_blank">{{ t("legal.inline.privacy") }}</RouterLink>
+          </template>
+        </i18n-t>
+      </p>
       <button class="btn btn-primary btn-block" type="submit" :disabled="pending">
         {{ pending ? t("auth.creating") : t("auth.createAccount") }}
       </button>
@@ -135,12 +158,17 @@ async function submit() {
     <div class="auth-locale">
       <LanguageSwitch compact />
     </div>
+    <LegalLinks class="auth-legal" />
   </main>
 </template>
 
 <style scoped>
 .lede {
   margin: var(--space-2) 0 var(--space-6);
+}
+
+.signup-terms {
+  margin-bottom: var(--space-4);
 }
 
 .invite-toggle {
@@ -153,5 +181,9 @@ async function submit() {
 
 .auth-locale {
   margin-top: var(--space-5);
+}
+
+.auth-legal {
+  margin-top: var(--space-4);
 }
 </style>

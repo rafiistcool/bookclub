@@ -28,6 +28,8 @@ import type {
   InviteList,
   InviteOut,
   InvitePreview,
+  LegalDoc,
+  LegalDocumentOut,
   LoginIn,
   MemberList,
   MemberOut,
@@ -198,6 +200,12 @@ export const api = {
   changeEmail: (email: string, currentPassword: string) =>
     request<void>("/api/auth/me/email", json("PUT", { email, current_password: currentPassword })),
   dismissEmailPrompt: () => request<void>("/api/auth/me/email-prompt/dismiss", { method: "POST" }),
+  /** Accepts the current terms (`/api/config.terms_version`); the account no longer `needs_terms`. */
+  acceptTerms: (termsVersion: string) =>
+    request<UserOut>("/api/auth/terms", json("POST", { terms_version: termsVersion })),
+  /** An imprint, privacy policy or terms of use, in `locale` or, failing that, the other language. Public. */
+  legal: (doc: LegalDoc, locale: string) =>
+    request<LegalDocumentOut>(`/api/legal/${enc(doc)}?locale=${enc(locale)}`),
   /** Always 204, whether or not the address belongs to an account. */
   requestPasswordReset: (email: string) =>
     request<void>("/api/auth/password-reset", json("POST", { email })),
