@@ -7,7 +7,7 @@ Owner: OAPI. These notes record what the package built, where it deviates from t
 | File | Contents |
 |---|---|
 | `frontend/scripts/gen-api-types.mjs` | Runs `cargo run --quiet --locked --manifest-path ../server/Cargo.toml -- openapi` with `SQLX_OFFLINE=true` (no database), marks response fields required (below), and writes `src/api/generated.ts` through the openapi-typescript Node API. `--check` then runs `git diff --exit-code` on the file and fails with a hint when it changed. |
-| `frontend/src/api/generated.ts` | The generated types: `paths`, `operations`, `components`, and one alias per schema (`export type BookOut = components['schemas']['BookOut']`). It is generated from phase1-green at 1d34355 (W1, CAT, SHELF, IMP: 78 operations, 91 schemas). |
+| `frontend/src/api/generated.ts` | The generated types: `paths`, `operations`, `components`, and one alias per schema (`export type BookOut = components['schemas']['BookOut']`). It is generated from phase1-green at 9b03a09 (W1, CAT, SHELF, IMP, POSTS: 88 operations, 100 schemas). |
 | `frontend/package.json` | `gen:api` (`node scripts/gen-api-types.mjs`), `check:api` (`… --check`), and the devDependency `openapi-typescript` `^7.13.0`. |
 | `frontend/package-lock.json` | The lockfile entries that devDependency brings (additions only; `npm ci` works). |
 | `.forgejo/workflows/ci.yml`, `.github/workflows/ci.yml` | Three steps at the end of the `server` job: `actions/setup-node` (Node 22, npm cache), `npm ci` and `npm run check:api`, all in `frontend/`. |

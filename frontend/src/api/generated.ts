@@ -735,6 +735,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/books/works/{work_id}/posts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The diary entries on a work the caller may see, plus the posts of the caller's clubs on it. */
+        get: operations["posts_work_thread"];
+        put?: never;
+        /**
+         * Writes a diary entry, or a reply. A reply to a club post is a club post (it needs
+         *     membership of that club and records `note_posted`); a diary entry records no event. The
+         *     work is locked against a merge first (`write::lock_work`): an entry written while the work
+         *     is merged away lands on the work it was merged into.
+         */
+        post: operations["posts_write_entry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/books/works/{work_id}/refresh": {
         parameters: {
             query?: never;
@@ -901,6 +924,45 @@ export interface paths {
         patch: operations["clubs_change_role"];
         trace?: never;
     };
+    "/api/clubs/{slug}/pick/posts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The current pick's discussion. */
+        get: operations["posts_current_pick_thread"];
+        put?: never;
+        /** Posts on the current pick. Records `note_posted`. */
+        post: operations["posts_write_current_pick"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/clubs/{slug}/picks/{pick_id}/posts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Any pick's discussion, current or ended. */
+        get: operations["posts_pick_thread"];
+        put?: never;
+        /**
+         * Posts on one of the club's picks; an ended pick is 400 `That pick is closed`. Records
+         *     `note_posted`.
+         */
+        post: operations["posts_write_pick"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/clubs/{slug}/stats": {
         parameters: {
             query?: never;
@@ -953,6 +1015,26 @@ export interface paths {
          *     memory.
          */
         get: operations["auth_get_config"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/diary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The newest posts the caller may see across every work: their own and their audience's diary
+         *     entries and their clubs' posts (`?club=`: one club's).
+         */
+        get: operations["posts_feed"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1036,6 +1118,44 @@ export interface paths {
         get: operations["platform_openapi"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/posts/{post_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Deletes a post: the author's own, or a club post as an admin or the owner of its club. A
+         *     post with replies stays as a tombstone.
+         */
+        delete: operations["posts_delete"];
+        options?: never;
+        head?: never;
+        /** Edits one of the caller's posts. */
+        patch: operations["posts_update"];
+        trace?: never;
+    };
+    "/api/posts/{post_id}/reactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Toggles one of the caller's reactions on a post they can see. */
+        post: operations["posts_react"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1491,6 +1611,64 @@ export interface components {
          * @enum {string}
          */
         DecorationKind: "plant" | "vase" | "candle" | "frame" | "bookend" | "globe";
+        /** @description A new diary entry, or a reply to an entry or to a club post. */
+        DiaryEntryIn: {
+            /** @description Stripped, 1 to 1000 characters. */
+            body: string;
+            /**
+             * Format: int64
+             * @description 0 to 100: the percentage of the book the post is safe up to; null for no spoiler flag.
+             */
+            spoiler_upto?: number | null;
+            /**
+             * Format: int64
+             * @description The entry to reply to. A reply takes its parent's scope: a reply to a club post is a
+             *     club post of that club.
+             */
+            parent_id?: number | null;
+            visibility?: components["schemas"]["Visibility"] | null;
+        };
+        /** @description One post of the feed, with its work and the viewer's position in it. */
+        DiaryFeedItemOut: {
+            /** @description The post, without replies. */
+            entry: components["schemas"]["PostOut"];
+            /** @description The work, without an edition context. */
+            book: components["schemas"]["BookOut"];
+            /** @description For a reply: the parent's author, when the viewer may see them; else null. */
+            parent_author: string | null;
+            /** Format: int32 */
+            my_progress: number | null;
+            my_status: components["schemas"]["ShelfStatus"] | null;
+            club: components["schemas"]["ClubRef"] | null;
+        };
+        /** @description A page of the diary feed, newest first. */
+        DiaryFeedOut: {
+            items: components["schemas"]["DiaryFeedItemOut"][];
+            has_more: boolean;
+            /** @description The viewer's time zone. */
+            timezone: string;
+        };
+        /** @description One work's thread. */
+        DiaryOut: {
+            /**
+             * Format: int64
+             * @description The work's current id (a merged work answers with the work it was merged into).
+             */
+            work_id: number;
+            /**
+             * Format: int32
+             * @description The viewer's progress in the work (100 when finished), for the spoiler shield.
+             */
+            my_progress: number | null;
+            my_status: components["schemas"]["ShelfStatus"] | null;
+            /**
+             * @description Diary entries and the viewer's clubs' posts on the work, oldest first, each with its
+             *     visible replies.
+             */
+            items: components["schemas"]["PostOut"][];
+            /** @description The viewer's time zone. */
+            timezone: string;
+        };
         /** @description A request in the admin queue. */
         EditRequestCreated: {
             /** Format: int64 */
@@ -1941,6 +2119,26 @@ export interface components {
             width?: number | null;
             display?: components["schemas"]["SpineDisplay"];
         };
+        /** @description A new post in a pick's discussion, or a reply to one. */
+        PickPostIn: {
+            /** @description Stripped, 1 to 1000 characters. */
+            body: string;
+            /**
+             * Format: int64
+             * @description 0 to 100: the percentage of the book the post is safe up to; null for no spoiler flag.
+             */
+            spoiler_upto?: number | null;
+            /**
+             * Format: int64
+             * @description A milestone of this pick the post is about.
+             */
+            milestone_id?: number | null;
+            /**
+             * Format: int64
+             * @description A post of this pick's discussion to reply to.
+             */
+            parent_id?: number | null;
+        };
         /** @description How the club read one pick (all time). */
         PickStat: {
             /** Format: int64 */
@@ -1965,6 +2163,103 @@ export interface components {
             average_rating: number | null;
             /** @description The members' ratings, highest first. */
             ratings: number[];
+        };
+        /** @description One pick's discussion. */
+        PickThreadOut: {
+            /** Format: int64 */
+            pick_id: number;
+            /** @description Whether the pick is still current (an ended pick takes no new posts). */
+            can_post: boolean;
+            /**
+             * Format: int32
+             * @description The caller's progress in the pick's work (100 when finished), for the spoiler shield.
+             */
+            my_progress: number | null;
+            my_status: components["schemas"]["ShelfStatus"] | null;
+            /** @description The pick's posts, oldest first, each with its replies. */
+            items: components["schemas"]["PostOut"][];
+            /** @description The club's time zone. */
+            timezone: string;
+        };
+        /**
+         * @description One post (a diary entry or a club post) as the viewer sees it: the legacy `DiaryEntryOut`
+         *     plus the scope fields.
+         */
+        PostOut: {
+            /** Format: int64 */
+            id: number;
+            /** @description The author's username; null only for a tombstone left by a deleted account. */
+            author: string | null;
+            author_avatar_url: string | null;
+            /** @description Whether the viewer wrote it. */
+            mine: boolean;
+            /** @description Empty for a tombstone. */
+            body: string;
+            /** @description A tombstone: deleted by its author, kept because it has replies. */
+            deleted: boolean;
+            /** @description Diary roots only; replies and club posts are always `audience`. */
+            visibility: components["schemas"]["Visibility"];
+            /**
+             * Format: int32
+             * @description The percentage of the book the post is safe up to; null for no spoiler flag and for a
+             *     tombstone.
+             */
+            spoiler_upto: number | null;
+            /**
+             * Format: int32
+             * @description The author's progress when writing (100 when finished).
+             */
+            progress_at: number | null;
+            status_at: components["schemas"]["ShelfStatus"] | null;
+            /**
+             * Format: int32
+             * @description The author's current rating of the work while they have it as finished; null when the
+             *     rating is `only_me` and the viewer is not the author.
+             */
+            author_rating: number | null;
+            /** Format: int64 */
+            parent_id: number | null;
+            club: components["schemas"]["ClubRef"] | null;
+            /**
+             * Format: int64
+             * @description The pick a club post belongs to.
+             */
+            pick_id: number | null;
+            /**
+             * Format: int64
+             * @description The milestone a club post is about.
+             */
+            milestone_id: number | null;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * @description `created_at` in the club's zone for a club post, in the viewer's zone for a diary entry,
+             *     e.g. `Tue 27 Oct 2026, 10:58 CET`.
+             */
+            created_label: string;
+            /** @description Changed after writing (never for a tombstone). */
+            edited: boolean;
+            /** @description Grouped by emoji, the most used first; empty for a tombstone. */
+            reactions: components["schemas"]["ReactionOut"][];
+            /**
+             * @description The visible replies, oldest first, where the endpoint includes them; always empty for a
+             *     reply.
+             */
+            replies: components["schemas"]["PostOut"][];
+        };
+        /**
+         * @description Changes to one of the caller's posts. `body` and `visibility` treat null as absent;
+         *     `spoiler_upto` null clears the flag.
+         */
+        PostPatchIn: {
+            /** @description Stripped, 1 to 1000 characters. */
+            body?: string | null;
+            /**
+             * Format: int64
+             * @description 0 to 100; null clears the spoiler flag.
+             */
+            spoiler_upto?: number | null;
+            visibility?: components["schemas"]["Visibility"] | null;
         };
         /** @description Preferences to change; `null` or absent leaves a value as it is. `{}` is a valid no-op. */
         PreferencesIn: {
@@ -2040,6 +2335,11 @@ export interface components {
              */
             page?: number | null;
             visibility?: components["schemas"]["Visibility"] | null;
+        };
+        /** @description A reaction to toggle. */
+        ReactionIn: {
+            /** @description One of ❤️ 👍 😂 😮 🔥 📚 (surrounding whitespace is ignored). */
+            emoji: string;
         };
         /** @description One emoji's reactions on a post. */
         ReactionOut: {
@@ -2409,6 +2709,10 @@ export type ClubSummary = components['schemas']['ClubSummary'];
 export type ContributorOut = components['schemas']['ContributorOut'];
 export type CustomBookIn = components['schemas']['CustomBookIn'];
 export type DecorationKind = components['schemas']['DecorationKind'];
+export type DiaryEntryIn = components['schemas']['DiaryEntryIn'];
+export type DiaryFeedItemOut = components['schemas']['DiaryFeedItemOut'];
+export type DiaryFeedOut = components['schemas']['DiaryFeedOut'];
+export type DiaryOut = components['schemas']['DiaryOut'];
 export type EditRequestCreated = components['schemas']['EditRequestCreated'];
 export type EditRequestIn = components['schemas']['EditRequestIn'];
 export type EditRequestList = components['schemas']['EditRequestList'];
@@ -2449,12 +2753,17 @@ export type PhysicalDecoration = components['schemas']['PhysicalDecoration'];
 export type PhysicalShelfItem = components['schemas']['PhysicalShelfItem'];
 export type PhysicalShelfLayout = components['schemas']['PhysicalShelfLayout'];
 export type PhysicalSpine = components['schemas']['PhysicalSpine'];
+export type PickPostIn = components['schemas']['PickPostIn'];
 export type PickStat = components['schemas']['PickStat'];
+export type PickThreadOut = components['schemas']['PickThreadOut'];
+export type PostOut = components['schemas']['PostOut'];
+export type PostPatchIn = components['schemas']['PostPatchIn'];
 export type PreferencesIn = components['schemas']['PreferencesIn'];
 export type QuoteIn = components['schemas']['QuoteIn'];
 export type QuoteListOut = components['schemas']['QuoteListOut'];
 export type QuoteOut = components['schemas']['QuoteOut'];
 export type QuotePatchIn = components['schemas']['QuotePatchIn'];
+export type ReactionIn = components['schemas']['ReactionIn'];
 export type ReactionOut = components['schemas']['ReactionOut'];
 export type RegisterIn = components['schemas']['RegisterIn'];
 export type ResetConfirmIn = components['schemas']['ResetConfirmIn'];
@@ -4475,6 +4784,101 @@ export interface operations {
             };
         };
     };
+    posts_work_thread: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A work id, `OL…W` or a legacy key */
+                work_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The thread */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiaryOut"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such book.` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    posts_write_entry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A work id, `OL…W` or a legacy key */
+                work_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiaryEntryIn"];
+            };
+        };
+        responses: {
+            /** @description The new post */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PostOut"];
+                };
+            };
+            /** @description Validation, `Write a short take, quote, or meeting note`, `Keep it to 1000 characters`, `Replies and club posts cannot be private`, `That entry is not on this book`, `Reply to the entry itself, not to a reply`, `That entry was deleted`, `That pick is closed` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such book.` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     catalog_refresh_work: {
         parameters: {
             query?: never;
@@ -5169,6 +5573,209 @@ export interface operations {
             };
         };
     };
+    posts_current_pick_thread: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The club's slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The discussion */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PickThreadOut"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club`, `No club pick yet` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    posts_write_current_pick: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The club's slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PickPostIn"];
+            };
+        };
+        responses: {
+            /** @description The new post */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PostOut"];
+                };
+            };
+            /** @description Validation, `Write a short take, quote, or meeting note`, `Keep it to 1000 characters`, `That milestone is not on this pick`, `That entry is not on this book`, `Reply to the entry itself, not to a reply`, `That entry was deleted`, `That pick is closed` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club`, `No club pick yet` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    posts_pick_thread: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The club's slug */
+                slug: string;
+                /** @description One of the club's picks */
+                pick_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The discussion */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PickThreadOut"];
+                };
+            };
+            /** @description A non-numeric pick id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club`, `No club pick with that id` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    posts_write_pick: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The club's slug */
+                slug: string;
+                /** @description One of the club's picks */
+                pick_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PickPostIn"];
+            };
+        };
+        responses: {
+            /** @description The new post */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PostOut"];
+                };
+            };
+            /** @description Validation, a non-numeric pick id, `Write a short take, quote, or meeting note`, `Keep it to 1000 characters`, `That pick is closed`, `That milestone is not on this pick`, `That entry is not on this book`, `Reply to the entry itself, not to a reply`, `That entry was deleted` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club`, `No club pick with that id` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     shelf_club_stats: {
         parameters: {
             query?: {
@@ -5301,6 +5908,63 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ServiceConfig"];
+                };
+            };
+        };
+    };
+    posts_feed: {
+        parameters: {
+            query?: {
+                /** @description Only posts with a smaller id (the last item's `entry.id`); at least 1. */
+                before?: number;
+                /** @description 1 to 50, default 10. */
+                limit?: number;
+                /**
+                 * @description A club's slug: that club's posts and its current members' diary entries. A club the
+                 *     caller is not in is 404 `No such club`. Empty means no filter.
+                 */
+                club?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of the feed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiaryFeedOut"];
+                };
+            };
+            /** @description `before` below 1, `limit` outside 1..50 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
         };
@@ -5450,6 +6114,180 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    posts_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The post */
+                post_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted, or a tombstone when it has replies */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A non-numeric id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `You can only delete your own entries` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No entry with that id` (also a tombstone or a post the caller cannot see) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    posts_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The post */
+                post_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PostPatchIn"];
+            };
+        };
+        responses: {
+            /** @description The edited post, with its replies */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PostOut"];
+                };
+            };
+            /** @description Validation, a non-numeric id, `Nothing to update`, `Replies and club posts cannot be private` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `You can only edit your own entries` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No entry with that id` (also a tombstone or a post the caller cannot see) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    posts_react: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The post */
+                post_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReactionIn"];
+            };
+        };
+        responses: {
+            /** @description The post with its reactions (and its replies) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PostOut"];
+                };
+            };
+            /** @description Validation, a non-numeric id, `Pick one of the club reactions` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No entry with that id` (also a tombstone or a post the caller cannot see) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
         };
