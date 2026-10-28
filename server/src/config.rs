@@ -176,11 +176,14 @@ impl Config {
         let smtp_url = get("SMTP_URL");
         let email_from = get("EMAIL_FROM");
         if email_transport == EmailTransport::Smtp {
-            if smtp_url.is_none() {
+            let Some(url) = &smtp_url else {
                 bail!("SMTP_URL is not set (needed for EMAIL_TRANSPORT=smtp)");
-            }
+            };
             if email_from.is_none() {
                 bail!("EMAIL_FROM is not set (needed for EMAIL_TRANSPORT=smtp)");
+            }
+            if !dev_mode {
+                check_smtp_tls(url)?;
             }
         }
         let contact_email = get("CONTACT_EMAIL");
@@ -347,6 +350,43 @@ fn parse_trusted_proxies(raw: &str) -> Result<Vec<IpNet>> {
     Ok(nets)
 }
 
+/// Outside DEV_MODE, mail (password reset links included) and the SMTP password must not cross
+/// the network in clear text: `smtps://` (TLS from the start), or `smtp://…?tls=required`
+/// (STARTTLS that must succeed). Plain `smtp://` is unencrypted in lettre, and
+/// `?tls=opportunistic` falls back to clear text when an on-path attacker strips STARTTLS; both
+/// are accepted only for a relay on this host (`localhost` or a loopback address).
+fn check_smtp_tls(raw: &str) -> Result<()> {
+    let url = Url::parse(raw)
+        .with_context(|| "SMTP_URL is not a URL, e.g. smtps://user:pass@smtp.example.eu:465")?;
+    let tls = url
+        .query_pairs()
+        .find(|(key, _)| key == "tls")
+        .map(|(_, value)| value.into_owned());
+    let encrypted = match (url.scheme(), tls.as_deref()) {
+        ("smtps", _) => true,
+        ("smtp", Some("required")) => true,
+        _ => false,
+    };
+    // `smtp` is no special scheme, so the url crate keeps an IPv4 host as a name.
+    let loopback = match url.host() {
+        Some(url::Host::Domain(name)) => {
+            name.eq_ignore_ascii_case("localhost")
+                || name.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
+        }
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    };
+    if encrypted || loopback {
+        return Ok(());
+    }
+    bail!(
+        "SMTP_URL must use TLS without DEV_MODE: smtps://… (port 465) or smtp://…?tls=required \
+         (STARTTLS, port 587); plain smtp:// and tls=opportunistic send reset links and the SMTP \
+         password in clear text and are only accepted for a relay on localhost"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -462,6 +502,40 @@ mod tests {
             let error = Config::from_lookup(lookup_from(&pairs)).unwrap_err();
             assert!(error.to_string().contains(key), "{key}: {error}");
         }
+    }
+
+    /// Security review 2026-10-28 #13: without DEV_MODE, SMTP must be encrypted, except to a
+    /// relay on this host.
+    #[test]
+    fn production_smtp_needs_tls_unless_the_relay_is_local() {
+        for url in [
+            "smtp://user:pass@smtp.example.eu:587",
+            "smtp://user:pass@smtp.example.eu:587?tls=opportunistic",
+            "smtp://smtp.example.eu?tls=none",
+            "smtp://10.0.0.5:25",
+        ] {
+            let error = with(PROD, &[("SMTP_URL", url)]).unwrap_err();
+            assert!(error.to_string().contains("SMTP_URL"), "{url}: {error}");
+        }
+        for url in [
+            "smtps://user:pass@smtp.example.eu:465",
+            "smtp://user:pass@smtp.example.eu:587?tls=required",
+            "smtp://localhost:25",
+            "smtp://127.0.0.1:2525?tls=opportunistic",
+            "smtp://[::1]:25",
+        ] {
+            let config = with(PROD, &[("SMTP_URL", url)]).unwrap();
+            assert_eq!(config.smtp_url.as_deref(), Some(url));
+        }
+        // DEV_MODE talks to a local test server (MailHog, Mailpit) however it likes.
+        let dev = Config::from_lookup(lookup_from(&[
+            ("DATABASE_URL", "postgres://x"),
+            ("DEV_MODE", "true"),
+            ("EMAIL_TRANSPORT", "smtp"),
+            ("SMTP_URL", "smtp://mail.example.lan:1025"),
+            ("EMAIL_FROM", "Bookclub <noreply@example.com>"),
+        ]));
+        assert!(dev.is_ok());
     }
 
     #[test]

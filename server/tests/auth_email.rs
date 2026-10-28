@@ -556,6 +556,76 @@ async fn email_change_and_resend_share_a_limit(db: PgPool) {
 
 /// Mail to one address counts against 6 a day across accounts; over it nothing is sent and the
 /// answer does not change.
+/// Security review 2026-10-28 #8: the verify page asks before it verifies. The preview names
+/// the account and the address, changes nothing and can be read again; the link still works
+/// afterwards, and a used, unknown or replaced link has no preview.
+#[sqlx::test]
+async fn a_preview_names_the_account_and_changes_nothing(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    change_email(&ada, "new@example.test")
+        .await
+        .assert_status(204);
+    let token = app.last_link_token("new@example.test");
+    let preview = |token: String| {
+        let anon = app.anon();
+        async move {
+            anon.post("/api/auth/verify-email/preview", json!({"token": token}))
+                .await
+        }
+    };
+    for _ in 0..2 {
+        let res = preview(token.clone()).await;
+        res.assert_status(200);
+        assert_eq!(
+            res.json(),
+            json!({"username": "ada", "email": "new@example.test"})
+        );
+    }
+    let account = me(&ada).await;
+    assert_eq!(account["email"], "ada@example.test");
+    assert_eq!(account["pending_email"], "new@example.test");
+    verify(&app, &token).await.assert_status(204);
+    preview(token).await.assert_detail(400, LINK_EXPIRED);
+    preview("nope".into())
+        .await
+        .assert_detail(400, LINK_EXPIRED);
+
+    let cleo = app.user_unverified("cleo").await;
+    for address in ["cleo1@example.test", "cleo2@example.test"] {
+        change_email(&cleo, address).await.assert_status(204);
+    }
+    preview(app.last_link_token("cleo1@example.test"))
+        .await
+        .assert_detail(400, LINK_EXPIRED);
+    preview(app.last_link_token("cleo2@example.test"))
+        .await
+        .assert_status(200);
+}
+
+/// Security review 2026-10-28 #14: links and each kind of notice have per-address buckets of
+/// their own. A flood of links to an address (reset requests, which anyone can send) cannot
+/// silence the notice that its account's address is being changed.
+#[sqlx::test]
+async fn link_floods_do_not_silence_the_security_notices(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    for _ in 0..6 {
+        app.state.limits.email_target.hit("ada@example.test");
+    }
+    change_email(&ada, "new@example.test")
+        .await
+        .assert_status(204);
+    let to_old = app.email.sent_to("ada@example.test");
+    assert_eq!(to_old.len(), 1);
+    assert!(
+        to_old[0].text.contains("new@example.test"),
+        "{}",
+        to_old[0].text
+    );
+    assert_eq!(app.email.sent_to("new@example.test").len(), 1);
+}
+
 #[sqlx::test]
 async fn mail_to_one_address_is_silently_limited(db: PgPool) {
     let app = TestApp::new(db).await;

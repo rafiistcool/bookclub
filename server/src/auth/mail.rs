@@ -34,6 +34,19 @@ pub enum TokenPurpose {
     ResetPassword,
 }
 
+/// Which per-address limit a mail counts against (§10.1). Links and the two security notices
+/// have buckets of their own, so a flood of one kind (reset requests, which anyone can send)
+/// cannot silence the others.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MailKind {
+    /// A verification or reset link: `email_target`, keyed by the address.
+    Link,
+    /// The "email changed" notice to the old address: `notice_target`, `changed:<address>`.
+    EmailChanged,
+    /// The "someone tried to use your address" notice: `notice_target`, `in_use:<address>`.
+    AddressInUse,
+}
+
 /// A verified account that holds an address, with what a notice to it needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Holder {
@@ -86,6 +99,20 @@ async fn issue(
     .execute(conn)
     .await?;
     Ok(BASE64_URL_SAFE_NO_PAD.encode(secret))
+}
+
+/// Marks the token behind a link used, e.g. when its mail could not be sent.
+pub async fn void_token(conn: &mut PgConnection, token: &str) -> sqlx::Result<()> {
+    let Some(hash) = link_token_hash(token) else {
+        return Ok(());
+    };
+    sqlx::query!(
+        "UPDATE email_tokens SET used_at = now() WHERE token_hash = $1 AND used_at IS NULL",
+        hash
+    )
+    .execute(conn)
+    .await?;
+    Ok(())
 }
 
 /// Marks every open (unused, unexpired) token of `purpose` of the user used.
@@ -148,24 +175,46 @@ pub async fn verified_holder(conn: &mut PgConnection, email: &str) -> sqlx::Resu
     .await
 }
 
-/// Sends a mail after the transaction committed. Every mail counts against the per-address
-/// `email_target` limit (6 a day, case-folded, across all accounts); over it the mail is
-/// silently dropped. A send failure, or a send slower than [`SEND_TIMEOUT`], is logged and never
-/// fails the request.
-pub async fn deliver(state: &AppState, email: Email) {
-    if state
-        .limits
-        .email_target
-        .check_and_hit(&casefold(email.to.trim()))
-        .is_err()
-    {
-        tracing::info!("mail not sent: the daily limit for this address is reached");
-        return;
+/// The case-folded address a per-address mail limit counts.
+pub fn target_key(address: &str) -> String {
+    casefold(address.trim())
+}
+
+/// Sends a mail after the transaction committed. Every mail counts against a per-address limit
+/// of its kind (6 a day each, case-folded, across all accounts): links in `email_target`, each
+/// notice in `notice_target` under its own prefix. Over it the mail is silently dropped. A send
+/// failure, or a send slower than [`SEND_TIMEOUT`], is logged and never fails the request.
+/// Returns whether the mail went out.
+pub async fn deliver(state: &AppState, email: Email, kind: MailKind) -> bool {
+    let address = target_key(&email.to);
+    let limited = match kind {
+        MailKind::Link => state.limits.email_target.check_and_hit(&address),
+        MailKind::EmailChanged => state
+            .limits
+            .notice_target
+            .check_and_hit(&format!("changed:{address}")),
+        MailKind::AddressInUse => state
+            .limits
+            .notice_target
+            .check_and_hit(&format!("in_use:{address}")),
+    };
+    if limited.is_err() {
+        tracing::info!(
+            ?kind,
+            "mail not sent: the daily limit for this address is reached"
+        );
+        return false;
     }
     match tokio::time::timeout(SEND_TIMEOUT, state.email.send(email)).await {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => tracing::warn!(error = %format!("{error:#}"), "sending mail failed"),
-        Err(_) => tracing::warn!("sending mail timed out"),
+        Ok(Ok(())) => true,
+        Ok(Err(error)) => {
+            tracing::warn!(error = %format!("{error:#}"), "sending mail failed");
+            false
+        }
+        Err(_) => {
+            tracing::warn!("sending mail timed out");
+            false
+        }
     }
 }
 

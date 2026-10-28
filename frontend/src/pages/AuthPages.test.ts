@@ -9,6 +9,7 @@ import { memoryStorage } from "../test/storage";
 const api: Record<string, ReturnType<typeof vi.fn>> = {
   register: vi.fn(),
   verifyEmail: vi.fn(),
+  previewVerifyEmail: vi.fn(),
   me: vi.fn(),
   requestPasswordReset: vi.fn(),
   confirmPasswordReset: vi.fn(),
@@ -126,20 +127,30 @@ describe("auth pages", () => {
     expect(router.currentRoute.value.path).toBe("/");
   });
 
-  it("confirms an address from the link's fragment and clears it from the address bar", async () => {
+  it("names the account and confirms the address only on a tap", async () => {
+    // Security review 2026-10-28 #8: a scanner that opens the link must verify nothing.
+    api.previewVerifyEmail.mockResolvedValue({ username: "ada", email: "ada@example.com" });
     api.verifyEmail.mockResolvedValue(undefined);
     const { wrapper, router } = await mountAt(VerifyEmailPage, "/verify-email#token=tok_123");
-    expect(api.verifyEmail).toHaveBeenCalledWith("tok_123");
+    expect(api.previewVerifyEmail).toHaveBeenCalledWith("tok_123");
+    expect(api.verifyEmail).not.toHaveBeenCalled();
     expect(router.currentRoute.value.hash).toBe("");
+    expect(wrapper.text()).toContain("ada@example.com becomes the email address of the account ada.");
+    expect(wrapper.text()).not.toContain("Address confirmed");
+
+    await wrapper.get("button.btn-primary").trigger("click");
+    await flushPromises();
+    expect(api.verifyEmail).toHaveBeenCalledWith("tok_123");
     expect(wrapper.text()).toContain("Address confirmed");
   });
 
   it("explains an expired verification link", async () => {
-    api.verifyEmail.mockRejectedValue(
+    api.previewVerifyEmail.mockRejectedValue(
       new ApiError("That link has expired or was already used", 400, "That link has expired or was already used"),
     );
     const { wrapper } = await mountAt(VerifyEmailPage, "/verify-email#token=old");
     expect(wrapper.get(".error").text()).toBe("That link has expired or was already used");
+    expect(api.verifyEmail).not.toHaveBeenCalled();
   });
 
   it("answers a reset request the same way for any address", async () => {

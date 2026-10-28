@@ -1066,6 +1066,11 @@
     "failed": "Could not send it"
   },
   "verify": {
+    "loading": "Checking the link…",
+    "confirmTitle": "Confirm your address",
+    "confirmBody": "{email} becomes the email address of the account {username}.",
+    "notMine": "Not your account, or you did not ask for this? Close this page and nothing changes.",
+    "confirm": "Confirm the address",
     "working": "Confirming your address…",
     "doneTitle": "Address confirmed",
     "doneBody": "Thanks. Password reset links go to this address now.",

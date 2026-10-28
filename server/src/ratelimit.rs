@@ -153,8 +153,12 @@ pub struct RateLimits {
     pub reset_account: SlidingWindow,
     /// Verification resend and `PUT /api/auth/me/email`, per account.
     pub email_send_user: SlidingWindow,
-    /// Any mail to one case-folded address across all accounts. Silent: the mail is not sent.
+    /// Verification and reset links to one case-folded address across all accounts. Silent:
+    /// the mail is not sent.
     pub email_target: SlidingWindow,
+    /// The security notices to one case-folded address, each kind in its own bucket
+    /// (`changed:<address>`, `in_use:<address>`), so link floods cannot silence them. Silent.
+    pub notice_target: SlidingWindow,
     pub invite_preview_ip: SlidingWindow,
     /// `POST /api/invites/{code}/accept` per account, valid code or not.
     pub invite_accept_user: SlidingWindow,
@@ -180,6 +184,7 @@ impl RateLimits {
             reset_account: SlidingWindow::new(3, HOUR),
             email_send_user: SlidingWindow::new(3, HOUR),
             email_target: SlidingWindow::new(6, DAY),
+            notice_target: SlidingWindow::new(6, DAY),
             invite_preview_ip: SlidingWindow::new(60, HOUR),
             invite_accept_user: SlidingWindow::new(20, HOUR),
             refresh_user: SlidingWindow::new(10, HOUR),

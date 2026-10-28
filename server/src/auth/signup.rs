@@ -9,7 +9,7 @@ use serde::Deserialize;
 use sqlx::PgConnection;
 use utoipa::ToSchema;
 
-use super::mail::{self, Holder};
+use super::mail::{self, Holder, MailKind};
 use super::session::{self, SessionKind};
 use super::{rules, user_out};
 use crate::AppState;
@@ -148,27 +148,33 @@ pub async fn register(
     tx.commit().await?;
 
     let site = mail::site(&state.config);
-    let email = match &outgoing {
-        Outgoing::Verify(token) => templates::verify_email(
-            site,
-            Recipient {
-                to: &body.email,
-                username: &user.username,
-                locale: &user.locale,
-            },
-            &mail::verify_link(&state.config, token),
+    let (email, kind) = match &outgoing {
+        Outgoing::Verify(token) => (
+            templates::verify_email(
+                site,
+                Recipient {
+                    to: &body.email,
+                    username: &user.username,
+                    locale: &user.locale,
+                },
+                &mail::verify_link(&state.config, token),
+            ),
+            MailKind::Link,
         ),
-        Outgoing::Notice(holder) => templates::address_in_use(
-            site,
-            Recipient {
-                to: &holder.email,
-                username: &holder.username,
-                locale: &holder.locale,
-            },
-            Attempt::SignUp,
+        Outgoing::Notice(holder) => (
+            templates::address_in_use(
+                site,
+                Recipient {
+                    to: &holder.email,
+                    username: &holder.username,
+                    locale: &holder.locale,
+                },
+                Attempt::SignUp,
+            ),
+            MailKind::AddressInUse,
         ),
     };
-    mail::deliver(&state, email).await;
+    mail::deliver(&state, email, kind).await;
 
     let cookie = session::set_cookie(&state.config, &new_session.secret);
     Ok((StatusCode::CREATED, [(SET_COOKIE, cookie)], Json(user)).into_response())

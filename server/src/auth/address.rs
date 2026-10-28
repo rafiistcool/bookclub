@@ -10,15 +10,16 @@
 //! `created_at` does not: it is the start of the issuing transaction, which can be older than a
 //! link another transaction issued and committed while this one waited for the lock.
 
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::PgConnection;
 use utoipa::ToSchema;
 
 use super::account::{account_key, verify_current_password};
 use super::extract::CurrentUser;
-use super::mail::{self, LINK_EXPIRED, TokenPurpose};
+use super::mail::{self, LINK_EXPIRED, MailKind, TokenPurpose};
 use super::rules;
 use crate::AppState;
 use crate::email::Email;
@@ -39,6 +40,15 @@ pub struct VerifyEmailIn {
 }
 
 impl Validate for VerifyEmailIn {}
+
+/// What a verification link would confirm, shown before the reader confirms it.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct VerifyEmailPreview {
+    /// The account the address would belong to.
+    pub username: String,
+    /// The address the link verifies.
+    pub email: String,
+}
 
 /// A new address for the account, confirmed with the current password.
 #[derive(Debug, Deserialize, ToSchema)]
@@ -172,6 +182,49 @@ pub async fn verify_email(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// What a verification link would do, without doing it: the account and the address. Public,
+/// like the verification itself, and read-only. The verify page shows it and verifies only when
+/// the reader confirms, so a link scanner that opens the page, or a click on a link someone
+/// else's sign-up sent, never verifies an address for an account its owner does not know.
+///
+/// The same links are accepted as by `POST /api/auth/verify-email`: open, the account's newest,
+/// and for the address still pending.
+#[utoipa::path(
+    post,
+    path = "/api/auth/verify-email/preview",
+    operation_id = "auth_preview_verification",
+    tag = "auth",
+    request_body = VerifyEmailIn,
+    responses(
+        (status = 200, body = VerifyEmailPreview, description = "The account and the address the link would verify"),
+        (status = 400, body = ErrorBody, description = "`That link has expired or was already used`")
+    )
+)]
+pub async fn preview_verification(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<VerifyEmailIn>,
+) -> ApiResult<Json<VerifyEmailPreview>> {
+    let hash = mail::link_token_hash(&body.token).ok_or_else(link_expired)?;
+    let preview = sqlx::query_as!(
+        VerifyEmailPreview,
+        r#"SELECT u.username, t.email
+           FROM email_tokens t
+           JOIN users u ON u.id = t.user_id
+           WHERE t.token_hash = $1 AND t.purpose = 'verify_email'
+             AND t.used_at IS NULL AND t.expires_at > now()
+             AND NOT EXISTS (
+                 SELECT 1 FROM email_tokens n
+                 WHERE n.user_id = t.user_id AND n.purpose = 'verify_email'
+                   AND n.id > t.id)
+             AND (u.email_verified_at IS NOT NULL OR u.email = t.email)"#,
+        hash
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(link_expired)?;
+    Ok(Json(preview))
+}
+
 /// Sends a new verification link for the pending address (the account's own unverified
 /// address, or the address of an email change) and voids the previous link.
 ///
@@ -224,7 +277,7 @@ pub async fn resend_verification(
             account.recipient(&pending),
             &link,
         );
-        tokio::spawn(async move { mail::deliver(&state, email).await });
+        tokio::spawn(async move { mail::deliver(&state, email, MailKind::Link).await });
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -244,8 +297,8 @@ pub async fn resend_verification(
 ///   nothing.
 ///
 /// Every earlier open verification link and every open reset link is voided. Shares the
-/// per-account limit with resend (3 an hour); mail to one address is also limited (6 a day,
-/// silently).
+/// per-account limit with resend (3 an hour); mail to one address is also limited (6 links and
+/// 6 of each notice a day, silently).
 #[utoipa::path(
     put,
     path = "/api/auth/me/email",
@@ -317,32 +370,37 @@ pub async fn change_email(
     tx.commit().await?;
 
     let site = mail::site(&state.config);
-    let mut outgoing: Vec<Email> = Vec::new();
+    let mut outgoing: Vec<(Email, MailKind)> = Vec::new();
     if let (true, Some(old)) = (account.verified, &account.email) {
-        outgoing.push(templates::email_changed(
-            site,
-            account.recipient(old),
-            &body.email,
+        outgoing.push((
+            templates::email_changed(site, account.recipient(old), &body.email),
+            MailKind::EmailChanged,
         ));
     }
     outgoing.push(match &holder {
-        Some(holder) => templates::address_in_use(
-            site,
-            Recipient {
-                to: &holder.email,
-                username: &holder.username,
-                locale: &holder.locale,
-            },
-            Attempt::EmailChange,
+        Some(holder) => (
+            templates::address_in_use(
+                site,
+                Recipient {
+                    to: &holder.email,
+                    username: &holder.username,
+                    locale: &holder.locale,
+                },
+                Attempt::EmailChange,
+            ),
+            MailKind::AddressInUse,
         ),
-        None => templates::verify_email(
-            site,
-            account.recipient(&body.email),
-            &mail::verify_link(&state.config, &token),
+        None => (
+            templates::verify_email(
+                site,
+                account.recipient(&body.email),
+                &mail::verify_link(&state.config, &token),
+            ),
+            MailKind::Link,
         ),
     });
-    for email in outgoing {
-        mail::deliver(&state, email).await;
+    for (email, kind) in outgoing {
+        mail::deliver(&state, email, kind).await;
     }
     Ok(StatusCode::NO_CONTENT)
 }

@@ -11,7 +11,7 @@ use sqlx::PgPool;
 
 /// The operations an anonymous caller may use (§17.7). Entries a later package adds are
 /// skipped until their route exists.
-const PUBLIC: [&str; 12] = [
+const PUBLIC: [&str; 13] = [
     "GET /api/health",
     "GET /api/config",
     "GET /api/openapi.json",
@@ -20,6 +20,7 @@ const PUBLIC: [&str; 12] = [
     "POST /api/auth/logout",
     "POST /api/auth/tokens",
     "POST /api/auth/verify-email",
+    "POST /api/auth/verify-email/preview",
     "POST /api/auth/password-reset",
     "POST /api/auth/password-reset/confirm",
     "GET /api/invites/{code}",

@@ -64,6 +64,7 @@ import type {
   SignupInviteIn,
   SpineColorsOut,
   UserOut,
+  VerifyEmailPreview,
   VoteApplyOut,
   VoteOut,
   VoteSuggestionsOut,
@@ -190,6 +191,9 @@ export const api = {
 
   /** The link from the verification mail (`/verify-email#token=…`). Needs no session. */
   verifyEmail: (token: string) => request<void>("/api/auth/verify-email", json("POST", { token })),
+  /** What that link would verify (the account and the address), without verifying it. */
+  previewVerifyEmail: (token: string) =>
+    request<VerifyEmailPreview>("/api/auth/verify-email/preview", json("POST", { token })),
   resendVerification: () => request<void>("/api/auth/verify-email/resend", { method: "POST" }),
   changeEmail: (email: string, currentPassword: string) =>
     request<void>("/api/auth/me/email", json("PUT", { email, current_password: currentPassword })),

@@ -186,7 +186,8 @@ async fn the_answer_does_not_wait_for_the_lookup_or_the_mail(db: PgPool) {
     assert_eq!(app.email.sent_to("ada@example.test").len(), 1);
 }
 
-/// Five requests per IP address an hour (429); three links per account an hour, silently.
+/// Five requests per IP address an hour (429); three links per account an hour, silently (each
+/// used before the next is asked for: one link is open at a time).
 #[sqlx::test]
 async fn requests_are_limited_per_ip_and_silently_per_account(db: PgPool) {
     let app = TestApp::new(db).await;
@@ -211,26 +212,70 @@ async fn requests_are_limited_per_ip_and_silently_per_account(db: PgPool) {
         request(&app, &app.anon().with_ip(ip(n)), "ada@example.test")
             .await
             .assert_status(204);
+        app.exec("UPDATE email_tokens SET used_at = now() WHERE used_at IS NULL")
+            .await;
     }
     assert_eq!(app.email.sent_to("ada@example.test").len(), 3);
     assert_eq!(app.scalar_i64("SELECT count(*) FROM email_tokens").await, 3);
 }
 
-/// Several links can be open; using one voids the others.
+/// Using a link voids every other open one (here one inserted as if left from before).
 #[sqlx::test]
 async fn a_reset_link_dies_when_another_is_used(db: PgPool) {
     let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let first = reset_link(&app, "ada@example.test").await;
+    app.exec(&format!(
+        "INSERT INTO email_tokens (user_id, purpose, email, token_hash, expires_at)
+         VALUES ({}, 'reset_password', 'ada@example.test', sha256('older'), now() + interval '1 hour')",
+        ada.id()
+    ))
+    .await;
+    confirm(&app, &first, NEW_PASSWORD).await.assert_status(204);
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM email_tokens WHERE used_at IS NULL")
+            .await,
+        0
+    );
+    assert_eq!(login(&app, "ada", NEW_PASSWORD).await, 204);
+}
+
+/// Security review 2026-10-28 #14: one reset link is open at a time. While it is, a new request
+/// sends nothing, so requests by anyone cannot use up the address's daily mail limit faster
+/// than its owner can use a link (the owner already has the open one). Using it lets the next
+/// request send a new one.
+#[sqlx::test]
+async fn one_reset_link_is_open_at_a_time(db: PgPool) {
+    let app = TestApp::new(db).await;
     app.user("ada").await;
     let first = reset_link(&app, "ada@example.test").await;
+    for n in 2..5 {
+        request(&app, &app.anon().with_ip(ip(n)), "ada@example.test")
+            .await
+            .assert_status(204);
+    }
+    assert_eq!(app.email.sent_to("ada@example.test").len(), 1);
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM email_tokens").await, 1);
+    confirm(&app, &first, NEW_PASSWORD).await.assert_status(204);
     let second = reset_link(&app, "ada@example.test").await;
     assert_ne!(first, second);
-    confirm(&app, &second, NEW_PASSWORD)
+    assert_eq!(app.email.sent_to("ada@example.test").len(), 2);
+}
+
+/// A reset whose mail the address's daily limit would drop issues no link either, so no unsent
+/// link holds back the owner's next request.
+#[sqlx::test]
+async fn a_reset_the_mail_limit_drops_leaves_no_open_link(db: PgPool) {
+    let app = TestApp::new(db).await;
+    app.user("ada").await;
+    for _ in 0..6 {
+        app.state.limits.email_target.hit("ada@example.test");
+    }
+    request(&app, &app.anon(), "ADA@example.test")
         .await
         .assert_status(204);
-    confirm(&app, &first, "another password")
-        .await
-        .assert_detail(400, LINK_EXPIRED);
-    assert_eq!(login(&app, "ada", NEW_PASSWORD).await, 204);
+    assert!(app.email.sent_to("ada@example.test").is_empty());
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM email_tokens").await, 0);
 }
 
 #[sqlx::test]

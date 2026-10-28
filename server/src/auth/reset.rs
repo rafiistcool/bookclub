@@ -8,7 +8,7 @@ use utoipa::ToSchema;
 
 use super::account::{account_key, email_login_key};
 use super::login::too_many;
-use super::mail::{self, LINK_EXPIRED, TokenPurpose};
+use super::mail::{self, LINK_EXPIRED, MailKind, TokenPurpose};
 use super::rules;
 use crate::AppState;
 use crate::client_ip::ClientIp;
@@ -53,8 +53,8 @@ impl Validate for ResetConfirmIn {
 /// is always 204, and it does not wait for the lookup or the mail: the work runs in a
 /// background task, so neither the answer nor its timing tells whether an account exists.
 ///
-/// Five requests per IP address an hour (429). Three links per account an hour; over that the
-/// request is silently dropped.
+/// Five requests per IP address an hour (429). Silently, nothing is sent while the account has
+/// an open link (one an hour at most), and at most three links go to an account an hour.
 #[utoipa::path(
     post,
     path = "/api/auth/password-reset",
@@ -79,7 +79,16 @@ pub async fn request_reset(
         .map_err(too_many)?;
     tokio::spawn(async move {
         match reset_mail(&state, &body.email).await {
-            Ok(Some(email)) => mail::deliver(&state, email).await,
+            Ok(Some((email, token))) => {
+                if !mail::deliver(&state, email, MailKind::Link).await {
+                    // A link nobody received must not hold back the next request.
+                    let voided =
+                        async { mail::void_token(&mut *state.db.acquire().await?, &token).await };
+                    if let Err(error) = voided.await {
+                        tracing::warn!(%error, "voiding an unsent reset link failed");
+                    }
+                }
+            }
             Ok(None) => {}
             Err(error) => tracing::warn!(%error, "password reset request failed"),
         }
@@ -87,24 +96,43 @@ pub async fn request_reset(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Issues the reset token for the verified account holding `email`, unless the account's limit
-/// is reached, and returns the mail with its link.
-async fn reset_mail(state: &AppState, email: &str) -> sqlx::Result<Option<Email>> {
+/// Issues the reset token for the verified account holding `email` and returns the mail with
+/// its link (and the token). Nothing is issued while the account has an open reset link (its
+/// mail went out: one link an hour at most, so reset requests, which anyone can send, cannot
+/// use up the address's mail limit faster than its owner can use a link), when the address's
+/// mail limit would drop the mail, or over the account's limit.
+async fn reset_mail(state: &AppState, email: &str) -> sqlx::Result<Option<(Email, String)>> {
     let mut tx = state.db.begin().await?;
     let Some(holder) = mail::verified_holder(&mut tx, email).await? else {
         return Ok(None);
     };
-    if state
-        .limits
-        .reset_account
-        .check_and_hit(&account_key(holder.user_id))
-        .is_err()
+    // The user row first, then its tokens, like every email flow; two requests take turns.
+    let open = sqlx::query_scalar!(
+        r#"SELECT EXISTS (
+               SELECT 1 FROM email_tokens
+               WHERE user_id = u.id AND purpose = 'reset_password'
+                 AND used_at IS NULL AND expires_at > now()) AS "open!"
+           FROM users u WHERE u.id = $1 FOR UPDATE"#,
+        holder.user_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    if open != Some(false)
+        || state
+            .limits
+            .email_target
+            .is_limited(&mail::target_key(&holder.email))
+        || state
+            .limits
+            .reset_account
+            .check_and_hit(&account_key(holder.user_id))
+            .is_err()
     {
         return Ok(None);
     }
     let token = mail::issue_reset_token(&mut tx, holder.user_id, &holder.email).await?;
     tx.commit().await?;
-    Ok(Some(templates::reset_password(
+    let mail = templates::reset_password(
         mail::site(&state.config),
         Recipient {
             to: &holder.email,
@@ -112,7 +140,8 @@ async fn reset_mail(state: &AppState, email: &str) -> sqlx::Result<Option<Email>
             locale: &holder.locale,
         },
         &mail::reset_link(&state.config, &token),
-    )))
+    );
+    Ok(Some((mail, token)))
 }
 
 /// Sets a new password with a reset link. The link must be open and still for the account's

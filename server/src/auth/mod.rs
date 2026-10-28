@@ -53,6 +53,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(account::update_preferences))
         .routes(routes!(account::change_password))
         .routes(routes!(address::verify_email))
+        .routes(routes!(address::preview_verification))
         .routes(routes!(address::resend_verification))
         .routes(routes!(address::change_email))
         .routes(routes!(address::dismiss_email_prompt))

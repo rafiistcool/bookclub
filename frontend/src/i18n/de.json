@@ -1066,6 +1066,11 @@
     "failed": "Das konnte nicht gesendet werden"
   },
   "verify": {
+    "loading": "Der Link wird geprüft…",
+    "confirmTitle": "Adresse bestätigen",
+    "confirmBody": "{email} wird die E-Mail-Adresse des Kontos {username}.",
+    "notMine": "Nicht dein Konto, oder hast du das nicht angefordert? Schließ diese Seite, dann ändert sich nichts.",
+    "confirm": "Adresse bestätigen",
     "working": "Deine Adresse wird bestätigt…",
     "doneTitle": "Adresse bestätigt",
     "doneBody": "Danke. Links zum Zurücksetzen des Passworts gehen jetzt an diese Adresse.",
