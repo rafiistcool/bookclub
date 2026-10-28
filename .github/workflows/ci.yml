@@ -52,7 +52,7 @@ jobs:
   # deploy/hosted/compose.yaml and ci.env, and ask /api/health, / and a script from a container on
   # the compose network (deploy/hosted/smoke-test.sh). The names below are unique per run, so
   # runs that share a daemon do not collide. On Forgejo the job runs on a runner of its own
-  # (label `docker`); GitHub's hosted runners are VMs with a Docker daemon of their own.
+  # (label `docker-host`); GitHub's hosted runners are VMs with a Docker daemon of their own.
   image:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository

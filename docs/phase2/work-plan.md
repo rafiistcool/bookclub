@@ -59,7 +59,7 @@ A completeness review checked this plan against the code at 84006bd. Where this 
 
 22. The registry already holds `rafiistcool/bookclub:{0.10.0,0.10,latest}`, pushed on 2026-10-18 but not by a Forgejo run. The v0.10.0 compose pulls `ghcr.io/rafiistcool/bookclub:latest`. Q5's recommendation (a new image name) therefore stands.
 23. The repo has no `REGISTRY_TOKEN` action secret, though `release.yml` logs in with it. It may be set at user level. This is a question for Rafael before the first release.
-24. Whether the self-hosted runner can `docker build` inside a job is still unknown. The Wave 1 PR's CI run answers it.
+24. Whether the self-hosted runner can `docker build` inside a job is still unknown. PR #71's first run showed that the existing runner already has forgejo-runner's default label `docker`, without the daemon (`docker: command not found`). `image` and `publish` therefore run on `docker-host`, a label only the runner described in `docs/phase2/notes/dep.md` ("The runner") gets.
 25. Q6 (the `legacy-python` branch and tag) waits for Rafael's answer. CUT puts the commands into the runbook and pushes nothing.
 26. Corrections:
     - `server/src/ratelimit.rs:273-302` are the thresholds; the limit tests are in `server/tests/auth_*.rs`.
@@ -188,7 +188,7 @@ Cutover CUT-R: branch cutover/remove-python, merged only on cutover day   (#52)
 - **CUT:** merged (adcd9be). Open: Q6, the `legacy-python` branch and tag (Rafael); the rehearsal is CUT2.
 - **LEG:** merged (4b88ec7). The integrator added `needs_terms: false` to the shared `user()` fixture, so `User` is plain `UserOut` again. Open: the optional file grants, and the final texts (LEG2, Rafael).
 - **ADM:** merged (bd4e454); the integrator's fix keeps a field an admin clears empty (59443d4). The integrator added `errors.receivedInFuture` and `errors.noticeCoversOnly` with their `apiErrors.ts` lines. Open: ADM2.
-- **DEP:** merged (b88622a); follow-ups dd5d1b4 (shellcheck without `-x`) and fe82997 (the Google scan reads the root `Dockerfile`). The integrator added `.github/actionlint.yaml`. Open: the `REGISTRY_TOKEN` secret and the runner labelled `docker` (items 23, 24, Rafael); the `image` job first runs on the Wave 1 PR.
+- **DEP:** merged (b88622a); follow-ups dd5d1b4 (shellcheck without `-x`) and fe82997 (the Google scan reads the root `Dockerfile`). The integrator added `.github/actionlint.yaml`. Open: the `REGISTRY_TOKEN` secret and the runner labelled `docker-host` (items 23, 24, Rafael). The `image` job's first run on PR #71 landed on the existing runner, which has forgejo-runner's default label `docker`, so the label is now `docker-host`.
 - **GATE:** merged (89b7da6); the integrator fixed the two FE observations (b42d99f, f604e59). The end-to-end run behind Caddy covered LEG's `/imprint`, `/privacy` and `/terms` and ADM's admin pages with no CSP violation. Open: Q17 (Rafael).
 
 All five run in parallel. They need no answer from Rafael. Where an answer is still open, they build the recommended option, and the alternative changes only a path or a constant. The suggested merge order is **DEP, CUT, LEG, ADM, GATE**:

@@ -77,6 +77,10 @@ export COMPOSE_PROJECT_NAME BOOKCLUB_TAG BOOKCLUB_DATA_DIR
     fail "BOOKCLUB_DATA_DIR=$BOOKCLUB_DATA_DIR is not a CI directory on the Docker daemon's host (/tmp/bookclub-ci…)"
 [[ $STALE_MINUTES =~ ^[0-9]+$ ]] || fail "STALE_MINUTES=$STALE_MINUTES is not a number of minutes"
 
+# In CI, both fail on a runner other than the one labelled docker-host (docs/phase2/notes/dep.md).
+command -v docker >/dev/null || fail "there is no docker command here"
+docker version >/dev/null || fail "the Docker daemon does not answer"
+
 compose() { docker compose -f "$here/compose.yaml" --env-file "$env_file" "$@"; }
 image=$(compose config --images | grep '/bookclub-server:') ||
     fail "compose.yaml names no bookclub-server image"

@@ -169,7 +169,7 @@ No routes, DTOs, `error::msg` strings, migrations or frontend files changed. `ge
 - **Jobs:**
   - `frontend` is unchanged.
   - `server` is a byte-for-byte copy of `ci.yml`'s server job (`diff` against `ci.yml` is empty in both directories).
-  - `publish` needs both and runs on the runner labelled `docker` (see "The runner"). The `backend` (pytest) job is gone, and line 4's GHCR comment now names the Forgejo registry.
+  - `publish` needs both and runs on the runner labelled `docker-host` (see "The runner"). The `backend` (pytest) job is gone, and line 4's GHCR comment now names the Forgejo registry.
 - **`publish`:**
   1. The tag must match `^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`, else the run fails. metadata-action only warns about a tag it cannot parse, such as `v1.2`, and would then leave the build without a tag.
   2. `docker/setup-buildx-action@v4`: the docker-container driver. The default `docker` driver cannot export a registry cache.
@@ -223,9 +223,10 @@ No routes, DTOs, `error::msg` strings, migrations or frontend files changed. `ge
   - It sets `BOOKCLUB_RESTART=no`.
   - Mutations that each fail it: a non-loopback plain `SMTP_URL`, `BOOKCLUB_ENV_FILE=.env`, `COMPOSE_PROJECT_NAME=bookclub`, an added `DEV_MODE=true`, and an unknown name.
 - **`smoke_test_refuses_names_that_are_not_ci_names`** (`deploy_env.rs`, review fix): `smoke-test.sh --down` with `docker` as a bash function imported from the environment (`BASH_FUNC_docker%%`) that only records a call. ci.env's names and CI's per-run names (with a trailing slash) reach `docker`. `/srv/bookclub`, `/tmp/`, `/tmp`, `/tmp/bookclub-ci-1/media`, `/tmp/bookclub-ci-1/..`, `/tmp/../srv/bookclub-ci`, the projects `bookclub` and `bookclub-staging`, and the tags `stable` and `0.11.0` each exit 1 with `<NAME>=… is not a CI …` and never call it. With the guard removed, the test fails.
-- **The runner (item 24; changed by the review):** the Docker daemon is root on its host, so only one runner hands it to job containers, and only `image` (ci.yml) and `publish` (release.yml) run there, through `runs-on: docker`. The `ubuntu-latest` runner keeps running the other jobs, whose npm and cargo build scripts come from any pull request, without the socket. `image` also skips pull requests from forks: `if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository`.
-  - **What Rafael sets up:** a second runner registration (its own `.runner` file and `config.yml`, best on a VM or LXC that does not also serve Forgejo or Caddy) with the label `docker:docker://ghcr.io/catthehacker/ubuntu:act-24.04`. Only its `config.yml` hands job containers the daemon, in the `container` section: `docker_host` set so that the runner mounts the daemon into job containers (`automount` in current Forgejo runners; check the runner version's config reference), or `valid_volumes: ["/var/run/docker.sock"]` with `options: -v /var/run/docker.sock:/var/run/docker.sock`. Its daemon needs Compose 2.24 or newer. The existing runner stays as it is.
-  - Until that runner exists, the `image` job of the Wave 1 PR waits for a runner instead of failing. A job that fails at `docker version` means the `container` settings above are missing.
+- **The runner (item 24; changed by the review):** the Docker daemon is root on its host, so only one runner hands it to job containers, and only `image` (ci.yml) and `publish` (release.yml) run there, through `runs-on: docker-host`. The `ubuntu-latest` runner keeps running the other jobs, whose npm and cargo build scripts come from any pull request, without the socket. `image` also skips pull requests from forks: `if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository`.
+  - **What Rafael sets up:** a second runner registration (its own `.runner` file and `config.yml`, best on a VM or LXC that does not also serve Forgejo or Caddy) with the label `docker-host:docker://ghcr.io/catthehacker/ubuntu:act-24.04`. Only its `config.yml` hands job containers the daemon, in the `container` section: `docker_host` set so that the runner mounts the daemon into job containers (`automount` in current Forgejo runners; check the runner version's config reference), or `valid_volumes: ["/var/run/docker.sock"]` with `options: -v /var/run/docker.sock:/var/run/docker.sock`. Its daemon needs Compose 2.24 or newer. The existing runner stays as it is.
+  - **Why not `docker`** (integrator, after PR #71's first run): forgejo-runner registers every runner with a default label `docker` (here `docker://node:22-bookworm`), so the existing runner took the `image` job and failed with `docker: command not found`. The label had to be one no runner has by default.
+  - Until that runner exists, the `image` job waits for a runner instead of failing. `smoke-test.sh` stops with "there is no docker command here" or "the Docker daemon does not answer" when a job lands on a runner without the daemon; the second means the `container` settings above are missing.
   - Every run builds the image without a registry cache; only the daemon's own build cache helps. The run time on the runner is not known. Locally, the build took about 2 minutes with the dependency layer cached and about 4 minutes cold (part 1).
 
 ### Backups
@@ -284,20 +285,20 @@ No routes, DTOs, `error::msg` strings, migrations, server code or frontend files
 
 - **`CLAUDE.md`, "CI and releases":**
   - The `image` job builds the root `Dockerfile` and boots it with `deploy/hosted/compose.yaml` and `ci.env`. Locally: `deploy/hosted/smoke-test.sh`; on the agents VM `CARGO_JOBS=3 deploy/hosted/smoke-test.sh`, then `docker builder prune -f`. It accepts only CI names (`bookclub-ci…`, `ci…`, `/tmp/bookclub-ci…`) and first removes what cancelled runs left behind (`STALE_MINUTES`, default 120).
-  - `image` (ci.yml) and `publish` (release.yml) run on the runner labelled `docker`, the only one that hands job containers the Docker daemon; `image` skips pull requests from forks.
+  - `image` (ci.yml) and `publish` (release.yml) run on the runner labelled `docker-host`, the only one that hands job containers the Docker daemon; `image` skips pull requests from forks.
   - A `vX.Y.Z` tag publishes `git.tillhome.de/rafiistcool/bookclub-server` with `X.Y.Z`; `deploy/hosted/release-tags.sh` then moves `X.Y` and `stable` only when the tag is the highest release of its minor line or of all (`X.Y.Z-rc.N`: only the exact tag), never `latest`. The secret is `REGISTRY_TOKEN`.
   - "Older releases are still on GHCR" stays true for the Python image.
 - **`CLAUDE.md`, "Request flow":** replace "Do not cut a Python release from `phase-1`…" with: a `v*` tag now publishes the Rust image `bookclub-server`, and the Python image `bookclub` gets no new versions.
-- **`CLAUDE.md`, deployment pointer:** `deploy/hosted/README.md` is the operator runbook (backups, restore, import, open sign-up); the scripts are shellcheck-clean (`koalaman/shellcheck:v0.10.0 deploy/hosted/*.sh`, with or without `-x`), the workflows actionlint-clean (`rhysd/actionlint:1.7.7`, which needs the runner label `docker` declared; see the next item).
-- **New file for the integrator: `.github/actionlint.yaml`.** actionlint knows only GitHub's runner labels and reports `label "docker" is unknown` for `runs-on: docker`. It reads its list of self-hosted labels from `.github/actionlint.yaml`, which is not among DEP's files, so DEP did not add it. Content:
+- **`CLAUDE.md`, deployment pointer:** `deploy/hosted/README.md` is the operator runbook (backups, restore, import, open sign-up); the scripts are shellcheck-clean (`koalaman/shellcheck:v0.10.0 deploy/hosted/*.sh`, with or without `-x`), the workflows actionlint-clean (`rhysd/actionlint:1.7.7`, which needs the runner label `docker-host` declared; see the next item).
+- **New file for the integrator: `.github/actionlint.yaml`.** actionlint knows only GitHub's runner labels and reports `label "docker-host" is unknown` for `runs-on: docker-host`. It reads its list of self-hosted labels from `.github/actionlint.yaml`, which is not among DEP's files, so DEP did not add it. Content:
 
   ```yaml
   self-hosted-runner:
     labels:
-      - docker
+      - docker-host
   ```
 
-  Until it exists: `docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.7 -ignore 'label "docker" is unknown' .forgejo/workflows/*.yml .github/workflows/*.yml`.
+  Until it exists: `docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.7 -ignore 'label "docker-host" is unknown' .forgejo/workflows/*.yml .github/workflows/*.yml`.
 - **`SELFHOST.md` §7 "Releases"** describes the Python image's tags (`1.2.3`, `1.2`, `1`, `latest` on `rafiistcool/bookclub`). That is no longer what a tag publishes. CUT-R deletes `SELFHOST.md`; until then, a pointer to `deploy/hosted/README.md`, "Releases".
 - **`docs/phase2/cutover.md` (CUT):** its compose directory and paths agree with the README's (`/opt/bookclub`, `/srv/bookclub/import`). Its checklist item "Backups run, and `restore-test.sh` has passed once (`deploy/hosted/README.md`)" now has the commands behind it.
 
@@ -374,7 +375,7 @@ No routes, DTOs, `error::msg` strings, migrations, server code or frontend files
 **Not verified** (see "Review round 1" below for what the review added):
 - **`docker compose pull` from `git.tillhome.de`:** no `bookclub-server` tag is published yet, and this VM has no `docker login` there (`unauthorized`). The same commands ran against a local registry.
 - **The release workflow:** it has never run, because no tag was pushed. Also untested: metadata-action and the registry cache against Forgejo's registry, and the `REGISTRY_TOKEN` secret.
-- **The `image` job on the Forgejo runner:** its first run is the Wave 1 PR (amendment 4; item 24), on the runner labelled `docker`.
+- **The `image` job on the Forgejo runner:** its first run is the Wave 1 PR (amendment 4; item 24). It landed on the existing runner (see "Why not `docker`"); it now runs on the runner labelled `docker-host`.
 - **The README commands that need the production VM or accounts:**
   - `systemctl` and `journalctl` on the VM itself (they ran in a systemd 257 container, see below)
   - the Storage Box key upload and its host-key fingerprints
@@ -391,7 +392,7 @@ A review of DEP raised ten findings; all were checked against the code. The fixe
 |---|---|
 | A cancelled CI run leaves its stack, image and data directory on the runner's daemon (two findings) | `BOOKCLUB_RESTART=no` in `ci.env`; `smoke-test.sh` sweeps stale `bookclub-ci…` stacks, unused `ci…` tags and `/tmp/bookclub-ci…` directories older than `STALE_MINUTES`; `timeout-minutes: 60` on the job ("The CI image smoke job") |
 | `smoke-test.sh` deletes whatever the environment names (two findings) | Names must look like CI's, checked before any `docker` call; `mkdir` without `-p`, and the teardown removes only a directory the run made; `smoke_test_refuses_names_that_are_not_ci_names` |
-| The PR-triggered `image` job needs the host daemon on the shared runner | `runs-on: docker` for `image` and `publish`; `image` skips fork pull requests ("The runner") |
+| The PR-triggered `image` job needs the host daemon on the shared runner | `runs-on: docker-host` for `image` and `publish`; `image` skips fork pull requests ("The runner") |
 | `stable` and `X.Y` can move back to an older version | The exact version is pushed first; `release-tags.sh` moves the floating tags only for the highest release, from the remote's tags at that moment ("The release workflow", step 6) |
 | A picture deleted between the dump and restic's read fails the backup (restic exit 3) or the restore test (two findings) | `backup.sh` treats exit 3 as a warning when every unreadable file is a vanished picture below `MEDIA_DIR`; `restore-test.sh` excuses missing pictures the live database no longer references; README reworded ("Backups") |
 | No test covers the `MEDIA_DIR` write probe | `/proc` cases in `store.rs` and `deploy_env.rs` |
@@ -447,6 +448,6 @@ Docker 29.9.2, Compose v5.6.1, buildx v0.38.1.
 
 - **`docker compose pull` from `git.tillhome.de`:** needs a published tag and `docker login` on the VM (Rafael, items 11 and 23). Only a local registry stood in.
 - **The release workflow on Forgejo:** it runs on the first `v*` tag. Untested there: metadata-action, the login with `REGISTRY_TOKEN` (a `rafiistcool` token with `write:package`, item 23), whether Forgejo's registry takes the cache manifest (config type `application/vnd.buildkit.cacheconfig.v0`) and `imagetools create`, and `git ls-remote` with the checkout's credentials.
-- **The runner labelled `docker` (item 24):** Rafael registers it as described in "The runner". The `image` job of the Wave 1 PR waits for it.
+- **The runner labelled `docker-host` (item 24):** Rafael registers it as described in "The runner". The `image` job waits for it.
 - **README commands no VM here can run:** the Storage Box key upload and host-key fingerprints (a local sftp server stood in), the healthchecks.io account (a local listener stood in), `git tag` and `git push` of a release, and `systemctl`/`journalctl` on the production VM itself.
 - **GATE's Caddy and `verify-limits.sh` sections** (amendment 16) are not on this branch: they are in `docs/phase2/notes/gate.md` on GATE's branch, and the integrator moves them into `deploy/hosted/README.md` after GATE merges. DEP's "Reverse proxy" section already points at both files.

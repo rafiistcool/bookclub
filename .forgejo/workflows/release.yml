@@ -111,7 +111,7 @@ jobs:
     name: Build and push image
     # The runner whose job containers get the Docker daemon, as ci.yml's `image` job
     # (docs/phase2/notes/dep.md, "The runner").
-    runs-on: docker
+    runs-on: docker-host
     needs: [frontend, server]
     steps:
       # metadata-action skips the semver tag of a tag it cannot parse (v1.2, v1.2.3.4) with only

@@ -57,11 +57,12 @@ jobs:
   # runs that share a daemon do not collide.
   #
   # The job needs the Docker daemon, which is root on the daemon's host. Only the runner with the
-  # label `docker` hands it to job containers, so the other jobs (npm and cargo build scripts of
-  # any pull request) never get it, and pull requests from forks skip this job
+  # label `docker-host` hands it to job containers, so the other jobs (npm and cargo build scripts
+  # of any pull request) never get it, and pull requests from forks skip this job. Not `docker`:
+  # forgejo-runner gives every runner that label by default, without the daemon
   # (docs/phase2/notes/dep.md, "The runner").
   image:
-    runs-on: docker
+    runs-on: docker-host
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     # A stack older than smoke-test.sh's STALE_MINUTES (120) is then never a running job's.
     timeout-minutes: 60
