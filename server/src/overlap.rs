@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use axum::Json;
 use axum::extract::State;
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -24,9 +24,13 @@ pub fn routes() -> OpenApiRouter<AppState> {
 }
 
 /// `?include_reading=`: also count books members are reading.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct OverlapQuery {
+    /// Also count `currently_reading` (`true/false/1/0/yes/no/on/off/t/f/y/n`, any case);
+    /// default false.
     #[serde(default, deserialize_with = "crate::extract::lax_bool")]
+    #[param(value_type = Option<bool>)]
     pub include_reading: bool,
 }
 
@@ -68,7 +72,7 @@ pub struct OverlapMember {
     security(("bookclub_session" = []), ("bearer" = [])),
     params(
         ("slug" = String, Path, description = "The club's slug"),
-        ("include_reading" = Option<bool>, Query, description = "Also count `currently_reading` (`true/false/1/0/yes/no/on/off/t/f/y/n`, any case); default false")
+        OverlapQuery
     ),
     responses(
         (status = 200, body = OverlapOut, description = "The shared books"),

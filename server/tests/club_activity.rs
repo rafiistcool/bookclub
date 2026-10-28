@@ -447,12 +447,39 @@ async fn a_user_in_two_clubs_sees_separate_feeds(db: PgPool) {
         .assert_detail(404, "No such club");
     // The home-feed username filter covers whoever the caller can see; the club feed only the
     // club's members.
-    assert_eq!(
-        zed.get("/api/activity?username=ada").await.json()["items"],
-        json!([])
-    );
     let filtered = ada.get("/api/activity?username=grace").await.json();
     assert_eq!(ids(&filtered), [p, b]);
+    // A name the caller cannot see answers like an unknown one, though the caller's feed has
+    // items: someone in no shared club, and a former member whose club event is still in the
+    // feed.
+    let former = app.user("former").await;
+    app.join(&mine, &former, "member").await;
+    let left = event(
+        &app,
+        Some(&mine),
+        &former,
+        "nominated",
+        Some(&circe),
+        json!({}),
+    )
+    .await;
+    app.exec(&format!(
+        "DELETE FROM club_memberships WHERE club_id = {} AND user_id = {}",
+        mine.id,
+        former.id()
+    ))
+    .await;
+    assert_eq!(ids(&ada.get("/api/activity").await.json()), [left, p, b, a]);
+    let unknown = ada.get("/api/activity?username=nobody_here").await.json();
+    assert_eq!(
+        unknown,
+        json!({"items": [], "has_more": false, "timezone": "UTC"})
+    );
+    for hidden in ["zed", "former"] {
+        let res = ada.get(&format!("/api/activity?username={hidden}")).await;
+        res.assert_status(200);
+        assert_eq!(res.json(), unknown, "{hidden}");
+    }
     let outsider = app.user("outsider").await;
     app.join(&theirs, &outsider, "member").await;
     let not_member = ada

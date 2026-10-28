@@ -24,7 +24,7 @@ use crate::error::{ApiResult, AppError, ErrorBody, msg};
 use crate::extract::{ApiJson, Validate};
 use crate::picks::current::{PickWrite, set_pick};
 use crate::picks::out::{ClubPickOut, current_row, pick_outs};
-use crate::picks::{club_zone, lock_as_admin, lock_club_writes};
+use crate::picks::{club_zone, lock_as_admin, lock_club_writes, lock_users};
 use crate::tz;
 
 /// Makes a nomination of the open vote the club pick.
@@ -112,8 +112,12 @@ async fn close_vote(
 ///   on the same work as the current pick, nothing of the pick changes), and the vote ends;
 /// - without one (no ballots), the deadline is cleared and the vote stays open.
 ///
-/// Takes the club row, then the vote row, and checks the deadline again under the lock, so two
-/// concurrent requests close the vote once. Returns whether it wrote anything.
+/// Takes the club row, then the user rows of every nominator of the open vote (the leader's
+/// nominator becomes the pick's `set_by` and the events' actor; a work merge locks users before
+/// votes, see `picks` on work merges), then the vote row, and checks the deadline again under
+/// the lock, so two concurrent requests close the vote once. Nominations are added only under
+/// the club lock (a merge re-points or drops them but adds no nominator), so the leader's
+/// nominator is among the locked users. Returns whether it wrote anything.
 pub async fn maybe_auto_close(conn: &mut PgConnection, club_id: i64) -> ApiResult<bool> {
     let due = sqlx::query_scalar!(
         "SELECT id FROM next_up_votes
@@ -125,6 +129,16 @@ pub async fn maybe_auto_close(conn: &mut PgConnection, club_id: i64) -> ApiResul
     if due.is_none() || !lock_club_writes(conn, club_id).await? {
         return Ok(false);
     }
+    let nominators = sqlx::query_scalar!(
+        r#"SELECT DISTINCT n.nominated_by AS "nominated_by!"
+           FROM next_up_nominations n
+           JOIN next_up_votes v ON v.id = n.vote_id
+           WHERE v.club_id = $1 AND v.ended_at IS NULL AND n.nominated_by IS NOT NULL"#,
+        club_id
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    lock_users(conn, &nominators).await?;
     let vote = sqlx::query_scalar!(
         "SELECT id FROM next_up_votes
          WHERE club_id = $1 AND ended_at IS NULL AND closes_at <= now()
@@ -147,12 +161,12 @@ pub async fn maybe_auto_close(conn: &mut PgConnection, club_id: i64) -> ApiResul
         return Ok(true);
     };
     // An account deletion locks every club it writes in (this one, through the nomination)
-    // before the user row, so the club lock already orders it with this close. Holding the
-    // nominator's row `FOR KEY SHARE` before any write keeps the actor valid until the commit
-    // all the same; a deleted account is no actor (NULL).
+    // before the user row, so the club lock already orders it with this close, and the
+    // nominator's row is held `FOR KEY SHARE` (above) until the commit. A deleted account is no
+    // actor (NULL).
     let actor = match winner.nominated_by {
         Some(user_id) => {
-            sqlx::query_scalar!("SELECT id FROM users WHERE id = $1 FOR KEY SHARE", user_id)
+            sqlx::query_scalar!("SELECT id FROM users WHERE id = $1", user_id)
                 .fetch_optional(&mut *conn)
                 .await?
         }

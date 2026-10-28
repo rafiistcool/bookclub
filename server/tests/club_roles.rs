@@ -116,7 +116,7 @@ fn rows() -> Vec<Row> {
         ),
         row(
             "PATCH /api/clubs/{slug}/vote",
-            Some(json!({"closes_at": "2030-01-01T18:00"})),
+            Some(json!({"closes_at": "2099-01-01T18:00"})),
             not_an_admin,
             (Admin, 200),
         ),

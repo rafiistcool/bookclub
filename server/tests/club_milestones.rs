@@ -110,7 +110,7 @@ async fn milestones_crud_and_threads(db: PgPool) {
     let first = f
         .create(json!({
             "title": "Part one", "unit": "chapter", "range_from": 1, "range_to": 8,
-            "due_at": "2030-01-05T20:00"
+            "due_at": "2099-01-05T20:00"
         }))
         .await;
     assert_eq!(first["position"], 0);
@@ -119,9 +119,9 @@ async fn milestones_crud_and_threads(db: PgPool) {
     assert_eq!(first["unit"], "chapter");
     assert_eq!(first["range_from"], 1);
     assert_eq!(first["range_to"], 8);
-    assert_eq!(first["due_at"], "2030-01-05T20:00:00Z");
-    assert_eq!(first["due_local"], "2030-01-05T20:00");
-    assert_eq!(first["due_label"], "Sat 05 Jan 2030, 20:00 UTC");
+    assert_eq!(first["due_at"], "2099-01-05T20:00:00Z");
+    assert_eq!(first["due_local"], "2099-01-05T20:00");
+    assert_eq!(first["due_label"], "Mon 05 Jan 2099, 20:00 UTC");
     assert_eq!(first["passed"], false);
     assert_eq!(first["note_count"], 0);
 
@@ -220,7 +220,7 @@ async fn milestones_crud_and_threads(db: PgPool) {
         [
             (json!({"title": "Part two"}), json!(f.pick_id)),
             (
-                json!({"title": "Part one", "due_at": "2030-01-05T20:00:00Z"}),
+                json!({"title": "Part one", "due_at": "2099-01-05T20:00:00Z"}),
                 json!(f.pick_id)
             )
         ]
@@ -345,7 +345,7 @@ async fn patch_is_partial_and_checks_the_result(db: PgPool) {
     let milestone = f
         .create(json!({
             "title": "Part one", "unit": "chapter", "range_from": 1, "range_to": 8,
-            "due_at": "2030-01-05T20:00"
+            "due_at": "2099-01-05T20:00"
         }))
         .await;
     let url = format!("{}/{}", f.url(), milestone["id"]);
@@ -356,7 +356,7 @@ async fn patch_is_partial_and_checks_the_result(db: PgPool) {
     assert_eq!(renamed.json()["unit"], "chapter");
     assert_eq!(renamed.json()["range_from"], 1);
     assert_eq!(renamed.json()["range_to"], 8);
-    assert_eq!(renamed.json()["due_at"], "2030-01-05T20:00:00Z");
+    assert_eq!(renamed.json()["due_at"], "2099-01-05T20:00:00Z");
 
     let same = f.ada.patch(&url, json!({})).await;
     same.assert_status(200);

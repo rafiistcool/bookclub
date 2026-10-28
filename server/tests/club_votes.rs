@@ -5,6 +5,7 @@ mod common;
 
 use std::time::Duration;
 
+use bookclub_server::catalog::merge_works;
 use common::*;
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -107,6 +108,49 @@ impl Fixture {
         self.app
             .scalar_i64(&sql.replace("{club}", &self.club.id.to_string()))
             .await
+    }
+
+    /// The `payload` of every `vote_closed`, oldest first.
+    async fn closed(&self) -> Vec<Value> {
+        self.events()
+            .await
+            .into_iter()
+            .filter(|e| e.0 == "vote_closed")
+            .map(|e| e.4)
+            .collect()
+    }
+
+    /// A transaction that holds the club row `FOR UPDATE`, so vote writes wait for it.
+    async fn hold_club(&self) -> sqlx::Transaction<'static, sqlx::Postgres> {
+        self.hold(&format!(
+            "SELECT id FROM clubs WHERE id = {} FOR UPDATE",
+            self.club.id
+        ))
+        .await
+    }
+
+    /// A transaction that has run `sql` (a row lock) and holds it until it ends.
+    async fn hold(&self, sql: &str) -> sqlx::Transaction<'static, sqlx::Postgres> {
+        let mut hold = self.app.db.begin().await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_owned()))
+            .execute(&mut *hold)
+            .await
+            .unwrap();
+        hold
+    }
+
+    /// Removes `who` from the club inside `hold`.
+    async fn remove_in(
+        &self,
+        hold: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        who: &TestClient,
+    ) {
+        sqlx::query("DELETE FROM club_memberships WHERE club_id = $1 AND user_id = $2")
+            .bind(self.club.id)
+            .bind(who.id())
+            .execute(&mut **hold)
+            .await
+            .unwrap();
     }
 }
 
@@ -413,7 +457,7 @@ async fn apply_needs_an_open_nomination(db: PgPool) {
 async fn the_deadline_and_turnout_are_reported(db: PgPool) {
     let f = Fixture::new(db).await;
     f.ada
-        .patch(&f.path("/vote"), json!({"closes_at": "2030-01-01T18:00"}))
+        .patch(&f.path("/vote"), json!({"closes_at": "2099-01-01T18:00"}))
         .await
         .assert_detail(404, "Nominate a book first");
 
@@ -436,13 +480,13 @@ async fn the_deadline_and_turnout_are_reported(db: PgPool) {
 
     let set = f
         .ada
-        .patch(&f.path("/vote"), json!({"closes_at": "2030-01-01T18:00"}))
+        .patch(&f.path("/vote"), json!({"closes_at": "2099-01-01T18:00"}))
         .await;
     set.assert_status(200);
     let set = set.json();
-    assert_eq!(set["closes_at"], "2030-01-01T18:00:00Z");
-    assert_eq!(set["closes_local"], "2030-01-01T18:00");
-    assert_eq!(set["closes_label"], "Tue 01 Jan 2030, 18:00 UTC");
+    assert_eq!(set["closes_at"], "2099-01-01T18:00:00Z");
+    assert_eq!(set["closes_local"], "2099-01-01T18:00");
+    assert_eq!(set["closes_label"], "Thu 01 Jan 2099, 18:00 UTC");
 
     let grace = f.member("grace", "member").await;
     let nomination_id = f.vote(&grace).await["nominations"][0]["id"].clone();
@@ -462,7 +506,7 @@ async fn the_deadline_and_turnout_are_reported(db: PgPool) {
     assert_eq!(cleared["closes_label"], Value::Null);
     // `{}` clears it too (parity), as does whitespace.
     f.ada
-        .patch(&f.path("/vote"), json!({"closes_at": "2030-01-01T18:00"}))
+        .patch(&f.path("/vote"), json!({"closes_at": "2099-01-01T18:00"}))
         .await
         .assert_status(200);
     let cleared = f.ada.patch(&f.path("/vote"), json!({})).await.json();
@@ -495,19 +539,19 @@ async fn the_deadline_uses_the_club_time_zone(db: PgPool) {
         .assert_status(201);
     let set = f
         .ada
-        .patch(&path("/vote"), json!({"closes_at": "2030-01-01T18:00"}))
+        .patch(&path("/vote"), json!({"closes_at": "2099-01-01T18:00"}))
         .await
         .json();
     assert_eq!(set["timezone"], "Europe/Berlin");
-    assert_eq!(set["closes_at"], "2030-01-01T17:00:00Z");
-    assert_eq!(set["closes_local"], "2030-01-01T18:00");
-    assert_eq!(set["closes_label"], "Tue 01 Jan 2030, 18:00 CET");
+    assert_eq!(set["closes_at"], "2099-01-01T17:00:00Z");
+    assert_eq!(set["closes_local"], "2099-01-01T18:00");
+    assert_eq!(set["closes_label"], "Thu 01 Jan 2099, 18:00 CET");
     let explicit = f
         .ada
-        .patch(&path("/vote"), json!({"closes_at": "2030-07-01T18:00Z"}))
+        .patch(&path("/vote"), json!({"closes_at": "2099-07-01T18:00Z"}))
         .await
         .json();
-    assert_eq!(explicit["closes_local"], "2030-07-01T20:00");
+    assert_eq!(explicit["closes_local"], "2099-07-01T20:00");
 }
 
 /// parity: test_vote_deadline.py::test_deadline_auto_applies_the_leader
@@ -520,7 +564,7 @@ async fn the_deadline_applies_the_leader(db: PgPool) {
     let achilles = nomination(&vote, "The Song of Achilles")["id"].clone();
     f.cast(&grace, &achilles).await;
     f.ada
-        .patch(&f.path("/vote"), json!({"closes_at": "2030-01-01T18:00"}))
+        .patch(&f.path("/vote"), json!({"closes_at": "2099-01-01T18:00"}))
         .await
         .assert_status(200);
     f.expire_deadline().await;
@@ -552,7 +596,7 @@ async fn a_deadline_without_ballots_is_cleared(db: PgPool) {
     let f = Fixture::new(db).await;
     f.nominate(&f.ada, &f.circe).await;
     f.ada
-        .patch(&f.path("/vote"), json!({"closes_at": "2030-01-01T18:00"}))
+        .patch(&f.path("/vote"), json!({"closes_at": "2099-01-01T18:00"}))
         .await
         .assert_status(200);
     f.expire_deadline().await;
@@ -584,7 +628,7 @@ async fn a_tie_goes_to_the_earliest_nomination(db: PgPool) {
     // Equal votes: nominations by id.
     assert_eq!(vote["nominations"][0]["id"], circe);
     f.ada
-        .patch(&f.path("/vote"), json!({"closes_at": "2030-01-01T18:00"}))
+        .patch(&f.path("/vote"), json!({"closes_at": "2099-01-01T18:00"}))
         .await
         .assert_status(200);
     f.expire_deadline().await;
@@ -748,7 +792,7 @@ async fn the_auto_close_credits_a_nominator_who_left_or_is_gone(db: PgPool) {
     let achilles = nomination(&vote, "The Song of Achilles")["id"].clone();
     f.cast(&f.ada, &achilles).await;
     f.ada
-        .patch(&f.path("/vote"), json!({"closes_at": "2030-01-01T18:00"}))
+        .patch(&f.path("/vote"), json!({"closes_at": "2099-01-01T18:00"}))
         .await
         .assert_status(200);
     grace
@@ -766,7 +810,7 @@ async fn the_auto_close_credits_a_nominator_who_left_or_is_gone(db: PgPool) {
     let wolf = nomination(&vote, "The Wolf Den")["id"].clone();
     f.cast(&f.ada, &wolf).await;
     f.ada
-        .patch(&f.path("/vote"), json!({"closes_at": "2030-01-01T18:00"}))
+        .patch(&f.path("/vote"), json!({"closes_at": "2099-01-01T18:00"}))
         .await
         .assert_status(200);
     f.app
@@ -822,7 +866,9 @@ async fn only_current_members_ballots_count(db: PgPool) {
 }
 
 /// The auto-close commits before the request's own work: a nomination refused afterwards does
-/// not undo it (parity). `PATCH vote`, apply, suggestions and the pick do not run it.
+/// not undo it (parity). Suggestions and the pick do not run it; a ballot cast after the deadline
+/// closes the vote first and is refused. `PATCH vote` and apply: see
+/// `patch_and_apply_do_not_run_the_auto_close`.
 #[sqlx::test]
 async fn the_auto_close_runs_only_on_read_nominate_and_cast(db: PgPool) {
     let f = Fixture::new(db).await;
@@ -830,7 +876,7 @@ async fn the_auto_close_runs_only_on_read_nominate_and_cast(db: PgPool) {
     let circe = vote["nominations"][0]["id"].clone();
     f.cast(&f.ada, &circe).await;
     f.ada
-        .patch(&f.path("/vote"), json!({"closes_at": "2030-01-01T18:00"}))
+        .patch(&f.path("/vote"), json!({"closes_at": "2099-01-01T18:00"}))
         .await
         .assert_status(200);
     f.expire_deadline().await;
@@ -852,6 +898,88 @@ async fn the_auto_close_runs_only_on_read_nominate_and_cast(db: PgPool) {
             .await,
         0
     );
+    assert_eq!(f.closed().await, [json!({"votes": 1, "auto": true})]);
+
+    // A ballot after the deadline: the cast closes the vote with the leader (The Song of
+    // Achilles) first, then finds no open vote. The late ballot for The Wolf Den, which would
+    // have tied the vote, is not stored.
+    let grace = f.member("grace", "member").await;
+    let vote = f.nominate(&f.ada, &f.achilles).await;
+    let achilles = vote["nominations"][0]["id"].clone();
+    f.cast(&f.ada, &achilles).await;
+    let vote = f.nominate(&grace, &f.wolf).await;
+    let wolf = nomination(&vote, "The Wolf Den")["id"].clone();
+    f.ada
+        .patch(&f.path("/vote"), json!({"closes_at": "2099-01-01T18:00"}))
+        .await
+        .assert_status(200);
+    f.expire_deadline().await;
+    grace
+        .post(&f.path("/vote/cast"), json!({"nomination_id": wolf}))
+        .await
+        .assert_detail(404, "No open next-up vote");
+    assert_eq!(
+        f.pick(&f.ada).await["book"]["title"],
+        "The Song of Achilles"
+    );
+    assert_eq!(
+        f.closed().await,
+        [
+            json!({"votes": 1, "auto": true}),
+            json!({"votes": 1, "auto": true})
+        ]
+    );
+    assert_eq!(
+        f.count(&format!(
+            "SELECT count(*) FROM next_up_ballots WHERE user_id = {}",
+            grace.id()
+        ))
+        .await,
+        0
+    );
+}
+
+/// `PATCH vote` and apply do not run the auto-close (parity): after the deadline, a new deadline
+/// keeps the vote open with its ballots, and apply makes the given nomination the pick rather
+/// than the leader, with no `auto` in `vote_closed`.
+#[sqlx::test]
+async fn patch_and_apply_do_not_run_the_auto_close(db: PgPool) {
+    let f = Fixture::new(db).await;
+    let vote = f.nominate(&f.ada, &f.circe).await;
+    let circe = vote["nominations"][0]["id"].clone();
+    f.cast(&f.ada, &circe).await;
+    let vote = f.nominate(&f.ada, &f.achilles).await;
+    let achilles = nomination(&vote, "The Song of Achilles")["id"].clone();
+    f.ada
+        .patch(&f.path("/vote"), json!({"closes_at": "2099-01-01T18:00"}))
+        .await
+        .assert_status(200);
+    f.expire_deadline().await;
+
+    let moved = f
+        .ada
+        .patch(&f.path("/vote"), json!({"closes_at": "2099-06-01T18:00"}))
+        .await;
+    moved.assert_status(200);
+    let moved = moved.json();
+    assert_eq!(moved["vote_id"], vote["vote_id"]);
+    assert_eq!(moved["closes_at"], "2099-06-01T18:00:00Z");
+    assert_eq!(moved["leader_id"], circe);
+    assert_eq!(f.pick(&f.ada).await, Value::Null);
+    assert_eq!(f.closed().await, Vec::<Value>::new());
+
+    f.expire_deadline().await;
+    let applied = f
+        .ada
+        .post(&f.path("/vote/apply"), json!({"nomination_id": achilles}))
+        .await;
+    applied.assert_status(200);
+    let applied = applied.json();
+    assert_eq!(applied["pick"]["book"]["title"], "The Song of Achilles");
+    assert_eq!(applied["pick"]["set_by"], "ada");
+    assert_eq!(applied["vote"]["vote_id"], Value::Null);
+    assert_eq!(f.closed().await, [json!({"votes": 0})]);
+    assert_eq!(f.count("SELECT count(*) FROM club_picks").await, 1);
 }
 
 /// A user in two clubs sees two separate votes, and a nomination of one club is unknown under
@@ -934,6 +1062,205 @@ async fn two_first_nominations_open_one_vote(db: PgPool) {
     assert_eq!(second.json()["nominations"].as_array().unwrap().len(), 2);
 }
 
+/// The membership is read again under the club lock: a member removed while their nomination or
+/// ballot waited for the lock gets 404 `No such club` and writes nothing.
+#[sqlx::test]
+async fn a_member_removed_while_waiting_writes_nothing(db: PgPool) {
+    let f = Fixture::new(db).await;
+    let grace = f.member("grace", "member").await;
+
+    // A first nomination: no vote is opened.
+    let mut hold = f.hold_club().await;
+    let nominate = {
+        let (client, path, work) = (grace.clone(), f.path("/vote/nominations"), f.circe.id);
+        tokio::spawn(async move { client.post(&path, json!({"work_id": work})).await })
+    };
+    wait_for_waiters(&f.app, 1).await;
+    f.remove_in(&mut hold, &grace).await;
+    hold.commit().await.unwrap();
+    nominate.await.unwrap().assert_detail(404, "No such club");
+    assert_eq!(f.count("SELECT count(*) FROM next_up_votes").await, 0);
+    assert_eq!(f.count("SELECT count(*) FROM next_up_nominations").await, 0);
+    assert!(f.events().await.is_empty());
+
+    // A ballot: nothing is stored or recorded.
+    f.app.join(&f.club, &grace, "member").await;
+    let circe = f.nominate(&f.ada, &f.circe).await["nominations"][0]["id"].clone();
+    let mut hold = f.hold_club().await;
+    let cast = {
+        let (client, path, id) = (grace.clone(), f.path("/vote/cast"), circe.clone());
+        tokio::spawn(async move { client.post(&path, json!({"nomination_id": id})).await })
+    };
+    wait_for_waiters(&f.app, 1).await;
+    f.remove_in(&mut hold, &grace).await;
+    hold.commit().await.unwrap();
+    cast.await.unwrap().assert_detail(404, "No such club");
+    assert_eq!(f.count("SELECT count(*) FROM next_up_ballots").await, 0);
+    let kinds: Vec<String> = f.events().await.into_iter().map(|e| e.0).collect();
+    assert_eq!(kinds, ["nominated"]);
+}
+
+/// A nomination is stamped when it takes the club lock, not when its transaction began, so the
+/// leader's tie-break order `(created_at, id)` is the order in which the club took the
+/// nominations. Ada's nomination of Circe begins first but waits for the work (a merge in flight
+/// holds it); Grace's nomination of The Song of Achilles begins later and takes the club lock
+/// first. With one vote each, Grace's nomination, the earlier one by id and in `nominations`,
+/// leads and wins the auto-close. `now()` (the transaction start) would give the tie to Ada's.
+#[sqlx::test]
+async fn a_tie_goes_to_the_first_nomination_the_club_took(db: PgPool) {
+    let f = Fixture::new(db).await;
+    let grace = f.member("grace", "member").await;
+    let hold = f
+        .hold(&format!(
+            "SELECT id FROM works WHERE id = {} FOR NO KEY UPDATE",
+            f.circe.id
+        ))
+        .await;
+    let late = {
+        let (client, path, work) = (f.ada.clone(), f.path("/vote/nominations"), f.circe.id);
+        tokio::spawn(async move { client.post(&path, json!({"work_id": work})).await })
+    };
+    wait_for_waiters(&f.app, 1).await;
+    let vote = f.nominate(&grace, &f.achilles).await;
+    let first = vote["nominations"][0]["id"].clone();
+    hold.commit().await.unwrap();
+    let vote = late.await.unwrap();
+    vote.assert_status(201);
+    let second = nomination(&vote.json(), "Circe")["id"].clone();
+    assert!(first.as_i64() < second.as_i64());
+
+    f.cast(&f.ada, &second).await;
+    let vote = f.cast(&grace, &first).await;
+    assert_eq!(vote["leader_id"], first);
+    assert_eq!(vote["nominations"][0]["id"], first);
+    f.ada
+        .patch(&f.path("/vote"), json!({"closes_at": "2099-01-01T18:00"}))
+        .await
+        .assert_status(200);
+    f.expire_deadline().await;
+    assert_eq!(f.vote(&f.ada).await["vote_id"], Value::Null);
+    let pick = f.pick(&f.ada).await;
+    assert_eq!(pick["book"]["title"], "The Song of Achilles");
+    assert_eq!(pick["set_by"], "grace");
+    assert_eq!(f.closed().await, [json!({"votes": 1, "auto": true})]);
+}
+
+/// A nomination that meets a merge of its work stores the winner (docs/phase1/notes/cat.md "For
+/// SHELF, POSTS and CLUB"): it waits for the merge, and the duplicate check then sees that the
+/// winner is nominated already. Without the work lock it would add the merged-away loser next
+/// to the winner.
+#[sqlx::test]
+async fn a_nomination_during_a_merge_names_the_winner(db: PgPool) {
+    let f = Fixture::new(db).await;
+    let grace = f.member("grace", "member").await;
+    f.nominate(&f.ada, &f.achilles).await;
+    let mut merge = f.app.db.begin().await.unwrap();
+    merge_works(&mut merge, f.circe.id, f.achilles.id)
+        .await
+        .unwrap();
+    let nominate = {
+        let (client, path, work) = (grace.clone(), f.path("/vote/nominations"), f.circe.id);
+        tokio::spawn(async move { client.post(&path, json!({"work_id": work})).await })
+    };
+    wait_for_waiters(&f.app, 1).await;
+    merge.commit().await.unwrap();
+    nominate
+        .await
+        .unwrap()
+        .assert_detail(400, "That book is already nominated");
+    let works: Vec<i64> = sqlx::query_scalar("SELECT work_id FROM next_up_nominations")
+        .fetch_all(&f.app.db)
+        .await
+        .unwrap();
+    assert_eq!(works, [f.achilles.id]);
+}
+
+/// A ballot that meets a work merge does not deadlock with it. The merge locks the users who
+/// shelved the loser (`FOR UPDATE`) before the votes that nominated it; the ballot locks its
+/// caller before the vote, instead of reaching her row only through the foreign-key check of
+/// the ballot while it holds the vote.
+#[sqlx::test]
+async fn a_ballot_during_a_merge_does_not_deadlock(db: PgPool) {
+    let f = Fixture::new(db).await;
+    let vote = f.nominate(&f.ada, &f.circe).await;
+    let circe = vote["nominations"][0]["id"].clone();
+    f.app
+        .exec(&format!(
+            "INSERT INTO shelf_entries (user_id, work_id, status) VALUES ({}, {}, 'want_to_read')",
+            f.ada.id(),
+            f.circe.id
+        ))
+        .await;
+    // The merge's user lock, taken before the ballot gets there.
+    let mut merge = f
+        .hold(&format!(
+            "SELECT id FROM users WHERE id = {} FOR UPDATE",
+            f.ada.id()
+        ))
+        .await;
+    let cast = {
+        let (client, path, id) = (f.ada.clone(), f.path("/vote/cast"), circe.clone());
+        tokio::spawn(async move { client.post(&path, json!({"nomination_id": id})).await })
+    };
+    wait_for_waiters(&f.app, 1).await;
+    merge_works(&mut merge, f.circe.id, f.achilles.id)
+        .await
+        .unwrap();
+    merge.commit().await.unwrap();
+    let vote = cast.await.unwrap();
+    vote.assert_status(200);
+    let vote = vote.json();
+    assert_eq!(vote["nominations"][0]["book"]["id"], f.achilles.id);
+    assert_eq!(vote["nominations"][0]["votes"], 1);
+    assert_eq!(vote["my_vote_id"], circe);
+}
+
+/// The auto-close locks the nominators before the vote, so it does not deadlock with a merge
+/// that holds the leader's nominator (who shelved the loser) and waits for the vote. The pick is
+/// the merged work, credited to the nominator.
+#[sqlx::test]
+async fn an_auto_close_during_a_merge_does_not_deadlock(db: PgPool) {
+    let f = Fixture::new(db).await;
+    let grace = f.member("grace", "member").await;
+    let vote = f.nominate(&grace, &f.circe).await;
+    let circe = vote["nominations"][0]["id"].clone();
+    f.cast(&f.ada, &circe).await;
+    f.app
+        .exec(&format!(
+            "INSERT INTO shelf_entries (user_id, work_id, status) VALUES ({}, {}, 'want_to_read')",
+            grace.id(),
+            f.circe.id
+        ))
+        .await;
+    f.ada
+        .patch(&f.path("/vote"), json!({"closes_at": "2099-01-01T18:00"}))
+        .await
+        .assert_status(200);
+    f.expire_deadline().await;
+    let mut merge = f
+        .hold(&format!(
+            "SELECT id FROM users WHERE id = {} FOR UPDATE",
+            grace.id()
+        ))
+        .await;
+    let read = {
+        let (client, path) = (f.ada.clone(), f.path("/vote"));
+        tokio::spawn(async move { client.get(&path).await })
+    };
+    wait_for_waiters(&f.app, 1).await;
+    merge_works(&mut merge, f.circe.id, f.achilles.id)
+        .await
+        .unwrap();
+    merge.commit().await.unwrap();
+    let read = read.await.unwrap();
+    read.assert_status(200);
+    assert_eq!(read.json()["vote_id"], Value::Null);
+    let pick = f.pick(&f.ada).await;
+    assert_eq!(pick["book"]["id"], f.achilles.id);
+    assert_eq!(pick["set_by"], "grace");
+    assert_eq!(f.closed().await, [json!({"votes": 1, "auto": true})]);
+}
+
 /// A burst of concurrent nominations of different books never fails with a 500 and never
 /// exceeds the limit: one vote, six nominations, the rest refused.
 #[sqlx::test]
@@ -976,7 +1303,7 @@ async fn a_concurrent_auto_close_applies_once(db: PgPool) {
     let achilles = vote["nominations"][0]["id"].clone();
     f.cast(&grace, &achilles).await;
     f.ada
-        .patch(&f.path("/vote"), json!({"closes_at": "2030-01-01T18:00"}))
+        .patch(&f.path("/vote"), json!({"closes_at": "2099-01-01T18:00"}))
         .await
         .assert_status(200);
     f.expire_deadline().await;
@@ -1018,7 +1345,7 @@ async fn a_burst_after_the_deadline_closes_the_vote_once(db: PgPool) {
     let achilles = vote["nominations"][0]["id"].clone();
     f.cast(&grace, &achilles).await;
     f.ada
-        .patch(&f.path("/vote"), json!({"closes_at": "2030-01-01T18:00"}))
+        .patch(&f.path("/vote"), json!({"closes_at": "2099-01-01T18:00"}))
         .await
         .assert_status(200);
     f.expire_deadline().await;

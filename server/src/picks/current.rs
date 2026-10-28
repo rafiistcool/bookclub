@@ -12,10 +12,9 @@ use utoipa::ToSchema;
 use super::out::{
     ClubPickCurrentOut, ClubPickHistoryOut, ClubPickOut, current_row, history_rows, pick_outs,
 };
-use super::{NO_PICK_YET, club_zone, lock_as_admin, lock_club_writes};
+use super::{NO_PICK_YET, club_zone, lock_as_admin, lock_club_writes, lock_work};
 use crate::AppState;
 use crate::activity::record::{EventKind, NewEvent, record};
-use crate::catalog::shared::books::require_work;
 use crate::clubs::extract::{ClubAdmin, ClubCtx, ClubMember};
 use crate::error::{ApiResult, AppError, ErrorBody, msg};
 use crate::extract::{ApiJson, Patch, Validate, Validator};
@@ -100,7 +99,8 @@ fn meeting_change(
 /// What [`set_pick`] writes.
 #[derive(Debug, Clone)]
 pub struct PickWrite {
-    /// The work, already resolved through `require_work`.
+    /// The work, already resolved through `require_work` (and locked by [`super::lock_work`]
+    /// when it comes from the request).
     pub work_id: i64,
     /// The setter of a new pick and the actor of its `pick_set` event; `None` for a deleted
     /// account (auto-close).
@@ -259,7 +259,7 @@ pub async fn put_pick(
 ) -> ApiResult<Json<ClubPickOut>> {
     let meeting_at = meeting_change(&body.meeting_at, &member.club)?;
     let mut tx = state.db.begin().await?;
-    let work_id = require_work(&mut tx, body.work_id).await?;
+    let work_id = lock_work(&mut tx, body.work_id).await?;
     lock_as_admin(&mut tx, member.club.id, member.user.id).await?;
     set_pick(
         &mut tx,

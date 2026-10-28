@@ -119,10 +119,19 @@ and apply a nomination. The home feed needs only a session.
 
 ### Meeting download (`.ics`)
 
-- The builder is the legacy one byte for byte (escape order, lone CR kept, 75/74-octet folding
-  that never splits a UTF-8 sequence, CRLF, 90 minutes, `UID:pick-{id}@bookclub`). Its unit
-  tests reproduce the Python golden output, the UTF-8 fold vector and an escape/fold vector, all
-  generated with `backend/app/ics.py`.
+- The builder is the legacy one byte for byte (escape order, 75/74-octet folding that never
+  splits a UTF-8 sequence, CRLF, 90 minutes, `UID:pick-{id}@bookclub`), except for control
+  characters. Its unit tests reproduce the Python golden output, the UTF-8 fold vector and an
+  escape/fold vector, all generated with `backend/app/ics.py` (the last one with the change
+  below applied to `_escape`).
+- **Deviation: no raw control character reaches the file.** The legacy `_escape` left a lone CR
+  raw. RFC 5545 TEXT (§3.3.11) allows no control character but HTAB, and a client that breaks
+  lines at a bare CR would read the rest of the text as a property of its own: an admin's note
+  `"x\rURL:https://evil.example"` (notes are only trimmed) would add a `URL:` line for every
+  member who downloads the meeting; catalog titles keep `\r` too (`ingest.rs`). After CRLF and LF,
+  a lone CR also becomes `\n`, and the remaining ASCII control characters except HTAB are
+  dropped. Byte parity changes only for those inputs (unit test
+  `no_control_character_but_htab_survives`).
 - Inputs changed per endpoint-map §9: `PRODID` and `SUMMARY` use the **club name** (as stored;
   club names are already trimmed, collapsed and at most 80 characters, so the legacy
   `sanitize_name` is not applied); the description links `{PUBLIC_URL}/book/{work_id}` instead of
@@ -204,9 +213,10 @@ and apply a nomination. The home feed needs only a session.
 - **The auto-close** runs at the start of `GET vote`, nominate and cast (not `GET pick`,
   `PATCH vote`, apply or suggestions; parity), in a transaction of its own that commits before
   the request's work: a nomination refused with 400 afterwards does not undo it (parity). It
-  reads the due vote without a lock, then takes the club row, then the vote row `FOR UPDATE`
-  with the deadline re-checked in that locked `SELECT`, then the nominator's user row `FOR KEY
-  SHARE`, then writes. A request that waited sees the vote ended and does nothing.
+  reads the due vote without a lock, then takes the club row, then the user rows of every
+  nominator of the open vote `FOR KEY SHARE` (see "Work merges"), then the vote row `FOR UPDATE`
+  with the deadline re-checked in that locked `SELECT`, then writes. A request that waited sees
+  the vote ended and does nothing.
 - **Locks:** every vote write takes the club row first (`picks::lock_club_writes`, `FOR NO KEY
   UPDATE`, the same lock as pick writes, so vote and pick writes of one club are serialised)
   and re-reads the caller's membership (nominate, cast: 404 `No such club` when removed
@@ -217,6 +227,15 @@ and apply a nomination. The home feed needs only a session.
   (a nomination or ballot counts) before the user row, so it orders with these writes too.
 - `closes_at` is RFC 3339 with `Z`; `closes_local` and `closes_label` are in the club's zone.
   Nominations are ordered by votes (descending), then id; voters by username (byte order).
+- **Nominations are stamped under the club lock:** nominate writes `created_at =
+  clock_timestamp()`, not the column default `now()` (the transaction start). The leader's
+  tie-break order is `(created_at, id)` (spec: ties go to the earliest nomination), and with
+  `now()` a nomination whose transaction began first but took the club lock second (it waited
+  for its work, see "Work merges") would get the later id yet the earlier `created_at`, so the
+  tie (and the auto-close) would go to the nomination that `VoteOut.nominations` and the feed
+  show as the later one. Now creation order, id order and lock order agree. Imported
+  nominations keep their legacy `created_at`. `catalog::merge_works` keeps the earlier
+  nomination by the same `(created_at, id)` order.
 - **Suggestions:** candidates are the want-to-read entries of current club members, read
   through `bc_visible_shelf(caller)` (legacy: all users). Excluded: every pick of the club,
   current or ended, and the open vote's nominations. Liked subjects come from `works.subjects`
@@ -224,6 +243,39 @@ and apply a nomination. The home feed needs only a session.
   `works.ol_rating`, formatted `{:.1}`, which rounds the exact binary value half to even like
   Python (`4.25` → `4.2`, unit test). After `(-score, lowercased title)`, ties go by work id. The
   book is the work (no edition context).
+
+### Work merges (after CAT merged)
+
+CAT's `catalog::merge_works` locks the two works `FOR NO KEY UPDATE`, then every user with the
+loser on their shelf or as a favourite `FOR UPDATE`, then the votes that nominated the loser,
+and then re-points nominations, events and picks (docs/phase1/notes/cat.md "For SHELF, POSTS
+and CLUB"). Club writes now keep that order:
+
+- **The lock order of a club write:** the work it stores (`FOR SHARE`; `PUT pick` and nominate
+  only), then the club row (`FOR NO KEY UPDATE`), then the user rows it references (`FOR KEY
+  SHARE`, id order), then the vote row (`FOR UPDATE`) and the current pick's row (its `UPDATE`).
+- **`picks::lock_work`** (CAT's rule for writes that store a `work_id`): `require_work`, then
+  `SELECT id FROM works WHERE id = $1 AND merged_into_id IS NULL FOR SHARE`. No row means a merge
+  committed while it waited: it follows the merge and locks again (4 times at most, then 500).
+  `PUT pick` and nominate call it before the club row. A merge in flight finishes first, and the
+  write then stores the winner: nominating the loser of a merge whose winner is already
+  nominated is 400 `That book is already nominated` instead of a second row for one book, and a
+  pick is set on the winner. A merge that starts later waits for the write and moves its rows.
+- **User rows before vote and pick rows:** `picks::lock_as_admin` and `votes::lock_as_member`
+  lock the caller after the role check; the auto-close locks every nominator of the open vote
+  (the leader's becomes `set_by` and the actor). Before, a ballot, a nomination, apply, the
+  auto-close, `PUT pick` and `DELETE pick` held the vote row or the current pick's row and
+  reached the user only through the foreign-key check of their insert (`FOR KEY SHARE`). A merge
+  that held that user `FOR UPDATE` and waited for the vote or pick then deadlocked with them, and
+  Postgres aborted one: a 500 or a failed merge.
+- **Safe without the work lock:** ballots, `voted`, and what apply and the auto-close write (the
+  pick, `pick_set`, `vote_closed`) store the work of a nomination read under the vote row lock,
+  which the merge also takes before it re-points nominations, picks and events.
+- **Accepted race:** `pick_cleared` (`DELETE pick`) and `milestone_added` store the current
+  pick's work without locking it. One that commits while a merge of that work runs keeps the
+  merged-away id in `events.work_id`, because the merge re-points events before it reaches the
+  pick row. The feed then shows the loser's own record (the row stays), and its book page
+  resolves to the winner. The pick row itself is re-pointed (the merge waits for its lock).
 
 ### Overlap
 
@@ -307,7 +359,15 @@ All are module constants in `picks` (`mod.rs`, `current.rs`, `milestones.rs`) an
   `reaction` payload's `author` can be null. Feed items carry `club` (null for personal events);
   the home feed's `timezone` is the user's, and each `created_label` is ready to show.
 - **Docs (integrator):** conventions §13's lock list could name the club row for vote writes
-  (nominate, cast, deadline, apply, auto-close), taken before the vote row.
+  (nominate, cast, deadline, apply, auto-close), taken before the vote row, and the full order
+  of a club write (work, club, users, vote, pick; "Work merges" above).
+- **POSTS:** a write that holds a row `catalog::merge_works` waits for later (a post of the
+  loser, its thread) and then inserts a row referencing a user the merge locks `FOR UPDATE`
+  (author, actor) can deadlock with the merge the same way; lock the user first.
+- **SHELF / integrator:** `tests/shelf_import.rs::two_runs_of_one_job_handle_each_row_once`
+  (merged from phase1-green, untouched here) failed twice in about 30 runs on this branch: the
+  job ended `failed` instead of `done`. It passed in isolation 20 times in a row and in the final
+  full run. Nothing CLUB changed is on the import's path.
 - **PAR (#49):** see "Parity" below.
 
 ## Parity (part 1)
@@ -397,10 +457,12 @@ appendix "club" 15; the activity events stay):
 
 ## Tests (part 1)
 
-- `tests/club_picks.rs` (19): the 8 `test_pick.py` ports, the `.ics` download (and UTC times),
+- `tests/club_picks.rs` (21): the 8 `test_pick.py` ports, the `.ics` download (and UTC times),
   same-work partial updates, PATCH, events, history order, merged works, two clubs, two
-  concurrent PUTs in a fixed order (held club lock), a burst of 8 concurrent PUTs, and an admin
-  demoted while waiting for the lock.
+  concurrent PUTs in a fixed order (held club lock), a burst of 8 concurrent PUTs, an admin
+  demoted while waiting for the lock, and two work-merge cases: a `PUT pick` that meets a merge
+  of its work waits and stores the winner; one that meets a merge of the current pick's work
+  (the merge holding the admin's user row) does not deadlock.
 - `tests/club_milestones.rs` (10): the milestone port, units and ranges, the order of checks,
   partial PATCH, ended picks, dense renumbering, `note_count`, club-zone labels, ids from another
   club or pick, member/admin access.
@@ -416,18 +478,30 @@ appendix "club" 15; the activity events stay):
 
 ## Tests (part 2)
 
-- `tests/club_votes.rs` (24): the 11 vote and deadline ports, the club zone of the deadline,
+- `tests/club_votes.rs` (30): the 11 vote and deadline ports, the club zone of the deadline,
   nomination order, the order of checks, merged works, applying the current pick, the auto-close
   credit (nominator left, account deleted), current-member ballots, where the auto-close runs
-  and that it commits first, two clubs, and the concurrency cases: two first nominations meeting
-  at a held club lock open one vote; a burst of 9 nominations gives six 201s, three 400s and one
-  vote; two `GET vote` calls after the deadline meeting at a held lock close the vote once; a
-  burst of reads, ballots and nominations after the deadline closes it once.
+  (read, nominate and cast, where the late ballot is refused with 404 `No open next-up vote`) and
+  that it commits first, that `PATCH vote` and apply do not run it (a new deadline keeps the
+  expired vote open; apply makes the given nomination the pick, no `auto`), two clubs, and the
+  concurrency cases: two first nominations meeting at a held club lock open one vote; a member
+  removed while their nomination or ballot waits for the lock gets 404 `No such club` and writes
+  nothing; a nomination that began first but took the club lock second (it waited for its work)
+  loses a tie and the auto-close to the one that took the lock first; a nomination that meets a
+  merge of its work names the winner (400 `That book is already nominated`); a ballot and an
+  auto-close that meet a merge holding the caller's or nominator's user row do not deadlock; a
+  burst of 9 nominations gives six 201s, three 400s and one vote; two `GET vote` calls after the
+  deadline meeting at a held lock close the vote once; a burst of reads, ballots and nominations
+  after the deadline closes it once.
+- **Test dates:** deadlines and milestone due dates that must stay in the future are in 2099
+  (`2099-01-01T18:00`, `2099-01-05T20:00`), so the suite does not start failing in 2030.
 - `tests/club_suggestions.rs` (2): the suggestions port; members only, the limit of 6, title
   order, want-to-read only.
 - `tests/club_overlap.rs` (6): the 4 overlap ports, the lax boolean, members only and order.
 - `tests/club_activity.rs` (7): the 3 activity ports, query validation, two clubs (separate club
-  feeds, a combined home feed, the name filters), labels and zones, odd stored payloads.
+  feeds, a combined home feed, the name filters: in the home feed, a name the caller cannot see,
+  someone in no shared club or a former member whose club event is still in the feed, answers
+  like an unknown name), labels and zones, odd stored payloads.
 - `tests/club_visibility.rs` (+3, 5 in all): `shelf_finished` redaction in both feeds across the
   viewer types (only me, audience, entry removed); `quote_added` visibility (audience, only me,
   deleted, someone else's quote, no `quote_id`); personal events from `joined_at` on, only while
@@ -435,8 +509,12 @@ appendix "club" 15; the activity events stay):
 - `tests/club_roles.rs` (1): 19 rows now, one per operation of the `picks`, `votes`, `overlap`
   and `activity` tags (the home feed's denied caller is anonymous: 401), with the completeness
   check over the OpenAPI document.
-- Unit tests (+6): the leader rule, the suggestion scores and reasons (including the probed
-  example and `{:.1}` rounding), and the feed payload rules.
+- Unit tests (+7): the leader rule, the suggestion scores and reasons (including the probed
+  example and `{:.1}` rounding), the feed payload rules, and the `.ics` control characters.
+- **OpenAPI parameters:** `FeedQuery` and `OverlapQuery` derive `IntoParams` (conventions §14),
+  so the query parameters of both feeds and of overlap come from the structs. The generated
+  parameters are unchanged except their descriptions; both feeds now share one `username`
+  description that names both rules (home: the caller can see the person; club: a member).
 - **#45 acceptance:** two clubs: picks (`club_picks.rs`), votes (`club_votes.rs`), milestones
   (`club_milestones.rs`), activity (`club_activity.rs`); threads are POSTS' routes. Ids of club A
   under club B's path give 404: picks and milestones (`club_milestones.rs`), nominations
@@ -444,3 +522,10 @@ appendix "club" 15; the activity events stay):
   nominations, one auto-close, one current pick from two `PUT pick` (`club_picks.rs`).
 - Mutation-checked: without the club lock in nominate, both nomination concurrency tests fail;
   without the club and vote row locks in the auto-close, both auto-close concurrency tests fail.
+  Also each fails its test: no auto-close in cast; an auto-close in `PATCH vote` or in apply; no
+  membership re-check in `lock_as_member`; `now()` as the nomination stamp; a hidden name in the
+  home feed that falls back to no filter, or is looked up without `bc_can_see_user`; a lone CR
+  kept in the `.ics` escape. And for the work merges: without the caller's user lock in
+  `lock_as_member` or `lock_as_admin`, or the nominators' in the auto-close, the ballot, pick and
+  auto-close merge tests get a 500 (deadlock); `require_work` instead of `lock_work` in nominate
+  or `PUT pick` fails the nomination and pick merge tests and the tie test.

@@ -15,6 +15,20 @@
 //! writes take the same row `FOR UPDATE`, so a role cannot change while a pick write runs. Code
 //! that also locks a vote row takes the club row first, then the vote row: a club delete holds
 //! the club row and its cascade then locks the vote rows.
+//!
+//! **Work merges** (`catalog::merge_works`, docs/phase1/notes/cat.md "For SHELF, POSTS and
+//! CLUB") lock the two works, then the users with the loser on their shelf `FOR UPDATE`, then
+//! the votes that nominated the loser, and then re-point picks, nominations and events. A club
+//! write keeps that order:
+//! 1. a write that stores a new `work_id` (`PUT pick`, nominate) locks the work first
+//!    ([`lock_work`]), so a merge in flight finishes before it and the write stores the winner;
+//! 2. the club row, then the user rows the write references ([`lock_users`]: the caller in
+//!    [`lock_as_admin`] and `votes::lock_as_member`, every nominator in the auto-close);
+//! 3. only then a vote row or the current pick's row.
+//!
+//! Without step 2 a write that held a vote or pick row would reach the user row only through
+//! the foreign-key check of its insert (a ballot, a nomination, a pick's `set_by`, an event's
+//! actor) and deadlock with a merge that holds that user and waits for the vote or pick.
 
 pub mod current;
 pub mod ics;
@@ -27,6 +41,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use crate::AppState;
+use crate::catalog::shared::books::require_work;
 use crate::clubs::extract::{Role, role_in};
 use crate::error::{ApiResult, AppError, msg};
 use crate::tz;
@@ -75,16 +90,60 @@ pub async fn lock_club_writes(conn: &mut PgConnection, club_id: i64) -> sqlx::Re
 
 /// [`lock_club_writes`], then the caller's role as it is now: 404 `No such club` when the club
 /// is gone or the caller is no longer a member, 403 `Only club admins can do that` when they are
-/// no longer an admin. The role the extractor read before the lock never decides a write.
+/// no longer an admin. The role the extractor read before the lock never decides a write. Then
+/// the caller's user row ([`lock_users`]), before any vote or pick row.
 pub async fn lock_as_admin(conn: &mut PgConnection, club_id: i64, user_id: i64) -> ApiResult<()> {
     if !lock_club_writes(conn, club_id).await? {
         return Err(AppError::not_found(msg::NO_SUCH_CLUB));
     }
     match role_in(conn, user_id, club_id).await? {
-        None => Err(AppError::not_found(msg::NO_SUCH_CLUB)),
-        Some(role) if role < Role::Admin => Err(AppError::forbidden(msg::ONLY_ADMINS)),
-        Some(_) => Ok(()),
+        None => return Err(AppError::not_found(msg::NO_SUCH_CLUB)),
+        Some(role) if role < Role::Admin => return Err(AppError::forbidden(msg::ONLY_ADMINS)),
+        Some(_) => {}
     }
+    lock_users(conn, &[user_id]).await?;
+    Ok(())
+}
+
+/// How many merges [`lock_work`] follows that commit while it waits, before it gives up.
+const MERGE_HOPS: usize = 4;
+
+/// Locks work `work_id`, or the work it was merged into, `FOR SHARE` and returns its id; 404
+/// `No such book.` for an unknown id. The lock conflicts with the `FOR NO KEY UPDATE` of a merge
+/// (docs/phase1/notes/cat.md "For SHELF, POSTS and CLUB"): a merge in flight finishes first,
+/// and the write then stores the winner instead of leaving a row on the merged-away loser (a
+/// second nomination of one book, a pick of a work that no longer exists on its own). A merge
+/// that starts later waits for the write and moves its rows. Taken before the club row.
+pub async fn lock_work(conn: &mut PgConnection, work_id: i64) -> ApiResult<i64> {
+    let mut current = require_work(conn, work_id).await?;
+    for _ in 0..MERGE_HOPS {
+        let locked = sqlx::query_scalar!(
+            "SELECT id FROM works WHERE id = $1 AND merged_into_id IS NULL FOR SHARE",
+            current
+        )
+        .fetch_optional(&mut *conn)
+        .await?;
+        if locked.is_some() {
+            return Ok(current);
+        }
+        current = require_work(conn, current).await?;
+    }
+    Err(AppError::internal(format!(
+        "work {work_id} kept being merged while it was locked"
+    )))
+}
+
+/// Locks the rows of `user_ids` `FOR KEY SHARE`, in id order: the users a club write
+/// references, before it locks a vote or pick row (see the module docs on work merges). A
+/// missing id is skipped.
+pub async fn lock_users(conn: &mut PgConnection, user_ids: &[i64]) -> sqlx::Result<()> {
+    sqlx::query_scalar!(
+        "SELECT id FROM users WHERE id = ANY($1) ORDER BY id FOR KEY SHARE",
+        user_ids
+    )
+    .fetch_all(conn)
+    .await?;
+    Ok(())
 }
 
 /// The club's zone and the name every `timezone` response field carries: the stored name, or

@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::PgConnection;
 use time::OffsetDateTime;
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -50,14 +50,19 @@ pub fn routes() -> OpenApiRouter<AppState> {
 }
 
 /// The query of both feeds.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct FeedQuery {
-    /// Only events with a smaller id (the last id of the previous page).
+    /// Only events with a smaller id (≥ 1): the last id of the previous page.
     #[serde(default)]
     pub before: Option<i64>,
+    /// 1 to 100, default 30.
     #[serde(default = "default_limit")]
+    #[param(value_type = Option<i64>)]
     pub limit: i64,
-    /// Only this member's events; lowercased, and empty means no filter.
+    /// Only this person's events (case-insensitive; empty means no filter). A name the caller
+    /// cannot see (home feed) or that is not a member of the club (club feed) gives an empty
+    /// list.
     #[serde(default)]
     pub username: Option<String>,
 }
@@ -158,11 +163,7 @@ struct Page {
     operation_id = "activity_home_feed",
     tag = "activity",
     security(("bookclub_session" = []), ("bearer" = [])),
-    params(
-        ("before" = Option<i64>, Query, description = "Only events with a smaller id (≥ 1)"),
-        ("limit" = Option<i64>, Query, description = "1 to 100, default 30"),
-        ("username" = Option<String>, Query, description = "Only this person's events; a name the caller cannot see gives an empty list")
-    ),
+    params(FeedQuery),
     responses(
         (status = 200, body = ActivityOut, description = "A page of the feed"),
         (status = 400, body = ErrorBody, description = "`Input should be greater than or equal to 1`, `Input should be less than or equal to 100`, `Input should be a valid integer, unable to parse string as an integer`"),
@@ -271,9 +272,7 @@ pub async fn home_feed(
     security(("bookclub_session" = []), ("bearer" = [])),
     params(
         ("slug" = String, Path, description = "The club's slug"),
-        ("before" = Option<i64>, Query, description = "Only events with a smaller id (≥ 1)"),
-        ("limit" = Option<i64>, Query, description = "1 to 100, default 30"),
-        ("username" = Option<String>, Query, description = "Only this member's events; a name that is not a member of the club gives an empty list")
+        FeedQuery
     ),
     responses(
         (status = 200, body = ActivityOut, description = "A page of the feed"),

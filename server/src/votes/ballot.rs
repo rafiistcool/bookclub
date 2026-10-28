@@ -17,11 +17,10 @@ use super::{
 };
 use crate::AppState;
 use crate::activity::record::{EventKind, NewEvent, record};
-use crate::catalog::shared::books::require_work;
 use crate::clubs::extract::{ClubAdmin, ClubMember};
 use crate::error::{ApiResult, AppError, ErrorBody, msg};
 use crate::extract::{ApiJson, Validate};
-use crate::picks::{club_zone, lock_as_admin};
+use crate::picks::{club_zone, lock_as_admin, lock_work};
 use crate::tz;
 
 /// Sets or clears the deadline.
@@ -149,7 +148,7 @@ pub async fn nominate(
     run_auto_close(&state, member.club.id).await?;
     let club_id = member.club.id;
     let mut tx = state.db.begin().await?;
-    let work_id = require_work(&mut tx, body.work_id).await?;
+    let work_id = lock_work(&mut tx, body.work_id).await?;
     lock_as_member(&mut tx, club_id, member.user.id).await?;
     let vote_id = match lock_open_vote(&mut tx, club_id).await? {
         Some(vote) => vote.id,
@@ -193,9 +192,12 @@ pub async fn nominate(
     if nominated {
         return Err(AppError::bad_request(ALREADY_NOMINATED));
     }
+    // `clock_timestamp()` under the club lock, not `now()` (the transaction start): the leader's
+    // tie-break order `(created_at, id)` is then the order in which the club took the
+    // nominations, the same as their ids, whichever transaction began first.
     sqlx::query!(
-        "INSERT INTO next_up_nominations (club_id, vote_id, work_id, nominated_by)
-         VALUES ($1, $2, $3, $4)",
+        "INSERT INTO next_up_nominations (club_id, vote_id, work_id, nominated_by, created_at)
+         VALUES ($1, $2, $3, $4, clock_timestamp())",
         club_id,
         vote_id,
         work_id,

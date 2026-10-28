@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO next_up_nominations (club_id, vote_id, work_id, nominated_by, created_at)\n         VALUES ($1, $2, $3, $4, clock_timestamp())",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dcb80f79c54ab82719f04d4b90a195d0db676c032f5f847eb21a5a474d74463c"
+}

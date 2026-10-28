@@ -15,7 +15,9 @@
 //! UPDATE`) and re-reads the caller's role under it, then the open vote row `FOR UPDATE`, in
 //! that order (a club delete holds the club row, and its cascade then locks the vote rows). So
 //! two first nominations create one vote, the limit of 6, the current-pick check and the
-//! duplicate check cannot race, and a concurrent auto-close applies once.
+//! duplicate check cannot race, and a concurrent auto-close applies once. Between the two, the
+//! users the write references (`picks::lock_users`), and before the club row, the nominated work
+//! (`picks::lock_work`): the order of a work merge (see `picks` on work merges).
 
 pub mod ballot;
 pub mod close;
@@ -30,7 +32,7 @@ use utoipa_axum::routes;
 use crate::AppState;
 use crate::clubs::extract::role_in;
 use crate::error::{ApiResult, AppError, msg};
-use crate::picks::lock_club_writes;
+use crate::picks::{lock_club_writes, lock_users};
 
 /// At most this many nominations per vote.
 pub const NOMINATION_LIMIT: i64 = 6;
@@ -84,11 +86,13 @@ pub async fn lock_open_vote(
 }
 
 /// Locks the club row ([`lock_club_writes`]) and checks that the caller is still a member: 404
-/// `No such club` when the club is gone or the caller was removed meanwhile.
+/// `No such club` when the club is gone or the caller was removed meanwhile. Then the caller's
+/// user row ([`lock_users`]), before the vote row.
 pub async fn lock_as_member(conn: &mut PgConnection, club_id: i64, user_id: i64) -> ApiResult<()> {
     if !lock_club_writes(conn, club_id).await? || role_in(conn, user_id, club_id).await?.is_none() {
         return Err(AppError::not_found(msg::NO_SUCH_CLUB));
     }
+    lock_users(conn, &[user_id]).await?;
     Ok(())
 }
 
@@ -118,6 +122,8 @@ pub struct Tally {
 }
 
 /// The vote's nominations in creation order (`created_at, id`) with their current-member votes.
+/// Nominate stamps `created_at` with `clock_timestamp()` under the club lock, so this is the
+/// order in which the club took them; imported nominations keep their legacy dates.
 pub async fn tallies(conn: &mut PgConnection, vote_id: i64) -> sqlx::Result<Vec<Tally>> {
     let rows = sqlx::query!(
         r#"SELECT n.id, n.work_id, n.nominated_by,

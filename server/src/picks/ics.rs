@@ -78,14 +78,21 @@ pub fn build_meeting_ics(meeting: &Meeting<'_>, now: OffsetDateTime) -> String {
     text
 }
 
-/// TEXT escaping, in this order: `\`, `;`, `,`, CRLF, LF. A lone CR and colons stay (parity).
+/// TEXT escaping, in this order: `\`, `;`, `,`, CRLF, LF, then a lone CR (also `\n`), as in the
+/// legacy builder except for the lone CR, which it left raw. RFC 5545 TEXT (§3.3.11) allows no
+/// control character but HTAB, and a parser that breaks lines at a bare CR would read the rest of
+/// an admin's note or a title as a property of its own. The other control characters are
+/// dropped for the same reason. Colons stay.
 fn escape(value: &str) -> String {
     value
         .replace('\\', "\\\\")
         .replace(';', "\\;")
         .replace(',', "\\,")
         .replace("\r\n", "\\n")
-        .replace('\n', "\\n")
+        .replace(['\n', '\r'], "\\n")
+        .chars()
+        .filter(|c| *c == '\t' || !c.is_ascii_control())
+        .collect()
 }
 
 /// UTC `YYYYMMDDTHHMMSSZ`.
@@ -253,8 +260,8 @@ mod tests {
         );
     }
 
-    /// Escape order (backslash first), CRLF and LF become `\n`, a lone CR stays, and a long line
-    /// folds into 74-byte continuations (Python output).
+    /// Escape order (backslash first), CRLF and LF become `\n`, and a long line folds into 74-byte
+    /// continuations (Python output, except for the lone CR, which also becomes `\n` here).
     #[test]
     fn escapes_and_folds_like_the_legacy_builder() {
         let note = "x".repeat(200);
@@ -272,18 +279,46 @@ mod tests {
             "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Lese\\, Kreis\x5c; \\\\ Nord//Bookclub//EN\r\n\
              CALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nBEGIN:VEVENT\r\nUID:pick-9@bookclub\r\n\
              DTSTAMP:20260301T080509Z\r\nDTSTART:20260329T013000Z\r\nDTEND:20260329T030000Z\r\n\
-             SUMMARY:Lese\\, Kreis\x5c; \\\\ Nord: Line\\nbreak\\nand\rcr\r\n\
-             DESCRIPTION:Line\\nbreak\\nand\rcr — A\\, B\\n{}\r\n {}\r\n {}\r\n \
-             {}\\nhttps://openlibrary.org/works/OL9W\\nhttps://x.exampl\r\n e\r\n\
+             SUMMARY:Lese\\, Kreis\x5c; \\\\ Nord: Line\\nbreak\\nand\\ncr\r\n\
+             DESCRIPTION:Line\\nbreak\\nand\\ncr — A\\, B\\n{}\r\n {}\r\n {}\r\n \
+             {}\\nhttps://openlibrary.org/works/OL9W\\nhttps://x.examp\r\n le\r\n\
              URL:https://x.example\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
-            "x".repeat(32),
+            "x".repeat(31),
             "x".repeat(74),
             "x".repeat(74),
-            "x".repeat(20)
+            "x".repeat(21)
         );
         assert_eq!(
             build_meeting_ics(&meeting, datetime!(2026-03-01 08:05:09 UTC)),
             golden
+        );
+    }
+
+    /// No raw control character reaches the file: a lone CR is a line break (`\n`) like CRLF and
+    /// LF, HTAB stays, and the other control characters are dropped. An admin's note cannot
+    /// smuggle in a property line for a parser that breaks lines at a bare CR.
+    #[test]
+    fn no_control_character_but_htab_survives() {
+        assert_eq!(escape("a\rb\tc\x0bd\x00e\x7ff\x1b"), "a\\nb\tcdef");
+        let meeting = Meeting {
+            pick_id: 1,
+            club_name: "Club",
+            title: "Circe",
+            authors: "",
+            note: "x\rURL:https://evil.example",
+            starts_at: datetime!(2026-03-29 01:30 UTC),
+            book_url: "https://b.example/book/1",
+            club_url: None,
+        };
+        let text = build_meeting_ics(&meeting, datetime!(2026-03-01 08:05:09 UTC));
+        assert!(
+            text.contains("DESCRIPTION:Circe\\nx\\nURL:https://evil.example\\nhttps://b.example")
+        );
+        let bare_cr = text.replace("\r\n", "");
+        assert!(!bare_cr.contains('\r'), "{text:?}");
+        assert!(
+            !text.lines().any(|line| line.starts_with("URL:")),
+            "{text:?}"
         );
     }
 

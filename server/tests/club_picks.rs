@@ -5,6 +5,7 @@ mod common;
 
 use std::time::Duration;
 
+use bookclub_server::catalog::merge_works;
 use common::*;
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -824,6 +825,75 @@ async fn an_admin_demoted_while_waiting_sets_nothing(db: PgPool) {
         .assert_detail(403, "Only club admins can do that");
     assert_eq!(f.app.scalar_i64("SELECT count(*) FROM club_picks").await, 0);
     assert!(events(&f.app, &f.club).await.is_empty());
+}
+
+/// A pick set while its work is being merged waits for the merge and stores the winner
+/// (docs/phase1/notes/cat.md "For SHELF, POSTS and CLUB"), instead of starting a pick on the
+/// merged-away loser.
+#[sqlx::test]
+async fn a_pick_set_during_a_merge_stores_the_winner(db: PgPool) {
+    let f = Fixture::new(db).await;
+    let mut merge = f.app.db.begin().await.unwrap();
+    merge_works(&mut merge, f.circe.id, f.achilles.id)
+        .await
+        .unwrap();
+    let put = {
+        let (client, path, work) = (f.ada.clone(), f.pick(""), f.circe.id);
+        tokio::spawn(async move { client.put(&path, json!({"work_id": work})).await })
+    };
+    wait_for_waiters(&f.app, 1).await;
+    merge.commit().await.unwrap();
+    let res = put.await.unwrap();
+    res.assert_status(200);
+    assert_eq!(res.json()["book"]["id"], f.achilles.id);
+    let stored: Vec<i64> = sqlx::query_scalar("SELECT work_id FROM club_picks")
+        .fetch_all(&f.app.db)
+        .await
+        .unwrap();
+    assert_eq!(stored, [f.achilles.id]);
+    let works: Vec<Option<i64>> = events(&f.app, &f.club)
+        .await
+        .into_iter()
+        .map(|e| e.2)
+        .collect();
+    assert_eq!(works, [Some(f.achilles.id)]);
+}
+
+/// Setting a pick does not deadlock with a merge of the current pick's work. The merge locks
+/// the users who shelved the loser (`FOR UPDATE`) before it re-points the club's picks; the pick
+/// write locks the admin before it ends the current pick, instead of reaching her row only
+/// through the foreign-key check of the new pick while it holds the old one.
+#[sqlx::test]
+async fn a_pick_set_during_a_merge_does_not_deadlock(db: PgPool) {
+    let f = Fixture::new(db).await;
+    let wolf = f.app.ol_work("OL3W", "The Wolf Den", "Elodie Harper").await;
+    f.ada
+        .put(&f.pick(""), json!({"work_id": f.circe.id}))
+        .await
+        .assert_status(200);
+    shelve(&f.app, &f.ada, &f.circe, "currently_reading").await;
+    // The merge's user lock, taken before the pick write gets there.
+    let mut merge = f.app.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+        .bind(f.ada.id())
+        .execute(&mut *merge)
+        .await
+        .unwrap();
+    let put = {
+        let (client, path, work) = (f.ada.clone(), f.pick(""), wolf.id);
+        tokio::spawn(async move { client.put(&path, json!({"work_id": work})).await })
+    };
+    wait_for_waiters(&f.app, 1).await;
+    merge_works(&mut merge, f.circe.id, f.achilles.id)
+        .await
+        .unwrap();
+    merge.commit().await.unwrap();
+    let res = put.await.unwrap();
+    res.assert_status(200);
+    assert_eq!(res.json()["book"]["title"], "The Wolf Den");
+    let history = f.ada.get(&f.pick("/history")).await.json();
+    assert_eq!(history["items"][0]["book"]["id"], f.achilles.id);
+    assert_eq!(current_picks(&f.app, &f.club).await, 1);
 }
 
 /// parity: test_notes_and_meeting.py::test_meeting_ics_download
