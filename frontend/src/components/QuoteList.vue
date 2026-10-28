@@ -27,12 +27,20 @@ const props = defineProps<{
 
 const emit = defineEmits<{ changed: [count: number] }>();
 
+/**
+ * A reader's list asks for the server's maximum: `GET /api/quotes` has no
+ * cursor, and /quotes is where they edit and delete them all.
+ */
+const READER_LIMIT = 500;
+
 const { t } = useI18n();
 const locale = useLocale();
 const session = useSession();
 const toast = useToast();
 
 const items = ref<QuoteOut[]>([]);
+/** The answer filled the limit: older quotes exist that this list cannot show. */
+const capped = ref(false);
 const loaded = ref(false);
 const error = ref("");
 const busy = ref(false);
@@ -60,8 +68,11 @@ function visibilityOf(onlyMe: boolean): Visibility {
 }
 
 async function load() {
+  const limit = props.username ? READER_LIMIT : undefined;
   try {
-    items.value = (await api.quotes({ work: props.workId, username: props.username })).items;
+    const page = await api.quotes({ work: props.workId, username: props.username, ...(limit ? { limit } : {}) });
+    items.value = page.items;
+    capped.value = limit !== undefined && page.items.length >= limit;
     error.value = "";
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : t("quotes.loadFailed");
@@ -236,6 +247,7 @@ watch(
         </template>
       </li>
     </ol>
+    <p v-if="capped && !error" class="fine subtle quotes-capped">{{ t("quotes.capped", { n: READER_LIMIT }) }}</p>
   </section>
 </template>
 

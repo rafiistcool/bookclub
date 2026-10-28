@@ -90,9 +90,28 @@ describe("account settings", () => {
     await current!.setValue("old pw");
     await next!.setValue("a new password");
     api.changePassword.mockResolvedValue(undefined);
+    api.me.mockResolvedValue(user());
     await passwordForm.trigger("submit");
     await flushPromises();
     expect(api.changePassword).toHaveBeenCalledWith("old pw", "a new password");
+  });
+
+  it("drops the pending address a password change voided, so there is nothing to send again", async () => {
+    const wrapper = mountWith(AccountSettings, user({ email: "old@example.com", email_verified: true, pending_email: "new@example.com" }));
+    await flushPromises();
+    expect(wrapper.find(".pending-line").exists()).toBe(true);
+    const passwordForm = wrapper.findAll("form.account-form").at(-1)!;
+    const [current, next] = passwordForm.findAll("input[type=password]");
+    await current!.setValue("old pw");
+    await next!.setValue("a new password");
+    api.changePassword.mockResolvedValue(undefined);
+    api.me.mockResolvedValue(user({ email: "old@example.com", email_verified: true, pending_email: null }));
+    await passwordForm.trigger("submit");
+    await flushPromises();
+    expect(api.me).toHaveBeenCalled();
+    expect(useSession().user?.pending_email).toBeNull();
+    expect(wrapper.find(".pending-line").exists()).toBe(false);
+    expect(wrapper.findAll(".account-panel .text-btn").some((b) => b.text() === "Send it again")).toBe(false);
   });
 
   it("signing out this device ends the session here", async () => {

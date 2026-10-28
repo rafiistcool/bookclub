@@ -29,6 +29,7 @@ vi.mock("../api/client", () => {
 
 import { ApiError } from "../api/client";
 import { i18n } from "../i18n";
+import { useLocale } from "../stores/locale";
 import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
 import ForgotPasswordPage from "./ForgotPasswordPage.vue";
@@ -65,7 +66,10 @@ describe("auth pages", () => {
     vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   });
 
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
 
   it("signs up with the invite code from the link and opens the club it joined", async () => {
     const club = { slug: "readers-ab12", name: "Readers", role: "member", timezone: "UTC", member_count: 4 };
@@ -83,6 +87,27 @@ describe("auth pages", () => {
       expect.objectContaining({ username: "neu", email: "neu@example.com", invite_code: "7K3M9QX2HD" }),
     );
     expect(router.currentRoute.value.path).toBe("/c/readers-ab12");
+  });
+
+  it("sends the browser's zone by its current name, and the UI language", async () => {
+    // Chromium still reports Kolkata by its old ICU name, which the server refuses.
+    const original = Intl.DateTimeFormat.prototype.resolvedOptions;
+    vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockImplementation(function (
+      this: Intl.DateTimeFormat,
+    ) {
+      return { ...original.call(this), timeZone: "Asia/Calcutta" };
+    });
+    api.register.mockResolvedValue(user({ clubs: [] }));
+    const { wrapper } = await mountAt(SignupPage, "/signup", "open");
+    useLocale().locale = "de";
+    await wrapper.get("input[name=username]").setValue("neu");
+    await wrapper.get("input[name=email]").setValue("neu@example.com");
+    await wrapper.get("input[name=password]").setValue("long enough");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(api.register).toHaveBeenCalledWith(
+      expect.objectContaining({ username: "neu", timezone: "Asia/Kolkata", locale: "de" }),
+    );
   });
 
   it("makes the invite optional when sign-up is open", async () => {

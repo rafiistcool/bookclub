@@ -17,7 +17,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { to: "/shelf", labelKey: "nav.shelf", icon: "shelf", bottomBar: true, also: ["/diary", "/quotes", "/stats"] },
   // `/club` leads to the last-used club, the only club, or the club list (router.ts).
   { to: "/club", labelKey: "nav.club", icon: "club", bottomBar: true, also: ["/c", "/clubs"] },
-  { to: "/settings", labelKey: "nav.settings", shortLabelKey: "nav.settingsShort", icon: "settings", bottomBar: true },
+  { to: "/settings", labelKey: "nav.settings", shortLabelKey: "nav.settingsShort", icon: "settings", bottomBar: true, also: ["/admin"] },
 ];
 
 function under(path: string, prefix: string): boolean {

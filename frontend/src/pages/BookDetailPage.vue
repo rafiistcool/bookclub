@@ -13,6 +13,7 @@ import ReportCoverSheet from "../components/ReportCoverSheet.vue";
 import EditionPicker from "../components/EditionPicker.vue";
 import CoverPhotoButton from "../components/CoverPhotoButton.vue";
 import MergeRequestSheet from "../components/MergeRequestSheet.vue";
+import EditRequestSheet from "../components/EditRequestSheet.vue";
 import { clubsFor } from "../clubActions";
 import {
   bookPath,
@@ -46,6 +47,7 @@ const refreshing = ref(false);
 const expanded = ref(false);
 const reportingCover = ref(false);
 const requestingMerge = ref(false);
+const requestingEdit = ref(false);
 
 const takeDraft = ref("");
 const reasonDraft = ref("");
@@ -227,9 +229,12 @@ function rate(value: number) {
   });
 }
 
-function setRatingVisibility(event: Event) {
-  const visibility: Visibility = (event.target as HTMLInputElement).checked ? "only_me" : "audience";
-  void patch({ rating_visibility: visibility }, t("book.ratingVisibilitySaved"));
+async function setRatingVisibility(event: Event) {
+  const box = event.target as HTMLInputElement;
+  const visibility: Visibility = box.checked ? "only_me" : "audience";
+  await patch({ rating_visibility: visibility }, t("book.ratingVisibilitySaved"));
+  // The box shows what the server stored: after a failed save the click is undone.
+  box.checked = book.value?.rating_visibility === "only_me";
 }
 
 async function remove() {
@@ -384,6 +389,7 @@ watch(param, load);
           <div class="detail-intro">
             <p v-if="book.club_picks.length" class="kicker">{{ t("book.currentPickIn", { clubs: pickNames }) }}</p>
             <h1 class="display">{{ book.title }}</h1>
+            <p v-if="book.subtitle" class="detail-subtitle">{{ book.subtitle }}</p>
             <p v-if="book.authors" class="detail-authors">{{ book.authors }}</p>
             <p v-if="book.rating_count" class="club-rating">
               <span class="stars" aria-hidden="true">★</span>
@@ -416,7 +422,9 @@ watch(param, load);
                 {{ refreshing ? t("book.refreshing") : t("book.refreshDetails") }}
               </button>
             </p>
-            <p class="fine">
+            <p class="fine catalog-requests">
+              <button class="text-btn" type="button" @click="requestingEdit = true">{{ t("editRequest.openBook") }}</button>
+              <span class="subtle" aria-hidden="true"> · </span>
               <button class="text-btn" type="button" @click="requestingMerge = true">{{ t("merge.open") }}</button>
             </p>
           </div>
@@ -649,6 +657,7 @@ watch(param, load);
       :title="book.title"
       @close="requestingMerge = false"
     />
+    <EditRequestSheet v-if="requestingEdit && book" :book="book" @close="requestingEdit = false" />
     <ReportCoverSheet
       v-if="reportingCover && book?.cover_public_id"
       :public-id="book.cover_public_id"
@@ -709,6 +718,12 @@ watch(param, load);
 
 .detail-intro .display {
   font-size: var(--text-2xl);
+}
+
+.detail-subtitle {
+  margin-top: calc(-1 * var(--space-1));
+  font-family: var(--serif);
+  font-size: var(--text-lg);
 }
 
 .detail-authors {

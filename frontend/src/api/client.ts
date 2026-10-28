@@ -18,7 +18,10 @@ import type {
   DiaryFeedOut,
   DiaryOut,
   EditRequestCreated,
+  EditRequestList,
+  EditRequestOut,
   EditionList,
+  EditionOut,
   FavoritesOut,
   ImportJobOut,
   InviteIn,
@@ -31,6 +34,7 @@ import type {
   MilestoneIn,
   MilestoneListOut,
   MilestoneOut,
+  NewEditionIn,
   NotificationsIn,
   NotificationsOut,
   OverlapOut,
@@ -47,6 +51,8 @@ import type {
   RegisterIn,
   ReportCreated,
   ReportIn,
+  ReportList,
+  ReportOut,
   SearchHistoryOut,
   SearchPage,
   ServiceConfig,
@@ -55,6 +61,7 @@ import type {
   ShelfItemOut,
   ShelfListOut,
   ShelfPatchIn,
+  SignupInviteIn,
   SpineColorsOut,
   UserOut,
   VoteApplyOut,
@@ -152,6 +159,13 @@ function upload(file: File): FormData {
 }
 
 const enc = encodeURIComponent;
+
+/**
+ * The fields of an edit request. The schema leaves `EditRequestIn.fields` an
+ * untyped object; the keys and value types are those `apply_admin_fields`
+ * accepts (text, a whole number, a list of subjects, or null to clear).
+ */
+export type EditFields = Record<string, string | number | string[] | null>;
 
 /** `{work_id}` path segment: a numeric work id, or a legacy key such as `OL1W` or `BCdeadbeef01`. */
 function workPath(workId: number | string): string {
@@ -380,6 +394,41 @@ export const api = {
     ),
   /** Every edition of a work, oldest first. */
   editions: (workId: number) => request<EditionList>(`${workPath(workId)}/editions`),
+  /** A missing edition (201). A known ISBN is 409 with `work_id` and `edition_id` in the body. */
+  addEdition: (workId: number, body: NewEditionIn) =>
+    request<EditionOut>(`${workPath(workId)}/editions`, json("POST", body)),
+  /** A correction of a book's facts, for the admin queue. Only the changed fields; null clears one. */
+  requestWorkEdit: (workId: number, fields: EditFields, note: string) =>
+    request<EditRequestCreated>(
+      `${workPath(workId)}/edit-requests`,
+      json("POST", { fields, ...(note ? { note } : {}) }),
+    ),
+  /** The same for one edition. */
+  requestEditionEdit: (editionId: number, fields: EditFields, note: string) =>
+    request<EditRequestCreated>(
+      `/api/books/editions/${editionId}/edit-requests`,
+      json("POST", { fields, ...(note ? { note } : {}) }),
+    ),
+
+  // Instance admins only; everyone else gets 404 `Not found`.
+  /** The open catalog requests (edits, cover photos, merges), oldest first. */
+  adminEditRequests: () => request<EditRequestList>("/api/admin/edit-requests"),
+  approveEditRequest: (id: number) =>
+    request<EditRequestOut>(`/api/admin/edit-requests/${id}/approve`, { method: "POST" }),
+  rejectEditRequest: (id: number, note: string) =>
+    request<EditRequestOut>(
+      `/api/admin/edit-requests/${id}/reject`,
+      json("POST", note ? { note } : {}),
+    ),
+  /** The open cover reports, oldest first. */
+  adminReports: () => request<ReportList>("/api/admin/reports"),
+  /** `remove` takes the picture down everywhere; `dismiss` keeps it. */
+  resolveReport: (id: number, action: "remove" | "dismiss") =>
+    request<ReportOut>(`/api/admin/reports/${id}/resolve`, json("POST", { action })),
+  /** Club-less sign-up invites, newest first. */
+  adminInvites: () => request<InviteList>("/api/admin/invites"),
+  createSignupInvite: (body: SignupInviteIn) =>
+    request<InviteOut>("/api/admin/invites", json("POST", body)),
 
   /** A reader's year in books: the caller's without `username`; the newest year without `year`. */
   personalStats: (params: { username?: string; year?: number } = {}) => {

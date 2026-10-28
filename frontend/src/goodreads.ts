@@ -18,14 +18,17 @@ export function importPercent(job: GoodreadsImport): number {
   return Math.min(100, Math.round((job.processed / job.total) * 100));
 }
 
-/** The skip in the reader's language: translated by code, with the server's English as a fallback. */
+/**
+ * The skip in the reader's language: translated by code, with the server's
+ * English as a fallback. A row without a title comes as `"Untitled"`
+ * (`no_title`), which is translated too; `stopped_after_400` names no row.
+ */
 export function skipLine(skip: GoodreadsSkip): string {
   const key = `settings.importSkip.${skip.code}`;
-  const reason = t(key);
-  return t("settings.importSkipLine", {
-    title: skip.title || t("settings.untitled"),
-    reason: reason === key ? skip.reason : reason,
-  });
+  const translated = t(key);
+  const reason = translated === key ? skip.reason : translated;
+  const title = skip.code === "no_title" ? t("settings.untitled") : skip.title;
+  return title ? t("settings.importSkipLine", { title, reason }) : reason;
 }
 
 /** What a finished import says in its toast. */

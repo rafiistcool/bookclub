@@ -63,7 +63,8 @@ describe("QuoteList", () => {
   it("lists a reader's quotes with their books, and edits and deletes only mine", async () => {
     api.quotes.mockResolvedValue({ items: [quote(), quote({ id: 3, mine: false, author: "grace", body: "Other" })] });
     const wrapper = await mountList({ username: "ada", showBook: true });
-    expect(api.quotes).toHaveBeenCalledWith({ work: undefined, username: "ada" });
+    expect(api.quotes).toHaveBeenCalledWith({ work: undefined, username: "ada", limit: 500 });
+    expect(wrapper.find(".quotes-capped").exists()).toBe(false);
     expect(wrapper.find(".quote-compose").exists()).toBe(false);
     expect(wrapper.findAll(".quote-book")[0]!.attributes("href")).toBe("/book/9");
     expect(wrapper.findAll(".quote")[1]!.find(".quote-actions").exists()).toBe(false);
@@ -84,5 +85,20 @@ describe("QuoteList", () => {
     await flushPromises();
     expect(api.deleteQuote).toHaveBeenCalledWith(1);
     expect(wrapper.findAll(".quote")).toHaveLength(1);
+  });
+
+  it("asks for the server's maximum on a reader's list and says when it was cut", async () => {
+    const many = Array.from({ length: 500 }, (_, index) => quote({ id: 1000 - index }));
+    api.quotes.mockResolvedValue({ items: many });
+    const wrapper = await mountList({ username: "ada", showBook: true });
+    expect(wrapper.findAll(".quote")).toHaveLength(500);
+    expect(wrapper.get(".quotes-capped").text()).toBe(
+      "Showing the newest 500 quotes. Older ones are kept, but this list cannot show them yet.",
+    );
+
+    // A book's quotes keep the server's default.
+    api.quotes.mockResolvedValue({ items: [] });
+    await mountList({ workId: 9 });
+    expect(api.quotes).toHaveBeenLastCalledWith({ work: 9, username: undefined });
   });
 });

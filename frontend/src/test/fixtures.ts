@@ -1,4 +1,5 @@
 // Complete API objects for tests, so each test only spells out what it is about.
+import type { EditionOut } from "../api/generated";
 import type {
   ActivityItem,
   BookDetail,
@@ -32,6 +33,29 @@ export function bookOut(overrides: Partial<BookOut> = {}): BookOut {
     spine_color: null,
     source: "openlibrary",
     custom: false,
+    ...overrides,
+  };
+}
+
+export function edition(overrides: Partial<EditionOut> = {}): EditionOut {
+  return {
+    id: 1,
+    work_id: 9,
+    isbn13: null,
+    isbn10: null,
+    title: null,
+    subtitle: null,
+    publisher: "",
+    language: null,
+    format: null,
+    pages: null,
+    publication_year: null,
+    planned_publication_date: null,
+    contributors: [],
+    cover_url: null,
+    cover_thumb_url: null,
+    cover_public_id: null,
+    source: "dnb",
     ...overrides,
   };
 }

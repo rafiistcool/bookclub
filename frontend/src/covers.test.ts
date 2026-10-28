@@ -24,6 +24,11 @@ describe("cover sources", () => {
       "http://books.google.com/books/content?id=x",
       "//attacker.example/pixel.gif",
       "/\\attacker.example/pixel.gif",
+      // The URL parser drops tabs and newlines, so each of these reads as //attacker.example.
+      "/\t/attacker.example/x.gif",
+      "/\n/attacker.example/x.gif",
+      "/\r/attacker.example/x.gif",
+      "/media/\u0000x",
       "javascript:alert(1)",
       "media/abc/l",
       "",

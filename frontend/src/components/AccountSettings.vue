@@ -64,6 +64,14 @@ const nextPassword = ref("");
 const passwordBusy = ref(false);
 const passwordError = ref("");
 
+async function refreshUser() {
+  try {
+    session.user = await api.me();
+  } catch {
+    /* The next load catches up. */
+  }
+}
+
 async function savePassword() {
   passwordError.value = "";
   passwordBusy.value = true;
@@ -73,6 +81,9 @@ async function savePassword() {
     nextPassword.value = "";
     toast.show(t("account.passwordSaved"));
     void loadSessions();
+    // The change voids a verified account's pending address: drop it here too,
+    // or "Send it again" would say "Link sent" for a link that never goes out.
+    void refreshUser();
   } catch (err) {
     passwordError.value = message(err, t("account.passwordFailed"));
   } finally {

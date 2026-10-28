@@ -1,4 +1,4 @@
-import { t } from "./index";
+import { t, te } from "./index";
 
 /**
  * The server answers errors with an English `detail`. Each key here is a
@@ -34,6 +34,7 @@ const API_ERROR_KEYS: Record<string, string> = {
   "Use a JPEG, PNG, WebP, or GIF": "errors.usePicture",
   "That file is not a picture": "errors.notAPicture",
   "This picture was removed": "errors.pictureRemoved",
+  "This report was already resolved": "errors.reportResolved",
 
   // Clubs
   "No such club": "errors.noSuchClub",
@@ -83,6 +84,7 @@ const API_ERROR_KEYS: Record<string, string> = {
   "That edition belongs to another book": "errors.editionOfAnotherBook",
   "That ISBN is already in the catalog": "errors.isbnInCatalog",
   "A book cannot be merged into itself": "errors.mergeIntoItself",
+  "This request was already decided": "errors.requestDecided",
   "That is not a valid ISBN-10 or ISBN-13": "errors.invalidIsbn",
   "Could not look that ISBN up right now. Try again.": "errors.isbnLookupFailed",
   "This book was added by a reader, not Open Library.": "errors.addedByReader",
@@ -121,20 +123,30 @@ const API_ERROR_KEYS: Record<string, string> = {
   "The request took too long": "errors.requestTimeout",
 };
 
+/** The edit-request field a template names, by the form's label; an unknown key as it is. */
+function fieldLabel(key: string): string {
+  const label = `editRequest.fields.${key}`;
+  return te(label) ? t(label) : key;
+}
+
 /**
- * Details the server builds from a template. The first capture group, if any,
- * reaches the translation as `{n}`.
+ * Details the server builds from a template, with what the translation gets
+ * from the match.
  */
-const API_ERROR_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
-  [/^The library is busy\. Try again in (\d+) seconds\.$/, "errors.libraryBusyIn"],
+const API_ERROR_PATTERNS: ReadonlyArray<
+  readonly [RegExp, string, (match: RegExpExecArray) => Record<string, string>]
+> = [
+  [/^The library is busy\. Try again in (\d+) seconds\.$/, "errors.libraryBusyIn", (m) => ({ n: m[1]! })],
+  // An edit request's value that `apply_admin_fields` refuses.
+  [/^Invalid value for ([a-z_]+)$/, "errors.invalidValueFor", (m) => ({ field: fieldLabel(m[1]!) })],
 ];
 
 export function translateApiError(detail: string): string {
   const key = API_ERROR_KEYS[detail];
   if (key) return t(key);
-  for (const [pattern, patternKey] of API_ERROR_PATTERNS) {
+  for (const [pattern, patternKey, params] of API_ERROR_PATTERNS) {
     const match = pattern.exec(detail);
-    if (match) return t(patternKey, { n: match[1] ?? "" });
+    if (match) return t(patternKey, params(match));
   }
   return detail;
 }

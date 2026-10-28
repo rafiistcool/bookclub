@@ -99,6 +99,8 @@ const router = createRouter({
           component: () => import("./pages/BookDetailPage.vue"),
         },
         { path: "settings", component: () => import("./pages/SettingsPage.vue") },
+        // Instance admins only (`UserOut.is_admin`); linked from Settings.
+        { path: "admin", component: () => import("./pages/AdminPage.vue"), meta: { admin: true } },
 
         // Paths from the pre-redesign IA, kept so bookmarks and the PWA's
         // stored start URL keep resolving.
@@ -130,6 +132,9 @@ router.beforeEach(async (to) => {
     return loginRoute(to.fullPath);
   }
   if (to.meta.guest && session.user) {
+    return { path: "/" };
+  }
+  if (to.meta.admin && !session.user?.is_admin) {
     return { path: "/" };
   }
   return true;

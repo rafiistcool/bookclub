@@ -235,6 +235,14 @@ onMounted(() => {
       <a class="btn btn-ghost backup-btn" href="/api/auth/me/export" download>{{ t("settings.exportData") }}</a>
     </section>
 
+    <section v-if="session.user?.is_admin" class="section" aria-labelledby="instance-admin">
+      <div class="section-head">
+        <h2 id="instance-admin">{{ t("admin.title") }}</h2>
+      </div>
+      <p class="fine muted">{{ t("admin.settingsBlurb") }}</p>
+      <RouterLink class="btn btn-ghost" to="/admin">{{ t("admin.open") }}</RouterLink>
+    </section>
+
     <DeleteAccount @deleted="toLogin(t('account.deleted'))" />
 
     <hr class="divider" />

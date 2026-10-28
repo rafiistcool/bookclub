@@ -671,7 +671,10 @@
     "noEntry": "That entry does not exist (any more)",
     "entryNotOnBook": "That entry belongs to another book",
     "editOwnEntries": "You can only edit your own entries",
-    "deleteOwnEntries": "You can only delete your own entries"
+    "deleteOwnEntries": "You can only delete your own entries",
+    "requestDecided": "Someone already decided this request",
+    "reportResolved": "Someone already closed this report",
+    "invalidValueFor": "That value of “{field}” cannot be used"
   },
   "physicalShelf": {
     "title": "Your real bookshelf",
@@ -967,7 +970,8 @@
     "page": "Page",
     "pageN": "p. {n}",
     "save": "Keep quote",
-    "onlyMeHint": "Only you can see this quote"
+    "onlyMeHint": "Only you can see this quote",
+    "capped": "Showing the newest {n} quotes. Older ones are kept, but this list cannot show them yet."
   },
   "diaryPage": {
     "title": "Diary",
@@ -1030,7 +1034,20 @@
       "ebook": "E-book",
       "audiobook": "Audiobook",
       "other": "Other format"
-    }
+    },
+    "notListed": "My edition is not listed",
+    "addBlurb": "Add the edition you have. What you leave empty stays empty. An ISBN is looked up in the catalog first.",
+    "isbnHint": "On the back cover or the copyright page. Optional.",
+    "noFormat": "Not given",
+    "noLanguage": "Not given",
+    "ownTitle": "Title of this edition",
+    "ownTitleHint": "Only if it differs from the book's title, as for a translation.",
+    "chooseExisting": "Choose that edition",
+    "add": "Add edition",
+    "adding": "Adding…",
+    "added": "Edition added",
+    "addFailed": "Could not add the edition",
+    "addSomething": "Fill in at least one field."
   },
   "merge": {
     "open": "Same book as another one?",
@@ -1134,5 +1151,92 @@
     "deleteFailed": "Could not delete the account",
     "deleted": "Your account was deleted",
     "deviceOn": "{browser} on {os}"
+  },
+  "editRequest": {
+    "open": "Suggest a correction",
+    "openBook": "Wrong details?",
+    "title": "Correct this book's details",
+    "editionTitle": "Correct this edition's details",
+    "blurb": "Change what is wrong about “{title}”. An admin checks it before everyone sees it.",
+    "fields": {
+      "title": "Title",
+      "subtitle": "Subtitle",
+      "authors": "Authors",
+      "year": "First published",
+      "pages": "Pages",
+      "description": "Description",
+      "subjects": "Subjects",
+      "publisher": "Publisher",
+      "format": "Format",
+      "language": "Language",
+      "publication_year": "Year published",
+      "planned_publication_date": "Publication date"
+    },
+    "subjectsHint": "One per line.",
+    "note": "Anything the admin should know?",
+    "send": "Send to an admin",
+    "sent": "Thanks. An admin will look at it.",
+    "failed": "Could not send it",
+    "nothingChanged": "Change at least one field first.",
+    "invalid": "Check these fields: {fields}"
+  },
+  "admin": {
+    "title": "Admin",
+    "lede": "What readers asked to change or reported, and invites for the closed beta.",
+    "sections": "Admin sections",
+    "tabs": {
+      "requests": "Requests",
+      "reports": "Reports",
+      "invites": "Invites"
+    },
+    "settingsBlurb": "You run this instance: corrections, cover photos, merges and reported covers wait for you.",
+    "open": "Open the admin page",
+    "loadFailed": "Could not load the queue",
+    "decideFailed": "Could not save the decision",
+    "someone": "someone",
+    "byOn": "{name} · {when}",
+    "requests": "Requests",
+    "requestsBlurb": "Corrections of books and editions, cover photos that would replace a cover, and books entered twice. Approving applies it, and no catalog source overwrites it later.",
+    "noRequests": "Nothing waiting.",
+    "kind": {
+      "work_edit": "Book details",
+      "edition_edit": "Edition details",
+      "cover_replace": "New cover photo",
+      "work_merge": "Same book"
+    },
+    "edition": "Edition {id}",
+    "bookGone": "This book is no longer in the catalog.",
+    "proposedCover": "Proposed photo",
+    "coverGone": "The photo was taken down",
+    "cleared": "(clear it)",
+    "mergeInto": "Merge into:",
+    "bookN": "book {id}",
+    "approve": "Approve",
+    "approved": "Approved",
+    "reject": "Reject",
+    "rejected": "Rejected",
+    "rejectNote": "Why not? (the reader does not see this yet)",
+    "reports": "Cover reports",
+    "reportsBlurb": "Covers readers reported. Taking one down removes the picture everywhere, for good; keeping it closes the report.",
+    "noReports": "No open reports.",
+    "alreadyRemoved": "This picture was already taken down.",
+    "takeDown": "Take down",
+    "takeDownConfirm": "Take down for good",
+    "takeDownBlurb": "The picture disappears from every book and edition that shows it, and no refresh brings it back.",
+    "keep": "Keep it",
+    "takenDown": "Picture taken down",
+    "kept": "Report closed, the picture stays",
+    "invites": "Sign-up invites",
+    "invitesBlurb": "While sign-up needs an invite, these let someone create an account without joining a club.",
+    "maxUses": "How many people",
+    "days": "Valid for days",
+    "noLimit": "No limit",
+    "inviteDefaults": "With both empty, the invite is for one person and lasts 30 days.",
+    "newInvite": "New sign-up invite",
+    "freshInvite": "Send this link to the people it is for:",
+    "anyNumber": "Any number of people",
+    "forPeople": "For one person | For {n} people",
+    "noExpiry": "does not expire",
+    "pastInvites": "{n} used or ended invite | {n} used or ended invites"
   }
 }

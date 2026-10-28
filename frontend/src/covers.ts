@@ -15,11 +15,14 @@ export const COVER_RETRY_MS = 1500;
 
 /**
  * Covers come from our own `/media/…` URLs only. Anything that would make the
- * browser ask another host (an absolute URL, `//host`, `/\host`) is dropped.
+ * browser ask another host (an absolute URL, `//host`, `/\host`, or a tab or
+ * newline the URL parser strips, as in `/<tab>/host`) is dropped, as in
+ * `safeNextPath`.
  */
 export function sameOriginPath(url: string | null | undefined): string | null {
   const text = (url || "").trim();
   if (!text.startsWith("/") || text.startsWith("//") || text.includes("\\")) return null;
+  if (/[\u0000-\u001f\u007f]/.test(text)) return null;
   return text;
 }
 

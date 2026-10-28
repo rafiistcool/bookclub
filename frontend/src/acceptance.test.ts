@@ -108,7 +108,7 @@ describe("#48 acceptance", () => {
     await go("/quotes");
     expect(app.get("h1").text()).toBe("Quotes");
     expect(app.text()).toContain("It is a common fault in gods.");
-    expect(server.requests).toContain("GET /api/quotes?username=ada");
+    expect(server.requests).toContain("GET /api/quotes?username=ada&limit=500");
 
     // Solo mode: nothing asked a club endpoint, and the Club tab leads to create-or-join.
     const clubCalls = server.requests.filter((line) => /\/api\/(clubs|activity|invites)/.test(line));

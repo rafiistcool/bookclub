@@ -20,7 +20,11 @@ describe("Goodreads import jobs", () => {
   it("translates each skip by its code and names untitled rows", () => {
     i18n.global.locale.value = "de";
     expect(skipLine({ title: "Circe", code: "no_match", reason: "No match" })).toBe("Circe — Kein Treffer im Katalog");
-    expect(skipLine({ title: "", code: "no_title", reason: "No title" })).toBe("Ohne Titel — Kein Titel");
+    // The server names a row without a title "Untitled".
+    expect(skipLine({ title: "Untitled", code: "no_title", reason: "No title" })).toBe("Ohne Titel — Kein Titel");
+    expect(skipLine({ title: "", code: "stopped_after_400", reason: "Stopped after 400 rows" })).toBe(
+      "Nach 400 Zeilen beendet",
+    );
     i18n.global.locale.value = "en";
     expect(skipLine({ title: "Dune", code: "already_on_shelf", reason: "Already on your shelf" })).toBe(
       "Dune — Already on your shelf",

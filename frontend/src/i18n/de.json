@@ -671,7 +671,10 @@
     "noEntry": "Diesen Eintrag gibt es nicht (mehr)",
     "entryNotOnBook": "Dieser Eintrag gehört zu einem anderen Buch",
     "editOwnEntries": "Du kannst nur deine eigenen Einträge bearbeiten",
-    "deleteOwnEntries": "Du kannst nur deine eigenen Einträge löschen"
+    "deleteOwnEntries": "Du kannst nur deine eigenen Einträge löschen",
+    "requestDecided": "Über diese Anfrage wurde schon entschieden",
+    "reportResolved": "Diese Meldung wurde schon geschlossen",
+    "invalidValueFor": "Dieser Wert für „{field}“ geht nicht"
   },
   "physicalShelf": {
     "title": "Dein Bücherregal",
@@ -967,7 +970,8 @@
     "page": "Seite",
     "pageN": "S. {n}",
     "save": "Zitat behalten",
-    "onlyMeHint": "Nur du siehst dieses Zitat"
+    "onlyMeHint": "Nur du siehst dieses Zitat",
+    "capped": "Hier stehen die neuesten {n} Zitate. Ältere bleiben gespeichert, diese Liste kann sie aber noch nicht zeigen."
   },
   "diaryPage": {
     "title": "Tagebuch",
@@ -1030,7 +1034,20 @@
       "ebook": "E-Book",
       "audiobook": "Hörbuch",
       "other": "Anderes Format"
-    }
+    },
+    "notListed": "Meine Ausgabe fehlt",
+    "addBlurb": "Trag die Ausgabe ein, die du hast. Was du leer lässt, bleibt leer. Eine ISBN wird zuerst im Katalog nachgeschlagen.",
+    "isbnHint": "Auf der Rückseite oder im Impressum. Optional.",
+    "noFormat": "Keine Angabe",
+    "noLanguage": "Keine Angabe",
+    "ownTitle": "Titel dieser Ausgabe",
+    "ownTitleHint": "Nur wenn er vom Titel des Buchs abweicht, etwa bei einer Übersetzung.",
+    "chooseExisting": "Diese Ausgabe wählen",
+    "add": "Ausgabe hinzufügen",
+    "adding": "Wird hinzugefügt…",
+    "added": "Ausgabe hinzugefügt",
+    "addFailed": "Die Ausgabe konnte nicht hinzugefügt werden",
+    "addSomething": "Füll mindestens ein Feld aus."
   },
   "merge": {
     "open": "Dasselbe Buch wie ein anderes?",
@@ -1134,5 +1151,92 @@
     "deleteFailed": "Das Konto konnte nicht gelöscht werden",
     "deleted": "Dein Konto wurde gelöscht",
     "deviceOn": "{browser} unter {os}"
+  },
+  "editRequest": {
+    "open": "Korrektur vorschlagen",
+    "openBook": "Angaben falsch?",
+    "title": "Angaben zum Buch korrigieren",
+    "editionTitle": "Angaben zur Ausgabe korrigieren",
+    "blurb": "Ändere, was an „{title}“ nicht stimmt. Ein Admin prüft es, bevor alle es sehen.",
+    "fields": {
+      "title": "Titel",
+      "subtitle": "Untertitel",
+      "authors": "Autorin / Autor",
+      "year": "Erstveröffentlichung",
+      "pages": "Seiten",
+      "description": "Beschreibung",
+      "subjects": "Themen",
+      "publisher": "Verlag",
+      "format": "Format",
+      "language": "Sprache",
+      "publication_year": "Erscheinungsjahr",
+      "planned_publication_date": "Erscheinungstermin"
+    },
+    "subjectsHint": "Eins pro Zeile.",
+    "note": "Sollte der Admin noch etwas wissen?",
+    "send": "An einen Admin schicken",
+    "sent": "Danke. Ein Admin sieht es sich an.",
+    "failed": "Das konnte nicht gesendet werden",
+    "nothingChanged": "Ändere zuerst mindestens ein Feld.",
+    "invalid": "Prüf diese Felder: {fields}"
+  },
+  "admin": {
+    "title": "Verwaltung",
+    "lede": "Was Leser:innen ändern lassen oder gemeldet haben, und Einladungen für die geschlossene Beta.",
+    "sections": "Bereiche der Verwaltung",
+    "tabs": {
+      "requests": "Anfragen",
+      "reports": "Meldungen",
+      "invites": "Einladungen"
+    },
+    "settingsBlurb": "Du betreibst diese Instanz: Korrekturen, Cover-Fotos, Zusammenführungen und gemeldete Cover warten auf dich.",
+    "open": "Verwaltung öffnen",
+    "loadFailed": "Die Warteschlange konnte nicht geladen werden",
+    "decideFailed": "Die Entscheidung konnte nicht gespeichert werden",
+    "someone": "jemand",
+    "byOn": "{name} · {when}",
+    "requests": "Anfragen",
+    "requestsBlurb": "Korrekturen an Büchern und Ausgaben, Cover-Fotos, die ein Cover ersetzen würden, und doppelt erfasste Bücher. Eine Freigabe übernimmt die Änderung, und keine Katalogquelle überschreibt sie später.",
+    "noRequests": "Nichts offen.",
+    "kind": {
+      "work_edit": "Angaben zum Buch",
+      "edition_edit": "Angaben zur Ausgabe",
+      "cover_replace": "Neues Cover-Foto",
+      "work_merge": "Dasselbe Buch"
+    },
+    "edition": "Ausgabe {id}",
+    "bookGone": "Dieses Buch ist nicht mehr im Katalog.",
+    "proposedCover": "Vorgeschlagenes Foto",
+    "coverGone": "Das Foto wurde entfernt",
+    "cleared": "(leeren)",
+    "mergeInto": "Zusammenführen mit:",
+    "bookN": "Buch {id}",
+    "approve": "Freigeben",
+    "approved": "Freigegeben",
+    "reject": "Ablehnen",
+    "rejected": "Abgelehnt",
+    "rejectNote": "Warum nicht? (Die Person sieht das noch nicht)",
+    "reports": "Gemeldete Cover",
+    "reportsBlurb": "Cover, die Leser:innen gemeldet haben. Entfernen nimmt das Bild überall und endgültig heraus; Behalten schließt die Meldung.",
+    "noReports": "Keine offenen Meldungen.",
+    "alreadyRemoved": "Dieses Bild wurde schon entfernt.",
+    "takeDown": "Entfernen",
+    "takeDownConfirm": "Endgültig entfernen",
+    "takeDownBlurb": "Das Bild verschwindet bei jedem Buch und jeder Ausgabe, die es zeigen, und keine Aktualisierung bringt es zurück.",
+    "keep": "Behalten",
+    "takenDown": "Bild entfernt",
+    "kept": "Meldung geschlossen, das Bild bleibt",
+    "invites": "Einladungen zur Anmeldung",
+    "invitesBlurb": "Solange die Anmeldung eine Einladung braucht, kann man hiermit ein Konto anlegen, ohne einem Club beizutreten.",
+    "maxUses": "Wie viele Personen",
+    "days": "Gültig für Tage",
+    "noLimit": "Keine Grenze",
+    "inviteDefaults": "Sind beide leer, gilt die Einladung für eine Person und 30 Tage.",
+    "newInvite": "Neue Einladung zur Anmeldung",
+    "freshInvite": "Schick diesen Link an die Personen, für die er gedacht ist:",
+    "anyNumber": "Beliebig viele Personen",
+    "forPeople": "Für eine Person | Für {n} Personen",
+    "noExpiry": "läuft nicht ab",
+    "pastInvites": "{n} benutzte oder abgelaufene Einladung | {n} benutzte oder abgelaufene Einladungen"
   }
 }

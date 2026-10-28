@@ -1,12 +1,14 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { favorite as favoriteRow, shelfItem, user } from "../test/fixtures";
+import { edition, favorite as favoriteRow, shelfItem, user } from "../test/fixtures";
 import type { ClubSummary, Favorite, ShelfItem } from "../types";
 
 const myShelf = vi.fn();
 const clubs = vi.fn();
 const patchShelf = vi.fn();
+const removeFromShelf = vi.fn();
+const addToShelf = vi.fn();
 
 vi.mock("../api/client", () => ({
   ApiError: class ApiError extends Error {},
@@ -14,10 +16,13 @@ vi.mock("../api/client", () => ({
     patchShelf: (...args: unknown[]) => patchShelf(...args),
     myShelf: (...args: unknown[]) => myShelf(...args),
     clubs: (...args: unknown[]) => clubs(...args),
+    removeFromShelf: (...args: unknown[]) => removeFromShelf(...args),
+    addToShelf: (...args: unknown[]) => addToShelf(...args),
   },
 }));
 
 import { useSession } from "../stores/session";
+import { useToast } from "../stores/toast";
 import ShelfPage from "./ShelfPage.vue";
 import ShelfBoard from "../components/ShelfBoard.vue";
 import { i18n } from "../i18n";
@@ -58,6 +63,8 @@ describe("ShelfPage favourites portrait", () => {
     myShelf.mockReset();
     clubs.mockReset();
     patchShelf.mockReset();
+    removeFromShelf.mockReset();
+    addToShelf.mockReset();
     Object.defineProperty(window, "matchMedia", {
       writable: true,
       configurable: true,
@@ -237,6 +244,45 @@ describe("ShelfPage favourites portrait", () => {
     const labels = wrapper.findAll(".sheet button").map((button) => button.text());
     expect(labels).not.toContain("Set as club pick");
     expect(labels).toContain("Nominate for next up");
+    wrapper.unmount();
+  });
+
+  it("removes a book and puts back its edition, rating, take and progress with Undo", async () => {
+    const finished = shelfItem({
+      id: 1,
+      status: "finished",
+      edition: edition({ id: 12, work_id: 1 }),
+      rating: 5,
+      rating_visibility: "only_me",
+      take: "A storm of a book.",
+      updated_at: "2026-09-01T00:00:00Z",
+      book: { title: "Circe", authors: "An Author", year: 2018 },
+    });
+    const wrapper = await mountShelf([], [finished]);
+    await wrapper.findAll("button.shelf-status")[0]!.trigger("click");
+    await wrapper.findAll(".sheet button").find((button) => button.text() === "Remove")!.trigger("click");
+    removeFromShelf.mockResolvedValue(undefined);
+    await wrapper.findAll(".sheet .btn-danger").find((button) => button.text() === "Remove")!.trigger("click");
+    await flushPromises();
+    expect(removeFromShelf).toHaveBeenCalledWith(1);
+    const toast = useToast().items.at(-1)!;
+    expect(toast.message).toBe("Removed “Circe”");
+
+    addToShelf.mockResolvedValue(finished);
+    myShelf.mockResolvedValue({ timezone: "UTC", user: { id: 1, username: "ada", avatar_url: null }, items: [finished], favorites: [] });
+    await useToast().run(toast.id);
+    await flushPromises();
+    expect(addToShelf).toHaveBeenCalledWith({
+      work_id: 1,
+      edition_id: 12,
+      status: "finished",
+      rating: 5,
+      rating_visibility: "only_me",
+      take: "A storm of a book.",
+      dnf_reason: "",
+      progress: null,
+    });
+    expect(myShelf).toHaveBeenCalledTimes(2);
     wrapper.unmount();
   });
 });

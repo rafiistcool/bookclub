@@ -56,7 +56,7 @@ describe("GoodreadsImport", () => {
       .mockResolvedValueOnce(importJob({ id: 7, status: "running", total: 3, processed: 1, imported: 1 }))
       .mockResolvedValueOnce(importJob({
         id: 7, status: "done", total: 3, processed: 3, imported: 2, skipped: 1,
-        skips: [{ title: "", code: "no_match", reason: "No match" }],
+        skips: [{ title: "Untitled", code: "no_title", reason: "No title" }],
       }));
     const wrapper = mount(GoodreadsImport, { global: { plugins: [i18n] } });
     await chooseAndStart(wrapper);
@@ -72,7 +72,7 @@ describe("GoodreadsImport", () => {
     await vi.advanceTimersByTimeAsync(IMPORT_POLL_MS);
     expect(wrapper.find('[role="progressbar"]').exists()).toBe(false);
     expect(wrapper.text()).toContain("Imported 2. Skipped 1.");
-    expect(wrapper.get(".import-skips").text()).toBe("Untitled — No match in the catalog");
+    expect(wrapper.get(".import-skips").text()).toBe("Untitled — No title");
     expect(useToast().items.at(-1)?.message).toBe("Imported 2. Skipped 1.");
     wrapper.unmount();
   });

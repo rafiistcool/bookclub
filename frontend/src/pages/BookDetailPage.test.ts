@@ -2,7 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
-import { bookDetail, shelfItem, user } from "../test/fixtures";
+import { bookDetail, edition, shelfItem, user } from "../test/fixtures";
 import type { BookDetail, ClubSummary } from "../types";
 
 const book = vi.fn();
@@ -10,6 +10,9 @@ const addFavorite = vi.fn();
 const removeFavorite = vi.fn();
 const addToShelf = vi.fn();
 const patchShelf = vi.fn();
+const removeFromShelf = vi.fn();
+const editions = vi.fn();
+const requestWorkEdit = vi.fn();
 const diary = vi.fn();
 const nominate = vi.fn();
 
@@ -30,6 +33,9 @@ vi.mock("../api/client", () => ({
     removeFavorite: (...args: unknown[]) => removeFavorite(...args),
     addToShelf: (...args: unknown[]) => addToShelf(...args),
     patchShelf: (...args: unknown[]) => patchShelf(...args),
+    removeFromShelf: (...args: unknown[]) => removeFromShelf(...args),
+    editions: (...args: unknown[]) => editions(...args),
+    requestWorkEdit: (...args: unknown[]) => requestWorkEdit(...args),
     diary: (...args: unknown[]) => diary(...args),
     nominate: (...args: unknown[]) => nominate(...args),
   },
@@ -78,11 +84,12 @@ function button(wrapper: Awaited<ReturnType<typeof mountBook>>["wrapper"], label
 
 describe("BookDetailPage", () => {
   beforeEach(() => {
-    for (const mock of [book, addFavorite, removeFavorite, addToShelf, patchShelf, diary, nominate]) {
+    for (const mock of [book, addFavorite, removeFavorite, addToShelf, patchShelf, removeFromShelf, editions, requestWorkEdit, diary, nominate]) {
       mock.mockReset();
     }
     book.mockResolvedValue(detail());
     diary.mockResolvedValue({ work_id: 4, my_progress: null, my_status: null, items: [], timezone: "UTC" });
+    editions.mockResolvedValue({ items: [] });
     i18n.global.locale.value = "en";
   });
 
@@ -173,5 +180,114 @@ describe("BookDetailPage", () => {
     const covered = await mountBook();
     await button(covered.wrapper, "Report cover")!.trigger("click");
     expect(covered.wrapper.text()).toContain("Report this cover");
+  });
+
+  it("suggests a correction of the book's details with only what changed", async () => {
+    book.mockResolvedValue(detail({ subjects: ["Fiction"], pages: null }));
+    const { wrapper } = await mountBook();
+    await button(wrapper, "Wrong details?")!.trigger("click");
+    const form = wrapper.get("form.edit-request");
+    expect((form.get("input[name=title]").element as HTMLInputElement).value).toBe("The Witch of Portobello");
+    await form.trigger("submit");
+    expect(requestWorkEdit).not.toHaveBeenCalled();
+    expect(form.get(".error").text()).toBe("Change at least one field first.");
+
+    await form.get("input[name=pages]").setValue("320");
+    await form.get("textarea[name=subjects]").setValue("Fiction\nBrazil");
+    requestWorkEdit.mockResolvedValue({ id: 3, status: "open" });
+    await form.trigger("submit");
+    await flushPromises();
+    expect(requestWorkEdit).toHaveBeenCalledWith(4, { pages: 320, subjects: ["Fiction", "Brazil"] }, "");
+    expect(wrapper.find("form.edit-request").exists()).toBe(false);
+    expect(useToast().items.at(-1)?.message).toBe("Thanks. An admin will look at it.");
+  });
+
+  describe("a finished book on the shelf", () => {
+    const FINISHED = {
+      shelf_id: 30,
+      on_shelf: "finished" as const,
+      edition_id: 12,
+      rating: 4,
+      rating_visibility: "audience" as const,
+      take: "Sharp and kind.",
+      dnf_reason: "",
+      progress: null,
+    };
+    const stored = (overrides: Parameters<typeof shelfItem>[0] = {}) =>
+      shelfItem({
+        id: 30,
+        status: "finished",
+        rating: 4,
+        rating_visibility: "audience",
+        take: "Sharp and kind.",
+        book: { id: 4 },
+        ...overrides,
+      });
+    const onlyMeBox = (wrapper: Awaited<ReturnType<typeof mountBook>>["wrapper"]) =>
+      wrapper.get(".check-row input[type=checkbox]").element as HTMLInputElement;
+
+    beforeEach(() => {
+      book.mockResolvedValue(detail(FINISHED));
+    });
+
+    it("keeps the rating to the reader with “Only me”, and shares it again", async () => {
+      const { wrapper } = await mountBook();
+      expect(onlyMeBox(wrapper).checked).toBe(false);
+
+      patchShelf.mockResolvedValue(stored({ rating_visibility: "only_me" }));
+      await wrapper.get(".check-row input[type=checkbox]").setValue(true);
+      await flushPromises();
+      expect(patchShelf).toHaveBeenLastCalledWith(30, { rating_visibility: "only_me" });
+      expect(onlyMeBox(wrapper).checked).toBe(true);
+      expect(useToast().items.at(-1)?.message).toBe("Rating visibility saved");
+
+      patchShelf.mockResolvedValue(stored({ rating_visibility: "audience" }));
+      await wrapper.get(".check-row input[type=checkbox]").setValue(false);
+      await flushPromises();
+      expect(patchShelf).toHaveBeenLastCalledWith(30, { rating_visibility: "audience" });
+      expect(onlyMeBox(wrapper).checked).toBe(false);
+    });
+
+    it("shows the stored visibility again when the save fails", async () => {
+      book.mockResolvedValue(detail({ ...FINISHED, rating_visibility: "only_me" }));
+      const { wrapper } = await mountBook();
+      expect(onlyMeBox(wrapper).checked).toBe(true);
+      patchShelf.mockRejectedValue(new ApiError("Book not on your shelf", 404, "Book not on your shelf"));
+      await wrapper.get(".check-row input[type=checkbox]").setValue(false);
+      await flushPromises();
+      expect(patchShelf).toHaveBeenCalledWith(30, { rating_visibility: "audience" });
+      expect(onlyMeBox(wrapper).checked).toBe(true);
+    });
+
+    it("removes the book and puts back everything with Undo", async () => {
+      book.mockResolvedValue(detail({ ...FINISHED, rating_visibility: "only_me" }));
+      const { wrapper } = await mountBook();
+      removeFromShelf.mockResolvedValue(undefined);
+      await button(wrapper, "Remove")!.trigger("click");
+      await flushPromises();
+      expect(removeFromShelf).toHaveBeenCalledWith(30);
+      expect(wrapper.find(".star-row").exists()).toBe(false);
+      const toast = useToast().items.at(-1)!;
+      expect(toast.message).toBe("Removed from your shelf");
+      expect(toast.action?.label).toBe("Undo");
+
+      addToShelf.mockResolvedValue(
+        stored({ id: 31, rating_visibility: "only_me", edition: edition({ id: 12, work_id: 4 }) }),
+      );
+      await useToast().run(toast.id);
+      await flushPromises();
+      expect(addToShelf).toHaveBeenCalledWith({
+        work_id: 4,
+        edition_id: 12,
+        status: "finished",
+        rating: 4,
+        rating_visibility: "only_me",
+        take: "Sharp and kind.",
+        dnf_reason: "",
+        progress: null,
+      });
+      expect(wrapper.find(".star-row").exists()).toBe(true);
+      expect(onlyMeBox(wrapper).checked).toBe(true);
+    });
   });
 });

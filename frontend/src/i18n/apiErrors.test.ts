@@ -27,6 +27,14 @@ describe("translateApiError", () => {
     );
   });
 
+  it("names the field of a refused correction by its label", () => {
+    expect(translateApiError("Invalid value for publication_year")).toBe("That value of “Year published” cannot be used");
+    i18n.global.locale.value = "de";
+    expect(translateApiError("Invalid value for pages")).toBe("Dieser Wert für „Seiten“ geht nicht");
+    expect(translateApiError("Invalid value for shelf_mark")).toBe("Dieser Wert für „shelf_mark“ geht nicht");
+    expect(translateApiError("This request was already decided")).toBe("Über diese Anfrage wurde schon entschieden");
+  });
+
   it("shows details it does not know as the server wrote them", () => {
     i18n.global.locale.value = "de";
     expect(translateApiError("Keep the take to 140 characters")).toBe("Keep the take to 140 characters");
