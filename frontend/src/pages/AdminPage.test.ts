@@ -130,29 +130,29 @@ describe("AdminPage", () => {
     expect(useToast().items.at(-1)?.message).toBe("Approved");
   });
 
-  it("reads the books the queue names without carrying them: a merge target, a second request on one edition", async () => {
+  it("reads only the merge target, which the queue names without carrying it", async () => {
     api.adminEditRequests.mockResolvedValue({
       items: [
         editRequest({ id: 1, kind: "edition_edit", edition_id: 13, payload: { pages: 530 } as never }),
-        // The server fills `book` for only one of two requests on the same edition.
-        editRequest({ id: 2, kind: "cover_replace", edition_id: 13, book: null, cover_thumb_url: "/media/p/s", cover_url: "/media/p/l" }),
+        editRequest({ id: 2, kind: "cover_replace", edition_id: 13, cover_thumb_url: "/media/p/s", cover_url: "/media/p/l" }),
         editRequest({ id: 3, kind: "work_merge", work_id: 40, book: bookOut({ id: 40, title: "Der Mörder" }), payload: { into_work_id: 31 } as never }),
         editRequest({ id: 4, kind: "work_edit", work_id: 77, book: null, payload: { title: "X" } as never }),
       ],
     });
     api.book.mockImplementation(async (id: number) => {
-      if (id === 9) return bookDetail({ id: 9, title: "Circe" });
       if (id === 31) return bookDetail({ id: 31, title: "Ich bin Circe", authors: "Madeline Miller" });
       throw new ApiError("No such book.", 404, "No such book.");
     });
     const { wrapper } = await mountAdmin();
     const items = wrapper.findAll(".request-item");
+    expect(items[0]!.get(".admin-book-link").text()).toContain("Circe");
     expect(items[1]!.get(".admin-book-link").text()).toContain("Circe");
     expect(items[1]!.get(".proposed-cover").text()).toContain("Proposed photo");
     expect(items[2]!.get(".merge-target").text()).toContain("Ich bin Circe");
     expect(items[2]!.get(".merge-target a").attributes("href")).toBe("/book/31");
+    // A request without its book (the work is gone) says so; no read by its work id.
     expect(items[3]!.text()).toContain("This book is no longer in the catalog.");
-    expect(new Set(api.book.mock.calls.map(([id]) => id))).toEqual(new Set([9, 31, 77]));
+    expect(api.book.mock.calls.map(([id]) => id)).toEqual([31]);
   });
 
   it("rejects with a note, and drops a request someone else decided", async () => {

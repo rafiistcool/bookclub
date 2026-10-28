@@ -244,6 +244,44 @@ async fn edition_edits_wait_for_an_admin(db: PgPool) {
     );
 }
 
+/// Two open requests on one work and edition (a correction of the edition and a photo for it)
+/// both carry the book, not only the first one listed.
+#[sqlx::test]
+async fn requests_on_the_same_edition_both_carry_the_book(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let root = app.admin("root").await;
+    let (work, edition) = app
+        .dnb_work("Der Hobbit", "J. R. R. Tolkien", "9783608938289")
+        .await;
+    let correction = ada
+        .post(
+            &format!("/api/books/editions/{}/edit-requests", edition.id),
+            json!({"fields": {"publisher": "Klett-Cotta"}}),
+        )
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+    let photo = upload_media(&app, &ada).await;
+    let cover = cover_request(&app, &ada, work.id, Some(edition.id), photo).await;
+
+    let queue = root.get("/api/admin/edit-requests").await.json();
+    let items = queue["items"].as_array().unwrap();
+    let ids: Vec<_> = items.iter().map(|item| item["id"].as_i64()).collect();
+    assert_eq!(ids, [Some(correction), Some(cover)]);
+    for item in items {
+        assert_eq!(item["work_id"], work.id);
+        assert_eq!(item["edition_id"], edition.id);
+        assert_eq!(item["book"]["id"], work.id, "request {}", item["id"]);
+        assert_eq!(
+            item["book"]["title"], "Der Hobbit",
+            "request {}",
+            item["id"]
+        );
+    }
+}
+
 /// Rejecting keeps the catalog as it is and records the admin's note.
 #[sqlx::test]
 async fn rejecting_changes_nothing(db: PgPool) {

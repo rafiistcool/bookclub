@@ -5,10 +5,10 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use regex::Regex;
-use unicode_normalization::UnicodeNormalization;
 
 use super::{ImportError, Importer};
-use crate::auth::random;
+// The slug is built as club creation builds it (`POST /api/clubs`).
+use crate::clubs::manage::{slug_base, slug_suffix};
 use crate::text::is_py_space;
 
 /// `clubs.slug`'s CHECK.
@@ -17,61 +17,11 @@ static SLUG: LazyLock<Regex> =
 /// `club_invites.code`'s CHECK (besides being uppercase).
 static CODE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[^\s-]{1,128}$").unwrap());
 
-/// The longest slug base, so base + "-" + 4 characters fits the 64 the CHECK allows.
-const MAX_SLUG_BASE: usize = 50;
-const SLUG_ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
 const SLUG_ATTEMPTS: usize = 20;
 
 /// Whether `slug` is a valid `clubs.slug`.
 pub(crate) fn valid_slug(slug: &str) -> bool {
     SLUG.is_match(slug)
-}
-
-/// The club name as a slug base, like club creation does: German umlauts and ß transliterated,
-/// other accents dropped, every run of other characters one `-`, at most 50 characters; `club`
-/// when nothing is left.
-pub(crate) fn slug_base(name: &str) -> String {
-    let mut slug = String::new();
-    let mut pending_dash = false;
-    for c in name.to_lowercase().chars() {
-        let spelled: Option<String> = match c {
-            'ä' => Some("ae".into()),
-            'ö' => Some("oe".into()),
-            'ü' => Some("ue".into()),
-            'ß' => Some("ss".into()),
-            c if c.is_ascii_alphanumeric() => Some(c.to_string()),
-            c => {
-                let base: String = c.nfkd().filter(char::is_ascii_alphanumeric).collect();
-                (!base.is_empty()).then_some(base.to_lowercase())
-            }
-        };
-        match spelled {
-            Some(part) => {
-                if pending_dash && !slug.is_empty() {
-                    slug.push('-');
-                }
-                pending_dash = false;
-                slug.push_str(&part);
-            }
-            None => pending_dash = true,
-        }
-    }
-    let cut: String = slug.chars().take(MAX_SLUG_BASE).collect();
-    let cut = cut.trim_end_matches('-');
-    if cut.is_empty() {
-        "club".to_owned()
-    } else {
-        cut.to_owned()
-    }
-}
-
-fn slug_suffix() -> String {
-    let mut bytes = [0u8; 4];
-    random::fill(&mut bytes);
-    bytes
-        .iter()
-        .map(|b| SLUG_ALPHABET[usize::from(*b) % SLUG_ALPHABET.len()] as char)
-        .collect()
 }
 
 /// A legacy invite code as `club_invites.code` stores it: whitespace and `-` removed,

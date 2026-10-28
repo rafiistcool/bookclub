@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE quotes\n         SET body = coalesce($3, body),\n             page = CASE WHEN $4 THEN $5 ELSE page END,\n             visibility = coalesce($6, visibility),\n             updated_at = now()\n         WHERE id = $1 AND user_id = $2\n         RETURNING id",
+  "query": "UPDATE quotes\n         SET body = coalesce($3, body),\n             page = CASE WHEN $4 THEN $5 ELSE page END,\n             visibility = coalesce($6, visibility),\n             updated_at = CASE WHEN $7 THEN now() ELSE updated_at END\n         WHERE id = $1 AND user_id = $2\n         RETURNING id",
   "describe": {
     "columns": [
       {
@@ -22,12 +22,13 @@
         "Text",
         "Bool",
         "Int4",
-        "Text"
+        "Text",
+        "Bool"
       ]
     },
     "nullable": [
       false
     ]
   },
-  "hash": "a5337c3be0db733ebc39ee71160688def91f6aca493559881618aeba8262e335"
+  "hash": "58022ac4a62568fa6939ca9bb51d5fcbc821df1ea014ffa5bd4f9b181b720313"
 }

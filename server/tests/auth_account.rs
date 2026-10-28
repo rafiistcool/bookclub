@@ -331,6 +331,39 @@ async fn preference_rules(db: PgPool) {
     .assert_detail(400, "Field required");
 }
 
+/// An old zone name (a tzdb link such as `Asia/Calcutta`) is accepted and stored as the
+/// current one; a wrong-case or made-up name stays refused and changes nothing.
+#[sqlx::test]
+async fn an_old_zone_name_is_stored_as_the_current_one(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let stored = async || -> String {
+        sqlx::query_scalar("SELECT timezone FROM users WHERE username = 'ada'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
+    let res = ada
+        .patch(
+            "/api/auth/me/preferences",
+            json!({"timezone": "Asia/Calcutta"}),
+        )
+        .await;
+    res.assert_status(200);
+    assert_eq!(res.json()["timezone"], "Asia/Kolkata");
+    assert_eq!(stored().await, "Asia/Kolkata");
+    assert_eq!(
+        ada.get("/api/auth/me").await.json()["timezone"],
+        "Asia/Kolkata"
+    );
+    for bad in ["asia/calcutta", "Asia/Atlantis"] {
+        ada.patch("/api/auth/me/preferences", json!({"timezone": bad}))
+            .await
+            .assert_detail(400, "That is not a valid time zone");
+    }
+    assert_eq!(stored().await, "Asia/Kolkata");
+}
+
 /// parity: test_notes_and_meeting.py::test_notification_prefs_default_on_and_patch
 #[sqlx::test]
 async fn notification_prefs_default_on_and_patch(db: PgPool) {

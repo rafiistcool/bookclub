@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE posts\n         SET body = coalesce($3, body),\n             spoiler_upto = CASE WHEN $4 THEN $5 ELSE spoiler_upto END,\n             visibility = coalesce($6, visibility),\n             updated_at = CASE WHEN $7 THEN now() ELSE updated_at END\n         WHERE id = $1 AND author_id = $2 AND deleted_at IS NULL\n         RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Bool",
+        "Int4",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "fd57bdd27a67ca94fa19e4f8781bb3347f3fae5f87a3c4d62220412b285780ef"
+}

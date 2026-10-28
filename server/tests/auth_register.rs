@@ -316,6 +316,33 @@ async fn fields_are_normalised(db: PgPool) {
         .assert_status(204);
 }
 
+/// An old zone name (a tzdb link that ICU browsers still report) signs up like the current
+/// one, which is what is stored. Case still matters, and a made-up name stays refused.
+#[sqlx::test]
+async fn an_old_zone_name_is_stored_as_the_current_one(db: PgPool) {
+    let app = TestApp::new(db).await;
+    signup_invite(&app, "TESTINVITE", None).await;
+    for bad in ["asia/calcutta", "Asia/Atlantis"] {
+        let mut wrong = body("ada", "TESTINVITE");
+        wrong["timezone"] = json!(bad);
+        app.anon()
+            .post("/api/auth/register", wrong)
+            .await
+            .assert_detail(400, "That is not a valid time zone");
+    }
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM users").await, 0);
+    let mut old = body("ada", "TESTINVITE");
+    old["timezone"] = json!(" Asia/Calcutta ");
+    let res = app.anon().post("/api/auth/register", old).await;
+    res.assert_status(201);
+    assert_eq!(res.json()["timezone"], "Asia/Kolkata");
+    let stored: String = sqlx::query_scalar("SELECT timezone FROM users WHERE username = 'ada'")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(stored, "Asia/Kolkata");
+}
+
 #[sqlx::test]
 async fn invite_mode_needs_a_code(db: PgPool) {
     let app = TestApp::new(db).await;

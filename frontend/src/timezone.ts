@@ -1,15 +1,19 @@
 /**
  * Old spellings that browsers built on ICU (Chrome, Edge, Safari) still report,
  * from `resolvedOptions().timeZone` and `supportedValuesOf("timeZone")`, with
- * their current IANA names. The server accepts only the current name ("That is
- * not a valid time zone" otherwise), so a reader in Kolkata or Kyiv could not
- * sign up. These are all such names in Chromium's list (checked against the
- * server on 2026-10-28); `Intl` accepts the new names too.
+ * their current IANA names. The server accepts the old names too but stores the
+ * current one (`LINKS` in server/src/tz.rs), so the SPA sends and compares
+ * current names: otherwise Settings would offer "use this device's zone" for
+ * good, and the pickers would list the saved zone twice. These are all the
+ * names in `LINKS` that ICU 78 (tz 2026e) reports; `timezone.test.ts` checks
+ * them against `LINKS` with the ICU of the Node that runs it. `Intl` accepts the
+ * new names too.
  */
 const CURRENT_ZONE_NAMES: Readonly<Record<string, string>> = {
   "Africa/Asmera": "Africa/Asmara",
   "America/Buenos_Aires": "America/Argentina/Buenos_Aires",
   "America/Catamarca": "America/Argentina/Catamarca",
+  "America/Coral_Harbour": "America/Atikokan",
   "America/Cordoba": "America/Argentina/Cordoba",
   "America/Godthab": "America/Nuuk",
   "America/Indianapolis": "America/Indiana/Indianapolis",
@@ -21,7 +25,11 @@ const CURRENT_ZONE_NAMES: Readonly<Record<string, string>> = {
   "Asia/Rangoon": "Asia/Yangon",
   "Asia/Saigon": "Asia/Ho_Chi_Minh",
   "Atlantic/Faeroe": "Atlantic/Faroe",
+  "CST6CDT": "America/Chicago",
+  "EST5EDT": "America/New_York",
   "Europe/Kiev": "Europe/Kyiv",
+  "MST7MDT": "America/Denver",
+  "PST8PDT": "America/Los_Angeles",
   "Pacific/Enderbury": "Pacific/Kanton",
   "Pacific/Ponape": "Pacific/Pohnpei",
   "Pacific/Truk": "Pacific/Chuuk",

@@ -1,6 +1,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { browserTimeZone, currentZoneName, postTimeZone, timeZoneOptions } from "./timezone";
 
+/** The server's zone module, from this file (a variable: Vite rewrites `new URL` of a literal). */
+const TZ_RS = "../../server/src/tz.rs";
+
+/**
+ * `LINKS` in server/src/tz.rs: the old names the server accepts and stores as
+ * the current name. Read from disk, as Vite serves nothing outside frontend/.
+ */
+async function serverLinks(): Promise<Map<string, string>> {
+  const fs = await vi.importActual<{ readFileSync(path: URL, encoding: "utf8"): string }>("node:fs");
+  const source = fs.readFileSync(new URL(TZ_RS, import.meta.url), "utf8");
+  const start = source.indexOf("static LINKS");
+  const table = source.slice(start, source.indexOf("];", start));
+  return new Map([...table.matchAll(/\(\s*"([^"]+)",\s*"([^"]+)",?\s*\)/g)].map((m) => [m[1], m[2]]));
+}
+
 const viewer = {
   timezone: "America/New_York",
   clubs: [{ slug: "berlin-ab12", timezone: "Europe/Berlin" }],
@@ -29,6 +44,25 @@ describe("zone names", () => {
       timeZone: "Asia/Calcutta",
     });
     expect(browserTimeZone()).toBe("Asia/Kolkata");
+  });
+
+  it("sends the current name for every old one this ICU reports and the server links", async () => {
+    const links = await serverLinks();
+    expect(links.size).toBe(150);
+    const intl = Intl as unknown as { supportedValuesOf: (key: string) => string[] };
+    const reported = new Set(intl.supportedValuesOf("timeZone"));
+    // The device's zone is ICU's name for it, which need not be in that list (CST6CDT).
+    for (const name of [...links.keys(), ...links.values()]) {
+      try {
+        reported.add(new Intl.DateTimeFormat("en", { timeZone: name }).resolvedOptions().timeZone);
+      } catch {
+        // A name this ICU does not know.
+      }
+    }
+    const wrong = [...reported].filter((name) => currentZoneName(name) !== (links.get(name) ?? name));
+    expect(wrong).toEqual([]);
+    expect(currentZoneName("America/Coral_Harbour")).toBe("America/Atikokan");
+    expect(currentZoneName("CST6CDT")).toBe("America/Chicago");
   });
 
   it("offers current names in the picker, each once", () => {

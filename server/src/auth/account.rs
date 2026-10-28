@@ -33,7 +33,8 @@ pub struct PreferencesIn {
     /// `en` or `de`.
     #[serde(default)]
     pub locale: Option<String>,
-    /// IANA zone for personal dates, canonical spelling (`Europe/Berlin`).
+    /// IANA zone for personal dates, exact spelling (`Europe/Berlin`); an old name such as
+    /// `Asia/Calcutta` is stored as the current one (`Asia/Kolkata`).
     #[serde(default)]
     pub timezone: Option<String>,
 }
@@ -59,8 +60,11 @@ impl Validate for PreferencesIn {
             );
         }
         if let Some(zone) = &mut self.timezone {
-            *zone = py_strip(zone).to_owned();
-            v.check(tz::parse_zone(zone).is_ok(), msg::INVALID_TIME_ZONE);
+            // An old name (`Asia/Calcutta`) is stored as the current one (`Asia/Kolkata`).
+            match tz::canonical_zone_name(py_strip(zone)) {
+                Ok(name) => *zone = name,
+                Err(_) => v.fail(msg::INVALID_TIME_ZONE),
+            }
         }
     }
 }

@@ -1331,12 +1331,19 @@ pub async fn get_text(o: &Outbound, t: &HostThrottle, url: Url, policy: &RetryPo
 - Serialised with `#[serde(with = "time::serde::rfc3339")]` (or `::option`), always UTC with `Z`. This is a reasoned change that fixes the legacy offset-less strings.
 - Dates are `time::Date`, `YYYY-MM-DD`. They need no attribute: the `time` crate's `serde-human-readable` feature (§18) serialises `Date` as `YYYY-MM-DD` in JSON. Timestamps still need `time::serde::rfc3339`.
 
-**Time zones** (`tz.rs`, `jiff` with `tzdb-bundle-always`, so the slim Docker image needs no tzdata):
+**Time zones** (`tz.rs`, `jiff` with `tzdb-bundle-always`, so the server needs no tzdata. jiff's `TimeZone::get` still reads the host's tzdb first when there is one: the server image's `debian:trixie-slim` base has one, without the old names that `tzdata-legacy` holds. So writes validate against the bundled tzdb explicitly):
 
 ```rust
-pub fn parse_zone(name: &str) -> Result<jiff::tz::TimeZone, InvalidZone>; // validate IANA names on write; only the
-    // canonical, case-sensitive spelling passes ("Europe/Berlin", not "europe/berlin"), like Python's ZoneInfo
-pub fn zone_or_utc(name: &str) -> jiff::tz::TimeZone;                     // corrupt stored value → UTC
+pub fn parse_zone(name: &str) -> Result<jiff::tz::TimeZone, InvalidZone>; // validate IANA names on write against
+    // jiff's bundled tzdb (TimeZoneDatabase::bundled(), not the host's). Every name it knows passes, in its exact,
+    // case-sensitive spelling only ("Europe/Berlin", not "europe/berlin"), like Python's ZoneInfo. An old name (a
+    // link in tz::LINKS, e.g. "Asia/Calcutta") passes too and returns the zone it links to, whose iana_name() is
+    // the current name ("Asia/Kolkata")
+pub fn canonical_zone_name(name: &str) -> Result<String, InvalidZone>;     // parse_zone(name)?.iana_name(): the
+    // name every writer stores (sign-up, PATCH /api/auth/me/preferences, club create/PATCH, importer --timezone),
+    // so stored names are always current ones
+pub fn zone_or_utc(name: &str) -> jiff::tz::TimeZone;                     // the host's tzdb, else the bundled
+    // one (which knows every name parse_zone accepts); corrupt stored value → UTC
 pub fn parse_meeting(value: Option<&str>, zone: &TimeZone) -> Result<Option<OffsetDateTime>, ()>;
     // None/""/whitespace → None; trailing Z; accepts date-only (midnight), YYYY-MM-DD[T| ]HH[:MM[:SS[.f]]],
     // lowercase t, ±HH:MM/±HHMM/Z; naive values use Disambiguation::Compatible (= Python fold=0); → UTC.
@@ -1365,6 +1372,8 @@ pub fn personal_date_in_range(date: time::Date) -> bool;  // 0001-01-02..=9999-1
 So a club post's label is in its club's zone wherever it appears (pick thread, work thread, `/api/diary`, PATCH and reaction answers), and a club event's in the home feed too. It can differ from the response's `timezone` (the viewer's zone in the work thread, `/api/diary` and the home feed); a client that formats `created_at` itself uses the club's zone for club items (`docs/phase1/notes/posts.md` deviation 4, `notes/club.md` "Activity feeds").
 
 Legacy tests with fixed zones (Kiritimati, Berlin, New York) become tests that set `users.timezone` or `clubs.timezone`.
+
+**Old zone names** (`tz::LINKS`, 150 entries, `docs/phase1/notes/fup.md` decision 2): the `Link` lines of the bundled tzdb's release (2026e) as built with `backzone` for `zone.tab` (Debian's `tzdata.zi`), less the 11 links listed in `zone.tab` (a country's own name such as `Europe/Bratislava`, which browsers report) and less `UTC` (the column default). So `Asia/Calcutta`, `Europe/Kiev`, `America/Buenos_Aires` and `US/Eastern` are stored as `Asia/Kolkata`, `Europe/Kyiv`, `America/Argentina/Buenos_Aires` and `America/New_York`; `Europe/Oslo`, `Pacific/Chuuk` and `UTC` stay. jiff's own `iana_name()` returns a link's name unresolved, so the table is needed. After a jiff-tzdb update, compare it with the new release: a test pins the bundled release's names (count and hash) and fails until then. Every name in the table that ICU browsers report (`Asia/Calcutta`, `America/Coral_Harbour`, `CST6CDT`, …) must also be in the SPA's `currentZoneName` map (`frontend/src/timezone.ts`, whose test reads the table), so that the SPA sends and compares the stored name.
 
 **Text** (`text.rs`). Python semantics are reproduced where the specs say they matter:
 

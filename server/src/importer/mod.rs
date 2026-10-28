@@ -55,7 +55,8 @@ pub struct Args {
     /// The club's name (the legacy BOOKCLUB_NAME), e.g. "Thursday Readers".
     #[arg(long)]
     pub club_name: String,
-    /// IANA zone (the legacy BOOKCLUB_TZ), for the club and every imported user.
+    /// IANA zone (the legacy BOOKCLUB_TZ), for the club and every imported user. An old name
+    /// such as `Europe/Kiev` is stored as the current one (`Europe/Kyiv`).
     #[arg(long)]
     pub timezone: String,
     /// Default: the slugified club name, "-" and 4 random characters.
@@ -227,9 +228,9 @@ pub async fn run(
     db: PgPool,
     lookup: Arc<dyn CatalogLookup>,
     media: Arc<dyn MediaStore>,
-    args: Args,
+    mut args: Args,
 ) -> Result<Report, ImportError> {
-    let club_name = check_args(&args)?;
+    let club_name = check_args(&mut args)?;
     let path = args.source.clone();
     let legacy = tokio::task::spawn_blocking(move || source::read(&path))
         .await
@@ -433,19 +434,23 @@ async fn remove_written(media: &dyn MediaStore, prefixes: &[String]) {
     }
 }
 
-/// Validates the flags; returns the trimmed club name.
-fn check_args(args: &Args) -> Result<String, ImportError> {
+/// Validates the flags and puts the current name of `--timezone` in `args` (an old name such as
+/// `Europe/Kiev` becomes `Europe/Kyiv`); returns the trimmed club name.
+fn check_args(args: &mut Args) -> Result<String, ImportError> {
     let name = py_strip(&args.club_name).to_owned();
     if name.is_empty() || char_len(&name) > 80 {
         return Err(ImportError::Other(anyhow::anyhow!(
             "--club-name must have 1 to 80 characters"
         )));
     }
-    if crate::tz::parse_zone(&args.timezone).is_err() {
-        return Err(ImportError::Other(anyhow::anyhow!(
-            "--timezone {:?} is not an IANA time zone (e.g. Europe/Berlin)",
-            args.timezone
-        )));
+    match crate::tz::canonical_zone_name(&args.timezone) {
+        Ok(zone) => args.timezone = zone,
+        Err(_) => {
+            return Err(ImportError::Other(anyhow::anyhow!(
+                "--timezone {:?} is not an IANA time zone (e.g. Europe/Berlin)",
+                args.timezone
+            )));
+        }
     }
     if let Some(slug) = &args.club_slug
         && !club::valid_slug(slug)

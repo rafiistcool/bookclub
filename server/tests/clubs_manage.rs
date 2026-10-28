@@ -129,6 +129,44 @@ async fn club_names_and_zones_are_validated(db: PgPool) {
     assert!(res.json()["slug"].as_str().unwrap().starts_with("aeaeae"));
 }
 
+/// An old zone name (a tzdb link that ICU browsers still report) creates and rezones a club
+/// under the current name, which is what is stored.
+#[sqlx::test]
+async fn an_old_zone_name_is_stored_as_the_current_one(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let res = create(
+        &ada,
+        json!({"name": "Readers", "timezone": "Asia/Calcutta"}),
+    )
+    .await;
+    res.assert_status(201);
+    assert_eq!(res.json()["timezone"], "Asia/Kolkata");
+    let slug = res.json()["slug"].as_str().unwrap().to_owned();
+    let stored = async || -> String {
+        sqlx::query_scalar("SELECT timezone FROM clubs WHERE slug = $1")
+            .bind(&slug)
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
+    assert_eq!(stored().await, "Asia/Kolkata");
+
+    let path = format!("/api/clubs/{slug}");
+    let res = ada
+        .patch(&path, json!({"timezone": "America/Buenos_Aires"}))
+        .await;
+    res.assert_status(200);
+    assert_eq!(res.json()["timezone"], "America/Argentina/Buenos_Aires");
+    assert_eq!(stored().await, "America/Argentina/Buenos_Aires");
+    for bad in ["america/buenos_aires", "America/Atlantis"] {
+        ada.patch(&path, json!({"timezone": bad}))
+            .await
+            .assert_detail(400, "That is not a valid time zone");
+    }
+    assert_eq!(stored().await, "America/Argentina/Buenos_Aires");
+}
+
 #[sqlx::test]
 async fn slugs_are_random_per_club_and_never_change(db: PgPool) {
     let app = TestApp::new(db).await;
