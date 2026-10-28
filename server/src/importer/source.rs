@@ -1,12 +1,16 @@
 //! The legacy SQLite database, read once into memory (docs/phase1/legacy-mapping.md §0).
 //!
-//! The file is opened read-only. Both legacy schema shapes are accepted: a missing table reads
-//! as empty, and a column `COLUMN_MIGRATIONS` added later reads as its DDL default
-//! (`PRAGMA table_info` decides). Values are coerced leniently (SQLite has no column types);
-//! a value that cannot be read aborts with its table, id and column.
+//! SQLite opens a private copy of the file (and its `-wal`) read-only, never the file itself
+//! (see [`read`]). Both legacy schema shapes are accepted: a missing table reads as empty, and a
+//! column `COLUMN_MIGRATIONS` added later reads as its DDL default (`PRAGMA table_info`
+//! decides). Values are coerced leniently (SQLite has no column types); a value that cannot be
+//! read aborts with its table, id and column.
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::fs::{self, File, OpenOptions};
+use std::io;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -257,14 +261,143 @@ pub struct LegacyDb {
     pub push_subscriptions: u64,
 }
 
-/// Opens `path` read-only and reads every table the importer maps.
+/// Copies `path` (with its `-wal` and `-journal`, found next to the file a symlink points to)
+/// into a private temporary directory, opens the copy read-only and reads every table the
+/// importer maps.
+///
+/// The legacy app runs SQLite in WAL mode, and a copy made with `app.backup` keeps WAL mode in
+/// its header. SQLite opens such a file only where it can create the `-wal` and `-shm` files
+/// next to it, so a read-only open in a directory the server cannot write (the `:ro` mount of
+/// `import-legacy`) fails with "attempt to write a readonly database". In the private copy it
+/// can. The `-wal` holds committed rows that no checkpoint has moved into the database file
+/// yet, so it is copied too. (`immutable=1` would avoid the files, but it silently ignores the
+/// `-wal` and those rows.) The copy lives under `$TMPDIR` (default `/tmp`) and is removed when
+/// the read ends; the source directory is never written.
 pub fn read(path: &Path) -> Result<LegacyDb, ImportError> {
+    let copy = PrivateCopy::of(path)?;
     let conn = Connection::open_with_flags(
-        path,
+        copy.db(),
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(|e| ImportError::Source(format!("cannot open {}: {e}", path.display())))?;
+    // The first read opens the WAL or finds a hot journal.
+    if let Err(e) = conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(())) {
+        if e.sqlite_error().map(|e| e.extended_code)
+            == Some(rusqlite::ffi::SQLITE_READONLY_ROLLBACK)
+        {
+            return Err(ImportError::Source(format!(
+                "{} has a hot journal (an interrupted write): open it once with sqlite3 or the \
+                 legacy app to roll it back, then import it again",
+                path.display()
+            )));
+        }
+        return Err(ImportError::Source(format!(
+            "cannot read {}: {e}",
+            path.display()
+        )));
+    }
+    // `conn` is dropped before `copy`, which removes the directory.
     read_conn(&conn)
+}
+
+/// The files SQLite reads with a database besides the file itself: committed rows not yet
+/// checkpointed (`-wal`), and a hot rollback journal (`-journal`; with it, SQLite refuses a
+/// read-only open instead of reading a half-written file). The `-shm` index is rebuilt from
+/// the `-wal`.
+const SIDECARS: [&str; 2] = ["-wal", "-journal"];
+
+/// A private temporary directory (mode 0700) holding a copy of a legacy database and its
+/// sidecar files; removed on drop.
+struct PrivateCopy {
+    dir: PathBuf,
+}
+
+impl PrivateCopy {
+    /// Copies `source` and those of its [`SIDECARS`] that exist.
+    ///
+    /// A symlink is resolved first: SQLite looks for the sidecars of a linked database next to
+    /// the file the link points to (`snap/2026-11-01.db-wal` for `bookclub.db ->
+    /// snap/2026-11-01.db`), so the copy takes them from there too. Next to the link, the
+    /// `-wal` would be missing and its rows silently lost.
+    fn of(source: &Path) -> Result<PrivateCopy, ImportError> {
+        let resolved = fs::canonicalize(source)
+            .map_err(|e| ImportError::Source(format!("cannot open {}: {e}", source.display())))?;
+        let source = resolved.as_path();
+        let copy = PrivateCopy {
+            dir: private_dir().map_err(|e| {
+                ImportError::Source(format!(
+                    "cannot create a private copy of {} in {}: {e}",
+                    source.display(),
+                    std::env::temp_dir().display()
+                ))
+            })?,
+        };
+        copy_private(source, &copy.db()).map_err(|e| {
+            ImportError::Source(format!(
+                "cannot copy {} into {}: {e}",
+                source.display(),
+                copy.dir.display()
+            ))
+        })?;
+        for suffix in SIDECARS {
+            let from = with_suffix(source, suffix);
+            match copy_private(&from, &with_suffix(&copy.db(), suffix)) {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    return Err(ImportError::Source(format!(
+                        "cannot copy {} into {}: {e}",
+                        from.display(),
+                        copy.dir.display()
+                    )));
+                }
+            }
+        }
+        Ok(copy)
+    }
+
+    /// The copied database file.
+    fn db(&self) -> PathBuf {
+        self.dir.join("legacy.db")
+    }
+}
+
+impl Drop for PrivateCopy {
+    fn drop(&mut self) {
+        if let Err(error) = fs::remove_dir_all(&self.dir) {
+            tracing::warn!(dir = %self.dir.display(), %error, "cannot remove the copy of the legacy database");
+        }
+    }
+}
+
+/// A new directory `bookclub-legacy-<random>` under the temporary directory, readable by this
+/// user only.
+fn private_dir() -> io::Result<PathBuf> {
+    let mut random = [0u8; 8];
+    crate::auth::random::fill(&mut random);
+    let name: String = random.iter().map(|b| format!("{b:02x}")).collect();
+    let dir = std::env::temp_dir().join(format!("bookclub-legacy-{name}"));
+    fs::DirBuilder::new().mode(0o700).create(&dir)?;
+    Ok(dir)
+}
+
+/// Copies `from` to the new file `to` (mode 0600), whatever the source's mode.
+fn copy_private(from: &Path, to: &Path) -> io::Result<()> {
+    let mut source = File::open(from)?;
+    let mut target = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(to)?;
+    io::copy(&mut source, &mut target)?;
+    Ok(())
+}
+
+/// `<path><suffix>`, e.g. `bookclub.db-wal`.
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    PathBuf::from(name)
 }
 
 /// Reads every table the importer maps from an open connection (tests load the SQL fixtures
@@ -1049,6 +1182,8 @@ pub fn parse_timestamp(text: &str) -> Option<OffsetDateTime> {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
     use time::macros::datetime;
 
     use super::*;
@@ -1111,6 +1246,137 @@ mod tests {
             (book.subjects.as_str(), book.description.as_str()),
             ("[]", "")
         );
+    }
+
+    /// A copy taken in the middle of a write has a hot rollback journal: the half-written file
+    /// is refused with the reason instead of being read.
+    #[test]
+    fn a_hot_journal_is_refused_with_its_reason() {
+        /// The first bytes of a rollback journal whose header SQLite has synced. A journal
+        /// without them (zeros: nothing was written to the database file yet) is not hot.
+        const JOURNAL_MAGIC: [u8; 8] = [0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7];
+
+        let live = tempfile::tempdir().unwrap();
+        let path = live.path().join("bookclub.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, username VARCHAR, password_hash VARCHAR,
+                                 created_at DATETIME);
+             WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000)
+             INSERT INTO users SELECT i, 'user' || i, hex(randomblob(64)), '2024-01-01' FROM n;",
+        )
+        .unwrap();
+        let committed = fs::read(&path).unwrap();
+        conn.execute_batch("BEGIN; UPDATE users SET password_hash = hex(randomblob(64));")
+            .unwrap();
+        // Write the changed pages into the database file while the transaction is open: SQLite
+        // first syncs the journal, which holds the original pages. Cache pressure does not do
+        // this reliably: next to other SQLite connections in the process, the write sometimes
+        // stays in the cache.
+        conn.cache_flush().unwrap();
+        let copied = tempfile::tempdir().unwrap();
+        let copy = copied.path().join("bookclub.db");
+        fs::copy(&path, &copy).unwrap();
+        fs::copy(
+            with_suffix(&path, "-journal"),
+            with_suffix(&copy, "-journal"),
+        )
+        .unwrap();
+        drop(conn);
+        // The premise: the copy is half-written, and its journal is hot.
+        assert!(
+            fs::read(&copy).unwrap() != committed,
+            "no changed page reached the database file"
+        );
+        let journal = fs::read(with_suffix(&copy, "-journal")).unwrap();
+        assert_eq!(
+            journal.get(..8),
+            Some(&JOURNAL_MAGIC[..]),
+            "the journal header was not synced, so the journal is not hot"
+        );
+
+        let error = read(&copy).unwrap_err().to_string();
+        assert!(error.contains("has a hot journal"), "{error}");
+        // The source is not touched: its journal is still there.
+        assert!(with_suffix(&copy, "-journal").exists());
+    }
+
+    /// The private copy is removed after the read, and a missing file names the path.
+    #[test]
+    fn the_private_copy_is_removed_and_a_missing_file_is_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookclub.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, username VARCHAR, password_hash VARCHAR,
+                                 created_at DATETIME);
+             INSERT INTO users VALUES (1, 'ada', 'x', '2024-01-01 00:00:00');",
+        )
+        .unwrap();
+        drop(conn);
+        let copy = PrivateCopy::of(&path).unwrap();
+        assert!(copy.db().exists());
+        let dir_of_copy = copy.dir.clone();
+        assert_eq!(dir_of_copy.parent(), Some(std::env::temp_dir().as_path()));
+        assert!(dir_of_copy.to_string_lossy().contains("/bookclub-legacy-"));
+        let mode = fs::metadata(&dir_of_copy).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
+        drop(copy);
+        assert!(!dir_of_copy.exists());
+        assert_eq!(read(&path).unwrap().users.len(), 1);
+
+        let missing = dir.path().join("nope.db");
+        let error = read(&missing).unwrap_err().to_string();
+        assert!(error.contains("nope.db"), "{error}");
+    }
+
+    /// A database reached through a symlink keeps the committed rows of the `-wal` next to the
+    /// file the link points to, where SQLite itself looks for them.
+    #[test]
+    fn a_symlinked_database_is_read_with_the_wal_next_to_its_target() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("snap")).unwrap();
+        let target = dir.path().join("snap/2026-11-01.db");
+        {
+            let conn = Connection::open(&target).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE users (id INTEGER PRIMARY KEY, username VARCHAR,
+                                     password_hash VARCHAR, created_at DATETIME);
+                 INSERT INTO users VALUES (1, 'ada', 'x', '2024-01-01 00:00:00');",
+            )
+            .unwrap();
+            let mode: String = conn
+                .query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(mode, "wal");
+            // Leave the second user in the WAL: no automatic checkpoint, none on close.
+            conn.set_db_config(
+                rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE,
+                true,
+            )
+            .unwrap();
+            conn.execute_batch(
+                "PRAGMA wal_autocheckpoint = 0;
+                 INSERT INTO users VALUES (2, 'wally', 'x', '2024-01-02 00:00:00');",
+            )
+            .unwrap();
+        }
+        let _ = fs::remove_file(with_suffix(&target, "-shm"));
+        let link = dir.path().join("bookclub.db");
+        std::os::unix::fs::symlink("snap/2026-11-01.db", &link).unwrap();
+        assert!(fs::metadata(with_suffix(&target, "-wal")).unwrap().len() > 0);
+        assert!(!with_suffix(&link, "-wal").exists());
+
+        let db = read(&link).unwrap();
+        let names: Vec<&str> = db.users.iter().map(|u| u.username.as_str()).collect();
+        assert_eq!(names, ["ada", "wally"]);
+
+        // SQLite, opening the link in place, finds the same rows.
+        let conn = Connection::open_with_flags(&link, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let users: i64 = conn
+            .query_row("SELECT count(*) FROM users", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(users, 2);
     }
 
     #[test]
