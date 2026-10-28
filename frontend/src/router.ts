@@ -1,4 +1,6 @@
 import { createRouter, createWebHistory } from "vue-router";
+import { loginRoute } from "./nextPath";
+import { installSessionExpiry } from "./sessionExpiry";
 import { useSession } from "./stores/session";
 
 const router = createRouter({
@@ -28,16 +30,18 @@ const router = createRouter({
         { path: "shelf", component: () => import("./pages/ShelfPage.vue") },
         { path: "shelf/physical", component: () => import("./pages/PhysicalShelfPage.vue") },
         { path: "club", component: () => import("./pages/ClubPage.vue") },
+        // Another reader's shelves. Personal data follows the audience, not a club.
         {
-          path: "club/:username/shelf",
+          path: "u/:username/shelf",
           component: () => import("./pages/MemberPhysicalShelfPage.vue"),
         },
         {
-          path: "club/:username",
+          path: "u/:username",
           component: () => import("./pages/MemberShelfPage.vue"),
         },
+        // A numeric work id. Legacy keys (OL…W, BC…, ISBN…, GB…) resolve on the page.
         {
-          path: "book/:workId",
+          path: "book/:id",
           component: () => import("./pages/BookDetailPage.vue"),
         },
         { path: "settings", component: () => import("./pages/SettingsPage.vue") },
@@ -46,7 +50,9 @@ const router = createRouter({
         // stored start URL keep resolving.
         { path: "library", redirect: "/discover" },
         { path: "friends", redirect: "/club" },
-        { path: "friends/:username", redirect: (to) => `/club/${to.params.username}` },
+        { path: "friends/:username", redirect: (to) => `/u/${to.params.username}` },
+        { path: "club/:username/shelf", redirect: (to) => `/u/${to.params.username}/shelf` },
+        { path: "club/:username", redirect: (to) => `/u/${to.params.username}` },
         { path: "overlap", redirect: "/club" },
         { path: "invites", redirect: "/settings" },
         { path: "pick", redirect: "/" },
@@ -66,12 +72,14 @@ router.beforeEach(async (to) => {
     }
   }
   if (to.meta.auth && !session.user) {
-    return { path: "/login", query: { next: to.fullPath } };
+    return loginRoute(to.fullPath);
   }
   if (to.meta.guest && session.user) {
     return { path: "/" };
   }
   return true;
 });
+
+installSessionExpiry(router);
 
 export default router;

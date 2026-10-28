@@ -1,6 +1,7 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { bookOut, post } from "../test/fixtures";
 import type { DiaryFeedItem } from "../types";
 
 const diaryFeed = vi.fn();
@@ -11,6 +12,8 @@ vi.mock("../api/client", () => ({
   ApiError: class ApiError extends Error {},
   api: {
     diaryFeed: (...args: unknown[]) => diaryFeed(...args),
+  },
+  legacyApi: {
     members: (...args: unknown[]) => members(...args),
     overlap: (...args: unknown[]) => overlap(...args),
   },
@@ -26,32 +29,18 @@ function feedItem(overrides: Partial<DiaryFeedItem> = {}): DiaryFeedItem {
     parent_author: null,
     my_progress: 20,
     my_status: "currently_reading",
-    book: {
-      id: 1,
-      ol_work_key: "/works/OL1W",
-      title: "The Wedding People",
-      authors: "Alison Espach",
-      cover_id: 9,
-      year: 2024,
-      cover_url: null,
-    },
-    entry: {
+    club: null,
+    book: bookOut({ id: 1, title: "The Wedding People", authors: "Alison Espach", year: 2024 }),
+    entry: post({
       id: 11,
       author: "anni",
-      mine: false,
       body: SECRET,
-      deleted: false,
       spoiler_upto: 80,
       progress_at: 80,
       status_at: "currently_reading",
-      author_rating: null,
-      parent_id: null,
       created_at: "2026-09-01T12:00:00Z",
       created_label: "Sep 1",
-      edited: false,
-      reactions: [],
-      replies: [],
-    },
+    }),
     ...overrides,
   };
 }
@@ -115,7 +104,7 @@ describe("ClubPage recently written", () => {
     expect(wrapper.get(".feed-body").text()).toContain("And a second paragraph.");
     expect(wrapper.get(".feed-more").attributes("aria-expanded")).toBe("true");
     // The row still leads to the note itself.
-    expect(wrapper.get("a.feed-head").attributes("href")).toBe("/book/OL1W#entry-11");
+    expect(wrapper.get("a.feed-head").attributes("href")).toBe("/book/1#entry-11");
     await wrapper.get(".feed-more").trigger("click");
     expect(wrapper.get(".feed-body").text()).not.toContain("second paragraph");
   });

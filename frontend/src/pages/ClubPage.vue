@@ -1,20 +1,19 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { api, ApiError } from "../api/client";
+import { api, ApiError, legacyApi } from "../api/client";
 import Avatar from "../components/Avatar.vue";
 import BookCover from "../components/BookCover.vue";
 import NextUpVote from "../components/NextUpVote.vue";
 import { bookPath, statusShort } from "../constants";
 import { clubFeedPreview, EXCERPT_LENGTH, isShielded, positionMarker } from "../diary";
 import { formatClubDate } from "../i18n/dates";
-import { useClub } from "../stores/club";
+import { postTimeZone } from "../timezone";
 import { useLocale } from "../stores/locale";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 
 const { t } = useI18n();
-const club = useClub();
 const locale = useLocale();
 import type { DiaryFeedItem, Member, OverlapBook } from "../types";
 
@@ -29,7 +28,7 @@ const overlap = ref<OverlapBook[]>([]);
 const overlapError = ref("");
 const overlapLoaded = ref(false);
 const includeReading = ref(false);
-const nominating = ref<string | null>(null);
+const nominating = ref<number | null>(null);
 
 const voteSection = ref<InstanceType<typeof NextUpVote> | null>(null);
 
@@ -86,12 +85,12 @@ function toggleFeed(id: number) {
 }
 
 function entryPath(item: DiaryFeedItem): string {
-  return `${bookPath(item.book.ol_work_key)}#entry-${item.entry.id}`;
+  return `${bookPath(item.book)}#entry-${item.entry.id}`;
 }
 
 async function loadMembers() {
   try {
-    members.value = await api.members();
+    members.value = await legacyApi.members();
     membersError.value = "";
   } catch (err) {
     membersError.value =
@@ -104,7 +103,7 @@ async function loadMembers() {
 async function loadOverlap() {
   overlapLoaded.value = false;
   try {
-    overlap.value = (await api.overlap(includeReading.value)).items;
+    overlap.value = (await legacyApi.overlap(includeReading.value)).items;
     overlapError.value = "";
   } catch (err) {
     overlap.value = [];
@@ -116,16 +115,9 @@ async function loadOverlap() {
 }
 
 async function nominate(row: OverlapBook) {
-  nominating.value = row.book.ol_work_key;
+  nominating.value = row.book.id;
   try {
-    await api.nominate({
-      ol_work_key: row.book.ol_work_key,
-      title: row.book.title,
-      authors: row.book.authors,
-      cover_id: row.book.cover_id,
-      cover_url: row.book.cover_url,
-      year: row.book.year,
-    });
+    await legacyApi.nominate(row.book.id);
     toast.show(t("shelf.nominated"));
     await voteSection.value?.load();
   } catch (err) {
@@ -180,7 +172,7 @@ watch(includeReading, loadOverlap);
           <RouterLink class="btn btn-ghost btn-sm" to="/shelf">{{ t("club.yourShelf") }}</RouterLink>
         </li>
         <li v-for="member in members" :key="member.username">
-          <RouterLink class="member-card" :to="`/club/${member.username}`">
+          <RouterLink class="member-card" :to="`/u/${member.username}`">
             <Avatar :username="member.username" :src="member.avatar_url" />
             <span class="member-meta">
               <strong>{{ member.username }}</strong>
@@ -189,15 +181,7 @@ watch(includeReading, loadOverlap);
               </span>
             </span>
             <span class="preview-row">
-              <BookCover
-                v-for="book in member.currently_reading_preview"
-                :key="book.title"
-                :title="book.title"
-                :cover-id="book.cover_id"
-                :work-key="book.ol_work_key"
-                :image-url="book.cover_url"
-                size="xs"
-              />
+              <BookCover :book="book" v-for="book in member.currently_reading_preview" :key="book.title" size="xs" />
             </span>
           </RouterLink>
         </li>
@@ -220,13 +204,7 @@ watch(includeReading, loadOverlap);
             <!-- Not one big link: the note can be unfolded in place. -->
             <article class="feed-row">
               <RouterLink class="feed-cover" :to="entryPath(item)" tabindex="-1" aria-hidden="true">
-                <BookCover
-                  :title="item.book.title"
-                  :cover-id="item.book.cover_id"
-                  :work-key="item.book.ol_work_key"
-                  :image-url="item.book.cover_url"
-                  size="xs"
-                />
+                <BookCover :book="item.book" size="xs" />
               </RouterLink>
               <span class="feed-meta">
                 <RouterLink class="feed-head" :to="entryPath(item)">
@@ -270,7 +248,7 @@ watch(includeReading, loadOverlap);
                   <template v-if="positionMarker(item.entry)">
                     {{ positionMarker(item.entry) }} ·
                   </template>
-                  {{ formatClubDate(item.entry.created_at, club.timezone, locale.locale) || item.entry.created_label }}
+                  {{ formatClubDate(item.entry.created_at, postTimeZone(item.entry, session.user), locale.locale) || item.entry.created_label }}
                   <template v-if="item.entry.reactions.length">
                     · {{ item.entry.reactions.map((r) => `${r.emoji} ${r.count}`).join(" ") }}
                   </template>
@@ -316,15 +294,9 @@ watch(includeReading, loadOverlap);
       </p>
 
       <ul v-else class="overlap-list">
-        <li v-for="row in overlap" :key="row.book.ol_work_key" class="overlap-row">
-          <RouterLink class="overlap-book" :to="bookPath(row.book.ol_work_key)">
-            <BookCover
-              :title="row.book.title"
-              :cover-id="row.book.cover_id"
-              :work-key="row.book.ol_work_key"
-              :image-url="row.book.cover_url"
-              size="sm"
-            />
+        <li v-for="row in overlap" :key="row.book.id" class="overlap-row">
+          <RouterLink class="overlap-book" :to="bookPath(row.book)">
+            <BookCover :book="row.book" size="sm" />
             <span class="overlap-meta">
               <strong>{{ row.book.title }}</strong>
               <span v-if="row.book.authors" class="finer subtle">
@@ -345,7 +317,7 @@ watch(includeReading, loadOverlap);
           <button
             class="btn btn-ghost btn-sm"
             type="button"
-            :disabled="nominating === row.book.ol_work_key"
+            :disabled="nominating === row.book.id"
             @click="nominate(row)"
           >
             {{ t("common.nominate") }}

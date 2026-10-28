@@ -1,82 +1,38 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   bookPath,
-  catalogUrl,
-  coverUrl,
-  editionCoverUrl,
   extractIsbn,
-  googleBooksUrl,
-  isbnCoverUrl,
-  isbnFromWorkKey,
-  isClubWorkId,
-  isGoogleCatalogWorkKey,
-  isGoogleWorkId,
-  isIsbnWorkId,
-  isOpenLibraryWorkId,
   monogram,
-  remoteCoverUrl,
   openLibraryUrl,
+  parseBookParam,
   relativeDay,
   starLabel,
-  workId,
 } from "./constants";
 
-describe("covers and links", () => {
-  it("maps our sizes onto Open Library's image tiers", () => {
-    expect(coverUrl(123, "xs")).toBe(
-      "https://covers.openlibrary.org/b/id/123-S.jpg?default=false",
-    );
-    expect(coverUrl(123, "md")).toBe(
-      "https://covers.openlibrary.org/b/id/123-M.jpg?default=false",
-    );
-    expect(coverUrl(123, "tile")).toBe(
-      "https://covers.openlibrary.org/b/id/123-M.jpg?default=false",
-    );
-    expect(coverUrl(123)).toBe("https://covers.openlibrary.org/b/id/123-L.jpg?default=false");
-    expect(coverUrl(null)).toBeNull();
-    expect(coverUrl(0)).toBeNull();
-    expect(coverUrl(-1)).toBeNull();
+describe("book identity and links", () => {
+  it("links every book by its numeric work id", () => {
+    expect(bookPath(42)).toBe("/book/42");
+    expect(bookPath({ id: 7 })).toBe("/book/7");
   });
 
-  it("builds edition and ISBN fallbacks", () => {
-    expect(editionCoverUrl("OL1M", "sm")).toBe(
-      "https://covers.openlibrary.org/b/olid/OL1M-S.jpg?default=false",
-    );
-    expect(isbnCoverUrl("978-0-316-76948-8", "md")).toBe(
-      "https://covers.openlibrary.org/b/isbn/9780316769488-M.jpg?default=false",
-    );
-    expect(extractIsbn("9780316769488")).toBe("9780316769488");
-    expect(extractIsbn("it")).toBeNull();
+  it("tells a work id from a legacy key the server resolves", () => {
+    expect(parseBookParam("42")).toEqual({ kind: "id", id: 42 });
+    expect(parseBookParam("OL1168007W")).toEqual({ kind: "legacy", key: "OL1168007W" });
+    expect(parseBookParam("BCdeadbeef01")).toEqual({ kind: "legacy", key: "BCdeadbeef01" });
+    expect(parseBookParam("ISBN9780316769488")).toEqual({ kind: "legacy", key: "ISBN9780316769488" });
+    expect(parseBookParam("ISBN080442957x")).toEqual({ kind: "legacy", key: "ISBN080442957x" });
+    expect(parseBookParam("GBzyTCAlFPjgYC")).toEqual({ kind: "legacy", key: "GBzyTCAlFPjgYC" });
+    for (const junk of ["", "0", "042", "-1", "1.5", "99999999999999999", "OLW", "../x", "Circe"]) {
+      expect(parseBookParam(junk)).toEqual({ kind: "invalid" });
+    }
   });
 
-  it("derives the detail route and Open Library link from a work key", () => {
-    expect(workId("/works/OL1W")).toBe("OL1W");
-    expect(workId("OL1W")).toBe("OL1W");
-    expect(bookPath("/works/OL1W")).toBe("/book/OL1W");
+  it("links Open Library works to Open Library, and nothing else", () => {
     expect(openLibraryUrl("/works/OL1W")).toBe("https://openlibrary.org/works/OL1W");
-    expect(isClubWorkId("BCdeadbeef01")).toBe(true);
+    expect(openLibraryUrl(null)).toBeNull();
     expect(openLibraryUrl("/works/BCdeadbeef01")).toBeNull();
-    expect(isOpenLibraryWorkId("OL1W")).toBe(true);
-    expect(isIsbnWorkId("ISBN9780316769488")).toBe(true);
-    expect(isGoogleWorkId("GBzyTCAlFPjgYC")).toBe(true);
-    expect(isGoogleCatalogWorkKey("/works/ISBN9780316769488")).toBe(true);
-    expect(isGoogleCatalogWorkKey("/works/GBzyTCAlFPjgYC")).toBe(true);
-    expect(isGoogleCatalogWorkKey("/works/OL1W")).toBe(false);
-    expect(remoteCoverUrl("http://books.google.com/books/content?id=x")).toBe(
-      "https://books.google.com/books/content?id=x",
-    );
-    expect(remoteCoverUrl("javascript:alert(1)")).toBeNull();
-    expect(
-      remoteCoverUrl("https://covers.openlibrary.org/b/id/123-L.jpg?default=false"),
-    ).toBeNull();
-    expect(remoteCoverUrl("https://attacker.example/pixel.gif")).toBeNull();
-    expect(isbnFromWorkKey("/works/ISBN9780316769488")).toBe("9780316769488");
-    expect(isbnFromWorkKey("/works/ISBN080442957x")).toBe("080442957X");
-    expect(openLibraryUrl("/works/ISBN9780316769488")).toBeNull();
-    expect(googleBooksUrl("/works/GBzyTCAlFPjgYC")).toBe(
-      "https://books.google.com/books?id=zyTCAlFPjgYC",
-    );
-    expect(catalogUrl("/works/ISBN9780316769488")).toContain("ISBN9780316769488");
+    expect(extractIsbn("978-0-316-76948-8")).toBe("9780316769488");
+    expect(extractIsbn("it")).toBeNull();
   });
 });
 

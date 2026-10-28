@@ -4,16 +4,17 @@ import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { ApiError } from "../api/client";
 import LanguageSwitch from "../components/LanguageSwitch.vue";
-import { useClub } from "../stores/club";
+import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
 
 const { t } = useI18n();
 
-const club = useClub();
+const service = useService();
 
 const session = useSession();
 const router = useRouter();
 const username = ref("");
+const email = ref("");
 const password = ref("");
 const invite = ref("");
 const show = ref(false);
@@ -24,7 +25,12 @@ async function submit() {
   error.value = "";
   pending.value = true;
   try {
-    await session.register(username.value, password.value, invite.value);
+    await session.register({
+      username: username.value,
+      email: email.value,
+      password: password.value,
+      inviteCode: invite.value,
+    });
     await router.replace("/");
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : t("auth.couldNotCreate");
@@ -36,7 +42,7 @@ async function submit() {
 
 <template>
   <main class="auth-page">
-    <h1 class="wordmark">{{ club.name }}</h1>
+    <h1 class="wordmark">{{ service.name }}</h1>
     <p class="lede">{{ t("auth.joinLede") }}</p>
     <form @submit.prevent="submit">
       <p v-if="error" class="error">{{ error }}</p>
@@ -56,6 +62,17 @@ async function submit() {
           v-model="username"
           name="username"
           autocomplete="username"
+          spellcheck="false"
+          required
+        />
+      </label>
+      <label class="field">
+        <span>{{ t("auth.email") }}</span>
+        <input
+          v-model="email"
+          type="email"
+          name="email"
+          autocomplete="email"
           spellcheck="false"
           required
         />

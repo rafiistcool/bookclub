@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VueDraggable, type DraggableEvent, type UseDraggableReturn } from "vue-draggable-plus";
 import { statusLabel } from "../constants";
+import { shelfItem } from "../test/fixtures";
 import type { DecorationKind, ShelfDecoration, ShelfObjectId } from "../physicalShelf";
 import type { ShelfItem } from "../types";
 
@@ -39,15 +40,11 @@ const draggable = {
 };
 
 function item(id: number, title: string, status: ShelfItem["status"] = "want_to_read"): ShelfItem {
-  return {
+  return shelfItem({
     id, status, position: id - 1, shelf_position: id - 1,
     updated_at: "2026-10-08T10:00:00Z", rating: status === "finished" ? 5 : null,
-    take: "", dnf_reason: "", progress: null,
-    book: {
-      id: id + 100, title, authors: "An Author", cover_id: null,
-      cover_url: null, year: 2020, ol_work_key: `/works/OL${id}W`,
-    },
-  };
+    book: { id: id + 100, title, authors: "An Author", year: 2020, ol_work_key: `/works/OL${id}W` },
+  });
 }
 
 const books = [item(1, "First"), item(2, "Finished", "finished"), item(3, "Reading", "currently_reading")];
@@ -225,7 +222,7 @@ describe("physical bookshelf", () => {
     const wrapper = await render();
     await wrapper.findAll(".book-spine")[0].trigger("click");
     expect(wrapper.get(".spine-sheet-book").text()).toContain("Finished");
-    expect(wrapper.get(".open-book").attributes("href")).toBe("/book/OL2W");
+    expect(wrapper.get(".open-book").attributes("href")).toBe("/book/102");
     expect(wrapper.find(".spine-editor").exists()).toBe(false);
     await wrapper.get(".edit-spine").trigger("click");
     expect(wrapper.find(".spine-editor").exists()).toBe(true);

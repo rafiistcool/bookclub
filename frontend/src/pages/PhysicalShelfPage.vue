@@ -9,6 +9,7 @@ import PhysicalShelf from "../components/PhysicalShelf.vue";
 import ShelfBookInfo from "../components/ShelfBookInfo.vue";
 import ShelfDecoration from "../components/ShelfDecoration.vue";
 import ShelfViewSwitch from "../components/ShelfViewSwitch.vue";
+import { bookPath } from "../constants";
 import { defaultSpine, moveBook, reconcileLayout, removeShelfRow, spineInk, type DecorationKind, type PhysicalShelfLayout, type ShelfMaterial, type ShelfObjectId, type SpineDisplay, type SpineStyle } from "../physicalShelf";
 import { useToast } from "../stores/toast";
 import type { ShelfItem } from "../types";
@@ -316,7 +317,7 @@ onMounted(load);
         <button type="button" class="icon-btn close-spine-sheet" :aria-label="t('physicalShelf.close')" :disabled="saving" @click="selectedId = null"><XMarkIcon aria-hidden="true" /></button>
       </ShelfBookInfo>
       <div v-if="!editing" class="book-sheet-actions">
-        <RouterLink class="btn btn-primary open-book" :to="`/book/${selected.book.ol_work_key.replace('/works/', '')}`">{{ t('physicalShelf.openBook') }}</RouterLink>
+        <RouterLink class="btn btn-primary open-book" :to="bookPath(selected.book)">{{ t('physicalShelf.openBook') }}</RouterLink>
         <button type="button" class="btn btn-ghost edit-spine" :disabled="saving" @click="startEditing"><PaintBrushIcon aria-hidden="true" />{{ t('physicalShelf.restyle') }}</button>
       </div>
       <form v-else class="spine-editor" @submit.prevent="saveSpine">

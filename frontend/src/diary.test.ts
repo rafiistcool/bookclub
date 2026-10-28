@@ -8,27 +8,16 @@ import {
   positionMarker,
   spoilerLabel,
 } from "./diary";
+import { post } from "./test/fixtures";
 import type { DiaryEntry, DiaryFeedItem } from "./types";
 
 function entry(overrides: Partial<DiaryEntry> = {}): DiaryEntry {
-  return {
-    id: 1,
-    author: "ada",
-    mine: false,
+  return post({
     body: "hello",
-    deleted: false,
-    spoiler_upto: null,
-    progress_at: null,
-    status_at: null,
-    author_rating: null,
-    parent_id: null,
     created_at: "2026-09-01T12:00:00Z",
     created_label: "Sep 1",
-    edited: false,
-    reactions: [],
-    replies: [],
     ...overrides,
-  };
+  });
 }
 
 describe("positionMarker", () => {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { api, ApiError } from "../api/client";
+import { ApiError, legacyApi } from "../api/client";
 import { bookPath } from "../constants";
 import { tp } from "../i18n";
 import { useToast } from "../stores/toast";
@@ -32,7 +32,7 @@ const totalVotes = computed(() =>
 
 async function load() {
   try {
-    vote.value = await api.nextUp();
+    vote.value = await legacyApi.nextUp();
     error.value = "";
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : t("vote.loadFailed");
@@ -44,7 +44,7 @@ async function load() {
 async function cast(row: VoteNomination) {
   pendingId.value = row.id;
   try {
-    vote.value = await api.castVote(row.id);
+    vote.value = await legacyApi.castVote(row.id);
   } catch (err) {
     toast.show(err instanceof ApiError ? err.message : t("vote.saveFailed"));
   } finally {
@@ -58,7 +58,7 @@ async function confirm(meetingAt: string | null) {
   if (!row) return;
   pendingId.value = row.id;
   try {
-    const result = await api.applyWinner(row.id, meetingAt);
+    const result = await legacyApi.applyWinner(row.id, meetingAt);
     vote.value = result.vote;
     toast.show(t("vote.confirmed", { title: row.book.title }));
     emit("applied");
@@ -95,14 +95,8 @@ defineExpose({ load });
         class="vote-row"
         :class="{ leading: index === 0 && row.votes > 0 }"
       >
-        <RouterLink class="vote-book" :to="bookPath(row.book.ol_work_key)">
-          <BookCover
-            :title="row.book.title"
-            :cover-id="row.book.cover_id"
-            :work-key="row.book.ol_work_key"
-            :image-url="row.book.cover_url"
-            size="sm"
-          />
+        <RouterLink class="vote-book" :to="bookPath(row.book)">
+          <BookCover :book="row.book" size="sm" />
           <span class="vote-meta">
             <strong>{{ row.book.title }}</strong>
             <span v-if="row.book.authors" class="finer subtle">

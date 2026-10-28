@@ -1,21 +1,11 @@
 import { mount } from "@vue/test-utils";
 import { describe, expect, it } from "vitest";
+import { favorite as favoriteRow } from "../test/fixtures";
 import type { Favorite } from "../types";
 import FavoritesEditor from "./FavoritesEditor.vue";
 
 function favorite(position: number, title: string, id = position): Favorite {
-  return {
-    position,
-    book: {
-      id,
-      ol_work_key: `/works/OL${id}W`,
-      title,
-      authors: "An Author",
-      cover_id: id,
-      year: 2018,
-      cover_url: null,
-    },
-  };
+  return favoriteRow(position, { id, title, authors: "An Author" });
 }
 
 describe("FavoritesEditor", () => {

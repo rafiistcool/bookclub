@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { api, ApiError } from "../api/client";
+import { api, ApiError, legacyApi } from "../api/client";
 import Avatar from "../components/Avatar.vue";
 import BookCover from "../components/BookCover.vue";
 import BookDiary from "../components/BookDiary.vue";
@@ -70,7 +70,7 @@ const leader = computed(() => {
 
 async function load() {
   try {
-    const [current, past] = await Promise.all([api.clubPick(), api.clubPickHistory()]);
+    const [current, past] = await Promise.all([legacyApi.clubPick(), legacyApi.clubPickHistory()]);
     pick.value = current.pick;
     timezone.value = current.timezone;
     history.value = past.items;
@@ -81,7 +81,7 @@ async function load() {
     loaded.value = true;
   }
   try {
-    vote.value = await api.nextUp();
+    vote.value = await legacyApi.nextUp();
   } catch {
     vote.value = null;
   }
@@ -92,15 +92,7 @@ async function startReading() {
   if (!current || busy.value) return;
   busy.value = true;
   try {
-    const created = await api.addToShelf({
-      ol_work_key: current.book.ol_work_key,
-      title: current.book.title,
-      authors: current.book.authors,
-      cover_id: current.book.cover_id,
-      cover_url: current.book.cover_url,
-      year: current.book.year,
-      status: "currently_reading",
-    });
+    const created = await api.addToShelf({ work_id: current.book.id, status: "currently_reading" });
     current.on_shelf = created.status;
     current.shelf_id = created.id;
     toast.show(t("home.addedToReading"));
@@ -157,15 +149,7 @@ async function saveMeeting(meetingAt: string | null) {
   editingMeeting.value = false;
   if (!current) return;
   try {
-    await api.setClubPick({
-      ol_work_key: current.book.ol_work_key,
-      title: current.book.title,
-      authors: current.book.authors,
-      cover_id: current.book.cover_id,
-      cover_url: current.book.cover_url,
-      year: current.book.year,
-      meeting_at: meetingAt,
-    });
+    await legacyApi.setClubPick({ work_id: current.book.id, meeting_at: meetingAt });
     toast.show(meetingAt ? t("home.meetingSaved") : t("home.meetingCleared"));
     await load();
   } catch (err) {
@@ -195,18 +179,12 @@ onMounted(load);
 
     <template v-else-if="pick">
       <article class="hero">
-        <RouterLink class="hero-cover" :to="bookPath(pick.book.ol_work_key)">
-          <BookCover
-            :title="pick.book.title"
-            :cover-id="pick.book.cover_id"
-            :work-key="pick.book.ol_work_key"
-            :image-url="pick.book.cover_url"
-            eager
-          />
+        <RouterLink class="hero-cover" :to="bookPath(pick.book)">
+          <BookCover :book="pick.book" eager />
         </RouterLink>
         <div class="hero-body">
           <p class="kicker">{{ t("home.readingNow") }}</p>
-          <RouterLink class="hero-title" :to="bookPath(pick.book.ol_work_key)">
+          <RouterLink class="hero-title" :to="bookPath(pick.book)">
             <h2 class="display">{{ pick.book.title }}</h2>
           </RouterLink>
           <p v-if="pick.book.authors" class="hero-authors">{{ pick.book.authors }}</p>
@@ -243,7 +221,7 @@ onMounted(load);
           <div class="btn-row hero-actions">
             <RouterLink
               class="btn btn-primary"
-              :to="bookPath(pick.book.ol_work_key)"
+              :to="bookPath(pick.book)"
             >
               {{ pick.on_shelf ? t("home.openBook") : t("home.seeDetails") }}
             </RouterLink>
@@ -292,7 +270,7 @@ onMounted(load);
             v-for="row in readers"
             :key="row.username"
             class="reader-chip"
-            :to="`/club/${row.username}`"
+            :to="`/u/${row.username}`"
           >
             <Avatar :username="row.username" :src="row.avatar_url" size="sm" />
             <span class="reader-name">{{ row.username }}</span>
@@ -324,8 +302,7 @@ onMounted(load);
       <section class="section thread-section">
         <BookDiary
           ref="diary"
-          :work-key="pick.book.ol_work_key"
-          :book="pick.book"
+          :work-id="pick.book.id"
           :preview="3"
           :heading="t('home.diary')"
         />
@@ -347,13 +324,7 @@ onMounted(load);
         <RouterLink to="/club">{{ t("home.voteInClub") }}</RouterLink>
       </div>
       <RouterLink v-if="leader" class="book-row next-up-card" to="/club">
-        <BookCover
-          :title="leader.book.title"
-          :cover-id="leader.book.cover_id"
-          :work-key="leader.book.ol_work_key"
-          :image-url="leader.book.cover_url"
-          size="sm"
-        />
+        <BookCover :book="leader.book" size="sm" />
         <span class="book-row-meta">
           <h3>{{ leader.book.title }}</h3>
           <p class="fine">
@@ -384,14 +355,9 @@ onMounted(load);
           v-for="row in history"
           :key="row.id"
           class="book-tile past-tile"
-          :to="bookPath(row.book.ol_work_key)"
+          :to="bookPath(row.book)"
         >
-          <BookCover
-            :title="row.book.title"
-            :cover-id="row.book.cover_id"
-            :work-key="row.book.ol_work_key"
-            :image-url="row.book.cover_url"
-          />
+          <BookCover :book="row.book" />
           <span class="book-tile-title">{{ row.book.title }}</span>
           <span class="book-tile-sub">{{ formatClubDate(row.meeting_at, timezone, locale.locale) || row.meeting_label || row.set_by }}</span>
         </RouterLink>

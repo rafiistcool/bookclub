@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { api, ApiError } from "../api/client";
 import type { User } from "../types";
 import { useLocale } from "./locale";
+import { browserTimeZone } from "../timezone";
 import { useTheme } from "./theme";
 
 export const useSession = defineStore("session", {
@@ -25,11 +26,15 @@ export const useSession = defineStore("session", {
         this.ready = true;
       }
     },
-    async register(username: string, password: string, inviteCode: string) {
+    async register(body: { username: string; email: string; password: string; inviteCode: string }) {
+      const locale = useLocale();
       this.user = await api.register({
-        username,
-        password,
-        invite_code: inviteCode,
+        username: body.username,
+        email: body.email,
+        password: body.password,
+        invite_code: body.inviteCode || null,
+        timezone: browserTimeZone(),
+        locale: locale.locale,
       });
       // A new account has no stored preference yet, so push the one this
       // browser has been using rather than snapping back to the default.
@@ -54,9 +59,13 @@ export const useSession = defineStore("session", {
       try {
         await api.logout();
       } finally {
-        this.user = null;
-        useLocale().clearExplicit();
+        this.reset();
       }
+    },
+    /** Forget the signed-in user, after a logout or when the server ended the session. */
+    reset() {
+      this.user = null;
+      useLocale().clearExplicit();
     },
   },
 });

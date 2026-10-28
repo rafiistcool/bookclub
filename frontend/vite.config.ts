@@ -12,12 +12,16 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // The Rust server (server/, BIND_ADDR 127.0.0.1:8080) answers the API and
+    // serves every picture under /media; the SPA always calls them same-origin.
     proxy: {
-      "/api": "http://127.0.0.1:8000",
+      "/api": "http://127.0.0.1:8080",
+      "/media": "http://127.0.0.1:8080",
     },
   },
   build: {
-    outDir: "../backend/app/static",
+    // The server serves this directory as STATIC_DIR (frontend/dist).
+    outDir: "dist",
     emptyOutDir: true,
   },
   test: {

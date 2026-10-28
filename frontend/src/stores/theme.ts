@@ -2,7 +2,7 @@ import { defineStore } from "pinia";
 import { api } from "../api/client";
 import { applyClubAccent, applyThemeColor } from "../brand";
 import type { ColorMode, ThemeId, User } from "../types";
-import { useClub } from "./club";
+import { useService } from "./service";
 
 export const THEMES = [
   { id: "paper", labelKey: "theme.paper", blurbKey: "theme.paperBlurb" },
@@ -88,7 +88,7 @@ export const useTheme = defineStore("theme", {
       root.setAttribute("data-mode", this.resolvedMode);
       write(THEME_KEY, this.theme);
       write(MODE_KEY, this.mode);
-      applyClubAccent(useClub().$state, this.theme);
+      applyClubAccent(useService().$state, this.theme);
       applyThemeColor();
     },
     /** Take the server's stored preference as the source of truth on login. */

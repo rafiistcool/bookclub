@@ -1,15 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { decorationWidth, defaultSpine, faceHeight, moveBook, reconcileLayout, removeShelfRow, shelfFootprint, spineInk, stackSlots, type PhysicalShelfLayout, type ShelfObjectId } from "./physicalShelf";
+import { shelfItem } from "./test/fixtures";
 import type { ShelfItem } from "./types";
 
-const item = (id: number, position = id, pages?: number | null): ShelfItem => ({
-  id, position, status: "want_to_read", updated_at: "", rating: null,
-  take: "", dnf_reason: "", progress: null,
-  book: {
-    id, title: `Book ${id}`, authors: "Author", cover_id: null, cover_url: null,
-    year: null, ol_work_key: `/works/OL${id}W`, ...pages === undefined ? {} : { pages },
-  },
-});
+const item = (id: number, position = id, pages?: number | null): ShelfItem =>
+  shelfItem({ id, position, book: pages === undefined ? {} : { pages } });
 const layout = (rows: ShelfObjectId[][] = []): PhysicalShelfLayout => ({ rows, material: "oak", spines: {} });
 
 describe("physical shelf layout", () => {

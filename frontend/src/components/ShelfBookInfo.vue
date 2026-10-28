@@ -11,7 +11,7 @@ const { t } = useI18n();
 <template>
   <div class="shelf-book-info">
     <div class="spine-sheet-book">
-      <BookCover :title="item.book.title" :cover-id="item.book.cover_id" :image-url="item.book.cover_url" :work-key="item.book.ol_work_key" size="md" />
+      <BookCover :book="item.book" size="md" />
       <div>
         <h3>{{ item.book.title }}</h3>
         <p class="muted">{{ item.book.authors }}</p>

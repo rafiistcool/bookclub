@@ -9,6 +9,8 @@ export type CachedBrowseRow = {
 
 export type BrowseSnapshot = {
   trending: SearchHit[];
+  /** The DNB new-releases row; null until it has loaded once. */
+  releases: SearchHit[] | null;
   rows: CachedBrowseRow[];
   browseError: string;
 };
@@ -22,6 +24,7 @@ export function readBrowseSnapshot(): BrowseSnapshot | null {
 export function writeBrowseSnapshot(next: BrowseSnapshot) {
   snapshot = {
     trending: [...next.trending],
+    releases: next.releases ? [...next.releases] : null,
     browseError: next.browseError,
     rows: next.rows.map((row) => ({
       ...row,

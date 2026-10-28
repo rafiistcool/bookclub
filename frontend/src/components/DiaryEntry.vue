@@ -5,14 +5,15 @@ import { useI18n } from "vue-i18n";
 import type { Status } from "../constants";
 import { REACTIONS, isShielded, positionMarker, spoilerLabel } from "../diary";
 import { formatClubDate } from "../i18n/dates";
-import { useClub } from "../stores/club";
+import { useSession } from "../stores/session";
+import { postTimeZone } from "../timezone";
 import { useLocale } from "../stores/locale";
 import type { DiaryEntry } from "../types";
 import Avatar from "./Avatar.vue";
 import SpoilerControl from "./SpoilerControl.vue";
 
 const { t } = useI18n();
-const club = useClub();
+const session = useSession();
 const locale = useLocale();
 
 const props = defineProps<{
@@ -45,7 +46,7 @@ const shielded = computed(
 const marker = computed(() => positionMarker(props.entry));
 const when = computed(
   () =>
-    formatClubDate(props.entry.created_at, club.timezone, locale.locale) ||
+    formatClubDate(props.entry.created_at, postTimeZone(props.entry, session.user), locale.locale) ||
     props.entry.created_label,
 );
 const pickable = computed(() =>
@@ -99,11 +100,11 @@ watch(
   >
     <header class="entry-meta">
       <Avatar
-        :username="entry.author"
+        :username="entry.author ?? ''"
         :src="entry.author_avatar_url"
         :size="compact ? 'xs' : 'sm'"
       />
-      <strong class="entry-author">{{ entry.author }}</strong>
+      <strong class="entry-author">{{ entry.author ?? t("diary.deletedAccount") }}</strong>
       <span v-if="marker" class="entry-marker" :class="entry.status_at ?? ''">{{ marker }}</span>
       <span class="finer subtle entry-time">{{ when }}</span>
       <span v-if="entry.edited" class="finer subtle">{{ t("diary.edited") }}</span>

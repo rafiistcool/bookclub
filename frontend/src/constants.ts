@@ -11,20 +11,6 @@ export const STATUSES = [
 
 export type Status = (typeof STATUSES)[number];
 
-export const STATUS_LABEL: Record<Status, string> = {
-  want_to_read: "Want to read",
-  currently_reading: "Reading",
-  finished: "Finished",
-  did_not_finish: "Did not finish",
-};
-
-export const STATUS_SHORT: Record<Status, string> = {
-  want_to_read: "Want",
-  currently_reading: "Reading",
-  finished: "Done",
-  did_not_finish: "DNF",
-};
-
 export function statusLabel(status: Status): string {
   return t(`status.${status}`);
 }
@@ -35,156 +21,45 @@ export function statusShort(status: Status): string {
 
 export type CoverSize = "xs" | "sm" | "md" | "lg" | "fluid" | "tile";
 
-/** Open Library's image tiers, mapped to the sizes we actually render. */
-const COVER_TIER: Record<CoverSize, "S" | "M" | "L"> = {
-  xs: "S",
-  sm: "S",
-  md: "M",
-  lg: "M",
-  tile: "M",
-  fluid: "L",
-};
-
 const ISBN_RE = /^(?:\d{9}[\dXx]|\d{13})$/;
-const CLUB_WORK_ID_RE = /^BC[a-f0-9]{10}$/;
 const OL_WORK_ID_RE = /^OL\d+W$/;
-const ISBN_WORK_ID_RE = /^ISBN(?:\d{9}[\dXx]|\d{13})$/;
-const GOOGLE_WORK_ID_RE = /^GB[A-Za-z0-9_-]{1,40}$/;
+const NUMERIC_ID_RE = /^[1-9]\d{0,15}$/;
+/** Book keys of the legacy app's `/book/<key>` links: Open Library, club-added, Google ISBN and volume. */
+const LEGACY_WORK_KEY_RE = /^(?:OL\d+W|BC[a-f0-9]{10}|ISBN[\dXx]{10,13}|isbn[\dXx]{10,13}|GB[A-Za-z0-9_-]{1,40})$/;
 
 export function extractIsbn(raw: string): string | null {
   const cleaned = raw.replace(/[\s-]/g, "").toUpperCase();
   return ISBN_RE.test(cleaned) ? cleaned : null;
 }
 
-function coverSrc(
-  kind: "id" | "olid" | "isbn",
-  value: string | number,
-  size: CoverSize,
-): string {
-  return `https://covers.openlibrary.org/b/${kind}/${value}-${COVER_TIER[size]}.jpg?default=false`;
+/** The book page of a work. Every link to a book goes through here. */
+export function bookPath(book: number | { id: number }): string {
+  return `/book/${typeof book === "number" ? book : book.id}`;
 }
 
-export function coverUrl(
-  coverId: number | null | undefined,
-  size: CoverSize = "fluid",
-): string | null {
-  if (coverId == null || coverId <= 0) return null;
-  return coverSrc("id", coverId, size);
-}
+export type BookParam =
+  | { kind: "id"; id: number }
+  | { kind: "legacy"; key: string }
+  | { kind: "invalid" };
 
-export function editionCoverUrl(
-  olid: string | null | undefined,
-  size: CoverSize = "fluid",
-): string | null {
-  const key = olid?.trim();
-  if (!key) return null;
-  return coverSrc("olid", key, size);
-}
-
-export function isbnCoverUrl(
-  isbn: string | null | undefined,
-  size: CoverSize = "fluid",
-): string | null {
-  const cleaned = extractIsbn(isbn || "");
-  if (!cleaned) return null;
-  return coverSrc("isbn", cleaned, size);
-}
-
-function isOpenLibraryCoverHost(host: string): boolean {
-  return (
-    host === "covers.openlibrary.org" || host.endsWith(".covers.openlibrary.org")
-  );
-}
-
-function isAllowedCoverHost(host: string): boolean {
-  return (
-    host === "books.google.com" ||
-    host.endsWith(".books.google.com") ||
-    host === "googleusercontent.com" ||
-    host.endsWith(".googleusercontent.com")
-  );
-}
-
-/** Google Books https cover. OL CDN URLs fall through to size-aware coverId. */
-export function remoteCoverUrl(url: string | null | undefined): string | null {
-  const text = (url || "").trim();
-  if (!text) return null;
-  const https = text.startsWith("http://") ? `https://${text.slice(7)}` : text;
-  if (!https.startsWith("https://")) return null;
-  try {
-    const parsed = new URL(https);
-    if (parsed.protocol !== "https:") return null;
-    if (isOpenLibraryCoverHost(parsed.hostname) || !isAllowedCoverHost(parsed.hostname)) {
-      return null;
-    }
-    return https;
-  } catch {
-    return null;
+/**
+ * What `/book/:id` names: a numeric work id, or a key of the legacy app
+ * (`OL…W`, `BC…`, `ISBN…`, `GB…`) that the server resolves to one.
+ */
+export function parseBookParam(raw: string): BookParam {
+  if (NUMERIC_ID_RE.test(raw)) {
+    const id = Number(raw);
+    if (Number.isSafeInteger(id)) return { kind: "id", id };
   }
+  if (LEGACY_WORK_KEY_RE.test(raw)) return { kind: "legacy", key: raw };
+  return { kind: "invalid" };
 }
 
-/** "/works/OL1W" -> "OL1W", the form the detail route and API path take. */
-export function workId(olWorkKey: string): string {
-  return olWorkKey.replace(/^\/works\//, "");
-}
-
-export function isClubWorkId(id: string): boolean {
-  return CLUB_WORK_ID_RE.test(id);
-}
-
-export function isClubWorkKey(olWorkKey: string): boolean {
-  return isClubWorkId(workId(olWorkKey));
-}
-
-export function isOpenLibraryWorkId(id: string): boolean {
-  return OL_WORK_ID_RE.test(id);
-}
-
-export function isIsbnWorkId(id: string): boolean {
-  return ISBN_WORK_ID_RE.test(id);
-}
-
-export function isGoogleWorkId(id: string): boolean {
-  return GOOGLE_WORK_ID_RE.test(id);
-}
-
-export function isGoogleCatalogWorkKey(olWorkKey: string): boolean {
-  const id = workId(olWorkKey);
-  return isIsbnWorkId(id) || isGoogleWorkId(id);
-}
-
-export function isbnFromWorkKey(olWorkKey: string): string | null {
-  const id = workId(olWorkKey);
-  const canonical = id.startsWith("ISBN") || id.startsWith("isbn")
-    ? `ISBN${id.slice(4).toUpperCase()}`
-    : id;
-  return isIsbnWorkId(canonical) ? extractIsbn(canonical.slice(4)) : null;
-}
-
-export function bookPath(olWorkKey: string): string {
-  return `/book/${workId(olWorkKey)}`;
-}
-
-export function openLibraryUrl(olWorkKey: string): string | null {
-  const id = workId(olWorkKey);
-  if (!isOpenLibraryWorkId(id)) return null;
+/** "/works/OL1W" -> the work's Open Library page. Other works have none. */
+export function openLibraryUrl(olWorkKey: string | null | undefined): string | null {
+  const id = (olWorkKey || "").replace(/^\/works\//, "");
+  if (!OL_WORK_ID_RE.test(id)) return null;
   return `https://openlibrary.org/works/${id}`;
-}
-
-export function googleBooksUrl(olWorkKey: string): string | null {
-  const id = workId(olWorkKey);
-  if (isGoogleWorkId(id)) {
-    return `https://books.google.com/books?id=${id.slice(2)}`;
-  }
-  const isbn = isbnFromWorkKey(olWorkKey);
-  if (isbn) {
-    return `https://books.google.com/books?vid=ISBN${isbn}`;
-  }
-  return null;
-}
-
-export function catalogUrl(olWorkKey: string): string | null {
-  return openLibraryUrl(olWorkKey) || googleBooksUrl(olWorkKey);
 }
 
 export type FinishNote = {

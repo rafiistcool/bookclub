@@ -4,7 +4,6 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { api, ApiError } from "../api/client";
-import { workId } from "../constants";
 import type { Status } from "../constants";
 import { countEntries, defaultSpoilerUpto } from "../diary";
 import { draftKey, loadDraft, saveDraft } from "../drafts";
@@ -13,15 +12,13 @@ import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 
 const { t } = useI18n();
-import type { Diary, DiaryBookIn, DiaryEntry as Entry } from "../types";
+import type { Diary, DiaryEntry as Entry } from "../types";
 import DiaryEntry from "./DiaryEntry.vue";
 import SpoilerControl from "./SpoilerControl.vue";
 
 const props = defineProps<{
-  /** "/works/OL1W" */
-  workKey: string;
-  /** Enough to create the book row the first time anyone writes about it. */
-  book: DiaryBookIn;
+  /** The work's numeric id. */
+  workId: number;
   /** Show only the newest N entries until the reader asks for the rest. */
   preview?: number;
   heading?: string;
@@ -53,8 +50,8 @@ const replyDraft = ref("");
 const replySpoiler = ref<number | null>(null);
 const expandedReplies = ref<Set<number>>(new Set());
 
-const draftId = computed(() => draftKey(session.user?.username, workId(props.workKey)));
-const replyDraftId = (entryId: number) => draftKey(session.user?.username, workId(props.workKey), "reply", entryId);
+const draftId = computed(() => draftKey(session.user?.username, String(props.workId)));
+const replyDraftId = (entryId: number) => draftKey(session.user?.username, String(props.workId), "reply", entryId);
 watch(draft, (text) => saveDraft(draftId.value, text));
 watch(replyDraft, (text) => {
   if (replyTo.value != null) saveDraft(replyDraftId(replyTo.value), text);
@@ -94,7 +91,7 @@ function resetSpoilerDefault() {
 
 async function load() {
   try {
-    diary.value = await api.diary(workId(props.workKey));
+    diary.value = await api.diary(props.workId);
     error.value = "";
     resetSpoilerDefault();
     await jumpToAnchor();
@@ -144,15 +141,13 @@ async function submit() {
   posting.value = true;
   const key = draftId.value;
   try {
-    const created = await api.addDiaryEntry(workId(props.workKey), {
+    const created = await api.addDiaryEntry(props.workId, {
       body,
       spoiler_upto: spoiler.value,
-      book: diary.value.book_id ? undefined : props.book,
     });
     // Posted: forget the draft now, even if the page changes before the field clears.
     saveDraft(key, "");
     diary.value.items = [...diary.value.items, created];
-    if (!diary.value.book_id) await load();
     draft.value = "";
     composing.value = false;
     spoilerTouched.value = false;
@@ -175,7 +170,7 @@ async function submitReply(parent: Entry) {
   if (!body || posting.value) return;
   posting.value = true;
   try {
-    const created = await api.addDiaryEntry(workId(props.workKey), {
+    const created = await api.addDiaryEntry(props.workId, {
       body,
       spoiler_upto: replySpoiler.value,
       parent_id: parent.id,
@@ -258,7 +253,7 @@ onMounted(() => {
 });
 onBeforeUnmount(() => document.removeEventListener("pointerdown", foldComposer));
 watch(
-  () => props.workKey,
+  () => props.workId,
   () => {
     loaded.value = false;
     showAll.value = false;

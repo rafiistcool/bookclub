@@ -502,6 +502,11 @@
   color: var(--status-dnf-fg);
   background: var(--status-dnf-bg);
 }
+/* A search hit only says whether the book is on the shelf, not its status. */
+.badge.on-shelf {
+  color: var(--status-want-fg);
+  background: var(--status-want-bg);
+}
 
 .badge.club-pick {
   color: var(--accent-ink);

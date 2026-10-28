@@ -2,6 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
+import { shelfItem } from "../test/fixtures";
 import type { ShelfItem } from "../types";
 
 const friendShelf = vi.fn();
@@ -20,25 +21,25 @@ vi.mock("../api/client", () => ({
 import MemberPhysicalShelfPage from "./MemberPhysicalShelfPage.vue";
 
 function item(id: number, title: string): ShelfItem {
-  return {
+  return shelfItem({
     id, status: "finished", position: id, shelf_position: id,
-    updated_at: "2026-10-08T10:00:00Z", rating: 4, take: "Stays with you.", dnf_reason: "", progress: null,
-    book: { id: id + 100, title, authors: "An Author", cover_id: null, cover_url: null, year: 2020, ol_work_key: `/works/OL${id}W` },
-  };
+    updated_at: "2026-10-08T10:00:00Z", rating: 4, take: "Stays with you.",
+    book: { id: id + 100, title, authors: "An Author", year: 2020, ol_work_key: `/works/OL${id}W` },
+  });
 }
 
 async function mountMember(layout: unknown, items = [item(1, "Circe"), item(2, "Piranesi")]) {
   friendShelf.mockResolvedValue({
     timezone: "UTC",
-    user: { id: 2, username: "grace", theme: "paper", color_mode: "system", locale: "en", avatar_url: null },
+    user: { id: 2, username: "grace", avatar_url: null },
     items, favorites: [],
   });
   physicalShelfLayout.mockResolvedValue(layout);
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [{ path: "/club/:username/shelf", component: MemberPhysicalShelfPage }],
+    routes: [{ path: "/u/:username/shelf", component: MemberPhysicalShelfPage }],
   });
-  await router.push("/club/grace/shelf");
+  await router.push("/u/grace/shelf");
   await router.isReady();
   const wrapper = mount(MemberPhysicalShelfPage, { global: { plugins: [createPinia(), router] } });
   await flushPromises();
@@ -72,7 +73,7 @@ describe("another member's bookshelf", () => {
     await wrapper.get('.shelf-object[data-id="1"]').trigger("click");
     expect(wrapper.get(".spine-sheet-book").text()).toContain("Circe");
     expect(wrapper.text()).toContain("Stays with you.");
-    expect(wrapper.get(".open-book").attributes("href")).toBe("/book/OL1W");
+    expect(wrapper.get(".open-book").attributes("href")).toBe("/book/101");
     expect(wrapper.find(".edit-spine").exists()).toBe(false);
     expect(savePhysicalShelfLayout).not.toHaveBeenCalled();
   });

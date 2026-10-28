@@ -6,10 +6,12 @@ import { useRoute } from "vue-router";
 import { api, ApiError } from "../api/client";
 import { tp } from "../i18n";
 import Avatar from "../components/Avatar.vue";
+import BackLink from "../components/BackLink.vue";
 import BottomSheet from "../components/BottomSheet.vue";
 import PhysicalShelf from "../components/PhysicalShelf.vue";
 import ShelfBookInfo from "../components/ShelfBookInfo.vue";
 import ShelfViewSwitch from "../components/ShelfViewSwitch.vue";
+import { bookPath } from "../constants";
 import { reconcileLayout, type PhysicalShelfLayout, type ShelfObjectId } from "../physicalShelf";
 import type { ShelfItem } from "../types";
 
@@ -54,7 +56,7 @@ watch(() => route.params.username, load);
 
 <template>
   <section class="member-physical-shelf">
-    <p class="fine back-link"><RouterLink to="/club">{{ t("memberShelf.back") }}</RouterLink></p>
+    <BackLink :label="t('memberShelf.back')" fallback="/" />
     <div class="page-head member-head">
       <Avatar :username="username" :src="avatarUrl" size="lg" />
       <div>
@@ -62,7 +64,7 @@ watch(() => route.params.username, load);
         <p v-if="loaded && !error" class="lede nums">{{ tp("shelf.books", items.length) }}</p>
       </div>
     </div>
-    <div class="member-shelf-switch"><ShelfViewSwitch active="physical" :base="`/club/${username}`" /></div>
+    <div class="member-shelf-switch"><ShelfViewSwitch active="physical" :base="`/u/${username}`" /></div>
 
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <PhysicalShelf v-else-if="!loaded" :layout="layout" :items="[]" loading />
@@ -73,7 +75,7 @@ watch(() => route.params.username, load);
       <ShelfBookInfo :item="selected">
         <button type="button" class="icon-btn close-spine-sheet" :aria-label="t('physicalShelf.close')" @click="selectedId = null"><XMarkIcon aria-hidden="true" /></button>
       </ShelfBookInfo>
-      <RouterLink class="btn btn-primary btn-block open-book" :to="`/book/${selected.book.ol_work_key.replace('/works/', '')}`">{{ t("physicalShelf.openBook") }}</RouterLink>
+      <RouterLink class="btn btn-primary btn-block open-book" :to="bookPath(selected.book)">{{ t("physicalShelf.openBook") }}</RouterLink>
     </BottomSheet>
   </section>
 </template>

@@ -1,10 +1,11 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Favorite, ShelfItem } from "../types";
+import { favorite as favoriteRow, shelfItem, user } from "../test/fixtures";
+import type { ClubSummary, Favorite, ShelfItem } from "../types";
 
 const myShelf = vi.fn();
-const clubPick = vi.fn();
+const clubs = vi.fn();
 const patchShelf = vi.fn();
 
 vi.mock("../api/client", () => ({
@@ -12,7 +13,7 @@ vi.mock("../api/client", () => ({
   api: {
     patchShelf: (...args: unknown[]) => patchShelf(...args),
     myShelf: (...args: unknown[]) => myShelf(...args),
-    clubPick: (...args: unknown[]) => clubPick(...args),
+    clubs: (...args: unknown[]) => clubs(...args),
   },
 }));
 
@@ -22,67 +23,28 @@ import ShelfBoard from "../components/ShelfBoard.vue";
 import { i18n } from "../i18n";
 
 function favorite(position: number, title: string): Favorite {
-  return {
-    position,
-    book: {
-      id: position,
-      ol_work_key: `/works/OL${position}W`,
-      title,
-      authors: "An Author",
-      cover_id: position,
-      year: 2018,
-      cover_url: null,
-    },
-  };
+  return favoriteRow(position, { title, authors: "An Author" });
 }
 
 function item(id: number, title: string): ShelfItem {
-  return {
+  return shelfItem({
     id,
-    status: "want_to_read",
-    position: 0,
     updated_at: "2026-09-01T00:00:00Z",
-    book: {
-      id,
-      ol_work_key: `/works/OL${id}W`,
-      title,
-      authors: "An Author",
-      cover_id: id,
-      year: 2018,
-      cover_url: null,
-    },
-    rating: null,
-    take: "",
-    dnf_reason: "",
-    progress: null,
-  };
+    book: { title, authors: "An Author", year: 2018 },
+  });
 }
 
-async function mountShelf(favorites: Favorite[], items: ShelfItem[] = []) {
+async function mountShelf(favorites: Favorite[], items: ShelfItem[] = [], memberOf: ClubSummary[] = []) {
   myShelf.mockResolvedValue({
-    user: {
-      id: 1,
-      username: "ada",
-      theme: "paper",
-      color_mode: "system",
-      locale: "en",
-      avatar_url: null,
-    },
+    timezone: "UTC",
+    user: { id: 1, username: "ada", avatar_url: null },
     items,
     favorites,
   });
-  clubPick.mockResolvedValue({ pick: null, timezone: "UTC" });
   const pinia = createPinia();
   setActivePinia(pinia);
   const session = useSession();
-  session.user = {
-    id: 1,
-    username: "ada",
-    theme: "paper",
-    color_mode: "system",
-    locale: "en",
-    avatar_url: null,
-  };
+  session.user = user({ clubs: memberOf });
   session.ready = true;
   const wrapper = mount(ShelfPage, {
     global: { plugins: [pinia] },
@@ -94,7 +56,7 @@ async function mountShelf(favorites: Favorite[], items: ShelfItem[] = []) {
 describe("ShelfPage favourites portrait", () => {
   beforeEach(() => {
     myShelf.mockReset();
-    clubPick.mockReset();
+    clubs.mockReset();
     patchShelf.mockReset();
     Object.defineProperty(window, "matchMedia", {
       writable: true,
@@ -248,4 +210,33 @@ describe("ShelfPage favourites portrait", () => {
     wrapper.unmount();
   });
 
+  it("makes no club request for a reader without clubs and offers no club actions", async () => {
+    const wrapper = await mountShelf([], [item(1, "Circe")]);
+    expect(clubs).not.toHaveBeenCalled();
+    await wrapper.get("button.shelf-status").trigger("click");
+    const labels = wrapper.findAll(".sheet button").map((button) => button.text());
+    expect(labels).not.toContain("Set as club pick");
+    expect(labels).not.toContain("Nominate for next up");
+    expect(labels).toContain("Remove");
+    wrapper.unmount();
+  });
+
+  it("marks the current picks of the reader's clubs and offers the actions their role allows", async () => {
+    const club: ClubSummary = { slug: "readers-ab12", name: "Readers", role: "member", timezone: "UTC", member_count: 3 };
+    clubs.mockResolvedValue({
+      items: [{
+        slug: club.slug, name: club.name, timezone: "UTC", role: "member", member_count: 3,
+        created_at: "2026-01-01T00:00:00Z",
+        current_pick: { id: 5, book: shelfItem({ id: 2 }).book, meeting_at: null },
+      }],
+    });
+    const wrapper = await mountShelf([], [item(1, "Circe"), item(2, "Galatea")], [club]);
+    expect(clubs).toHaveBeenCalledTimes(1);
+    expect(wrapper.getComponent(ShelfBoard).props("clubPickIds")).toEqual([2]);
+    await wrapper.findAll("button.shelf-status")[0].trigger("click");
+    const labels = wrapper.findAll(".sheet button").map((button) => button.text());
+    expect(labels).not.toContain("Set as club pick");
+    expect(labels).toContain("Nominate for next up");
+    wrapper.unmount();
+  });
 });

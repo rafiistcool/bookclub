@@ -4,12 +4,13 @@ import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { ApiError } from "../api/client";
 import LanguageSwitch from "../components/LanguageSwitch.vue";
-import { useClub } from "../stores/club";
+import { safeNextPath } from "../nextPath";
+import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
 
 const { t } = useI18n();
 
-const club = useClub();
+const service = useService();
 const session = useSession();
 const router = useRouter();
 const route = useRoute();
@@ -18,14 +19,6 @@ const password = ref("");
 const show = ref(false);
 const error = ref("");
 const pending = ref(false);
-
-function safeNextPath(raw: unknown): string {
-  if (typeof raw !== "string") return "/";
-  if (!raw.startsWith("/") || raw.startsWith("//") || raw.includes("\\")) {
-    return "/";
-  }
-  return raw;
-}
 
 async function submit() {
   error.value = "";
@@ -43,7 +36,7 @@ async function submit() {
 
 <template>
   <main class="auth-page">
-    <h1 class="wordmark">{{ club.name }}</h1>
+    <h1 class="wordmark">{{ service.name }}</h1>
     <p class="lede">{{ t("auth.signInLede") }}</p>
     <form @submit.prevent="submit">
       <p v-if="error" class="error">{{ error }}</p>
