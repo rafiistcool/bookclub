@@ -273,7 +273,7 @@ Posts are one table with two scopes (conventions.md §6.3).
 
 ## 9. Club features (#45, owner CLUB)
 
-The `timezone` in every response is the club's. Labels (`meeting_label` and the like) use the legacy format in the club zone.
+The `timezone` in every club-scoped response is the club's, and its labels (`meeting_label` and the like) use the legacy format in the club zone. The combined home feed (`GET /api/activity`) is not club-scoped: its `timezone` is the viewer's, and it labels club items in their club's zone and personal items in the viewer's (conventions.md §12).
 
 | Legacy | New | Role | Request → Response | Changes |
 |---|---|---|---|---|
