@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The caller's home feed: events of every club they are in, the personal events of their
+         *     co-members from the moment each joined the shared club, and their own personal events.
+         */
+        get: operations["activity_home_feed"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/edit-requests": {
         parameters: {
             query?: never;
@@ -918,6 +938,26 @@ export interface paths {
         patch: operations["clubs_update"];
         trace?: never;
     };
+    "/api/clubs/{slug}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The club's feed: its events plus the personal events of its current members from the moment
+         *     each joined.
+         */
+        get: operations["activity_club_feed"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/clubs/{slug}/invites": {
         parameters: {
             query?: never;
@@ -1019,6 +1059,94 @@ export interface paths {
         patch: operations["clubs_change_role"];
         trace?: never;
     };
+    "/api/clubs/{slug}/overlap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Books that two or more club members want to read; with `include_reading`, reading counts
+         *     too. Finished and abandoned books never count.
+         */
+        get: operations["overlap_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/clubs/{slug}/pick": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The club's current pick (no side effects). */
+        get: operations["picks_get"];
+        /**
+         * Sets the club's pick (admins). The same work as the current pick updates only the keys
+         *     present (no history entry, no event); a different work ends the current pick and records
+         *     `pick_set`.
+         */
+        put: operations["picks_set"];
+        post?: never;
+        /**
+         * Ends the current pick without a successor (admins) and records `pick_cleared`. Without a
+         *     current pick nothing is written. The answer is always `{"pick": null}`.
+         */
+        delete: operations["picks_clear"];
+        options?: never;
+        head?: never;
+        /** Edits the current pick's note and meeting (admins) without touching `set_by`. */
+        patch: operations["picks_update"];
+        trace?: never;
+    };
+    "/api/clubs/{slug}/pick/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The club's ended picks, the most recently ended first. Readers are empty on ended picks; the
+         *     caller's own shelf status is still filled in.
+         */
+        get: operations["picks_history"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/clubs/{slug}/pick/meeting.ics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The current pick's meeting as an `.ics` file (`text/calendar`). `PRODID` and `SUMMARY` use
+         *     the club's name; the description links the book's page and the club's page, which is also
+         *     `URL:`.
+         */
+        get: operations["picks_meeting_ics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/clubs/{slug}/pick/posts": {
         parameters: {
             query?: never;
@@ -1035,6 +1163,51 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/clubs/{slug}/picks/{pick_id}/milestones": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The pick's milestones in schedule order. */
+        get: operations["picks_list_milestones"];
+        put?: never;
+        /**
+         * Adds a milestone at the end of the schedule (admins) and records `milestone_added`. An ended
+         *     pick takes no new milestones.
+         */
+        post: operations["picks_create_milestone"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/clubs/{slug}/picks/{pick_id}/milestones/{milestone_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Deletes a milestone (admins), also on an ended pick. Posts tied to it stay, without the
+         *     milestone; the rest of the schedule is renumbered densely.
+         */
+        delete: operations["picks_delete_milestone"];
+        options?: never;
+        head?: never;
+        /**
+         * Changes the keys present (admins), also on an ended pick. The range rules apply to the
+         *     result. No event.
+         */
+        patch: operations["picks_update_milestone"];
         trace?: never;
     };
     "/api/clubs/{slug}/picks/{pick_id}/posts": {
@@ -1092,6 +1265,111 @@ export interface paths {
          *     run in one transaction under the club lock, the demotion first.
          */
         post: operations["clubs_transfer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/clubs/{slug}/vote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The club's open vote. Applies the leader first when the deadline has passed (or, with no
+         *     ballots, clears the deadline).
+         */
+        get: operations["votes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Sets or clears the open vote's deadline (admins). Does not run the auto-close. */
+        patch: operations["votes_set_deadline"];
+        trace?: never;
+    };
+    "/api/clubs/{slug}/vote/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Makes a nomination of the open vote the club pick (admins), whatever its votes: the current
+         *     pick ends, the new one is set by the caller with the given meeting, the vote ends and
+         *     `vote_closed` is recorded with the nomination's votes. When the nominated book is already the
+         *     current pick, only its meeting changes (cleared when none is given) and no `pick_set` is
+         *     recorded. Does not run the auto-close.
+         */
+        post: operations["votes_apply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/clubs/{slug}/vote/cast": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Casts the caller's ballot (members), or moves it to another nomination. `voted` is recorded
+         *     on the first ballot only.
+         */
+        post: operations["votes_cast"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/clubs/{slug}/vote/nominations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Nominates a book (members) and records `nominated`. The first nomination opens a vote. At
+         *     most 6 books per vote; not the current pick (past picks are fine); each book once.
+         */
+        post: operations["votes_nominate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/clubs/{slug}/vote/suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Candidates for the next vote (members): books club members want to read, at most 6, ranked
+         *     by score (3 per member when two or more want it, else 1; 1 per subject shared with a past
+         *     pick; 1 for an Open Library rating of 4.0 or more), then by title.
+         */
+        get: operations["votes_suggestions"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1528,6 +1806,48 @@ export interface components {
         AccountDeleteIn: {
             password: string;
         };
+        /** @description One event. */
+        ActivityItem: {
+            /** Format: int64 */
+            id: number;
+            /**
+             * @description `member_joined`, `pick_set`, `pick_cleared`, `note_posted`, `reaction`, `nominated`,
+             *     `voted`, `vote_closed`, `milestone_added`, `shelf_added`, `shelf_moved`,
+             *     `shelf_finished`, `shelf_dnf`, `shelf_removed`, `progress` or `quote_added`.
+             */
+            kind: string;
+            /**
+             * @description The actor's username; null for a system event (an auto-close credited to a deleted
+             *     account).
+             */
+            actor: string | null;
+            /** @description The caller is the actor. */
+            mine: boolean;
+            book: components["schemas"]["BookOut"] | null;
+            /** Format: int64 */
+            pick_id: number | null;
+            club: components["schemas"]["ClubRef"] | null;
+            /**
+             * @description Kind-specific (docs/phase1/spec/club.md §2.11); `reaction` carries `author` (a username
+             *     or null), never `author_id`.
+             */
+            payload: Record<string, never>;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * @description E.g. `Sat 22 Aug 2026, 19:00 CEST` (always English): in the club's zone for club events
+             *     and in the club feed, in the caller's zone for personal events in the home feed.
+             */
+            created_label: string;
+        };
+        /** @description A page of the feed, newest first. */
+        ActivityOut: {
+            items: components["schemas"]["ActivityItem"][];
+            /** @description More events are older than the last item (pass its id as `before`). */
+            has_more: boolean;
+            /** @description The club's zone (club feed) or the caller's (home feed). */
+            timezone: string;
+        };
         /** @description One work with the viewer's shelf state, their audience's readers and the catalog facts. */
         BookDetailOut: {
             /**
@@ -1680,6 +2000,101 @@ export interface components {
         ClubPatchIn: {
             name?: string | null;
             timezone?: string | null;
+        };
+        /** @description The current pick (`null` when there is none) and the club's zone. */
+        ClubPickCurrentOut: {
+            pick: components["schemas"]["ClubPickOut"] | null;
+            /** @description The club's IANA zone, in which every label is given. */
+            timezone: string;
+        };
+        /** @description Ended picks, the most recently ended first. */
+        ClubPickHistoryOut: {
+            items: components["schemas"]["ClubPickOut"][];
+            timezone: string;
+        };
+        /** @description A club pick as the caller sees it. */
+        ClubPickOut: {
+            /** Format: int64 */
+            id: number;
+            /** @description The work, without an edition context (members may read different editions). */
+            book: components["schemas"]["BookOut"];
+            /** @description The username of whoever set the pick; null when that account is gone. */
+            set_by: string | null;
+            note: string;
+            /** Format: date-time */
+            started_at: string;
+            /**
+             * Format: date-time
+             * @description Null for the current pick.
+             */
+            ended_at: string | null;
+            /** Format: date-time */
+            meeting_at: string | null;
+            /** @description The meeting in the club's zone, `YYYY-MM-DDTHH:MM` (a `datetime-local` value). */
+            meeting_local: string | null;
+            /** @description The meeting in the club's zone, e.g. `Sat 22 Aug 2026, 19:00 CEST` (always English). */
+            meeting_label: string | null;
+            on_shelf: components["schemas"]["ShelfStatus"] | null;
+            /**
+             * Format: int64
+             * @description The caller's own shelf entry for the book.
+             */
+            shelf_id: number | null;
+            /**
+             * @description Club members with the book on their shelf, the caller first, then by username; empty on
+             *     an ended pick. Ratings and takes marked "only me" are hidden from everyone else.
+             */
+            readers: components["schemas"]["ClubPickReader"][];
+            /** @description The readers currently reading it, in reader order. */
+            reading: string[];
+            /** @description The readers who finished it, in reader order. */
+            finished: string[];
+        };
+        /** @description Edits the current pick's note and meeting; absent keys stay as they are. */
+        ClubPickPatchIn: {
+            /** @description At most 280 characters after trimming; `null` clears it. */
+            note?: string | null;
+            /** @description As in `ClubPickSetIn`; `null` or `""` clears it. */
+            meeting_at?: string | null;
+        };
+        /** @description A club member who has the pick on their shelf. */
+        ClubPickReader: {
+            username: string;
+            status: components["schemas"]["ShelfStatus"];
+            /**
+             * Format: int32
+             * @description Null when unrated, or when the rating is "only me" and not the caller's.
+             */
+            rating: number | null;
+            /** @description Empty when there is none, or when it is "only me" and not the caller's. */
+            take: string;
+            dnf_reason: string;
+            /** Format: int32 */
+            progress: number | null;
+            /** @description `/media/{public_id}/a`. */
+            avatar_url: string | null;
+        };
+        /**
+         * @description Sets the club's pick. The same work as the current pick updates only the keys present; a
+         *     different work ends the current pick and starts a new one.
+         */
+        ClubPickSetIn: {
+            /**
+             * Format: int64
+             * @description A work id from the catalog (`BookOut.id`).
+             */
+            work_id: number;
+            /**
+             * @description At most 280 characters after trimming. Absent: `""` on a new pick, unchanged on the same
+             *     work; `null` clears it.
+             */
+            note?: string | null;
+            /**
+             * @description The meeting, in the club's zone unless it carries an offset (`2026-08-22T19:00`,
+             *     `2026-08-22`, `…Z`, `…+02:00`). Absent: none on a new pick, unchanged on the same work;
+             *     `null` or `""` clears it.
+             */
+            meeting_at?: string | null;
         };
         /** @description The current pick on a club card. */
         ClubPickSummary: {
@@ -2176,6 +2591,80 @@ export interface components {
             /** @description Why; at most 2000 characters. */
             note?: string;
         };
+        /** @description A new milestone. */
+        MilestoneIn: {
+            /** @description 1 to 120 characters after trimming. */
+            title: string;
+            unit?: components["schemas"]["MilestoneUnit"] | null;
+            /**
+             * Format: int32
+             * @description Inclusive start, ≥ 0; null = "up to `range_to`".
+             */
+            range_from?: number | null;
+            /**
+             * Format: int32
+             * @description Inclusive end, ≥ 0 and not below `range_from`; at most 100 for percent.
+             */
+            range_to?: number | null;
+            /** @description In the club's zone unless it carries an offset; null or `""` for none. */
+            due_at?: string | null;
+        };
+        /** @description A pick's milestones, in schedule order. */
+        MilestoneListOut: {
+            /** Format: int64 */
+            pick_id: number;
+            items: components["schemas"]["MilestoneOut"][];
+            timezone: string;
+        };
+        /** @description One step of a pick's reading schedule. */
+        MilestoneOut: {
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            pick_id: number;
+            title: string;
+            unit: components["schemas"]["MilestoneUnit"] | null;
+            /** Format: int32 */
+            range_from: number | null;
+            /** Format: int32 */
+            range_to: number | null;
+            /** Format: date-time */
+            due_at: string | null;
+            /** @description `YYYY-MM-DDTHH:MM` in the club's zone. */
+            due_local: string | null;
+            /** @description E.g. `Sat 05 Jan 2030, 20:00 UTC`, in the club's zone (always English). */
+            due_label: string | null;
+            /**
+             * Format: int32
+             * @description 0-based, dense.
+             */
+            position: number;
+            /**
+             * Format: int64
+             * @description Live club posts tied to the milestone.
+             */
+            note_count: number;
+            /** @description The due time has come. */
+            passed: boolean;
+        };
+        /**
+         * @description Milestone changes: only the keys present change; `null` clears `unit`, a range end or
+         *     `due_at` (a title cannot be cleared).
+         */
+        MilestonePatchIn: {
+            title?: string | null;
+            unit?: components["schemas"]["MilestoneUnit"] | null;
+            /** Format: int32 */
+            range_from?: number | null;
+            /** Format: int32 */
+            range_to?: number | null;
+            due_at?: string | null;
+        };
+        /**
+         * @description What a milestone's range counts.
+         * @enum {string}
+         */
+        MilestoneUnit: "percent" | "chapter";
         /** @description Books finished in one month. */
         MonthCount: {
             /** @description `YYYY-MM` (UTC). */
@@ -2217,6 +2706,29 @@ export interface components {
             notify_meeting: boolean;
             notify_pick: boolean;
             notify_note: boolean;
+        };
+        /** @description One shared book. */
+        OverlapBookOut: {
+            book: components["schemas"]["BookOut"];
+            /**
+             * Format: int64
+             * @description The number of members.
+             */
+            count: number;
+            /** @description By username. */
+            members: components["schemas"]["OverlapMember"][];
+        };
+        /** @description A member with the book on their shelf. */
+        OverlapMember: {
+            username: string;
+            /** @description `want_to_read`, or `currently_reading` with `include_reading`. */
+            status: components["schemas"]["ShelfStatus"];
+        };
+        /** @description Books two or more club members want to read (or are reading). */
+        OverlapOut: {
+            /** @description Most members first, then by title. */
+            items: components["schemas"]["OverlapBookOut"][];
+            include_reading: boolean;
         };
         /** @description The current and the new password. */
         PasswordChangeIn: {
@@ -2918,6 +3430,133 @@ export interface components {
          * @enum {string}
          */
         Visibility: "audience" | "only_me";
+        /** @description Makes a nomination of the open vote the club pick. */
+        VoteApplyIn: {
+            /**
+             * Format: int64
+             * @description A nomination of the club's open vote (any, whatever its votes).
+             */
+            nomination_id: number;
+            /**
+             * @description The meeting of the new pick, as in `ClubPickSetIn`. Absent, `null` or `""`: none (and,
+             *     when the nominated book is already the current pick, its meeting is cleared).
+             */
+            meeting_at?: string | null;
+        };
+        /** @description The new pick and the vote, which is then always the "no open vote" shape. */
+        VoteApplyOut: {
+            pick: components["schemas"]["ClubPickOut"];
+            vote: components["schemas"]["VoteOut"];
+        };
+        /** @description Casts (or moves) the caller's ballot. */
+        VoteCastIn: {
+            /**
+             * Format: int64
+             * @description A nomination of the club's open vote.
+             */
+            nomination_id: number;
+        };
+        /** @description Sets or clears the deadline. */
+        VoteDeadlineIn: {
+            /**
+             * @description In the club's zone unless it carries an offset (`2030-01-01T18:00`, `…Z`). Absent,
+             *     `null`, `""` or whitespace clear the deadline.
+             */
+            closes_at?: string | null;
+        };
+        /** @description Nominates a book for the next pick. */
+        VoteNominateIn: {
+            /**
+             * Format: int64
+             * @description A work id from the catalog (`BookOut.id`).
+             */
+            work_id: number;
+        };
+        /** @description One nominated book. */
+        VoteNominationOut: {
+            /** Format: int64 */
+            id: number;
+            /** @description The work, without an edition context. */
+            book: components["schemas"]["BookOut"];
+            /** @description The nominator's username; null when that account is gone. */
+            nominated_by: string | null;
+            /**
+             * Format: int64
+             * @description The number of club members whose ballot is on this nomination.
+             */
+            votes: number;
+            /** @description Their usernames, sorted. */
+            voters: string[];
+            /** @description The caller's ballot is on this nomination. */
+            mine: boolean;
+        };
+        /** @description The club's open next-up vote, or the "no open vote" shape (`vote_id: null`). */
+        VoteOut: {
+            /**
+             * Format: int64
+             * @description Null when no vote is open; the first nomination opens one.
+             */
+            vote_id: number | null;
+            /** @description Most votes first, then by id. */
+            nominations: components["schemas"]["VoteNominationOut"][];
+            /**
+             * Format: int64
+             * @description The nomination the caller's ballot is on.
+             */
+            my_vote_id: number | null;
+            /**
+             * Format: int64
+             * @description Always 6.
+             */
+            nomination_limit: number;
+            /** @description Fewer than 6 nominations (true when no vote is open). */
+            can_nominate: boolean;
+            /** @description The club's IANA zone, in which `closes_local` and `closes_label` are given. */
+            timezone: string;
+            /**
+             * Format: date-time
+             * @description The deadline, if any; at the deadline the leader becomes the club pick.
+             */
+            closes_at: string | null;
+            /** @description The deadline in the club's zone, `YYYY-MM-DDTHH:MM`. */
+            closes_local: string | null;
+            /** @description The deadline in the club's zone, e.g. `Tue 01 Jan 2030, 18:00 UTC` (always English). */
+            closes_label: string | null;
+            /** @description Club members without a ballot, by username; empty when no vote is open. */
+            not_voted: string[];
+            /**
+             * Format: int64
+             * @description Club members with a ballot.
+             */
+            voted_count: number;
+            /**
+             * Format: int64
+             * @description The club's members.
+             */
+            member_count: number;
+            /**
+             * Format: int64
+             * @description The nomination in the lead (most votes, ties to the earliest); null when nobody voted.
+             */
+            leader_id: number | null;
+        };
+        /** @description One candidate. */
+        VoteSuggestionOut: {
+            book: components["schemas"]["BookOut"];
+            /** Format: int64 */
+            score: number;
+            /**
+             * @description English reasons, in this order when present: the members who want it
+             *     (`On 2 shelves: ada, grace` or `ada wants to read it`), `Like past picks: …` and
+             *     `Open Library rating 4.4`.
+             */
+            reasons: string[];
+        };
+        /** @description Ranked candidates for the next vote. */
+        VoteSuggestionsOut: {
+            /** @description At most 6, best first. */
+            items: components["schemas"]["VoteSuggestionOut"][];
+        };
         /** @description A direct merge. */
         WorkMergeIn: {
             /**
@@ -2934,6 +3573,8 @@ export interface components {
     pathItems: never;
 }
 export type AccountDeleteIn = components['schemas']['AccountDeleteIn'];
+export type ActivityItem = components['schemas']['ActivityItem'];
+export type ActivityOut = components['schemas']['ActivityOut'];
 export type BookDetailOut = components['schemas']['BookDetailOut'];
 export type BookOut = components['schemas']['BookOut'];
 export type BookReader = components['schemas']['BookReader'];
@@ -2942,6 +3583,12 @@ export type ClubIn = components['schemas']['ClubIn'];
 export type ClubList = components['schemas']['ClubList'];
 export type ClubOut = components['schemas']['ClubOut'];
 export type ClubPatchIn = components['schemas']['ClubPatchIn'];
+export type ClubPickCurrentOut = components['schemas']['ClubPickCurrentOut'];
+export type ClubPickHistoryOut = components['schemas']['ClubPickHistoryOut'];
+export type ClubPickOut = components['schemas']['ClubPickOut'];
+export type ClubPickPatchIn = components['schemas']['ClubPickPatchIn'];
+export type ClubPickReader = components['schemas']['ClubPickReader'];
+export type ClubPickSetIn = components['schemas']['ClubPickSetIn'];
 export type ClubPickSummary = components['schemas']['ClubPickSummary'];
 export type ClubRef = components['schemas']['ClubRef'];
 export type ClubStatsOut = components['schemas']['ClubStatsOut'];
@@ -2986,10 +3633,18 @@ export type MemberList = components['schemas']['MemberList'];
 export type MemberOut = components['schemas']['MemberOut'];
 export type MemberYear = components['schemas']['MemberYear'];
 export type MergeRequestIn = components['schemas']['MergeRequestIn'];
+export type MilestoneIn = components['schemas']['MilestoneIn'];
+export type MilestoneListOut = components['schemas']['MilestoneListOut'];
+export type MilestoneOut = components['schemas']['MilestoneOut'];
+export type MilestonePatchIn = components['schemas']['MilestonePatchIn'];
+export type MilestoneUnit = components['schemas']['MilestoneUnit'];
 export type MonthCount = components['schemas']['MonthCount'];
 export type NewEditionIn = components['schemas']['NewEditionIn'];
 export type NotificationsIn = components['schemas']['NotificationsIn'];
 export type NotificationsOut = components['schemas']['NotificationsOut'];
+export type OverlapBookOut = components['schemas']['OverlapBookOut'];
+export type OverlapMember = components['schemas']['OverlapMember'];
+export type OverlapOut = components['schemas']['OverlapOut'];
 export type PasswordChangeIn = components['schemas']['PasswordChangeIn'];
 export type PersonalStatsOut = components['schemas']['PersonalStatsOut'];
 export type PhysicalDecoration = components['schemas']['PhysicalDecoration'];
@@ -3042,9 +3697,67 @@ export type UserOut = components['schemas']['UserOut'];
 export type UserSummary = components['schemas']['UserSummary'];
 export type VerifyEmailIn = components['schemas']['VerifyEmailIn'];
 export type Visibility = components['schemas']['Visibility'];
+export type VoteApplyIn = components['schemas']['VoteApplyIn'];
+export type VoteApplyOut = components['schemas']['VoteApplyOut'];
+export type VoteCastIn = components['schemas']['VoteCastIn'];
+export type VoteDeadlineIn = components['schemas']['VoteDeadlineIn'];
+export type VoteNominateIn = components['schemas']['VoteNominateIn'];
+export type VoteNominationOut = components['schemas']['VoteNominationOut'];
+export type VoteOut = components['schemas']['VoteOut'];
+export type VoteSuggestionOut = components['schemas']['VoteSuggestionOut'];
+export type VoteSuggestionsOut = components['schemas']['VoteSuggestionsOut'];
 export type WorkMergeIn = components['schemas']['WorkMergeIn'];
 export type $defs = Record<string, never>;
 export interface operations {
+    activity_home_feed: {
+        parameters: {
+            query?: {
+                /** @description Only events with a smaller id (≥ 1): the last id of the previous page. */
+                before?: number;
+                /** @description 1 to 100, default 30. */
+                limit?: number;
+                /**
+                 * @description Only this person's events (case-insensitive; empty means no filter). A name the caller
+                 *     cannot see (home feed) or that is not a member of the club (club feed) gives an empty
+                 *     list.
+                 */
+                username?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of the feed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityOut"];
+                };
+            };
+            /** @description `Input should be greater than or equal to 1`, `Input should be less than or equal to 100`, `Input should be a valid integer, unable to parse string as an integer` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     catalog_admin_list_edit_requests: {
         parameters: {
             query?: never;
@@ -5739,6 +6452,67 @@ export interface operations {
             };
         };
     };
+    activity_club_feed: {
+        parameters: {
+            query?: {
+                /** @description Only events with a smaller id (≥ 1): the last id of the previous page. */
+                before?: number;
+                /** @description 1 to 100, default 30. */
+                limit?: number;
+                /**
+                 * @description Only this person's events (case-insensitive; empty means no filter). A name the caller
+                 *     cannot see (home feed) or that is not a member of the club (club feed) gives an empty
+                 *     list.
+                 */
+                username?: string;
+            };
+            header?: never;
+            path: {
+                /** @description The club's slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of the feed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityOut"];
+                };
+            };
+            /** @description `Input should be greater than or equal to 1`, `Input should be less than or equal to 100`, `Input should be a valid integer, unable to parse string as an integer` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club` (also for a non-member) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     clubs_list_invites: {
         parameters: {
             query?: never;
@@ -6124,6 +6898,361 @@ export interface operations {
             };
         };
     };
+    overlap_get: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Also count `currently_reading` (`true/false/1/0/yes/no/on/off/t/f/y/n`, any case);
+                 *     default false.
+                 */
+                include_reading?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description The club's slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The shared books */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OverlapOut"];
+                };
+            };
+            /** @description `Input should be a valid boolean, unable to interpret input` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club` (also for a non-member) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    picks_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The club's slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current pick, or null */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClubPickCurrentOut"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club` (also for a non-member) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    picks_set: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The club's slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClubPickSetIn"];
+            };
+        };
+        responses: {
+            /** @description The current pick */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClubPickOut"];
+                };
+            };
+            /** @description `note must be 280 characters or fewer`, `meeting_at must be a date and time` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Only club admins can do that` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club`, `No such book.` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    picks_clear: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The club's slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No current pick any more */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClubPickCurrentOut"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Only club admins can do that` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    picks_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The club's slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClubPickPatchIn"];
+            };
+        };
+        responses: {
+            /** @description The current pick */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClubPickOut"];
+                };
+            };
+            /** @description `note must be 280 characters or fewer`, `meeting_at must be a date and time` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Only club admins can do that` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club`, `No club pick yet` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    picks_history: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The club's slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ended picks */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClubPickHistoryOut"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club` (also for a non-member) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    picks_meeting_ics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The club's slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The meeting as an iCalendar file, `attachment; filename="bookclub-{pick_id}.ics"` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/calendar": string;
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club`, `No meeting scheduled` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     posts_current_pick_thread: {
         parameters: {
             query?: never;
@@ -6209,6 +7338,251 @@ export interface operations {
                 };
             };
             /** @description `No such club`, `No club pick yet` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    picks_list_milestones: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The club's slug */
+                slug: string;
+                /** @description A pick of the club, current or ended */
+                pick_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The milestones */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MilestoneListOut"];
+                };
+            };
+            /** @description A `pick_id` that is not a number */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club`, `No club pick with that id` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    picks_create_milestone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The club's slug */
+                slug: string;
+                /** @description The current pick */
+                pick_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MilestoneIn"];
+            };
+        };
+        responses: {
+            /** @description The new milestone */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MilestoneOut"];
+                };
+            };
+            /** @description `Give the milestone a title`, `Keep the title to 120 characters`, `A range needs a unit`, `Percent milestones go up to 100`, `That pick is closed`, `Chapter range is backwards`, `meeting_at must be a date and time` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Only club admins can do that` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club`, `No club pick with that id` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    picks_delete_milestone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The club's slug */
+                slug: string;
+                /** @description A pick of the club */
+                pick_id: number;
+                /** @description A milestone of that pick */
+                milestone_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description An id that is not a number */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Only club admins can do that` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club`, `No club pick with that id`, `No milestone with that id` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    picks_update_milestone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The club's slug */
+                slug: string;
+                /** @description A pick of the club */
+                pick_id: number;
+                /** @description A milestone of that pick */
+                milestone_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MilestonePatchIn"];
+            };
+        };
+        responses: {
+            /** @description The milestone */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MilestoneOut"];
+                };
+            };
+            /** @description `Give the milestone a title`, `Keep the title to 120 characters`, `A range needs a unit`, `Percent milestones go up to 100`, `Chapter range is backwards`, `meeting_at must be a date and time` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Only club admins can do that` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club`, `No club pick with that id`, `No milestone with that id` */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -6433,6 +7807,322 @@ export interface operations {
                 };
             };
             /** @description `No such club`, `No member with that name` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    votes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The club's slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The open vote, or `vote_id: null` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoteOut"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club` (also for a non-member) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    votes_set_deadline: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The club's slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VoteDeadlineIn"];
+            };
+        };
+        responses: {
+            /** @description The open vote */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoteOut"];
+                };
+            };
+            /** @description `meeting_at must be a date and time`, `The deadline has to be in the future` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Only club admins can do that` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club`, `Nominate a book first` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    votes_apply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The club's slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VoteApplyIn"];
+            };
+        };
+        responses: {
+            /** @description The new pick; no vote is open any more */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoteApplyOut"];
+                };
+            };
+            /** @description `meeting_at must be a date and time` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Only club admins can do that` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club`, `No open next-up vote`, `No nomination with that id` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    votes_cast: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The club's slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VoteCastIn"];
+            };
+        };
+        responses: {
+            /** @description The open vote with the ballot */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoteOut"];
+                };
+            };
+            /** @description `Field required` and other body errors */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club`, `No open next-up vote`, `No nomination with that id` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    votes_nominate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The club's slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VoteNominateIn"];
+            };
+        };
+        responses: {
+            /** @description The open vote with the new nomination */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoteOut"];
+                };
+            };
+            /** @description `This vote already has enough books`, `That book is already the club pick`, `That book is already nominated` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club`, `No such book.` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    votes_suggestions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The club's slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The best candidates */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoteSuggestionsOut"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such club` (also for a non-member) */
             404: {
                 headers: {
                     [name: string]: unknown;
