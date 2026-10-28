@@ -835,7 +835,8 @@ pub struct WorkRecord { pub source: Source, pub ol_work_id: Option<String>, pub 
     pub pages: Option<i32>, pub ol_rating: Option<f64>, pub ol_rating_count: Option<i32>,
     pub ol_cover_id: Option<i64>, pub full_details: bool, pub created_by: Option<i64> }
 pub struct EditionRecord { pub source: Source, pub isbn13: Option<Isbn13>, pub ol_edition_id: Option<String>,
-    pub dnb_idn: Option<String>, pub title: Option<String>, pub subtitle: Option<String>, pub publisher: Option<String>,
+    pub dnb_idn: Option<String>, pub dnb_record_idn: Option<String> /* None = dnb_idn; added by INT, migration 1200 */,
+    pub title: Option<String>, pub subtitle: Option<String>, pub publisher: Option<String>,
     pub language: Option<String>, pub format: Option<Format>, pub pages: Option<i32>,
     pub publication_year: Option<i32>, pub planned_publication_date: Patch<time::Date>,
     pub ol_cover_id: Option<i64>, pub contributors: Vec<(AuthorRecord, ContributorRole)>, pub created_by: Option<i64> }
@@ -879,7 +880,8 @@ pub async fn upsert_work(conn: &mut PgConnection, rec: &WorkRecord, mode: Mode) 
 pub async fn upsert_work_stubs(conn: &mut PgConnection, recs: &[WorkRecord]) -> sqlx::Result<Vec<i64>>;
 /// Finds the edition by isbn13, then dnb_idn, then ol_edition_id.
 /// - Found: updates it per `mode` and the provenance rules (dnb_idn takes the newest record's IDN, moving it from
-///   another edition; a NULL isbn13/ol_edition_id is filled when free, an existing one is kept; a withdrawn
+///   another edition; dnb_record_idn takes the newest delivering record's IDN, which is not unique and moves
+///   nothing; a NULL isbn13/ol_edition_id is filled when free, an existing one is kept; a withdrawn
 ///   edition is un-withdrawn). Then the parent work's title, subtitle, author_names and work_authors are updated
 ///   from `work` under the same rules when they are `legacy`-ranked, or when they are `dnb`-ranked and this is the
 ///   work's only edition (a provisional VLB title gets the final one). Precisely: the three fields merge normally
@@ -908,7 +910,10 @@ pub async fn upsert_dnb_record(conn: &mut PgConnection, rec: &DnbRecord, mode: M
 /// its work: the returned work_id says so (CAT answers 409).
 pub async fn upsert_edition(conn: &mut PgConnection, work_id: i64, rec: &EditionRecord, mode: Mode)
     -> sqlx::Result<(i64, i64)>;
-/// DNB delivered status="deleted" for this IDN: sets editions.withdrawn_at when the edition exists. Never inserts.
+/// DNB delivered status="deleted" for this IDN: sets editions.withdrawn_at on every edition whose newest
+/// delivering record it is (editions.dnb_record_idn), so a multi-ISBN record is withdrawn with all its ISBNs and
+/// an edition a newer record delivered again stays live. Never inserts. (INT changed the rule from `dnb_idn = $1`,
+/// which withdrew only the first ISBN's edition; the signature is unchanged.)
 pub async fn withdraw_dnb_edition(conn: &mut PgConnection, dnb_idn: &str) -> sqlx::Result<()>;
 /// The media row for an Open Library cover id (insert-only). None when that row was removed by a takedown,
 /// so no caller can attach it again, and for ids <= 0.
@@ -1005,13 +1010,13 @@ pub fn map_record(record_xml: &str) -> Result<DnbRecord, MarcError>;
 - **Text:** DNB's non-filing markers (U+0098 … U+009C around "Die", "The") are dropped, and the decomposed Unicode DNB delivers ("o" + U+0308) is composed to NFC; trailing ISBD separators (` /`, ` :`, ` ;`, ` =`, `,`) are trimmed.
 - **Title:** 245 `$a`, plus `$n` (". " + part number) and `$p` (". " + part name, ", " after a `$n`), so the volumes of a series ("Gesammelte Werke. Bd. 21.") never share a match key; `$b` is the subtitle.
 - **Names** come in natural order: "Paulitz, Udo" → `name` "Udo Paulitz", `sort_name` "Paulitz, Udo". `author_names` joins the `aut` names in natural order with ", ". A 100 without `$4` counts as `aut`; other relators (`aui`, `waw`, `ctb`, …) and a 700 without `$4` are not mapped; each person appears once per role. The GND id is the `$0` with prefix `(DE-588)`.
-- **ISBNs:** the ISBN-10 and ISBN-13 of one book (DNB lists both) are one edition. Only the first edition carries `dnb_idn` (`editions.dnb_idn` is unique), so a deleted header withdraws the first ISBN's edition.
+- **ISBNs:** the ISBN-10 and ISBN-13 of one book (DNB lists both) are one edition. Only the first edition carries `dnb_idn` (`editions.dnb_idn` is unique); every edition carries the record's IDN as `dnb_record_idn` (`editions.dnb_record_idn`, not unique, migration 1200), so a deleted header withdraws every ISBN of the record.
 - **Imprint:** 264 with ind2 `1` first, then other 264s, then 260. An edition whose 020 `$q` names a 264 `$b` (co-publishers) gets that publisher, else the first. The year is the first four-digit number of `$c` ("September 2026", "[2026]").
 - **Placeholder years:** DNB announces books a year or two ahead and uses far-future years for "not known yet" (recorded records carry 2040/204001, 2050/205004 and 9999). A year more than five years after the current year counts as missing, in 260/264 `$c` and in 263 alike, so `map_record` depends on the clock. Language: the first valid 041 `$a`, else 008/35-37. Pages: the number before "Seiten"/"S."/"pages"/"p." in 300 `$a`.
 - **Work facts** (for `upsert_edition_with_work`): title and subtitle from 245; authors from the `aut` names; `first_publish_year` = the edition's `publication_year`, else the year of the planned date; `pages` = the edition's pages.
 - **Several ISBNs in one record:** one edition per ISBN in the registration group of the first 020 ISBN (foreign co-publisher ISBNs are dropped), all under the same work. Callers ingest a record with `ingest::upsert_dnb_record` (§7.2), which keeps them on one work; calling `upsert_edition_with_work(…, DnbTitleAuthor, …)` per edition can split them when the first ISBN already belongs to a non-DNB work.
 - **Format**, per edition: with one ISBN, 653 `(Produktform)` first (`Hardback` → hardcover; `Paperback / softback` → paperback; `Digital…`/`E-book` → ebook; `Audio…` → audiobook; anything else, e.g. `Calendar`, `Multiple-item retail product` → other), then the 020 $c binding, then 337/338. With several ISBNs, each edition's own 020 $c binding first (`Gb.`, `geb.`, `Gebunden`, `Gewebe`, `Hldr.`, `Pp.`, `Hperg.`, `Festeinband`, `Leinen`, `Ln.`, `Lw.`, `Hardcover` → hardcover; `kart.`, `KT`, `Broschur`, `brosch.`, `Broschiert`, `Klappenbroschur`, `Pb.`, `Paperback`, `Taschenbuch` → paperback; matched as words, case-insensitively, before the first `:`), then a single 653 value, then 337/338 (`cr` → ebook; audio carriers such as `sd` → audiobook; 337 `s` → audiobook, `c` → ebook). Nothing usable → `other`, so a DNB edition always has a format.
-- **Deleted records:** the OAI header `status="deleted"` is the caller's to detect; it calls `ingest::withdraw_dnb_edition` and never maps the metadata.
+- **Deleted records:** the OAI header `status="deleted"` is the caller's to detect; it calls `ingest::withdraw_dnb_edition` with the header's IDN and never maps the metadata. That withdraws the editions the record delivered last (`dnb_record_idn`), all its ISBNs included.
 - **Deleted records still carry metadata** in DNB's OAI responses, so the caller must check the header before mapping.
 - Tests (W1): `tests/fixtures/dnb_marc/` holds single records copied from DNB responses recorded on 2026-10-27 (reiheN and reiheA OAI pages, one SRU search): a single-ISBN hardback with 263, an inverted multi-author name list, translators and editors with GND ids, a translator without one, a multi-ISBN co-publisher record, a record with 856 links plus a hand-added 520 (DNB's MARC carries blurbs only as 856 links; no recorded record had a 520), and a deleted-header record. No recorded record combined kart./Gewebe/Hperg. bindings, so `dnb_marc.rs` unit tests cover the binding vocabulary, foreign co-publisher groups and the carrier fallbacks with small inline records. `tests/dnb_marc.rs` maps and ingests every fixture through `upsert_dnb_record` and checks that no VLB text or URL is stored.
 
@@ -1330,7 +1335,9 @@ pub fn personal_date_in_range(date: time::Date) -> bool;  // 0001-01-02..=9999-1
 |---|---|
 | Club times (meeting, deadline, milestone due, club feed and thread labels) | `clubs.timezone` |
 | Personal dates (`finished_on`, shelf "today", personal labels) | `users.timezone` of the owner |
-| `created_label` on diary and home-feed items | the viewer's zone |
+| `created_label` on diary and home-feed items | the viewer's zone for personal items, the item's club zone for club items (work-plan appendix diary 11, club 4) |
+
+So a club post's label is in its club's zone wherever it appears (pick thread, work thread, `/api/diary`, PATCH and reaction answers), and a club event's in the home feed too. It can differ from the response's `timezone` (the viewer's zone in the work thread, `/api/diary` and the home feed); a client that formats `created_at` itself uses the club's zone for club items (`docs/phase1/notes/posts.md` deviation 4, `notes/club.md` "Activity feeds").
 
 Legacy tests with fixed zones (Kiritimati, Berlin, New York) become tests that set `users.timezone` or `clubs.timezone`.
 
@@ -1356,7 +1363,13 @@ pub fn round_half_even(x: f64, digits: usize) -> f64;  // via format!("{:.*}") �
 - **Locks**, used exactly where the specs found races:
   - `SELECT … FROM users WHERE id = $1 FOR UPDATE`: shelf add/patch/delete/import, favourites, physical layout, and the 10-club creation count
   - `SELECT … FROM clubs WHERE id = $1 FOR UPDATE`: **every membership write** (§5.3): join and invite accept (with the 20-member count), member removal, role change, leave, transfer, club delete, invite create and revoke, and account deletion (every club the deletion writes in, before the user row; §5.6)
-  - `SELECT … FROM next_up_votes WHERE id = $1 FOR UPDATE`: nominate, cast, apply, auto-close
+  - `SELECT … FROM clubs WHERE id = $1 FOR NO KEY UPDATE`: **every pick, milestone and vote write** (`picks::lock_club_writes`, `picks::lock_as_admin`, `votes::lock_as_member`): `PUT`/`PATCH`/`DELETE` pick, milestone create, update and delete, and the vote writes nominate, cast, deadline (`PATCH vote`), apply and auto-close, each with the caller's membership or role read again under the lock. It serialises the pick and vote writes of one club and conflicts with the membership writes' `FOR UPDATE`, but not with the `FOR KEY SHARE` of foreign-key checks, so club posts and events are not blocked. It comes **before** the vote row: a first nomination has no vote row to lock yet, and a club delete holds the club row and then reaches the vote rows through its cascade (`docs/phase1/notes/club.md` "Locks and concurrency", "Votes")
+  - `SELECT … FROM next_up_votes WHERE id = $1 FOR UPDATE`: nominate, cast, deadline (`PATCH vote`), apply, auto-close (after the club row)
+- **Lock order of a club write:**
+  - **Pick and vote writes** (CLUB; `docs/phase1/notes/club.md` "Locks and concurrency", "Work merges"): the work the write stores (`FOR SHARE`, CAT's rule below; `PUT pick` and nominate only), then the club row (`FOR NO KEY UPDATE`), then the user rows it references (`FOR KEY SHARE`, in id order: the caller, and on auto-close every nominator of the open vote), then the vote row (`FOR UPDATE`), then the current pick's row (its `UPDATE`).
+  - **Club posts, replies and reactions** (POSTS; `notes/posts.md` "Lock order", "Work lock"): the club row (`FOR KEY SHARE`, with the membership read again under it), then the work (`FOR SHARE`), then the milestone (`FOR KEY SHARE`) and the parent or the post; the user rows only through foreign keys.
+  - The two orders never deadlock. They do not conflict on the club and work rows (`FOR SHARE` against `FOR SHARE` on the work, `FOR NO KEY UPDATE` against `FOR KEY SHARE` on the club) and meet only on a milestone row: a club post or reply that names a milestone holds it `FOR KEY SHARE`, and a milestone delete (a pick-side write, after the club row) deletes it, so whichever starts second waits for the other (a post after a delete is then refused with `That milestone is not on this pick`; a delete after a post detaches it through `posts_milestone_fk`, a no-key update that the `FOR KEY SHARE` of replies and reactions on that post does not block). Neither holds anything else the other needs (`tests/posts_races.rs`; `notes/posts.md` "For other packages"). Both take the work before users, votes and posts, as `catalog::merge_works` does (the cover media rows, the two works `FOR NO KEY UPDATE`, the affected users `FOR UPDATE`, the affected votes, then the rows it re-points), and the club row before the user rows, as the membership writes and account deletion do (§5.3, §5.6). So a club write waits for a merge, a club delete or a removal instead of deadlocking with it.
+- **Writes that store a `work_id`** lock the work against a concurrent merge (CAT's rule, `notes/cat.md` "For SHELF, POSTS and CLUB"): `SELECT id FROM works WHERE id = $1 AND merged_into_id IS NULL FOR SHARE`; no row means the work was merged away meanwhile, so the write follows `merged_into_id` (`books::require_work`) and locks again. The lock comes before the write's user and vote locks (works → users → votes, the merge's order). CAT's own edition adds and the DNB harvest lock the work after ingest's advisory and edition locks instead (`FOR NO KEY UPDATE` in the harvest, `notes/har.md` decision 11). A write that skips the rule documents the race: `pick_cleared` and `milestone_added` events may keep a merged-away `work_id` (`notes/club.md` "Accepted race").
 - **Concurrency outcomes** come from atomic statements:
   - invite consume: `UPDATE club_invites SET use_count = use_count + 1 WHERE code = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now()) AND (max_uses IS NULL OR use_count < max_uses) RETURNING …` (link invites have `max_uses` NULL), after the club-row lock and the inviter's row lock (`FOR KEY SHARE`), in that order (§5.5 "Lock order of a join")
   - first cover upload: `UPDATE … SET cover_media_id = $1 WHERE id = $2 AND cover_media_id IS NULL RETURNING` (through `ingest::set_cover`)
@@ -1381,6 +1394,10 @@ pub fn round_half_even(x: f64, digits: usize) -> f64;  // via format!("{:.*}") �
 - **Migrations:**
   - `0001_init.sql` is the whole Phase 1 schema, so Wave 2 packages normally need no migration.
   - If one does, it uses its **reserved version block**, never the next free number: CAT 1100–1199, HAR 1200–1299, MED 1300–1399, SHELF 1400–1499, POSTS 1500–1599, CLUB 1600–1699, IMP 1700–1799. It also notes the migration in its PR.
+  - The migrations after `0001_init.sql` so far:
+    - `1200_editions_dnb_record_idn.sql` (HAR's block, added by the integrator's follow-up package INT): `editions.dnb_record_idn`, the IDN of the newest DNB record that delivered an edition, on every edition of a multi-ISBN record, with its index; `withdraw_dnb_edition` withdraws by it (§7.2, §7.5). Its backfill gives rows harvested before it the record IDN (the other ISBNs of a record by HAR's sibling heuristic, the same work and DNB planned date) and withdraws the editions HAR's removed new-releases clause hid (`docs/phase1/notes/int.md` decision 3).
+    - `1300_media_removed_hashes.sql` (MED): `media_removed_hashes`, the hashes a taken-down picture must never come back under.
+  - sqlx applies a lower version that is missing even after a higher one was applied (1200 after 1300), so a database migrated before 1200 existed only needs `cargo sqlx migrate run` again.
   - Before Phase 2 (#52) the migrations may be squashed back into one file, since no production database exists yet.
 
 ## 14. OpenAPI (utoipa 6 / utoipa-axum 0.3)

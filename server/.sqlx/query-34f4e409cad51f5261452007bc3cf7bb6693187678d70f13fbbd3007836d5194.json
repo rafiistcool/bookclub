@@ -1,0 +1,68 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT work_id AS \"work_id!\", edition_id AS \"edition_id!\", isbn13,\n                  planned AS \"planned!\"\n           FROM (\n               SELECT DISTINCT ON (e.work_id)\n                      e.work_id, e.id AS edition_id, e.isbn13, e.planned_publication_date AS planned\n               FROM editions e\n               JOIN works w ON w.id = e.work_id\n               WHERE e.planned_publication_date BETWEEN $1 AND $2\n                 AND e.withdrawn_at IS NULL\n                 AND e.language = $3\n                 AND w.merged_into_id IS NULL\n               ORDER BY e.work_id, e.planned_publication_date, e.id\n           ) firsts\n           ORDER BY planned, work_id\n           LIMIT $4 OFFSET $5",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "work_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "work_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "edition_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "isbn13",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "isbn13"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "planned!",
+        "type_info": "Date",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "planned_publication_date"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Date",
+        "Date",
+        "Text",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "34f4e409cad51f5261452007bc3cf7bb6693187678d70f13fbbd3007836d5194"
+}

@@ -187,7 +187,7 @@ Each package owns `server/tests/<prefix>_*.rs` for its tests and `server/tests/f
 - **Builds:**
   - **OAI-PMH `ListRecords` client** through `outbound::get_bytes` with `RetryPolicy::JOB` (`metadataPrefix=MARC21-xml`, set, `from`, resumption tokens; ≥ 1 s between pages; obeys 503 `Retry-After`).
   - **Envelope handling only.** Each `<record>` goes to the frozen W1 mapping `catalog::shared::dnb_marc::map_record` (conventions.md §7.5: the CC0 field list, format, multi-ISBN records, natural-order names, translators). HAR never parses MARC fields itself, and so never stores 520, 856 or any VLB text.
-  - **Deleted headers** (`<header status="deleted">`): `ingest::withdraw_dnb_edition(idn)`; the metadata is never mapped.
+  - **Deleted headers** (`<header status="deleted">`): `ingest::withdraw_dnb_edition(idn)`, which withdraws every edition the record delivered last, all its ISBNs (`editions.dnb_record_idn`, added in Wave 3 by INT); the metadata is never mapped.
   - **Ingest:** `ingest::upsert_dnb_record(record, Mode::Replace)` per record (the first edition with `WorkGrouping::DnbTitleAuthor`, the others into its work; conventions.md §7.2). A page transaction that Postgres aborts with a deadlock (`error::is_deadlock`) is rolled back and retried (conventions.md §7.2 "Deadlocks"). Replace means DNB-owned fields are replaced as a whole (None clears them), user and admin fields are never touched, a re-delivered record with a final title retitles a single-edition DNB work, and `planned_publication_date` only changes when the record carries 263. Grouping: an existing edition by ISBN or IDN first, else the `match_key` index among `source='dnb'` works.
   - **Sets:** every entry of `DNB_HARVEST_SETS` (default `dnb-all:reiheN,dnb:reiheA`), each with its own `harvest_state` row (`dnb:<setSpec>`). A reiheA record for a title harvested from reiheN finds the edition by ISBN or IDN and updates it.
   - **Cursor** in `harvest_state`:
@@ -241,6 +241,14 @@ Each package owns `server/tests/<prefix>_*.rs` for its tests and `server/tests/f
   - `test_import.py` (8)
   - `test_search_history.py` (3)
   - `test_stats_milestones_quotes.py::{test_stats_year_in_review, test_stats_with_empty_club, test_quotes_crud_and_filters}`: the personal-stats, club-stats and quotes parts.
+  - **Handed over from CAT** (`notes/cat.md` "Left for other packages, or PAR"; added by INT in Wave 3, after SHELF merged without them, so **PAR (#49) ports or reasons them**):
+    - `test_google_books.py::test_known_google_book_skips_upstream`, the shelf half: a shelf add, then the detail shows `on_shelf`, with zero upstream calls
+    - `test_google_books.py::test_goodreads_import_prefers_google`: the Goodreads job through `state.lookup`, with `FakeCatalog` (PAR's end-to-end run against `with_real_lookup` is the other half)
+    - `test_google_books.py::test_shelf_rejects_non_google_cover_url`: a client-sent `cover_url` (`https://attacker.example/pixel.gif?u=1`) never becomes a stored or served cover
+    - `test_google_books.py::test_shelf_isbn_x_and_X_are_the_same_row`: adding the edition of `080442957X`, then of `080442957x`, is 409 `Already on your shelf` (CAT ported the lookup half in `catalog_isbn.rs`)
+    - `test_google_books.py::test_goodreads_import_while_cooling_down`: a throttled row is skipped with `catalog_unavailable` and the job continues (google decision 9; `shelf_import.rs::throttled_lookups_skip_with_catalog_unavailable` tests this behaviour but carries no `/// parity:` line)
+    - `test_local_reads.py::test_known_book_reads_never_touch_open_library`: the shelf, stats and quotes reads
+    - `test_local_reads.py::test_shelving_persists_search_metadata_for_later_local_reads`: the shelf add's `BookOut` (CAT ported the search half)
 - **Acceptance (#44, its share):** every listed Python test has a Rust counterpart or a recorded reason; the Goodreads import works with the same sample CSV; visibility tests (`tests/shelf_visibility.rs`) cover the shelf, favourites, layout (GET and the PUT→404 acceptance criterion), quotes and stats.
 
 ### POSTS: diary entries and pick discussions (#44b, also the pick-post part of #45)
@@ -258,6 +266,9 @@ Each package owns `server/tests/<prefix>_*.rs` for its tests and `server/tests/f
   - `test_diary.py` (15). `test_legacy_pick_notes_are_imported_once_with_reactions` moves to IMP; `test_entry_on_the_current_pick_records_the_pick` becomes "a club post records its pick".
   - `test_pick_posts.py` (5)
   - `test_notes_and_meeting.py::{test_post_carries_spoiler_flag_and_viewer_progress, test_spoiler_flag_must_be_a_percentage, test_author_can_edit_and_delete_own_note, test_other_members_cannot_edit_or_delete, test_reactions_toggle_and_aggregate, test_deleting_a_note_removes_its_reactions}`
+  - **Handed over from CAT** (`notes/cat.md` "Left for other packages, or PAR"; added by INT in Wave 3, after POSTS merged without them, so **PAR (#49) ports or reasons them**):
+    - `test_google_books.py::test_known_google_book_skips_upstream`, the posts half: `GET /api/books/works/{work_id}/posts` with zero upstream calls
+    - `test_local_reads.py::test_known_book_reads_never_touch_open_library`: the diary and `GET /api/books/works/{work_id}/posts`
 - **Visibility tests:** `tests/posts_visibility.rs` covers diary roots (`audience`/`only_me`), replies by strangers, reaction user lists, `parent_author`, club posts across clubs, **reacting to an invisible post (404, body not returned)**, a club admin of club B unable to delete a club A post, and the deleted-account tombstone whose replies stay visible to their audience.
 
 ### CLUB: club features (#45)
@@ -282,6 +293,10 @@ Each package owns `server/tests/<prefix>_*.rs` for its tests and `server/tests/f
   - `test_stats_milestones_quotes.py::test_milestones_crud_and_threads` (the club-stats assertions are SHELF's)
   - `test_notes_and_meeting.py::{test_meeting_ics_download, test_ics_folds_long_lines_without_breaking_utf8}`
   - `test_push.py` (10): **reasoned** (Phase 4)
+  - **Handed over from CAT** (`notes/cat.md` "Left for other packages, or PAR"; added by INT in Wave 3, after CLUB merged without them, so **PAR (#49) ports or reasons them**):
+    - `test_google_books.py::test_known_google_book_skips_upstream`, the pick half: `PUT /api/clubs/{slug}/pick` for that work with zero upstream calls
+    - `test_google_books.py::test_pick_does_not_persist_ol_cdn_cover_url`: the pick body names a work id, and a `cover_url` or `cover_id` in it is never stored (ignored, or 400 under strict JSON)
+    - `test_local_reads.py::test_known_book_reads_never_touch_open_library`: the pick, pick history, overlap, members, vote, vote suggestions and activity reads
 - **Acceptance (#45):** a user in two clubs sees separate picks, votes, milestones, threads and activity; ids from club A under club B's path give 404; every role row has an allowed and a denied case; concurrency tests show that two first nominations create one vote, a concurrent auto-close applies once, and two concurrent `PUT pick` calls leave one current pick.
 - **Visibility tests:** `tests/club_visibility.rs` covers reader rating redaction, `shelf_finished` payload redaction, hidden `quote_added` events, and `joined_at` filtering.
 
@@ -363,6 +378,17 @@ Each package owns `server/tests/<prefix>_*.rs` for its tests and `server/tests/f
     - the #46 matrix completeness check: every personal data kind has self, co-member, stranger and unknown-name cases
 - **Acceptance (#49):** every Python test is checked off or reasoned.
 
+### INT: integrator follow-ups (#42, #45)
+
+Runs alongside FE and PAR. It does what the Wave 2 notes left "for the integrator" that is neither FE's nor PAR's (parity lines); `docs/phase1/notes/int.md` lists each item, done or not, with a reason.
+
+- **Owns:** `docs/phase1/{conventions,endpoint-map,work-plan}.md`, `docs/phase1/notes/int.md`, `server/migrations/12*.sql` (HAR's block), `server/src/catalog/shared/{dnb_marc,ingest}.rs`, `server/src/catalog/hits.rs`, `server/src/harvest/**`, `server/tests/{dnb_marc,ingest}.rs`, `server/tests/harvest_*.rs`, `server/tests/fixtures/dnb_oai/**`, plus minimal edits to the callers of functions it changes.
+- **Builds:**
+  - conventions §12 (the `created_label` zone of club items) and §13 (the club row lock of vote writes, the lock order of a club write, the migrations so far), as POSTS and CLUB built them.
+  - `editions.dnb_record_idn` (migration 1200): a deleted multi-ISBN DNB record withdraws all its editions (HAR's open point).
+  - One annotation of search hits and new-releases hits (`catalog::hits::annotated_hits`).
+  - CAT's handoff lines (`notes/cat.md` "Left for other packages, or PAR") in the SHELF, POSTS and CLUB parity lists above, marked for PAR, since those packages merged without them.
+
 ---
 
 ## Dependencies and concurrency summary
@@ -378,8 +404,9 @@ Each package owns `server/tests/<prefix>_*.rs` for its tests and `server/tests/f
 | CLUB | W1 | all of Wave 2 | It reads `shelf_entries`, `posts` and `quotes` with SQL only. |
 | IMP | W1 (`ingest`, `merge_rules`, `media::shared`) | all of Wave 2 | Its tests use `FakeCatalog` and `MemMediaStore`. |
 | OAPI | W1 | all of Wave 2 | The integrator regenerates `generated.ts` after each merge. Every §0 DTO is registered by W1, so its contract test passes alone. |
-| FE | all of Wave 2 merged (a stable OpenAPI) | PAR | Frontend only. |
-| PAR | all of Wave 2 merged | FE | Server tests and fixes only. |
+| FE | all of Wave 2 merged (a stable OpenAPI) | PAR, INT | Frontend only. |
+| PAR | all of Wave 2 merged | FE, INT | Server tests and fixes only. |
+| INT | all of Wave 2 merged | FE, PAR | Docs, the DNB withdraw fix and the hit annotation; one migration (1200). |
 
 **Suggested merge order in Wave 2:** CAT, MED, SHELF, POSTS, CLUB, HAR, IMP, then OAPI last, with one final regeneration. Any order works. At most 3 packages build at a time (ground rule 5); a sensible batching is {CAT, MED, SHELF}, then {POSTS, CLUB, HAR}, then {IMP, OAPI}.
 

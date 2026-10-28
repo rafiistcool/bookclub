@@ -204,7 +204,11 @@ pub struct EditionRecord {
     pub source: Source,
     pub isbn13: Option<Isbn13>,
     pub ol_edition_id: Option<String>,
+    /// MARC 001 of the record, on the first ISBN's edition only (`editions.dnb_idn` is unique).
     pub dnb_idn: Option<String>,
+    /// MARC 001 of the delivering DNB record, on every edition of the record
+    /// (`editions.dnb_record_idn`, not unique). `None` falls back to `dnb_idn`.
+    pub dnb_record_idn: Option<String>,
     /// Stored only when it differs (by case fold) from the work title.
     pub title: Option<String>,
     pub subtitle: Option<String>,
@@ -229,6 +233,7 @@ impl EditionRecord {
             isbn13: None,
             ol_edition_id: None,
             dnb_idn: None,
+            dnb_record_idn: None,
             title: None,
             subtitle: None,
             publisher: None,
@@ -685,6 +690,8 @@ struct CleanEdition {
     isbn13: Option<String>,
     ol_edition_id: Option<String>,
     dnb_idn: Option<String>,
+    /// The record's IDN, else `dnb_idn`: an edition that carries an IDN was delivered by it.
+    dnb_record_idn: Option<String>,
     title: Option<String>,
     subtitle: Option<String>,
     publisher: Option<String>,
@@ -703,12 +710,15 @@ struct CleanEdition {
 
 impl CleanEdition {
     fn new(rec: &EditionRecord) -> Self {
+        // Identifiers are dropped, never truncated, when they break the schema's limits.
+        let idn = |value: Option<&str>| clean_line(value, 33).filter(|idn| char_len(idn) <= 32);
+        let dnb_idn = idn(rec.dnb_idn.as_deref());
         Self {
             source: rec.source,
             isbn13: rec.isbn13.as_ref().map(|isbn| isbn.as_str().to_owned()),
             ol_edition_id: clean_id(rec.ol_edition_id.as_deref(), &OL_EDITION_ID),
-            // Identifiers are dropped, never truncated, when they break the schema's limits.
-            dnb_idn: clean_line(rec.dnb_idn.as_deref(), 33).filter(|idn| char_len(idn) <= 32),
+            dnb_record_idn: idn(rec.dnb_record_idn.as_deref()).or_else(|| dnb_idn.clone()),
+            dnb_idn,
             title: clean_line(rec.title.as_deref(), 1000),
             subtitle: clean_line(rec.subtitle.as_deref(), 1000),
             publisher: clean_line(rec.publisher.as_deref(), 300),
@@ -1576,6 +1586,7 @@ struct EditionRow {
     planned_publication_date: Option<Date>,
     ol_edition_id: Option<String>,
     dnb_idn: Option<String>,
+    dnb_record_idn: Option<String>,
     source: String,
     cover_media_id: Option<i64>,
     field_sources: Json<Map<String, Value>>,
@@ -1595,7 +1606,7 @@ async fn find_edition(
         EditionRow,
         r#"SELECT e.id, e.work_id, e.isbn13, e.title, e.subtitle, e.publisher, e.language,
                   e.format, e.pages, e.publication_year, e.planned_publication_date,
-                  e.ol_edition_id, e.dnb_idn, e.source, e.cover_media_id,
+                  e.ol_edition_id, e.dnb_idn, e.dnb_record_idn, e.source, e.cover_media_id,
                   e.field_sources AS "field_sources: Json<Map<String, Value>>",
                   e.withdrawn_at IS NOT NULL AS "withdrawn!",
                   (SELECT count(*) FROM edition_contributors c WHERE c.edition_id = e.id)
@@ -1653,8 +1664,9 @@ async fn insert_edition(
     let id = sqlx::query_scalar!(
         "INSERT INTO editions (work_id, isbn13, title, subtitle, publisher, language, format,
                                pages, publication_year, planned_publication_date, ol_edition_id,
-                               dnb_idn, source, cover_media_id, created_by, field_sources)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                               dnb_idn, dnb_record_idn, source, cover_media_id, created_by,
+                               field_sources)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
          ON CONFLICT DO NOTHING
          RETURNING id",
         work_id,
@@ -1669,6 +1681,7 @@ async fn insert_edition(
         planned,
         ed.ol_edition_id,
         ed.dnb_idn,
+        ed.dnb_record_idn,
         source,
         cover,
         ed.created_by,
@@ -1685,7 +1698,8 @@ async fn insert_edition(
 }
 
 /// Merges `ed` into a found edition under the provenance rules: the newest record's IDN moves to
-/// it, a missing ISBN or OL edition id is filled, and a withdrawn edition is un-withdrawn.
+/// it, the newest delivering record's IDN replaces `dnb_record_idn`, a missing ISBN or OL edition
+/// id is filled, and a withdrawn edition is un-withdrawn.
 async fn update_edition(
     conn: &mut PgConnection,
     mut row: EditionRow,
@@ -1738,6 +1752,13 @@ async fn update_edition(
         row.dnb_idn = Some(idn.clone());
         identity_changed = true;
     }
+    // Not unique: every edition of a multi-ISBN record carries it, so nothing moves.
+    if let Some(idn) = &ed.dnb_record_idn
+        && row.dnb_record_idn.as_ref() != Some(idn)
+    {
+        row.dnb_record_idn = Some(idn.clone());
+        identity_changed = true;
+    }
     // An edition found by IDN or OL id keeps its ISBN; a missing one is filled when free.
     if row.isbn13.is_none()
         && let Some(isbn) = &ed.isbn13
@@ -1769,8 +1790,8 @@ async fn update_edition(
             "UPDATE editions SET isbn13 = $2, title = $3, subtitle = $4, publisher = $5,
                     language = $6, format = $7, pages = $8, publication_year = $9,
                     planned_publication_date = $10, ol_edition_id = $11, dnb_idn = $12,
-                    source = $13, cover_media_id = $14, field_sources = $15,
-                    withdrawn_at = NULL, updated_at = now()
+                    dnb_record_idn = $13, source = $14, cover_media_id = $15,
+                    field_sources = $16, withdrawn_at = NULL, updated_at = now()
              WHERE id = $1",
             row.id,
             row.isbn13,
@@ -1784,6 +1805,7 @@ async fn update_edition(
             row.planned_publication_date,
             row.ol_edition_id,
             row.dnb_idn,
+            row.dnb_record_idn,
             source,
             row.cover_media_id,
             m.prov.to_value()
@@ -1853,10 +1875,10 @@ async fn insert_or_merge_edition(
 }
 
 /// Finds the edition by isbn13, then dnb_idn, then ol_edition_id.
-/// - Found: updates it per `mode` and the provenance rules (dnb_idn takes the newest record's
-///   IDN; a withdrawn edition is un-withdrawn). Then the parent work's title, subtitle,
-///   author_names and work_authors are updated from `work` under the same rules when they are
-///   `legacy`-ranked, or when they are `dnb`-ranked and this is the work's only edition.
+/// - Found: updates it per `mode` and the provenance rules (dnb_idn and dnb_record_idn take the
+///   newest record's IDN; a withdrawn edition is un-withdrawn). Then the parent work's title,
+///   subtitle, author_names and work_authors are updated from `work` under the same rules when
+///   they are `legacy`-ranked, or when they are `dnb`-ranked and this is the work's only edition.
 /// - Not found: resolves the work by `grouping` (creating it from `work` when needed) and
 ///   inserts the edition.
 ///
@@ -1984,12 +2006,14 @@ pub async fn upsert_edition(
     Ok((work_id, edition_id))
 }
 
-/// DNB delivered `status="deleted"` for this IDN: sets `editions.withdrawn_at` when the edition
-/// exists. Never inserts.
+/// DNB delivered `status="deleted"` for this IDN: sets `editions.withdrawn_at` on every edition
+/// whose newest delivering record it is (`editions.dnb_record_idn`), so a multi-ISBN record is
+/// withdrawn with all its ISBNs. An edition a newer record delivered again stays live. Never
+/// inserts.
 pub async fn withdraw_dnb_edition(conn: &mut PgConnection, dnb_idn: &str) -> sqlx::Result<()> {
     sqlx::query!(
         "UPDATE editions SET withdrawn_at = now(), updated_at = now()
-         WHERE dnb_idn = $1 AND withdrawn_at IS NULL",
+         WHERE dnb_record_idn = $1 AND withdrawn_at IS NULL",
         dnb_idn
     )
     .execute(conn)
@@ -2528,7 +2552,29 @@ mod tests {
         });
         assert_eq!(ed.language.as_deref(), Some("ger"));
         assert_eq!(ed.dnb_idn, None);
+        assert_eq!(ed.dnb_record_idn, None);
         assert_eq!(ed.own_title("Circe"), None);
+        // The record's IDN falls back to the edition's own; an overlong one is dropped too.
+        let ed = CleanEdition::new(&EditionRecord {
+            dnb_idn: Some(" 100 ".into()),
+            ..EditionRecord::new(Source::Dnb)
+        });
+        assert_eq!(
+            (ed.dnb_idn.as_deref(), ed.dnb_record_idn.as_deref()),
+            (Some("100"), Some("100"))
+        );
+        let ed = CleanEdition::new(&EditionRecord {
+            dnb_idn: Some("100".into()),
+            dnb_record_idn: Some("200".into()),
+            ..EditionRecord::new(Source::Dnb)
+        });
+        assert_eq!(ed.dnb_record_idn.as_deref(), Some("200"));
+        let ed = CleanEdition::new(&EditionRecord {
+            dnb_idn: Some("100".into()),
+            dnb_record_idn: Some("x".repeat(40)),
+            ..EditionRecord::new(Source::Dnb)
+        });
+        assert_eq!(ed.dnb_record_idn.as_deref(), Some("100"));
         let ed = CleanEdition::new(&EditionRecord {
             publisher: Some("Reclam\u{0}".into()),
             planned_publication_date: Patch::Value(time::macros::date!(3001 - 01 - 01)),

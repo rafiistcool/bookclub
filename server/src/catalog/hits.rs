@@ -6,6 +6,7 @@
 use std::collections::{HashMap, HashSet};
 
 use sqlx::{Connection, PgConnection};
+use time::Date;
 
 use super::openlibrary::OlDoc;
 use super::shared::books::{BookRef, book_outs};
@@ -171,23 +172,36 @@ pub async fn club_picks(
     Ok(picks)
 }
 
-/// The `SearchHit`s of `refs`, in order, annotated for `viewer`. Works that no longer exist
-/// are left out.
-pub async fn search_hits(
+/// One hit of a list before it is loaded: its work, optionally in the context of the edition the
+/// hit stands for (whose own title and cover then win, `books::book_outs`), and the hit's own
+/// `isbn` and `planned_publication_date`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListedHit {
+    pub book: BookRef,
+    pub isbn: Option<String>,
+    pub planned_publication_date: Option<Date>,
+}
+
+/// The `SearchHit`s of `hits`, in order, annotated for `viewer`: `on_shelf` and `shelf_id` from
+/// the viewer's shelf entry for the work, `club_picks` from the viewer's clubs whose current pick
+/// it is. Works that no longer exist, and a repeated `BookRef`, are left out. Catalog search and
+/// new-releases (`harvest::new_releases`) both build their hits here.
+pub async fn annotated_hits(
     conn: &mut PgConnection,
     viewer: i64,
-    refs: &[HitRef],
+    hits: &[ListedHit],
 ) -> sqlx::Result<Vec<SearchHit>> {
-    let book_refs: Vec<BookRef> = refs.iter().map(|hit| BookRef::work(hit.work_id)).collect();
-    let work_ids: Vec<i64> = refs.iter().map(|hit| hit.work_id).collect();
+    let book_refs: Vec<BookRef> = hits.iter().map(|hit| hit.book).collect();
+    let work_ids: Vec<i64> = hits.iter().map(|hit| hit.book.work_id).collect();
     let mut books = book_outs(conn, &book_refs).await?;
     let shelf = shelf_entries(conn, viewer, &work_ids).await?;
     let mut picks = club_picks(conn, viewer, &work_ids).await?;
-    Ok(refs
+    Ok(hits
         .iter()
         .filter_map(|hit| {
-            let book = books.remove(&BookRef::work(hit.work_id))?;
-            let shelf_id = shelf.get(&hit.work_id).copied();
+            let work_id = hit.book.work_id;
+            let book = books.remove(&hit.book)?;
+            let shelf_id = shelf.get(&work_id).copied();
             Some(SearchHit {
                 id: book.id,
                 ol_work_key: book.ol_work_key,
@@ -202,11 +216,29 @@ pub async fn search_hits(
                 custom: book.custom,
                 on_shelf: shelf_id.is_some(),
                 shelf_id,
-                club_picks: picks.remove(&hit.work_id).unwrap_or_default(),
-                planned_publication_date: None,
+                club_picks: picks.remove(&work_id).unwrap_or_default(),
+                planned_publication_date: hit.planned_publication_date,
             })
         })
         .collect())
+}
+
+/// The `SearchHit`s of `refs`, in order, annotated for `viewer` ([`annotated_hits`], without an
+/// edition context or a planned date). Works that no longer exist are left out.
+pub async fn search_hits(
+    conn: &mut PgConnection,
+    viewer: i64,
+    refs: &[HitRef],
+) -> sqlx::Result<Vec<SearchHit>> {
+    let hits: Vec<ListedHit> = refs
+        .iter()
+        .map(|hit| ListedHit {
+            book: BookRef::work(hit.work_id),
+            isbn: hit.isbn.clone(),
+            planned_publication_date: None,
+        })
+        .collect();
+    annotated_hits(conn, viewer, &hits).await
 }
 
 #[cfg(test)]
