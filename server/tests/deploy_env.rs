@@ -8,6 +8,7 @@
 //!   domain and fails on an SMTP error, and `serve` and `import-legacy` refuse a `MEDIA_DIR`
 //!   they cannot write before they touch the database.
 //! - `deploy/hosted/smoke-test.sh` refuses names that are not CI's before it runs `docker`.
+//! - Every action the Forgejo workflows use is pinned to a commit.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -639,5 +640,44 @@ fn smoke_test_refuses_names_that_are_not_ci_names() {
             stderr.contains(&format!("{name}=")) && stderr.contains("is not a CI"),
             "{name}={value}: {stderr}"
         );
+    }
+}
+
+/// Every `uses:` in `.forgejo/workflows/` names a full commit, with its release in a comment
+/// (security review, Phase 2 Wave 1 #2): a tag or a branch can be moved to other code, and the
+/// release job hands its actions the registry token and the Docker daemon of the runner's host.
+/// An action in this repository (`./…`) is code the workflow checks out anyway.
+#[test]
+fn workflows_pin_every_action_to_a_commit() {
+    let uses = Regex::new(r"^\s*(?:-\s+)?uses:\s*(.*?)\s*$").unwrap();
+    let pinned = Regex::new(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40} # \S").unwrap();
+    let dir = repo().join(".forgejo/workflows");
+    let mut workflows: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|ext| ext == "yml" || ext == "yaml")
+        })
+        .collect();
+    workflows.sort();
+    assert!(workflows.len() >= 2, "{workflows:?}");
+    for workflow in &workflows {
+        let text = std::fs::read_to_string(workflow).unwrap();
+        let mut checked = 0;
+        for (index, line) in text.lines().enumerate() {
+            let Some(captures) = uses.captures(line) else {
+                continue;
+            };
+            let action = &captures[1];
+            checked += 1;
+            assert!(
+                action.starts_with("./") || pinned.is_match(action),
+                "{}:{}: `{action}` is not pinned to a commit with its release in a comment",
+                workflow.display(),
+                index + 1
+            );
+        }
+        assert!(checked > 0, "no `uses:` found in {}", workflow.display());
     }
 }

@@ -127,6 +127,8 @@ The exact version is pushed first. Then `release-tags.sh` compares the tag with 
 
 There is no `latest` and no floating major. A tag that is not `vX.Y.Z` or `vX.Y.Z-<pre-release>` fails the run. The publish job runs on the Forgejo runner with the label `docker` and logs in with the repository secret `REGISTRY_TOKEN`, a Forgejo token with `write:package`. The old Python image `rafiistcool/bookclub` is never touched.
 
+Every action in the Forgejo workflows is pinned to a commit, with its release in a comment, because the publish job hands its actions that token and the host's Docker daemon. A pin moves only on purpose; the comment above `jobs:` in `release.yml` says how, and `server/tests/deploy_env.rs` fails on an unpinned `uses:`.
+
 ## Staging
 
 Staging runs the same files on the same VM, on a temporary hostname and with test data only. It needs its own `PUBLIC_URL` and the SMTP account (see Requirements). Wipe it before the import:

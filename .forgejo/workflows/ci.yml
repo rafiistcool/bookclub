@@ -10,6 +10,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Every action is pinned to a commit, as in release.yml: the `image` job gets the Docker daemon of
+# the runner that also publishes releases (security review, Phase 2 Wave 1 #2).
 jobs:
   backend:
     runs-on: ubuntu-latest
@@ -17,8 +19,8 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
           cache: pip
@@ -34,8 +36,8 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
           cache: npm
@@ -68,7 +70,7 @@ jobs:
       BOOKCLUB_TAG: ci-${{ github.run_id }}
       BOOKCLUB_DATA_DIR: /tmp/bookclub-ci-${{ github.run_id }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build, boot and probe the image
         run: deploy/hosted/smoke-test.sh
       # The script tears the stack down itself; a cancelled run may not get that far, and the
@@ -97,11 +99,12 @@ jobs:
     env:
       DATABASE_URL: postgres://bookclub:bookclub@postgres:5432/bookclub
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable (branch head 2026-10-16)
         with:
+          toolchain: stable
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: server
       - name: Format
@@ -123,7 +126,7 @@ jobs:
       # if it differs from the committed file. This job has already built the server, so the check
       # adds only a Node setup and `npm ci` here; the frontend job would need a Rust toolchain and
       # a second full build.
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
           cache: npm
