@@ -25,7 +25,13 @@
     "reportSend": "Meldung senden",
     "reporting": "Wird gesendet…",
     "reported": "Danke. Jemand aus dem Admin-Team sieht es sich an.",
-    "reportFailed": "Die Meldung konnte nicht gesendet werden"
+    "reportFailed": "Die Meldung konnte nicht gesendet werden",
+    "photoAdd": "Foto deines Exemplars hinzufügen",
+    "photoSuggest": "Foto deines Exemplars vorschlagen",
+    "photoUploading": "Wird hochgeladen …",
+    "photoSet": "Dein Foto ist jetzt das Cover",
+    "photoQueued": "Danke. Ein Admin sieht sich dein Foto an.",
+    "photoFailed": "Das Foto konnte nicht hochgeladen werden"
   },
   "common": {
     "cancel": "Abbrechen",
@@ -617,7 +623,7 @@
     "invalidIsbn": "Das ist keine gültige ISBN-10 oder ISBN-13",
     "isbnLookupFailed": "Die ISBN lässt sich gerade nicht nachschlagen. Versuch es nochmal.",
     "addedByReader": "Dieses Buch hat jemand von Hand angelegt, es kommt nicht von Open Library.",
-    "mergeIntoItself": "Ein Buch lässt sich nicht mit sich selbst zusammenführen",
+    "mergeIntoItself": "Ein Buch kann nicht mit sich selbst zusammengeführt werden",
     "titleRequired": "Ein Titel ist nötig",
     "searchTooShort": "Mindestens 3 Zeichen. Ergänze den Autor oder füge eine ISBN ein.",
     "searchTooLong": "Diese Suche ist zu lang",
@@ -1007,6 +1013,40 @@
     "setBy": "ausgewählt von {name}",
     "pickSince": "seit {day}",
     "pickLine": "{readers} im Regal · {finished} beendet · ★ {rating}"
+  },
+  "editions": {
+    "yours": "Deine Ausgabe:",
+    "any": "Keine bestimmte Ausgabe",
+    "choose": "Wählen",
+    "title": "Welche Ausgabe hast du?",
+    "blurb": "Dein Regal und dein Bücherregal nehmen dann ihre Seitenzahl und ihr Cover.",
+    "loadFailed": "Die Ausgaben konnten nicht geladen werden",
+    "saved": "Ausgabe gespeichert",
+    "pages": "{n} Seiten",
+    "unnamed": "Ausgabe {id}",
+    "format": {
+      "hardcover": "Gebunden",
+      "paperback": "Taschenbuch",
+      "ebook": "E-Book",
+      "audiobook": "Hörbuch",
+      "other": "Anderes Format"
+    }
+  },
+  "merge": {
+    "open": "Dasselbe Buch wie ein anderes?",
+    "title": "Das ist dasselbe Buch",
+    "blurb": "Wenn der Katalog „{title}“ doppelt hat, such den anderen Eintrag. Ein Admin prüft ihn und führt beide zusammen.",
+    "other": "Der andere Eintrag",
+    "otherPlaceholder": "Titel, Autor:in oder ein Link zur Seite",
+    "find": "Suchen",
+    "findFailed": "Das konnte nicht nachgeschlagen werden",
+    "noHits": "Sonst nichts gefunden. Versuch eine andere Schreibweise oder füge den Link zur Seite ein.",
+    "same": "„{title}“ ist dasselbe Buch wie „{other}“.",
+    "change": "Ändern",
+    "note": "Sollte der Admin noch etwas wissen?",
+    "send": "An einen Admin schicken",
+    "sent": "Danke. Ein Admin sieht es sich an.",
+    "failed": "Das konnte nicht gesendet werden"
   },
   "verify": {
     "working": "Deine Adresse wird bestätigt…",

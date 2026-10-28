@@ -120,3 +120,12 @@ export function relativeDay(iso: string | null | undefined, timeZone?: string): 
     ? t("relative.daysAgo", { n: ago })
     : t("relative.weeksAgo", { n: Math.round(ago / 7) });
 }
+
+/** A book typed or pasted as a link (`…/book/42`, `/book/42#entry-3`) or a bare id; null for anything else. */
+export function bookIdFromInput(text: string): number | null {
+  const value = text.trim();
+  const match = /^(?:\d+|(?:https?:\/\/[^/\s]+)?\/book\/(\d+)(?:[?#].*)?)$/.exec(value);
+  if (!match) return null;
+  const id = Number(match[1] ?? value);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}

@@ -6,6 +6,8 @@ import type {
   ClubOut,
   ClubPatchIn,
   ClubStatsOut,
+  CoverRequested,
+  CoverSet,
   ClubPickCurrentOut,
   ClubPickHistoryOut,
   ClubPickOut,
@@ -15,6 +17,8 @@ import type {
   DiaryEntryIn,
   DiaryFeedOut,
   DiaryOut,
+  EditRequestCreated,
+  EditionList,
   FavoritesOut,
   ImportJobOut,
   InviteIn,
@@ -358,6 +362,24 @@ export const api = {
     request<OverlapOut>(
       `${clubPath(slug)}/overlap${includeReading ? "?include_reading=true" : ""}`,
     ),
+
+  /**
+   * A photo of the reader's copy as the cover: 200 `CoverSet` when it became
+   * the cover, 202 `CoverRequested` when a cover existed and an admin decides.
+   */
+  uploadCover: (workId: number, file: File, editionId?: number | null) => {
+    const body = upload(file);
+    if (editionId != null) body.append("edition_id", String(editionId));
+    return request<CoverSet | CoverRequested>(`${workPath(workId)}/cover`, { method: "POST", body });
+  },
+  /** "These are the same book": `workId` should be merged into `intoWorkId` (an admin decides). */
+  requestMerge: (workId: number, intoWorkId: number, note: string) =>
+    request<EditRequestCreated>(
+      `${workPath(workId)}/merge-requests`,
+      json("POST", { into_work_id: intoWorkId, ...(note ? { note } : {}) }),
+    ),
+  /** Every edition of a work, oldest first. */
+  editions: (workId: number) => request<EditionList>(`${workPath(workId)}/editions`),
 
   /** A reader's year in books: the caller's without `username`; the newest year without `year`. */
   personalStats: (params: { username?: string; year?: number } = {}) => {

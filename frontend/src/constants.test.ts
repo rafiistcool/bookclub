@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  bookIdFromInput,
   bookPath,
   extractIsbn,
   monogram,
@@ -77,5 +78,17 @@ describe("relativeDay", () => {
     expect(relativeDay("2026-09-03T08:00:00Z", "UTC")).toBe("in 2 days");
     expect(relativeDay("2026-09-03T08:00:00Z", "Pacific/Honolulu")).toBe("tomorrow");
     expect(relativeDay("2026-09-01T23:30:00Z", "Not/AZone")).not.toBe("");
+  });
+});
+
+describe("bookIdFromInput", () => {
+  it("reads a book's id from a pasted link or a bare number", () => {
+    expect(bookIdFromInput("42")).toBe(42);
+    expect(bookIdFromInput(" /book/42 ")).toBe(42);
+    expect(bookIdFromInput("https://bookclub.example/book/42#entry-3")).toBe(42);
+    expect(bookIdFromInput("http://agents.lan:5173/book/7?x=1")).toBe(7);
+    expect(bookIdFromInput("Circe")).toBeNull();
+    expect(bookIdFromInput("/book/OL1W")).toBeNull();
+    expect(bookIdFromInput("0")).toBeNull();
   });
 });

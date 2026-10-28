@@ -25,7 +25,13 @@
     "reportSend": "Send report",
     "reporting": "Sending…",
     "reported": "Thanks. An admin will look at it.",
-    "reportFailed": "Could not send that report"
+    "reportFailed": "Could not send that report",
+    "photoAdd": "Add a photo of your copy",
+    "photoSuggest": "Suggest a photo of your copy",
+    "photoUploading": "Uploading…",
+    "photoSet": "Your photo is the cover now",
+    "photoQueued": "Thanks. An admin will look at your photo.",
+    "photoFailed": "Could not upload the photo"
   },
   "common": {
     "cancel": "Cancel",
@@ -1007,6 +1013,40 @@
     "setBy": "picked by {name}",
     "pickSince": "since {day}",
     "pickLine": "{readers} on their shelf · {finished} finished · ★ {rating}"
+  },
+  "editions": {
+    "yours": "Your edition:",
+    "any": "No particular edition",
+    "choose": "Choose",
+    "title": "Which edition do you have?",
+    "blurb": "Your shelf and your real bookshelf then use its pages and cover.",
+    "loadFailed": "Could not load the editions",
+    "saved": "Edition saved",
+    "pages": "{n} pages",
+    "unnamed": "Edition {id}",
+    "format": {
+      "hardcover": "Hardcover",
+      "paperback": "Paperback",
+      "ebook": "E-book",
+      "audiobook": "Audiobook",
+      "other": "Other format"
+    }
+  },
+  "merge": {
+    "open": "Same book as another one?",
+    "title": "These are the same book",
+    "blurb": "If the catalog has “{title}” twice, find the other entry. An admin checks it and joins the two.",
+    "other": "The other entry",
+    "otherPlaceholder": "Title, author, or a link to its page",
+    "find": "Find it",
+    "findFailed": "Could not look that up",
+    "noHits": "Nothing else found. Try another spelling, or paste the link to its page.",
+    "same": "“{title}” is the same book as “{other}”.",
+    "change": "Change",
+    "note": "Anything the admin should know?",
+    "send": "Send to an admin",
+    "sent": "Thanks. An admin will look at it.",
+    "failed": "Could not send it"
   },
   "verify": {
     "working": "Confirming your address…",

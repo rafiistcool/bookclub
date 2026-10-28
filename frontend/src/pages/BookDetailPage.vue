@@ -10,6 +10,9 @@ import BookDiary from "../components/BookDiary.vue";
 import QuoteList from "../components/QuoteList.vue";
 import ClubBookActions from "../components/ClubBookActions.vue";
 import ReportCoverSheet from "../components/ReportCoverSheet.vue";
+import EditionPicker from "../components/EditionPicker.vue";
+import CoverPhotoButton from "../components/CoverPhotoButton.vue";
+import MergeRequestSheet from "../components/MergeRequestSheet.vue";
 import { clubsFor } from "../clubActions";
 import {
   bookPath,
@@ -24,6 +27,7 @@ import {
 import { tp } from "../i18n";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
+import type { BookOut } from "../api/generated";
 import type { BookDetail, ClubRef, ShelfItem, Visibility } from "../types";
 
 const { t } = useI18n();
@@ -41,6 +45,7 @@ const busy = ref(false);
 const refreshing = ref(false);
 const expanded = ref(false);
 const reportingCover = ref(false);
+const requestingMerge = ref(false);
 
 const takeDraft = ref("");
 const reasonDraft = ref("");
@@ -65,6 +70,15 @@ function syncDrafts(detail: BookDetail) {
   takeDraft.value = detail.take;
   reasonDraft.value = detail.dnf_reason;
   progressDraft.value = detail.progress ?? 0;
+}
+
+/** A photo became the cover: show it without reloading the page. */
+function adoptCover(updated: BookOut) {
+  const detail = book.value;
+  if (!detail) return;
+  detail.cover_url = updated.cover_url;
+  detail.cover_thumb_url = updated.cover_thumb_url;
+  detail.cover_public_id = updated.cover_public_id;
 }
 
 /** Copy the viewer's shelf entry onto the page after a write. */
@@ -359,6 +373,12 @@ watch(param, load);
           >
             {{ t("cover.report") }}
           </button>
+          <CoverPhotoButton
+            :work-id="book.id"
+            :edition-id="book.edition_id"
+            :has-cover="Boolean(book.cover_url || book.cover_thumb_url)"
+            @covered="adoptCover"
+          />
         </div>
         <div class="detail-side">
           <div class="detail-intro">
@@ -395,6 +415,9 @@ watch(param, load);
               >
                 {{ refreshing ? t("book.refreshing") : t("book.refreshDetails") }}
               </button>
+            </p>
+            <p class="fine">
+              <button class="text-btn" type="button" @click="requestingMerge = true">{{ t("merge.open") }}</button>
             </p>
           </div>
 
@@ -501,6 +524,14 @@ watch(param, load);
                 {{ t("book.saveReason") }}
               </button>
             </div>
+
+            <EditionPicker
+              v-if="book.shelf_id"
+              :work-id="book.id"
+              :edition-id="book.edition_id"
+              :disabled="busy"
+              @choose="(editionId) => patch({ edition_id: editionId }, t('editions.saved'))"
+            />
 
             <div class="btn-row panel-actions">
               <button
@@ -612,6 +643,12 @@ watch(param, load);
     </template>
 
     <ClubBookActions ref="clubActions" @picked="onPicked" />
+    <MergeRequestSheet
+      v-if="requestingMerge && book"
+      :work-id="book.id"
+      :title="book.title"
+      @close="requestingMerge = false"
+    />
     <ReportCoverSheet
       v-if="reportingCover && book?.cover_public_id"
       :public-id="book.cover_public_id"
@@ -649,7 +686,8 @@ watch(param, load);
   border-radius: var(--radius-md);
 }
 
-.report-cover {
+.report-cover,
+.hero-cover :deep(.cover-photo) {
   display: block;
   margin-top: var(--space-1);
   color: var(--text-subtle);
