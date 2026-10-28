@@ -21,13 +21,14 @@ HAR never reads a MARC field. Each live record's `<metadata>` content goes to `c
 
 ### Tests
 
-- `tests/harvest_run.rs` (21 tests) covers the OAI client and the cursor:
+- `tests/harvest_run.rs` (22 tests) covers the OAI client and the cursor:
   - request parameters and the User-Agent
   - paging with the token
   - the first run 90 days back, or `DNB_HARVEST_START_DAYS`, and later runs from `harvested_until`
   - acceptance: the crash between pages
   - acceptance: the rejected token
   - a token rejected again and again
+  - a page that hands back the token it was asked with
   - a stale token, and one just under 6 h
   - a failed page keeps the cursor
   - 503 `Retry-After`
@@ -76,7 +77,7 @@ The not-yet-published title is "Bondbreaker" (263 `202803`) of the recorded page
 2. **Run state.**
    - A run is in progress while `run_started_at` is set. The next call resumes it with the stored token when the token is younger than 6 h; otherwise it restarts the run from `run_from`.
    - A run that failed before its first page has no token, so the next call restarts it from `run_from`.
-   - The last page writes, in its own transaction: `harvested_until` = `run_started_at` − 1 h (the start of the interrupted run, also after a resume or a restart), `last_success_at`, and NULL for the token, `run_started_at`, `run_from`, `last_error` and `last_error_at`.
+   - The last page's transaction, the one that stores its records, also writes `harvested_until` = `run_started_at` − 1 h (the start of the interrupted run, also after a resume or a restart), `last_success_at`, and NULL for the token, `run_started_at`, `run_from`, `last_error` and `last_error_at`.
 3. **`records_seen`** counts the records of the current run, deleted ones included. It is reset when a run starts or restarts, and stays at the last run's total afterwards.
 4. **Failures** set `last_error` (at most 1000 characters) and `last_error_at`. The cursor stays at the last committed page. Errors include:
    - transport errors and statuses (after the `RetryPolicy::JOB` retries)
@@ -84,6 +85,7 @@ The not-yet-published title is "Bondbreaker" (263 `202803`) of the recorded page
    - a page that is not OAI-PMH, or is truncated (no closing root element)
    - a page that deadlocks three times
    - a token rejected more than three times in one run (`HarvestError::TokenRejected`)
+   - a page whose next token is the token it was asked with, which would page forever (checked before the page is committed)
 5. **Skipped records.** A record that the mapping refuses (no 001, no usable title) is skipped with a WARN line. So is a record that ingest refuses with any error other than a deadlock: each record runs in a savepoint, and the failure is logged at ERROR. Otherwise one bad record would fail its page on every later run. A deadlock still rolls back and retries the whole page (conventions §7.2).
 6. **Deleted headers** take the IDN from the OAI identifier's last segment (`oai:dnb.de/dnb-all:reiheN/1168979633`), because the metadata is never mapped. An identifier without a usable IDN is skipped. `withdraw_dnb_edition` inserts nothing for an unknown IDN.
 7. **End of a list:** no `<resumptionToken>` element (the DNB's answer when the list fits on one page), an empty one, and `noRecordsMatch` all complete the run.

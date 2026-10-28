@@ -207,6 +207,12 @@ async fn run_set(
             }
             Answer::Error { code, message } => return Err(HarvestError::Oai { code, message }),
         };
+        if page.resumption_token.is_some() && page.resumption_token == token {
+            // Paging would never end; the next run tries again from the same cursor.
+            return Err(HarvestError::Envelope(
+                "the DNB sent the same resumption token again".to_owned(),
+            ));
+        }
         let counts = commit_page(conn, source, &page).await?;
         report.add(&counts);
         report.pages += 1;
@@ -247,31 +253,30 @@ async fn start_or_resume(
     .fetch_optional(&mut *tx)
     .await?;
 
-    let cursor = match row {
-        Some(row) if row.run_from.is_some() => {
-            let run_from = row.run_from.expect("checked");
-            match row.resumption_token {
-                Some(token) if row.token_fresh == Some(true) => Cursor {
+    let in_progress =
+        row.and_then(|row| Some((row.run_from?, row.resumption_token, row.token_fresh)));
+    let cursor = match in_progress {
+        Some((run_from, token, token_fresh)) => match token {
+            Some(token) if token_fresh == Some(true) => Cursor {
+                run_from,
+                token: Some(token),
+            },
+            stale => {
+                if stale.is_some() {
+                    tracing::warn!(
+                        source,
+                        "dnb harvest: stored token too old, restarting the run"
+                    );
+                    report.restarts += 1;
+                }
+                restart(&mut tx, source).await?;
+                Cursor {
                     run_from,
-                    token: Some(token),
-                },
-                stale => {
-                    if stale.is_some() {
-                        tracing::warn!(
-                            source,
-                            "dnb harvest: stored token too old, restarting the run"
-                        );
-                        report.restarts += 1;
-                    }
-                    restart(&mut tx, source).await?;
-                    Cursor {
-                        run_from,
-                        token: None,
-                    }
+                    token: None,
                 }
             }
-        }
-        _ => {
+        },
+        None => {
             let days = i32::try_from(config.dnb_harvest_start_days).unwrap_or(i32::MAX);
             let run_from = sqlx::query_scalar!(
                 r#"UPDATE harvest_state

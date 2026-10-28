@@ -435,6 +435,25 @@ async fn a_failed_page_keeps_the_cursor(db: PgPool) {
     assert_eq!(oai_requests(&app).await.len(), 1);
 }
 
+/// A page that hands back the token it was asked with would page forever: the run fails
+/// before committing it, and the cursor stays.
+#[sqlx::test]
+async fn a_repeated_token_fails_the_run(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let token = token_of(PAGE_1);
+    on_list(&app, SET_N, xml(PAGE_1)).await;
+    on_token(&app, &token, xml(PAGE_1)).await;
+    let error = harvest(&app, SET_N).await.unwrap_err();
+    assert!(
+        matches!(&error, HarvestError::Envelope(message) if message.contains("same resumption token")),
+        "{error}"
+    );
+    assert_eq!(oai_requests(&app).await.len(), 2);
+    let state = cursor(&app, SET_N).await;
+    assert_eq!(state.resumption_token, Some(token));
+    assert_eq!(state.records_seen, 5);
+}
+
 /// The job policy waits out a 503 with `Retry-After`, up to three times (a request path would
 /// give up after one retry).
 #[sqlx::test]
