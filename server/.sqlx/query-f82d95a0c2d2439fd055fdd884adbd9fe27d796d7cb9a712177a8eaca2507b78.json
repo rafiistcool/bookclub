@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.id\n           FROM posts p\n           JOIN bc_visible_posts($1) AS v ON v.id = p.id\n           WHERE p.club_id = $2 AND p.pick_id = $3 AND p.parent_id IS NULL\n           ORDER BY p.created_at, p.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f82d95a0c2d2439fd055fdd884adbd9fe27d796d7cb9a712177a8eaca2507b78"
+}

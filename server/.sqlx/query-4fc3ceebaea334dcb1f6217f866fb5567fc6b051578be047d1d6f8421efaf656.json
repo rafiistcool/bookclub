@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE posts SET body = '', spoiler_upto = NULL, deleted_at = now() WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4fc3ceebaea334dcb1f6217f866fb5567fc6b051578be047d1d6f8421efaf656"
+}

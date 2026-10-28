@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.id\n           FROM posts p\n           JOIN bc_visible_posts($1) AS v ON v.id = p.id\n           WHERE p.work_id = $2 AND p.parent_id IS NULL\n           ORDER BY p.created_at, p.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "675c11bf7791b9753d592f001eab64ecc4b0e24f3baf98ff111f0caad317079f"
+}
