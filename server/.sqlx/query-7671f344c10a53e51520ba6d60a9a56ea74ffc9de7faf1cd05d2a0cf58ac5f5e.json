@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT e.id, e.club_id, e.actor_id, u.username AS \"actor?\", e.kind, e.work_id,\n                  e.pick_id, e.payload, e.created_at, q.body AS \"quote_body?\",\n                  q.page AS \"quote_page?\",\n                  (e.kind = 'shelf_finished' AND e.actor_id IS DISTINCT FROM $1\n                   AND NOT EXISTS (\n                       SELECT 1 FROM shelf_entries s\n                       WHERE s.user_id = e.actor_id AND s.work_id = e.work_id\n                         AND bc_can_see_item($1, s.user_id, s.rating_visibility))) AS \"hide_rating!\"\n           FROM events e\n           LEFT JOIN users u ON u.id = e.actor_id\n           LEFT JOIN quotes q ON e.kind = 'quote_added' AND q.user_id = e.actor_id\n                AND q.id = CASE WHEN jsonb_typeof(e.payload -> 'quote_id') = 'number'\n                                     AND e.payload ->> 'quote_id' ~ '^[0-9]{1,18}$'\n                                THEN (e.payload ->> 'quote_id')::int8 END\n           WHERE (e.club_id IN (SELECT mc.club_id FROM bc_member_clubs($1) mc)\n                  OR (e.club_id IS NULL\n                      AND (e.actor_id = $1 OR EXISTS (\n                          SELECT 1 FROM bc_member_clubs($1) mc\n                          JOIN club_memberships m ON m.club_id = mc.club_id\n                          WHERE m.user_id = e.actor_id AND m.joined_at <= e.created_at))))\n             AND ($2::int8 IS NULL OR e.id < $2)\n             AND ($3::int8 IS NULL OR e.actor_id = $3)\n             AND (e.kind <> 'quote_added' OR e.actor_id = $1 OR EXISTS (\n                  SELECT 1 FROM bc_visible_quotes($1) q\n                  WHERE q.user_id = e.actor_id\n                    AND q.id = CASE WHEN jsonb_typeof(e.payload -> 'quote_id') = 'number'\n                                         AND e.payload ->> 'quote_id' ~ '^[0-9]{1,18}$'\n                                    THEN (e.payload ->> 'quote_id')::int8 END))\n           ORDER BY e.id DESC\n           LIMIT $4",
+  "query": "SELECT e.id, e.club_id, e.actor_id, u.username AS \"actor?\", e.kind, e.work_id,\n                  e.pick_id, e.payload, e.created_at, q.body AS \"quote_body?\",\n                  q.page AS \"quote_page?\",\n                  (e.kind = 'shelf_finished' AND e.actor_id IS DISTINCT FROM $1\n                   AND (e.payload ? 'private' OR NOT EXISTS (\n                       SELECT 1 FROM shelf_entries s\n                       WHERE s.user_id = e.actor_id AND s.work_id = e.work_id\n                         AND bc_can_see_item($1, s.user_id, s.rating_visibility)))) AS \"hide_rating!\"\n           FROM events e\n           LEFT JOIN users u ON u.id = e.actor_id\n           LEFT JOIN quotes q ON e.kind = 'quote_added' AND q.user_id = e.actor_id\n                AND q.id = CASE WHEN jsonb_typeof(e.payload -> 'quote_id') = 'number'\n                                     AND e.payload ->> 'quote_id' ~ '^[0-9]{1,18}$'\n                                THEN (e.payload ->> 'quote_id')::int8 END\n           WHERE (e.club_id = $2\n                  OR (e.club_id IS NULL AND EXISTS (\n                      SELECT 1 FROM club_memberships m\n                      WHERE m.club_id = $2 AND m.user_id = e.actor_id\n                        AND m.joined_at <= e.created_at)))\n             AND ($3::int8 IS NULL OR e.id < $3)\n             AND ($4::int8 IS NULL OR e.actor_id = $4)\n             AND (e.kind <> 'quote_added' OR e.actor_id = $1 OR EXISTS (\n                  SELECT 1 FROM bc_visible_quotes($1) q\n                  WHERE q.user_id = e.actor_id\n                    AND q.id = CASE WHEN jsonb_typeof(e.payload -> 'quote_id') = 'number'\n                                         AND e.payload ->> 'quote_id' ~ '^[0-9]{1,18}$'\n                                    THEN (e.payload ->> 'quote_id')::int8 END))\n           ORDER BY e.id DESC\n           LIMIT $5",
   "describe": {
     "columns": [
       {
@@ -136,6 +136,7 @@
         "Int8",
         "Int8",
         "Int8",
+        "Int8",
         "Int8"
       ]
     },
@@ -154,5 +155,5 @@
       null
     ]
   },
-  "hash": "829182887fd801da43e5b7fe6ac5d153e59d231234e3bec7bd64ed9bbff0d65d"
+  "hash": "7671f344c10a53e51520ba6d60a9a56ea74ffc9de7faf1cd05d2a0cf58ac5f5e"
 }
