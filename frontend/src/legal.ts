@@ -99,66 +99,72 @@ const DROP = new Set([
   "video",
 ]);
 
-/** Kept, with these attributes besides the global ones. */
-const KEEP: Record<string, readonly string[]> = {
-  a: ["href"],
-  abbr: [],
-  address: [],
-  article: [],
-  aside: [],
-  b: [],
-  blockquote: [],
-  br: [],
-  caption: [],
-  cite: [],
-  code: [],
-  col: ["span"],
-  colgroup: ["span"],
-  dd: [],
-  del: [],
-  dfn: [],
-  div: [],
-  dl: [],
-  dt: [],
-  em: [],
-  figcaption: [],
-  figure: [],
-  footer: [],
-  h1: [],
-  h2: [],
-  h3: [],
-  h4: [],
-  h5: [],
-  h6: [],
-  header: [],
-  hr: [],
-  i: [],
-  ins: [],
-  kbd: [],
-  li: ["value"],
-  mark: [],
-  ol: ["start", "reversed", "type"],
-  p: [],
-  pre: [],
-  q: [],
-  s: [],
-  section: [],
-  small: [],
-  span: [],
-  strong: [],
-  sub: [],
-  sup: [],
-  table: [],
-  tbody: [],
-  td: ["colspan", "rowspan"],
-  tfoot: [],
-  th: ["colspan", "rowspan", "scope"],
-  thead: [],
-  time: ["datetime"],
-  tr: [],
-  u: [],
-  ul: [],
-};
+/**
+ * Kept, with these attributes besides the global ones. A `Map`, not an object:
+ * `tag in {…}` would also match `Object.prototype` names such as
+ * `constructor`, which the HTML parser accepts as a tag name.
+ */
+const KEEP: ReadonlyMap<string, readonly string[]> = new Map(
+  Object.entries({
+    a: ["href"],
+    abbr: [],
+    address: [],
+    article: [],
+    aside: [],
+    b: [],
+    blockquote: [],
+    br: [],
+    caption: [],
+    cite: [],
+    code: [],
+    col: ["span"],
+    colgroup: ["span"],
+    dd: [],
+    del: [],
+    dfn: [],
+    div: [],
+    dl: [],
+    dt: [],
+    em: [],
+    figcaption: [],
+    figure: [],
+    footer: [],
+    h1: [],
+    h2: [],
+    h3: [],
+    h4: [],
+    h5: [],
+    h6: [],
+    header: [],
+    hr: [],
+    i: [],
+    ins: [],
+    kbd: [],
+    li: ["value"],
+    mark: [],
+    ol: ["start", "reversed", "type"],
+    p: [],
+    pre: [],
+    q: [],
+    s: [],
+    section: [],
+    small: [],
+    span: [],
+    strong: [],
+    sub: [],
+    sup: [],
+    table: [],
+    tbody: [],
+    td: ["colspan", "rowspan"],
+    tfoot: [],
+    th: ["colspan", "rowspan", "scope"],
+    thead: [],
+    time: ["datetime"],
+    tr: [],
+    u: [],
+    ul: [],
+  }),
+);
 
 /** Allowed on every kept element. `data-legal-placeholder` marks the development texts. */
 const GLOBAL_ATTRIBUTES = new Set(["id", "lang", "dir", "title", "data-legal-placeholder"]);
@@ -189,7 +195,7 @@ function isExternal(href: string, origin: string): boolean {
 }
 
 function cleanAttributes(element: Element, tag: string, origin: string): void {
-  const allowed = KEEP[tag] ?? [];
+  const allowed = KEEP.get(tag) ?? [];
   for (const { name } of Array.from(element.attributes)) {
     if (!GLOBAL_ATTRIBUTES.has(name) && !allowed.includes(name)) element.removeAttribute(name);
   }
@@ -222,7 +228,7 @@ function cleanChildren(parent: Node, origin: string): void {
       continue;
     }
     cleanChildren(element, origin);
-    if (tag in KEEP) {
+    if (KEEP.has(tag)) {
       cleanAttributes(element, tag, origin);
     } else {
       // Unknown or structural (`html`, `body`, `font`, `center`, custom elements): keep the content only.

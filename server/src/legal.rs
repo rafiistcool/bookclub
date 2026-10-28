@@ -10,7 +10,9 @@
 //!   only is served in that one, and the answer says which.
 //! - **Without `LEGAL_DIR`.** DEV_MODE serves the marked placeholders of
 //!   `server/legal-placeholder/` (compiled in), without a terms version, so a sign-up needs no
-//!   acceptance; production serves nothing.
+//!   acceptance; production serves nothing. A `LEGAL_DIR` that does not exist, or holds no text
+//!   and no manifest yet, serves nothing either (in DEV_MODE too), so a deployment can mount
+//!   the directory before the operator has written the texts.
 //! - **Production rules.** Outside DEV_MODE, startup refuses placeholder files in `LEGAL_DIR`,
 //!   and refuses `SIGNUP_MODE=open` unless all six files are present: strangers may only sign up
 //!   once the imprint, the privacy policy and the terms are online.
@@ -208,17 +210,48 @@ impl LegalTexts {
         }
     }
 
-    /// Reads the operator's texts from `dir`. `manifest.json` is required; each text file is
-    /// optional (a missing one is served in the other language, or not at all), but one that
-    /// exists must be UTF-8, not empty and at most 512 KiB. Once a terms file exists, the
-    /// manifest must name the `terms_version`: 1 to 64 letters, digits, `.`, `_` or `-`.
+    /// Reads the operator's texts from `dir`. Each text file is optional (a missing one is
+    /// served in the other language, or not at all), but one that exists must be UTF-8, not
+    /// empty and at most 512 KiB. `manifest.json` is required once a text file exists; once a
+    /// terms file exists, it must name the `terms_version`: 1 to 64 letters, digits, `.`, `_`
+    /// or `-`.
+    ///
+    /// A `dir` that does not exist, or holds neither `manifest.json` nor any of the six texts,
+    /// is no texts ([`LegalTexts::none`]), with a warning in the log: a deployment mounts the
+    /// directory before the operator has written the texts, and invite mode runs without them.
+    /// A path that is not a directory, and text files without a manifest, are errors.
     pub fn load(dir: &Path) -> Result<Self> {
-        if !dir.is_dir() {
-            bail!("LEGAL_DIR {} is not a directory", dir.display());
+        match std::fs::metadata(dir) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => bail!("LEGAL_DIR {} is not a directory", dir.display()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                tracing::warn!(
+                    legal_dir = %dir.display(),
+                    "LEGAL_DIR does not exist: no legal texts are served"
+                );
+                return Ok(Self::none());
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("LEGAL_DIR: cannot read {}", dir.display()));
+            }
         }
         let manifest_path = dir.join(MANIFEST);
-        let raw = std::fs::read_to_string(&manifest_path)
-            .with_context(|| format!("LEGAL_DIR: cannot read {}", manifest_path.display()))?;
+        let raw = match std::fs::read_to_string(&manifest_path) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && !holds_a_text(dir)? => {
+                tracing::warn!(
+                    legal_dir = %dir.display(),
+                    "LEGAL_DIR holds no legal texts yet: none are served"
+                );
+                return Ok(Self::none());
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("LEGAL_DIR: cannot read {}", manifest_path.display())
+                });
+            }
+        };
         let manifest: Manifest = serde_json::from_str(&raw).with_context(|| {
             format!(
                 "LEGAL_DIR: {} must be {{\"terms_version\": \"…\", \"updated\": {{\"imprint\": \
@@ -323,6 +356,24 @@ fn valid_terms_version(version: &str) -> bool {
         && version
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
+/// Whether `dir` holds an entry named like one of the six text files. Any entry counts, a
+/// broken one too: then the directory is not empty, and the missing manifest is the error.
+fn holds_a_text(dir: &Path) -> Result<bool> {
+    for doc in LegalDoc::ALL {
+        for locale in LOCALES {
+            let name = file_name(doc, locale);
+            match std::fs::symlink_metadata(dir.join(&name)) {
+                Ok(_) => return Ok(true),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(error).with_context(|| format!("LEGAL_DIR: cannot read {name}"));
+                }
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// The text file `name` in `dir`: `None` when it does not exist.
@@ -585,10 +636,48 @@ mod tests {
         assert!(texts.missing_files().is_empty());
     }
 
+    /// The deployment mounts `LEGAL_DIR` before the operator has written the texts: an empty
+    /// or absent directory is no texts, which invite mode runs with and open sign-up refuses.
+    #[test]
+    fn an_empty_or_absent_directory_serves_nothing() {
+        let empty = tempfile::tempdir().unwrap();
+        let stray = dir_with(&[("README.txt", "the texts go here")]);
+        let absent = empty.path().join("legal");
+        for dir in [empty.path(), stray.path(), absent.as_path()] {
+            let texts = LegalTexts::load(dir).unwrap();
+            assert!(texts.documents().is_empty(), "{}", dir.display());
+            assert_eq!(texts.terms_version(), None);
+            assert_eq!(texts.missing_files(), ALL_FILES);
+
+            let texts = LegalTexts::configure(Some(dir), false, SignupMode::Invite).unwrap();
+            assert!(texts.documents().is_empty());
+            let message = error(LegalTexts::configure(Some(dir), false, SignupMode::Open));
+            assert!(message.contains("SIGNUP_MODE=open"), "{message}");
+            for file in ALL_FILES {
+                assert!(message.contains(file), "{file}: {message}");
+            }
+            // DEV_MODE takes the directory it is given, not the placeholders.
+            let texts = LegalTexts::configure(Some(dir), true, SignupMode::Open).unwrap();
+            assert!(texts.documents().is_empty());
+        }
+    }
+
     #[test]
     fn the_manifest_is_checked() {
+        // A text without a manifest is an error, not an empty directory.
         let dir = dir_with(&[("terms.de.html", "<p>x</p>")]);
         assert!(error(LegalTexts::load(dir.path())).contains("manifest.json"));
+        let dir = dir_with(&[("imprint.en.html", "<p>x</p>")]);
+        assert!(error(LegalTexts::load(dir.path())).contains("cannot read"));
+        // So is a manifest that is not a file.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(MANIFEST)).unwrap();
+        assert!(error(LegalTexts::load(dir.path())).contains("manifest.json"));
+        // A manifest alone is a valid set without texts.
+        let dir = dir_with(&[(MANIFEST, r#"{"terms_version": "1"}"#)]);
+        let texts = LegalTexts::load(dir.path()).unwrap();
+        assert!(texts.documents().is_empty());
+        assert_eq!(texts.terms_version(), None);
 
         for (manifest, expected) in [
             ("not json", "manifest.json must be"),
@@ -609,8 +698,10 @@ mod tests {
 
     #[test]
     fn bad_files_are_refused() {
-        let message = error(LegalTexts::load(Path::new("/definitely/not/here")));
+        let dir = dir_with(&[("legal", "not a directory")]);
+        let message = error(LegalTexts::load(&dir.path().join("legal")));
         assert!(message.contains("LEGAL_DIR"), "{message}");
+        assert!(message.contains("is not a directory"), "{message}");
 
         let dir = dir_with(&[("imprint.de.html", "  \n"), (MANIFEST, "{}")]);
         assert!(error(LegalTexts::load(dir.path())).contains("imprint.de.html is empty"));

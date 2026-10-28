@@ -693,10 +693,46 @@ mod tests {
         assert_eq!(dev.legal.terms_version(), None);
     }
 
+    /// The deployment sets `LEGAL_DIR` and mounts the directory before the texts exist
+    /// (`deploy/hosted/env.example`): an empty or absent directory starts invite mode with no
+    /// texts and refuses open sign-up. A file in its place, or texts without a manifest, do not
+    /// start.
     #[test]
-    fn legal_dir_must_be_a_directory_with_a_manifest() {
-        let error = with(PROD, &[("LEGAL_DIR", "/definitely/not/here")]).unwrap_err();
+    fn an_empty_or_absent_legal_dir_serves_no_texts() {
+        let prod_with = |extra: &[(&str, &str)]| {
+            let mut pairs = PROD.to_vec();
+            pairs.extend_from_slice(extra);
+            Config::from_lookup(lookup_from(&pairs))
+        };
+        let root = tempfile::tempdir().unwrap();
+        let empty = root.path().join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        let absent = root.path().join("absent");
+        for dir in [&empty, &absent] {
+            let path = dir.to_str().unwrap();
+            let config = prod_with(&[("SIGNUP_MODE", "invite"), ("LEGAL_DIR", path)]).unwrap();
+            assert!(config.legal.documents().is_empty(), "{path}");
+            assert_eq!(config.legal.terms_version(), None);
+
+            let error = prod_with(&[("SIGNUP_MODE", "open"), ("LEGAL_DIR", path)]).unwrap_err();
+            let message = error.to_string();
+            assert!(message.contains("SIGNUP_MODE=open"), "{message}");
+            for doc in ["imprint", "privacy", "terms"] {
+                for locale in ["de", "en"] {
+                    let file = format!("{doc}.{locale}.html");
+                    assert!(message.contains(&file), "{file}: {message}");
+                }
+            }
+        }
+
+        let file = root.path().join("file");
+        std::fs::write(&file, "x").unwrap();
+        let error = prod_with(&[("LEGAL_DIR", file.to_str().unwrap())]).unwrap_err();
         assert!(error.to_string().contains("LEGAL_DIR"), "{error}");
+
+        std::fs::write(empty.join("imprint.de.html"), "<p>Impressum</p>").unwrap();
+        let error = prod_with(&[("LEGAL_DIR", empty.to_str().unwrap())]).unwrap_err();
+        assert!(format!("{error:#}").contains("manifest.json"), "{error:#}");
     }
 
     #[test]

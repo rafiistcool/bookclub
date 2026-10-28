@@ -1,7 +1,8 @@
 //! The legal paperwork stays true to the code (#53): `docs/legal/vvt.md` records every table
 //! with personal data, `docs/legal/processors.md` gives every outbound host a verdict,
 //! `docs/legal/takedown.md` names only endpoints that exist (or that ADM and ADM2 are building),
-//! and every file the four documents cite exists, with its line numbers inside the file.
+//! and every file the four documents cite exists, with its line numbers inside the file and the
+//! names cited in it still there. Files other packages edit are cited by name, not by line.
 
 mod common;
 
@@ -183,4 +184,128 @@ fn every_cited_file_exists() {
         }
     }
     assert!(checked >= 40, "only {checked} citations checked");
+}
+
+/// Files other Phase 2 packages edit (work plan §0 and §2: ADM, ADM2, GATE, DEP, CUT, LEG2).
+/// A line number into one of them goes stale at that package's merge while
+/// [`every_cited_file_exists`] stays green (the files grow), so the documents cite them by name:
+/// `` `path` (`symbol`) ``, which [`every_cited_name_exists`] checks. A directory ends in `/`.
+const EDITED_ELSEWHERE: [&str; 32] = [
+    // ADM
+    "server/src/admin/",
+    "server/src/catalog/admin.rs",
+    "server/src/catalog/requests.rs",
+    "server/src/catalog/mod.rs",
+    "server/src/media/reports.rs",
+    "server/src/media/mod.rs",
+    "server/src/email/templates.rs",
+    "server/src/jobs.rs",
+    "frontend/src/pages/AdminPage.vue",
+    "frontend/src/components/admin/",
+    "frontend/src/admin.ts",
+    "frontend/src/components/EditRequestSheet.vue",
+    "frontend/src/pages/BookDetailPage.vue",
+    "frontend/src/components/ReportCoverSheet.vue",
+    "frontend/src/pages/SettingsPage.vue",
+    "server/src/lib.rs",
+    // ADM2
+    "server/src/auth/extract.rs",
+    "server/src/auth/login.rs",
+    "server/src/catalog/reports.rs",
+    "frontend/src/pages/MemberShelfPage.vue",
+    "frontend/src/components/ReportSheet.vue",
+    // GATE
+    "server/src/spa.rs",
+    "frontend/index.html",
+    "frontend/public/theme-init.js",
+    // DEP
+    "server/src/main.rs",
+    "server/src/healthcheck.rs",
+    "server/src/media/shared/store.rs",
+    "server/src/email/mod.rs",
+    // CUT
+    "server/src/importer/source.rs",
+    // LEG2
+    "server/src/auth/mod.rs",
+    "server/src/auth/deletion.rs",
+    "server/tests/jobs.rs",
+];
+
+/// No `path:line` citation points into a file another package edits ([`EDITED_ELSEWHERE`]).
+#[test]
+fn files_other_packages_edit_are_cited_by_name() {
+    let by_line = Regex::new(r"`((?:server|frontend|docs)/[^`:\s]+):[0-9]").unwrap();
+    for doc in LEGAL_DOCS {
+        for captures in by_line.captures_iter(&repo_file(doc)) {
+            let relative = &captures[1];
+            let edited = EDITED_ELSEWHERE.iter().any(|file| {
+                relative == *file || (file.ends_with('/') && relative.starts_with(file))
+            });
+            assert!(
+                !edited,
+                "{doc} cites {relative} by line, but another package edits it: cite a name \
+                 instead, `{relative}` (`symbol`)"
+            );
+        }
+    }
+}
+
+/// `` `path` (`name`, …) `` cites names in a file: each must still be there. In a Rust file a
+/// snake_case name must be a function and a SCREAMING_CASE name a constant; any other name
+/// (a type, an i18n key, a table) must occur as a word. In a directory (`dir/`) each name is an
+/// entry.
+#[test]
+fn every_cited_name_exists() {
+    let cited =
+        Regex::new(r"`((?:server|frontend|docs)/[^`:\s]+)` \(((?:`[^`]+`(?:, )?)+)\)").unwrap();
+    let quoted = Regex::new(r"`([^`]+)`").unwrap();
+    let mut checked = 0;
+    for doc in LEGAL_DOCS {
+        let text = repo_file(doc);
+        for captures in cited.captures_iter(&text) {
+            let relative = &captures[1];
+            let names = quoted
+                .captures_iter(&captures[2])
+                .map(|name| name[1].to_owned());
+            if relative.ends_with('/') {
+                for entry in names {
+                    assert!(
+                        repo_root().join(relative).join(&entry).exists(),
+                        "{doc} cites {entry} in {relative}, which does not exist"
+                    );
+                    checked += 1;
+                }
+                continue;
+            }
+            let source = repo_file(relative);
+            for name in names {
+                assert!(
+                    names_it(relative, &source, &name),
+                    "{doc} cites {name} in {relative}, which it no longer has"
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked >= 30, "only {checked} names checked");
+}
+
+/// Whether `source` (the file `relative`) has `name` in the sense of [`every_cited_name_exists`].
+fn names_it(relative: &str, source: &str, name: &str) -> bool {
+    let escaped = regex::escape(name);
+    let rust = relative.ends_with(".rs");
+    let snake_case = name
+        .bytes()
+        .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'_'));
+    let screaming_case = name
+        .bytes()
+        .all(|b| matches!(b, b'A'..=b'Z' | b'0'..=b'9' | b'_'));
+    let pattern = if rust && snake_case {
+        format!(r"\bfn {escaped}\b")
+    } else if rust && screaming_case {
+        format!(r"\b(?:const|static) {escaped}\b")
+    } else {
+        format!(r"(?:^|[^\w.-]){escaped}(?:[^\w-]|$)")
+    };
+    Regex::new(&pattern).unwrap().is_match(source)
 }

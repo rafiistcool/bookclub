@@ -21,7 +21,7 @@ Shared by every activity below. Sources are in `privacy-facts.md` and `docs/phas
 - **Transport:** TLS at the reverse proxy with HSTS (DEP, #51). Mail to the provider only over TLS: `smtps://` or STARTTLS that must succeed (`server/src/config.rs`, `check_smtp_tls`).
 - **Authentication:** passwords hashed with argon2id (conventions §5.4); session secrets and mail-link tokens stored only as SHA-256 hashes (§5.1, §5.5); the session cookie is `__Host-`, `HttpOnly`, `Secure`, `SameSite=Lax`; cross-site writes are refused (§5.8); a password change ends every other session.
 - **Abuse limits:** sign-up, login, reset, search, upload, report and export are rate limited in memory (`server/src/ratelimit.rs:273-302`).
-- **Access control:** strangers see nothing of a user; the audience sees only what the user did not mark "only me"; club data only the club's members (conventions §6). Instance-admin routes sit behind one guard (`server/src/lib.rs`, `InstanceAdmin`).
+- **Access control:** strangers see nothing of a user in the app (pictures are served to whoever has their unguessable URL, `privacy-facts.md` §2); the audience sees only what the user did not mark "only me"; club data only the club's members (conventions §6). Instance-admin routes sit behind one guard (`server/src/lib.rs`, `InstanceAdmin`).
 - **Data minimisation:** no IP addresses in the app log or database; no third-party requests from the browser; pictures re-encoded without metadata; the Goodreads rows are emptied after the import.
 - **Isolation:** the app VM sits in its own VLAN, accepts connections only from the reverse proxy, and cannot reach the LAN (work plan §5 step 10; to confirm at #51 acceptance).
 - **Availability and recovery:** nightly encrypted backups with a weekly restore test (Q9, to confirm); an uptime monitor (Q10, to confirm).
@@ -122,11 +122,11 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 | Purpose | A picture next to the username |
 | Legal basis | Art. 6 (1) (b) (optional feature the user chooses) |
 | Data subjects | users |
-| Data | the picture, re-encoded as a 256×256 WebP without metadata |
+| Data | the picture, re-encoded as a 256×256 WebP without metadata; one imported from the old app stays the 256×256 JPEG it stored, already without metadata (`server/src/importer/users.rs` (`import_avatar`)) |
 | Tables | `media` (`kind = 'avatar'`), `users.avatar_media_id` |
-| Recipients | the user's audience |
+| Recipients | in the app, the user's audience; the file is served without sign-in to whoever has its unguessable URL, and browsers may cache it for up to a year (`privacy-facts.md` §2) |
 | Third countries | none |
-| Retention | until replaced or removed, or with the account |
+| Retention | until replaced or removed, or with the account (copies in browser caches: up to a year) |
 | Source | `server/src/media/avatar.rs`, `server/src/media/pipeline.rs` |
 
 ### 8. Shared catalog contributions
@@ -138,7 +138,7 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 | Data subjects | users who contribute |
 | Data | the contributed records and pictures, the contributor's id; requests with their note, the deciding admin and the decision |
 | Tables | `works`, `editions`, `media` (`kind = 'cover'`, `uploaded_by`), `catalog_edit_requests` |
-| Recipients | the books and covers: every signed-in user, without the contributor's name; the requests: instance admins |
+| Recipients | the books and covers: every signed-in user, without the contributor's name; the cover files also whoever has their URL, without sign-in (`privacy-facts.md` §2); the requests: instance admins |
 | Third countries | none |
 | Retention | the contributions stay as catalog content; the contributor's id becomes empty when the account is deleted; decided requests 3 years (to confirm, Q14) |
 | Source | `server/src/catalog/`, `server/src/media/cover.rs` |
@@ -164,12 +164,12 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 | Purpose | Keep the service available and accounts safe: rate limits, request logs, the reverse proxy log |
 | Legal basis | Art. 6 (1) (f) (security of the service, Recital 49) |
 | Data subjects | every visitor |
-| Data | in memory: IP addresses (IPv6 by /64), account ids and hashed unknown login names with their counters; in the app log: method, path, status, latency, request id (no IP); in the proxy log: IP address, time, request, status, User-Agent |
+| Data | in memory: IP addresses (IPv6 by /64), account ids, session ids, hashed unknown login names and recipient email addresses (case-folded, the keys of the per-address mail limits: 6 mails of each kind a day, also for addresses of people without an account) with their counters; in the app log: method, path, status, latency, request id (no IP); in the proxy log: IP address, time, request, status, User-Agent |
 | Tables | none (memory and log files) |
 | Recipients | none |
 | Third countries | none |
 | Retention | counters at most 24 h and gone at restart; app log per the Docker log options (to confirm); proxy log 7 days (to confirm) |
-| Source | `server/src/ratelimit.rs`, `server/src/client_ip.rs`, `server/src/lib.rs` (`TraceLayer`); DEP's Caddyfile |
+| Source | `server/src/ratelimit.rs`, `server/src/client_ip.rs`, `server/src/auth/mail.rs` (`target_key`, `deliver`), `server/src/lib.rs` (`TraceLayer`); DEP's Caddyfile |
 
 ### 11. Requests of data subjects
 
@@ -239,7 +239,7 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 | Recipients | instance admins |
 | Third countries | none |
 | Retention | invites until revoked or used up; the record of uses with the account |
-| Source | `server/src/admin/invites.rs`, `server/src/main.rs` (`make-admin`, `beta-invite`) |
+| Source | `server/src/admin/invites.rs`, the `make-admin` and `beta-invite` commands of `server/src/main.rs` (`MakeAdmin`, `BetaInvite`) |
 
 ## Tables with personal data
 

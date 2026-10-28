@@ -117,6 +117,16 @@ describe("sanitizeLegalHtml", () => {
     expect(box.innerHTML).toBe("Old markup");
   });
 
+  it("unwraps a tag named like an Object.prototype member instead of keeping it", () => {
+    // The parser accepts any tag name and lowercases it, so `constructor` is the one such name
+    // that arrives. An allow-list lookup on a plain object kept it and then threw on its
+    // attributes, which left the whole legal page blank.
+    for (const tag of ["constructor", "Constructor"]) {
+      expect(sanitizeLegalHtml(`<p><${tag} class="x" id="y">text</${tag}></p>`, ORIGIN), tag).toBe("<p>text</p>");
+      expect(sanitizeLegalHtml(`<${tag}>bare</${tag}>`, ORIGIN), tag).toBe("bare");
+    }
+  });
+
   it("leaves nothing that turns into markup when the browser parses it again", () => {
     // Raw-text and RCDATA elements serialise their content unescaped; unwrapped, it stays text.
     const payloads = [

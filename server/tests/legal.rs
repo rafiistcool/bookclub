@@ -131,6 +131,58 @@ async fn production_without_texts_serves_none(db: PgPool) {
     }
 }
 
+/// The deployment sets `LEGAL_DIR` (`/app/legal`) and mounts the directory before the operator
+/// has written the texts. An empty or absent directory starts production in invite mode with no
+/// texts and nothing to accept; open sign-up with it does not start and names all six files.
+#[sqlx::test]
+async fn an_empty_or_absent_legal_dir_starts_invite_mode_without_texts(db: PgPool) {
+    let root = tempfile::tempdir().unwrap();
+    let empty = root.path().join("legal");
+    std::fs::create_dir(&empty).unwrap();
+    let absent = root.path().join("not-mounted");
+    for (at, dir) in [&empty, &absent].into_iter().enumerate() {
+        let path = dir.to_str().unwrap();
+        let app = TestApp::with_env(
+            db.clone(),
+            &production(&[("SIGNUP_MODE", "invite"), ("LEGAL_DIR", path)]),
+        )
+        .await;
+        let anon = app.anon();
+        let config = anon.get("/api/config").await.json();
+        assert_eq!(config["signup"], "invite", "{path}");
+        assert_eq!(config["legal"], json!([]), "{path}");
+        assert_eq!(config["terms_version"], Value::Null, "{path}");
+        for doc in DOCS {
+            anon.get(&format!("/api/legal/{doc}?locale=de"))
+                .await
+                .assert_detail(404, "Not found");
+        }
+        let alice = app.user(&format!("alice{at}")).await;
+        assert_eq!(alice.get("/api/auth/me").await.json()["needs_terms"], false);
+
+        let open = production(&[
+            ("DATABASE_URL", "postgres://unused"),
+            ("SIGNUP_MODE", "open"),
+            ("LEGAL_DIR", path),
+        ]);
+        let error = bookclub_server::config::Config::from_lookup(|key| {
+            open.iter()
+                .rev()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| (*v).to_owned())
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("SIGNUP_MODE=open"), "{error}");
+        for doc in DOCS {
+            for locale in ["de", "en"] {
+                let file = format!("{doc}.{locale}.html");
+                assert!(error.contains(&file), "{file}: {error}");
+            }
+        }
+    }
+}
+
 /// DEV_MODE without `LEGAL_DIR` serves the marked placeholders, without a terms version, so a
 /// development sign-up needs no acceptance.
 #[sqlx::test]
