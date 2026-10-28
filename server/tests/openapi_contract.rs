@@ -3,12 +3,18 @@
 //! `frontend/scripts/gen-api-types.mjs` turns the document into `frontend/src/api/generated.ts`,
 //! and CI fails when the committed file is stale. These tests catch the server-side half: a shared
 //! DTO of endpoint-map.md §0 that was renamed or reshaped without the design changing with it, a
-//! response field the generated types would wrongly call always present, and a document whose
-//! bytes change from run to run (which would make the CI check flap).
+//! response field the generated types would wrongly call always present, a document whose bytes
+//! change from run to run (which would make the CI check flap), and a docs UI next to the
+//! document. They also pin the generator's own rule in the committed `generated.ts`: response
+//! fields are required, request fields keep their optionality.
+
+mod common;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use bookclub_server::app;
+use common::{PRODUCTION_ENV, get, test_config, test_state_with, unreachable_db};
 use serde_json::Value;
 
 fn repo_file(relative: &str) -> String {
@@ -61,10 +67,17 @@ struct Field {
     name: String,
     /// The fields of an inline `[{…}]` (an array of objects).
     items: Option<Vec<Field>>,
-    /// The string literals of a `"a"|"b"` value. They are compared only when the document gives
-    /// the field an enum (`"YYYY-MM-DD"` is a format, `"owner"|"admin"` a documented string).
+    /// The string literals of a `"a"|"b"` value: the values of an enum in the document, unless
+    /// the field is a [`DATE`] or one of the [`DOCUMENTED_STRINGS`].
     literals: Vec<String>,
 }
+
+/// The §0 literal that stands for a date. The document gives such a field `format: date`.
+const DATE: &str = "YYYY-MM-DD";
+
+/// The §0 fields with string literals that the document keeps a plain `string`, naming the values
+/// in the field's description instead of an enum.
+const DOCUMENTED_STRINGS: [&str; 2] = ["ClubSummary.role", "EditionOut.contributors.role"];
 
 /// One DTO of endpoint-map.md §0.
 #[derive(Debug)]
@@ -250,19 +263,71 @@ fn compare_fields(doc: &Value, what: &str, fields: &[Field], schema: &Value) -> 
             let array = resolve(doc, property);
             problems.extend(compare_fields(doc, &path, items, &array["items"]));
         }
-        if let Some(values) = resolve(doc, property)["enum"].as_array()
-            && !field.literals.is_empty()
-        {
-            let listed = string_set(field.literals.iter().map(String::as_str));
-            let documented = string_set(values.iter().filter_map(Value::as_str));
-            if listed != documented {
-                problems.push(format!(
-                    "{path}: §0 lists {listed:?}, the document {documented:?}"
-                ));
-            }
+        if !field.literals.is_empty() {
+            problems.extend(compare_literals(doc, &path, &field.literals, property));
         }
     }
     problems
+}
+
+/// Whether `schema` (resolved) is a string, nullable or not.
+fn is_string(schema: &Value) -> bool {
+    schema["type"] == "string"
+        || schema["type"]
+            .as_array()
+            .is_some_and(|types| types.iter().any(|t| t == "string"))
+}
+
+/// Compares the string literals §0 gives the field at `path` with its document schema
+/// `property`, so a field the generated types turn into a plain `string` cannot pass unnoticed:
+/// - `"YYYY-MM-DD"` needs `format: date`;
+/// - a field of [`DOCUMENTED_STRINGS`] needs a plain string whose description names every value;
+/// - every other field needs an enum of exactly those values.
+fn compare_literals(doc: &Value, path: &str, literals: &[String], property: &Value) -> Vec<String> {
+    let schema = resolve(doc, property);
+    let listed = string_set(literals.iter().map(String::as_str));
+    if literals == [DATE] {
+        return match schema["format"].as_str() {
+            Some("date") => Vec::new(),
+            other => vec![format!(
+                "{path}: §0 gives a {DATE} date, the document the format {other:?}, not \"date\""
+            )],
+        };
+    }
+    if DOCUMENTED_STRINGS.contains(&path) {
+        if !schema["enum"].is_null() {
+            return vec![format!(
+                "{path} is an enum in the document now: drop it from DOCUMENTED_STRINGS"
+            )];
+        }
+        if !is_string(schema) {
+            return vec![format!("{path}: the document's schema is no string")];
+        }
+        let description = [&schema["description"], &property["description"]]
+            .iter()
+            .filter_map(|text| text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        return listed
+            .iter()
+            .filter(|value| !description.contains(&format!("\"{value}\"")))
+            .map(|value| format!("{path}: the document's description never names \"{value}\""))
+            .collect();
+    }
+    let Some(values) = schema["enum"].as_array() else {
+        return vec![format!(
+            "{path}: §0 lists the values {listed:?}, but the document has no enum, so the \
+             generated type would be a plain string"
+        )];
+    };
+    let documented = string_set(values.iter().filter_map(Value::as_str));
+    if listed == documented {
+        Vec::new()
+    } else {
+        vec![format!(
+            "{path}: §0 lists {listed:?}, the document {documented:?}"
+        )]
+    }
 }
 
 /// Every DTO name endpoint-map.md §0 lists is a schema of the document, so a renamed DTO fails
@@ -295,7 +360,9 @@ fn every_section_0_dto_is_in_the_document() {
 }
 
 /// Every §0 object has exactly the fields §0 lists, including the inline `[{…}]` of
-/// `EditionOut.contributors`, and every field §0 gives string literals for has those enum values.
+/// `EditionOut.contributors`, and every field §0 gives string literals for keeps them in the
+/// document: as an enum of those values, `format: date` for `"YYYY-MM-DD"`, or a description
+/// naming them for the [`DOCUMENTED_STRINGS`].
 #[test]
 fn section_0_objects_match_the_document() {
     let doc = document();
@@ -383,15 +450,93 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// The `ToSchema` types declared in the Rust `source`, and those of them that let serde skip a
+/// field (`skip_serializing` or `skip_serializing_if`).
+///
+/// Only declarations at the start of a line count as items (`pub(crate) struct Name`, `enum
+/// Name`), so the words "struct" and "enum" in a comment never name one. Serde attributes sit
+/// inside their item, so each occurrence belongs to the nearest item declared before it; an
+/// occurrence after `//` on its line is a comment and is ignored.
+fn schema_types_in(source: &str) -> (BTreeSet<String>, BTreeSet<String>) {
+    let derive = regex::Regex::new(r"(?m)^[ \t]*#\[derive\(([^)]*)\)\]").unwrap();
+    let item = regex::Regex::new(
+        r"(?m)^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?(?:struct|enum)[ \t]+([A-Za-z0-9_]+)",
+    )
+    .unwrap();
+    let mut schema_types = BTreeSet::new();
+    for found in derive.captures_iter(source) {
+        if found[1].contains("ToSchema") {
+            let rest = &source[found.get(0).unwrap().end()..];
+            let name = &item
+                .captures(rest)
+                .expect("a struct or enum after the derive")[1];
+            schema_types.insert(name.to_owned());
+        }
+    }
+    let mut skipping = BTreeSet::new();
+    for (at, _) in source.match_indices("skip_serializing") {
+        let line_start = source[..at].rfind('\n').map_or(0, |n| n + 1);
+        if source[line_start..at].contains("//") {
+            continue;
+        }
+        let owner = item
+            .captures_iter(&source[..at])
+            .last()
+            .map(|captures| captures[1].to_owned());
+        if let Some(owner) = owner.filter(|owner| schema_types.contains(owner)) {
+            skipping.insert(owner);
+        }
+    }
+    (schema_types, skipping)
+}
+
+/// The scan of [`schema_types_in`] takes item names from declarations, never from comments:
+/// "enum" in a doc comment of a `ToSchema` struct does not hide its skipped field, and "struct
+/// BookOut" in the comment of another type does not blame `BookOut`.
+#[test]
+fn the_skip_scan_reads_declarations_not_comments() {
+    let source = r#"
+/// A book.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BookOut {
+    /// Set for works from the catalog enum value list.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ol_work_key: Option<String>,
+}
+
+/// Mirrors struct BookOut, but never leaves the server.
+#[derive(Serialize)]
+pub(crate) struct BookRow {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ol_work_key: Option<String>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct Page {
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    items: Vec<BookOut>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub enum Kind {
+    // Never skip_serializing here: a comment is no attribute.
+    A,
+}
+"#;
+    let (schema_types, skipping) = schema_types_in(source);
+    assert_eq!(schema_types, string_set(["BookOut", "Page", "Kind"]));
+    assert_eq!(skipping, string_set(["BookOut", "Page"]));
+}
+
 /// The generated types mark every response field required (`x: T | null`), because the server
 /// sends each one, `null` when empty (endpoint-map.md). That holds only while no `ToSchema` type
-/// lets serde skip a field, so this source scan forbids `skip_serializing` and
-/// `skip_serializing_if` in them. Serde attributes sit inside their item, so each occurrence
-/// belongs to the nearest `struct` or `enum` before it.
+/// lets serde skip a field, so this source scan ([`schema_types_in`]) forbids `skip_serializing`
+/// and `skip_serializing_if` in them.
 #[test]
 fn schema_types_never_skip_a_field() {
-    let derive = regex::Regex::new(r"#\[derive\(([^)]*)\)\]").unwrap();
-    let item = regex::Regex::new(r"\b(?:struct|enum)\s+([A-Za-z0-9_]+)").unwrap();
     let mut files = Vec::new();
     rust_files(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
@@ -401,27 +546,13 @@ fn schema_types_never_skip_a_field() {
     let mut scanned = 0;
     let mut skipping = Vec::new();
     for file in files {
-        let text = std::fs::read_to_string(&file).unwrap();
-        let mut schema_types = BTreeSet::new();
-        for found in derive.captures_iter(&text) {
-            if found[1].contains("ToSchema") {
-                let rest = &text[found.get(0).unwrap().end()..];
-                let name = &item
-                    .captures(rest)
-                    .expect("a struct or enum after the derive")[1];
-                schema_types.insert(name.to_owned());
-            }
-        }
+        let (schema_types, skips) = schema_types_in(&std::fs::read_to_string(&file).unwrap());
         scanned += schema_types.len();
-        for (at, _) in text.match_indices("skip_serializing") {
-            let owner = item
-                .captures_iter(&text[..at])
-                .last()
-                .map(|captures| captures[1].to_owned());
-            if let Some(owner) = owner.filter(|owner| schema_types.contains(owner)) {
-                skipping.push(format!("{owner} in {}", file.display()));
-            }
-        }
+        skipping.extend(
+            skips
+                .into_iter()
+                .map(|owner| format!("{owner} in {}", file.display())),
+        );
     }
     assert!(
         scanned >= 14,
@@ -464,4 +595,147 @@ fn the_cli_prints_the_same_bytes_every_time() {
         bookclub_server::openapi().to_pretty_json().unwrap(),
         "the CLI prints the document `openapi()` builds"
     );
+}
+
+/// parity: test_selfhost.py::test_production_app_registers_and_hides_docs
+///
+/// The `/api/docs` half of that test; `auth_config.rs::a_production_app_registers` ports the
+/// rest (health, CORS, sign-up). Reasoned change: the legacy app served Swagger UI and the
+/// document in debug mode only. The service serves no docs UI in any mode, and
+/// `GET /api/openapi.json` is public: it is the API contract and holds no secrets
+/// (endpoint-map.md §1). So in production and in DEV_MODE, an anonymous request for the usual
+/// docs UI paths gets the JSON 404, and the document is the one `openapi()` builds.
+#[tokio::test]
+async fn no_docs_ui_is_served_and_the_document_is_public() {
+    let doc = document();
+    for env in [&PRODUCTION_ENV[..], &[]] {
+        let router = || app(test_state_with(unreachable_db(), test_config(env)));
+        for path in [
+            "/api/docs",
+            "/api/docs/",
+            "/api/docs/oauth2-redirect",
+            "/api/redoc",
+            "/api/swagger-ui",
+            "/docs",
+            "/redoc",
+            "/swagger-ui",
+            "/swagger-ui/",
+            "/rapidoc",
+            "/scalar",
+        ] {
+            let res = get(router(), path).await;
+            assert_eq!(res.status.as_u16(), 404, "{path} ({env:?}): {}", res.text());
+            assert_eq!(
+                res.json(),
+                serde_json::json!({"detail": "Not found"}),
+                "{path}"
+            );
+        }
+        let res = get(router(), "/api/openapi.json").await;
+        res.assert_status(200);
+        assert_eq!(res.json(), doc, "/api/openapi.json ({env:?})");
+    }
+}
+
+/// The properties of `components.schemas.<name>` in the generated `generated.ts`, each with
+/// whether it is optional (`name?: T`). Nested inline objects are not listed.
+fn generated_properties(generated: &str, name: &str) -> BTreeMap<String, bool> {
+    let property = regex::Regex::new(r"^ {12}([A-Za-z_][A-Za-z0-9_]*)(\?)?: ").unwrap();
+    let open = format!("        {name}: {{");
+    let mut lines = generated
+        .lines()
+        .skip_while(|line| *line != "export interface components {")
+        .skip_while(|line| *line != open);
+    assert!(lines.next().is_some(), "generated.ts has no schema {name}");
+    let properties: BTreeMap<String, bool> = lines
+        .take_while(|line| *line != "        };")
+        .filter_map(|line| property.captures(line))
+        .map(|captures| (captures[1].to_owned(), captures.get(2).is_some()))
+        .collect();
+    assert!(
+        !properties.is_empty(),
+        "generated.ts lists no fields for {name}"
+    );
+    properties
+}
+
+/// The names of the document's properties of schema `name`, and those it marks required.
+fn documented_properties(doc: &Value, name: &str) -> (BTreeSet<String>, BTreeSet<String>) {
+    let schema = &schemas(doc)[name];
+    let properties = string_set(
+        schema["properties"]
+            .as_object()
+            .unwrap_or_else(|| panic!("{name} has no properties"))
+            .keys()
+            .map(String::as_str),
+    );
+    let required = string_set(
+        schema["required"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str),
+    );
+    (properties, required)
+}
+
+/// The committed `frontend/src/api/generated.ts` follows the rule of
+/// `frontend/scripts/gen-api-types.mjs` (CI's `check:api` keeps it equal to what the script
+/// writes, so this pins the script):
+/// - the response DTOs of endpoint-map.md §0 have no optional field, although the document leaves
+///   their `Option` fields out of `required` (`cover_url: string | null`, not `cover_url?:`);
+/// - request schemas keep the document's optionality, `ShelfAddIn` (a request body) as well as
+///   `PhysicalSpine`, which a request reaches only through `PhysicalShelfLayout`, so the
+///   script's `$ref` closure must be transitive.
+#[test]
+fn generated_types_require_response_fields_only() {
+    let doc = document();
+    let generated = repo_file("frontend/src/api/generated.ts");
+
+    let mut leaves_optional = 0;
+    for dto in section_0_dtos() {
+        let Dto::Object { name, .. } = dto else {
+            continue;
+        };
+        let (properties, required) = documented_properties(&doc, &name);
+        leaves_optional += properties.difference(&required).count();
+        let fields = generated_properties(&generated, &name);
+        assert_eq!(
+            fields.keys().cloned().collect::<BTreeSet<_>>(),
+            properties,
+            "{name}: generated.ts is stale; run `npm run gen:api` in frontend/"
+        );
+        let optional: Vec<_> = fields.iter().filter(|(_, o)| **o).map(|(f, _)| f).collect();
+        assert!(
+            optional.is_empty(),
+            "{name} is a response DTO, but generated.ts makes {optional:?} optional"
+        );
+    }
+    // Otherwise the loop above would pin nothing.
+    assert!(
+        leaves_optional > 0,
+        "the document marks every §0 field required"
+    );
+
+    for name in ["ShelfAddIn", "PhysicalSpine"] {
+        let (properties, required) = documented_properties(&doc, name);
+        let fields = generated_properties(&generated, name);
+        assert_eq!(
+            fields.keys().cloned().collect::<BTreeSet<_>>(),
+            properties,
+            "{name}: generated.ts is stale; run `npm run gen:api` in frontend/"
+        );
+        for (field, optional) in &fields {
+            assert_eq!(
+                *optional,
+                !required.contains(field),
+                "{name}.{field} is a request field: generated.ts must keep the document's \
+                 optionality"
+            );
+        }
+        assert!(
+            fields.values().any(|optional| *optional),
+            "{name} has no optional field left to check"
+        );
+    }
 }
