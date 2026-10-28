@@ -248,7 +248,11 @@ pub struct RateLimits {
     pub invite_accept_user: SlidingWindow,
     pub refresh_user: SlidingWindow,
     pub upload_user: SlidingWindow,
+    /// New reports per account (`u:<id>`); a repeat, answered with the earlier report, is not one.
     pub report_user: SlidingWindow,
+    /// Every `POST /api/media/{public_id}/reports` per account (`u:<id>`), repeats and 404s
+    /// included, checked first: a repeat is free against `report_user`, but not unlimited.
+    pub report_request_user: SlidingWindow,
     pub edit_request_user: SlidingWindow,
     pub custom_book_user: SlidingWindow,
     pub export_user: SlidingWindow,
@@ -290,6 +294,7 @@ impl RateLimits {
             refresh_user: SlidingWindow::new(10, HOUR),
             upload_user: SlidingWindow::new(30, DAY),
             report_user: SlidingWindow::new(20, DAY),
+            report_request_user: SlidingWindow::new(30, MINUTE),
             edit_request_user: SlidingWindow::new(50, DAY),
             custom_book_user: SlidingWindow::new(30, DAY),
             export_user: SlidingWindow::new(5, HOUR),
@@ -475,6 +480,7 @@ mod tests {
             (&limits.refresh_user, 10, 3600),
             (&limits.upload_user, 30, 86_400),
             (&limits.report_user, 20, 86_400),
+            (&limits.report_request_user, 30, 60),
             (&limits.edit_request_user, 50, 86_400),
             (&limits.custom_book_user, 30, 86_400),
             (&limits.export_user, 5, 3600),

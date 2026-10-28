@@ -15,7 +15,8 @@ use common::*;
 use image::codecs::jpeg::JpegEncoder;
 use image::{ExtendedColorType, ImageEncoder, Rgb, RgbImage};
 use serde_json::{Value, json};
-use sqlx::PgPool;
+use sqlx::pool::PoolConnection;
+use sqlx::{PgPool, Postgres};
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, ResponseTemplate};
 
@@ -694,7 +695,12 @@ async fn a_repeat_report_answers_with_the_open_report(db: PgPool) {
     assert_eq!(stored, "offensive", "a repeat changes nothing");
     let items = root.get("/api/admin/reports").await.json()["items"].clone();
     assert_eq!(items.as_array().unwrap().len(), 2);
-    // Ada's one report counted once: 19 more pictures, then the limit.
+    // Every request counts against the per-minute limit (30), the repeats too; a new minute.
+    app.state
+        .limits
+        .report_request_user
+        .clear(&format!("u:{}", ada.id()));
+    // Ada's one report counted once against the daily limit: 19 more pictures, then the limit.
     for n in 0..20 {
         let other_id = format!("pic{n:0>23}");
         app.exec(&format!(
@@ -1179,6 +1185,148 @@ async fn a_dismissal_waits_for_a_report_being_filed_and_closes_it_too(db: PgPool
         json!([])
     );
     assert!(cover_of(&app, work).await.is_some(), "the picture stays");
+}
+
+/// Holds the server's advisory lock for `reader`'s reports of `media` (space 0x6263_0200, key
+/// hashtext('<user id>:<media id>')) on a connection of its own, as a request of the reader that
+/// has its turn would, until `pg_advisory_unlock_all()` on that connection.
+async fn hold_reader_turn(app: &TestApp, reader: i64, media: i64) -> PoolConnection<Postgres> {
+    let mut holder = app.db.acquire().await.unwrap();
+    sqlx::query("SELECT pg_advisory_lock($1, hashtext($2))")
+        .bind(0x6263_0200_i32)
+        .bind(format!("{reader}:{media}"))
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    holder
+}
+
+/// Security review, Phase 2 Wave 1 #1: a repeat report is answered from a plain read and takes
+/// no lock. A repeat that locked the picture `FOR SHARE` and then waited for the reader's turn
+/// let one account keep the picture share-locked without a break, by sending repeats (which
+/// the daily limit never counted) faster than they ended, and a takedown waited until the
+/// request deadline. Here repeats answer at once while another request of the reader has its
+/// turn, and while a takedown holds the picture.
+#[sqlx::test]
+async fn repeat_reports_take_no_lock(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let (_, public_id) = second_picture(&app).await;
+    let media = media_id(&app, &public_id).await;
+    let id = report(&ada, &public_id, json!({"reason": "offensive"}))
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+    let repeats = |n: usize| {
+        futures::future::join_all(
+            (0..n).map(|_| report(&ada, &public_id, json!({"reason": "other"}))),
+        )
+    };
+
+    let mut holder = hold_reader_turn(&app, ada.id(), media).await;
+    let answered = tokio::time::timeout(Duration::from_secs(5), repeats(3))
+        .await
+        .expect("repeats waited for the reader's turn");
+    for res in answered {
+        assert_eq!(res.json(), json!({"id": id, "status": "open"}));
+    }
+    sqlx::query("SELECT pg_advisory_unlock_all()")
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+
+    let mut takedown = app.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM media WHERE id = $1 FOR UPDATE")
+        .bind(media)
+        .execute(&mut *takedown)
+        .await
+        .unwrap();
+    let answered = tokio::time::timeout(Duration::from_secs(5), repeats(3))
+        .await
+        .expect("repeats waited for the takedown's lock on the picture");
+    for res in answered {
+        assert_eq!(res.json(), json!({"id": id, "status": "open"}));
+    }
+    takedown.rollback().await.unwrap();
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM reports").await, 1);
+}
+
+/// Security review, Phase 2 Wave 1 #1: a new report waits for its reader's turn before it locks
+/// the picture, so only the request whose turn it is holds the picture, and one that waits
+/// holds nothing a takedown needs. Locked the other way round, every waiting request held the
+/// picture `FOR SHARE`, and the takedown below waited for the reader's turn to come.
+#[sqlx::test]
+async fn a_report_waiting_for_its_turn_does_not_hold_off_a_takedown(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let root = app.admin("root").await;
+    let (work, public_id) = second_picture(&app).await;
+    let media = media_id(&app, &public_id).await;
+
+    let mut holder = hold_reader_turn(&app, ada.id(), media).await;
+    let filing = report(&ada, &public_id, json!({"reason": "offensive"}));
+    let take_down = async {
+        until_a_lock_wait(&app.db).await;
+        let taken = tokio::time::timeout(
+            Duration::from_secs(5),
+            root.delete(&format!("/api/admin/media/{public_id}")),
+        )
+        .await;
+        sqlx::query("SELECT pg_advisory_unlock_all()")
+            .execute(&mut *holder)
+            .await
+            .unwrap();
+        taken
+    };
+    let (filed, taken) = tokio::join!(filing, take_down);
+    taken
+        .expect("the takedown waited for a report that waited for its turn")
+        .assert_status(204);
+    assert_eq!(cover_of(&app, work).await, None);
+    // The report went on after the takedown and saw it.
+    filed.assert_status(201);
+    let id = filed.json()["id"].as_i64().unwrap();
+    assert_eq!(filed.json(), json!({"id": id, "status": "removed"}));
+    assert_eq!(
+        root.get("/api/admin/reports").await.json()["items"],
+        json!([])
+    );
+}
+
+/// Security review, Phase 2 Wave 1 #1: every report request counts against a per-account limit
+/// of 30 a minute, repeats and unknown pictures included, so repeats, which the daily limit of
+/// new reports never counts, cannot be sent without end. Another reader is not affected.
+#[sqlx::test]
+async fn every_report_request_counts_against_a_minute_limit(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let grace = app.user("grace").await;
+    let (_, public_id) = second_picture(&app).await;
+    let id = report(&ada, &public_id, json!({"reason": "offensive"}))
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+    report(
+        &ada,
+        "abcdefghijklmnopqrstuvwxyz",
+        json!({"reason": "other"}),
+    )
+    .await
+    .assert_detail(404, "Not found");
+    for _ in 0..28 {
+        let again = report(&ada, &public_id, json!({"reason": "other"})).await;
+        assert_eq!(again.json(), json!({"id": id, "status": "open"}));
+    }
+    let limited = report(&ada, &public_id, json!({"reason": "other"})).await;
+    limited.assert_detail(429, "Slow down a little. Try again later.");
+    let wait: u64 = limited.header("retry-after").unwrap().parse().unwrap();
+    assert!((1..=60).contains(&wait), "{wait}");
+    report(&grace, &public_id, json!({"reason": "other"}))
+        .await
+        .assert_status(201);
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM reports").await, 2);
 }
 
 /// Two identical reports by one reader at once are one report: the advisory lock on (reader,

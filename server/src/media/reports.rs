@@ -5,7 +5,10 @@
 //! picture: a repeat answers with the reader's open report, and a report of a picture already
 //! taken down is recorded as resolved (`removed`) and never enters the open queue. Both are
 //! answered like the first report (201 with the same id), and only a new row counts against the
-//! limit. **Dismissing** closes every open report of the picture.
+//! daily limit (`report_user`). Every request, a repeat too, counts against the per-minute limit
+//! (`report_request_user`). A repeat is answered from a plain read before any lock, so a reader
+//! cannot hold the picture with repeats and keep its takedown waiting (security review, Phase 2
+//! Wave 1 #1). **Dismissing** closes every open report of the picture.
 //!
 //! **A takedown** ([`take_down`]), in one transaction: the media row is locked, the hashes of
 //! its original bytes and of every stored variant go into `media_removed_hashes`, the row gets
@@ -13,8 +16,9 @@
 //! showed it, then the picture's open reports are resolved as `removed` and its open
 //! `cover_replace` requests are rejected with a note. That order (media row, catalog rows,
 //! reports, requests) is the one ingest, `set_cover` and `merge_works` lock in, so a takedown
-//! waits for an ingest that is attaching the picture and then clears it too. Reports, dismissals
-//! and cover approvals lock the media row first as well. The bytes are deleted after the
+//! waits for an ingest that is attaching the picture and then clears it too. Dismissals and
+//! cover approvals lock the media row first as well; a new report locks it after its reader's
+//! turn (the advisory lock) and before the reports row. The bytes are deleted after the
 //! commit. The row stays, with its hash: `ingest::ol_cover_media` never hands
 //! it out again, no fetch or backfill downloads it again, `/media/…` answers 410, and an upload
 //! of the same file, or of a variant a reader saved from `/media/…`, is refused.
@@ -237,9 +241,10 @@ where
 }
 
 /// Reports a cover (`cover_public_id` of a book or edition): copyright, the wrong book,
-/// offensive, or something else. 20 per day. Idempotent per reader and picture: a repeat
-/// answers with the reader's open report, and a picture already taken down gets a closed record
-/// (`status` `removed`); neither counts against the limit again.
+/// offensive, or something else. 20 new reports per day, and 30 requests per minute, repeats
+/// included. Idempotent per reader and picture: a repeat answers with the reader's open report,
+/// and a picture already taken down gets a closed record (`status` `removed`); neither counts
+/// against the daily limit again.
 #[utoipa::path(
     post,
     path = "/api/media/{public_id}/reports",
@@ -253,7 +258,7 @@ where
         (status = 400, body = ErrorBody, description = "`Input should be 'copyright', 'wrong_book', 'offensive' or 'other'`"),
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
         (status = 404, body = ErrorBody, description = "`Not found`: no such cover"),
-        (status = 429, body = ErrorBody, description = "`Slow down a little. Try again later.` (20 new reports per day)")
+        (status = 429, body = ErrorBody, description = "`Slow down a little. Try again later.` (20 new reports per day; 30 requests per minute, repeats included)")
     )
 )]
 pub async fn report(
@@ -262,23 +267,39 @@ pub async fn report(
     ApiPath(public_id): ApiPath<String>,
     ApiJson(body): ApiJson<ReportIn>,
 ) -> ApiResult<(StatusCode, Json<ReportCreated>)> {
+    // Every request, a repeat or a 404 too, before anything else: a repeat costs nothing against
+    // the daily limit, but it cannot be sent without end either.
+    state
+        .limits
+        .report_request_user
+        .check_and_hit(&format!("u:{}", user.id))
+        .map_err(|wait| wait.into_error(msg::SLOW_DOWN))?;
     let mut conn = state.db.acquire().await?;
-    let media_id = sqlx::query_scalar!(
-        "SELECT id FROM media WHERE public_id = $1 AND kind = 'cover'",
-        public_id
+    // A repeat is answered from this plain read, one snapshot, without a lock. A repeat that
+    // locked the picture could, sent often enough at once, hold it `FOR SHARE` without a break,
+    // and a takedown or dismissal would wait for its turn until the request deadline. One that
+    // races a takedown may still answer `open`; the takedown then resolves that report.
+    let found = sqlx::query!(
+        r#"SELECT m.id, m.removed_at IS NOT NULL AS "removed!",
+                  (SELECT r.id FROM reports r
+                   WHERE r.created_by = $2 AND r.media_id = m.id
+                     AND r.status = CASE WHEN m.removed_at IS NULL THEN 'open' ELSE 'removed' END
+                   ORDER BY r.id DESC LIMIT 1) AS earlier
+           FROM media m WHERE m.public_id = $1 AND m.kind = 'cover'"#,
+        public_id,
+        user.id
     )
     .fetch_optional(&mut *conn)
     .await?
     .ok_or_else(|| AppError::not_found(msg::NOT_FOUND))?;
+    if let Some(id) = found.earlier {
+        return Ok(created(id, if found.removed { "removed" } else { "open" }));
+    }
+    let media_id = found.id;
     let mut tx = conn.begin().await?;
-    // The picture first (conventions §7.2), FOR SHARE: a takedown or a dismissal that is under
-    // way finishes first and this report sees it; a later one waits and then resolves it.
-    let removed = sqlx::query_scalar!(
-        r#"SELECT removed_at IS NOT NULL AS "removed!" FROM media WHERE id = $1 FOR SHARE"#,
-        media_id
-    )
-    .fetch_one(&mut *tx)
-    .await?;
+    // The reader's turn first: one reader's reports of one picture take turns, so two at once
+    // are one report, and only the one whose turn it is holds the picture. Taken before the
+    // picture, a request that waits for its turn holds nothing a takedown needs.
     sqlx::query!(
         "SELECT pg_advisory_xact_lock($1, hashtext($2::int8::text || ':' || $3::int8::text))",
         REPORT_LOCK_SPACE,
@@ -286,6 +307,14 @@ pub async fn report(
         media_id
     )
     .execute(&mut *tx)
+    .await?;
+    // Then the picture (conventions §7.2), FOR SHARE: a takedown or a dismissal that is under
+    // way finishes first and this report sees it; a later one waits and then resolves it.
+    let removed = sqlx::query_scalar!(
+        r#"SELECT removed_at IS NOT NULL AS "removed!" FROM media WHERE id = $1 FOR SHARE"#,
+        media_id
+    )
+    .fetch_one(&mut *tx)
     .await?;
     let status = if removed { "removed" } else { "open" };
     let earlier = sqlx::query_scalar!(
@@ -298,6 +327,8 @@ pub async fn report(
     )
     .fetch_optional(&mut *tx)
     .await?;
+    // Another of the reader's requests filed it while this one waited for its turn, or the
+    // picture came down since the plain read.
     if let Some(id) = earlier {
         tx.rollback().await?;
         return Ok(created(id, status));

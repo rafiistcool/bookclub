@@ -986,9 +986,9 @@ pub fn match_key(title: &str, surname: &str) -> String;  pub fn search_extra(wor
   - **Lock order around a picture** (ADM #54): everything that touches a picture's reports or cover requests locks its media row first, so takedowns, reports, dismissals and cover approvals take turns instead of deadlocking:
     - **Takedown** (`media::reports::take_down_locked`, for the direct takedown and `remove`): media `FOR UPDATE` → works and editions (`clear_media`) → reports → `catalog_edit_requests` (it rejects the picture's open `cover_replace` requests with the note `media::reports::TAKEN_DOWN_NOTE`).
     - **Cover approval** (`approve_edit_request`): the request's picture `FOR SHARE` (`lock_request_media`, before the request row) → the request row `FOR UPDATE` → catalog rows.
-    - **Report:** media `FOR SHARE` → `pg_advisory_xact_lock(0x6263_0200, hashtext('<user id>:<media id>'))` (the two-key space for one reader's reports of one picture, beside ingest's `0x6263_0100` and `jobs::lock_ids`) → the reports row.
+    - **Report:** a repeat (the reader's open report, or their `removed` one of a picture that is down) is answered from one plain read before the transaction, with no lock. A new report takes `pg_advisory_xact_lock(0x6263_0200, hashtext('<user id>:<media id>'))` (the two-key space for one reader's reports of one picture, beside ingest's `0x6263_0100` and `jobs::lock_ids`) → media `FOR SHARE` → the reports row. The reader's turn comes before the picture, so of one reader's requests for one picture only the one whose turn it is holds the picture, and repeats hold nothing: otherwise one account could keep the picture share-locked without a break and a takedown would wait until the request deadline (security review, Phase 2 Wave 1 #1). No other path takes that advisory lock, so it cannot form a cycle with the media row.
     - **Dismiss:** media `FOR NO KEY UPDATE` → reports.
-    - Each lock has a race test that fails without it (`catalog_requests.rs::a_takedown_rejects_a_cover_request_an_admin_is_approving`, `media_reports.rs::a_report_filed_during_a_takedown_sees_the_removal`, `a_dismissal_waits_for_a_report_being_filed_and_closes_it_too`, `two_reports_at_once_by_one_reader_are_one_report`).
+    - Each lock has a race test that fails without it (`catalog_requests.rs::a_takedown_rejects_a_cover_request_an_admin_is_approving`, `media_reports.rs::a_report_filed_during_a_takedown_sees_the_removal`, `a_dismissal_waits_for_a_report_being_filed_and_closes_it_too`, `two_reports_at_once_by_one_reader_are_one_report`), and so does the report's order (`repeat_reports_take_no_lock`, `a_report_waiting_for_its_turn_does_not_hold_off_a_takedown`).
 - `upsert_work_stubs` writes `author_names` only (author records come with the full record) and inserts records without an `ol_work_id` one by one.
 
 ### 7.3 Rules ingest maintains
@@ -1203,7 +1203,7 @@ impl SlidingWindow {
 }
 pub struct RateLimits { pub login_failures, pub password_check_session, pub password_check_user, pub login_unknown,
     pub login_ip, pub signup_ip, pub reset_ip, pub reset_account, pub email_send_user, pub email_target, pub notice_target,
-    pub invite_preview_ip, pub invite_accept_user, pub refresh_user, pub upload_user, pub report_user, pub edit_request_user,
+    pub invite_preview_ip, pub invite_accept_user, pub refresh_user, pub upload_user, pub report_user, pub report_request_user, pub edit_request_user,
     pub custom_book_user, pub export_user, pub avatar_user, pub catalog_user: SlidingWindow,
     pub upload_gate, pub catalog_gate, pub export_gate: KeyedGate,   // at most N at once per key (`u:<id>`)
     pub exports: Arc<Semaphore> }                                    // exports streaming on the instance
@@ -1241,7 +1241,8 @@ pub fn unknown_identifier_key(normalised: &str) -> String;
 | `invite_accept_user`: `POST /api/invites/{code}/accept` per account (`u:<id>`), valid code or not | 20 per hour (429 `Slow down a little. Try again later.`, checked before the transaction) |
 | Refresh | 10 per hour per user |
 | Uploads | 30 per day |
-| Reports | 20 per day |
+| `report_user`: new reports per account (a repeat, answered with the earlier report, is none) | 20 per day |
+| `report_request_user`: `POST /api/media/{public_id}/reports` per account (`u:<id>`), repeats and 404s included | 30 per minute (checked first) |
 | Edit requests | 50 per day |
 | Custom books | 30 per day |
 | Export | 5 per hour; and 2 at once on the instance (`exports`), 1 per account (`export_gate`), held while the download streams (§5.7) |

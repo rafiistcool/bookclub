@@ -1668,9 +1668,10 @@ export interface paths {
         put?: never;
         /**
          * Reports a cover (`cover_public_id` of a book or edition): copyright, the wrong book,
-         *     offensive, or something else. 20 per day. Idempotent per reader and picture: a repeat
-         *     answers with the reader's open report, and a picture already taken down gets a closed record
-         *     (`status` `removed`); neither counts against the limit again.
+         *     offensive, or something else. 20 new reports per day, and 30 requests per minute, repeats
+         *     included. Idempotent per reader and picture: a repeat answers with the reader's open report,
+         *     and a picture already taken down gets a closed record (`status` `removed`); neither counts
+         *     against the daily limit again.
          */
         post: operations["media_report"];
         delete?: never;
@@ -9257,7 +9258,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description `Slow down a little. Try again later.` (20 new reports per day) */
+            /** @description `Slow down a little. Try again later.` (20 new reports per day; 30 requests per minute, repeats included) */
             429: {
                 headers: {
                     [name: string]: unknown;
