@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO harvest_state (source) VALUES ($1) ON CONFLICT (source) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8fafabd7d3cdad70132c8b4a929d985778c07781ea735d6bdc1a53890ddc6541"
+}

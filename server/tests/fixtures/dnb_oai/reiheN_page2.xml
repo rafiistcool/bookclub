@@ -1,0 +1,685 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OAI-PMH xsi:schemaLocation="http://www.openarchives.org/OAI/2.0/ http://www.openarchives.org/OAI/2.0/OAI-PMH.xsd" xmlns="http://www.openarchives.org/OAI/2.0/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><responseDate>2026-10-27T23:26:07Z</responseDate><request resumptionToken="jqTteNozNLc0NjQxNjUzNzC2lPV1DHI2MtStyM2RS8lL0k3MybEqSs3MSPWTc5MzNZAzBCo2MLU0MgABOQU5WagisATIFHOwBIxnZmlqaWpqaGYhZ2pibGlgaGSqa25mLGcoZ2JoaAQAEBMb3Q" verb="ListRecords">https://services.dnb.de/oai/repository</request><ListRecords xsi:schemaLocation="http://www.loc.gov/MARC21/slim http://www.loc.gov/standards/marcxml/schema/MARC21slim.xsd"><record><header><identifier>oai:dnb.de/dnb-all:reiheN/1423076036</identifier><datestamp>2026-10-27T21:37:46Z</datestamp><setSpec>dnb-all:reiheN</setSpec></header><metadata><record type="Bibliographic" xmlns="http://www.loc.gov/MARC21/slim">
+    <leader>00000nam a22000008c 4500</leader>
+    <controlfield tag="001">1423076036</controlfield>
+    <controlfield tag="003">DE-101</controlfield>
+    <controlfield tag="005">20261027223746.0</controlfield>
+    <controlfield tag="007">tu</controlfield>
+    <controlfield tag="008">261027s2027    gw ||||| |||| 00||||ger  </controlfield>
+    <datafield tag="015" ind1=" " ind2=" ">
+      <subfield code="a">26,N45</subfield>
+      <subfield code="2">dnb</subfield>
+    </datafield>
+    <datafield tag="016" ind1="7" ind2=" ">
+      <subfield code="2">DE-101</subfield>
+      <subfield code="a">1423076036</subfield>
+    </datafield>
+    <datafield tag="020" ind1=" " ind2=" ">
+      <subfield code="a">9783692580418</subfield>
+      <subfield code="c">: EUR 18.00 (DE), EUR 18.50 (AT)</subfield>
+      <subfield code="9">978-3-69258-041-8</subfield>
+    </datafield>
+    <datafield tag="020" ind1=" " ind2=" ">
+      <subfield code="a">369258041X</subfield>
+      <subfield code="9">3-69258-041-X</subfield>
+    </datafield>
+    <datafield tag="024" ind1="3" ind2=" ">
+      <subfield code="a">9783692580418</subfield>
+    </datafield>
+    <datafield tag="035" ind1=" " ind2=" ">
+      <subfield code="a">(DE-599)DNB1423076036</subfield>
+    </datafield>
+    <datafield tag="040" ind1=" " ind2=" ">
+      <subfield code="a">1145</subfield>
+      <subfield code="b">ger</subfield>
+      <subfield code="c">DE-101</subfield>
+      <subfield code="d">9999</subfield>
+    </datafield>
+    <datafield tag="041" ind1=" " ind2=" ">
+      <subfield code="a">ger</subfield>
+      <subfield code="h">fre</subfield>
+    </datafield>
+    <datafield tag="044" ind1=" " ind2=" ">
+      <subfield code="c">XA-DE-NW</subfield>
+    </datafield>
+    <datafield tag="082" ind1="7" ind2="4">
+      <subfield code="8">8\p</subfield>
+      <subfield code="a">741.5</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="2">23sdnb</subfield>
+    </datafield>
+    <datafield tag="100" ind1="1" ind2=" ">
+      <subfield code="8">3\p</subfield>
+      <subfield code="0">(isni)0000000080815736</subfield>
+      <subfield code="a">Lecigne, Bruno</subfield>
+      <subfield code="e">Verfasser</subfield>
+      <subfield code="4">aut</subfield>
+    </datafield>
+    <datafield tag="240" ind1="1" ind2="0">
+      <subfield code="8">7\p</subfield>
+      <subfield code="a">Systeme Solaire - Jupiter</subfield>
+    </datafield>
+    <datafield tag="245" ind1="1" ind2="0">
+      <subfield code="a">Interplanetar – Uranus</subfield>
+      <subfield code="b">Der blaue Kristall</subfield>
+      <subfield code="c">Bruno Lecigne</subfield>
+    </datafield>
+    <datafield tag="250" ind1=" " ind2=" ">
+      <subfield code="a">1. Auflage</subfield>
+    </datafield>
+    <datafield tag="263" ind1=" " ind2=" ">
+      <subfield code="a">202704</subfield>
+    </datafield>
+    <datafield tag="264" ind1=" " ind2="1">
+      <subfield code="a">Bielefeld</subfield>
+      <subfield code="b">Splitter-Verlag</subfield>
+      <subfield code="c">2027</subfield>
+    </datafield>
+    <datafield tag="300" ind1=" " ind2=" ">
+      <subfield code="a">56 Seiten</subfield>
+      <subfield code="b">komplett farbiges Comicalbum</subfield>
+      <subfield code="c">32.3 cm</subfield>
+    </datafield>
+    <datafield tag="336" ind1=" " ind2=" ">
+      <subfield code="a">Text</subfield>
+      <subfield code="b">txt</subfield>
+      <subfield code="2">rdacontent</subfield>
+    </datafield>
+    <datafield tag="337" ind1=" " ind2=" ">
+      <subfield code="a">ohne Hilfsmittel zu benutzen</subfield>
+      <subfield code="b">n</subfield>
+      <subfield code="2">rdamedia</subfield>
+    </datafield>
+    <datafield tag="338" ind1=" " ind2=" ">
+      <subfield code="a">Band</subfield>
+      <subfield code="b">nc</subfield>
+      <subfield code="2">rdacarrier</subfield>
+    </datafield>
+    <datafield tag="385" ind1=" " ind2=" ">
+      <subfield code="8">1\p</subfield>
+      <subfield code="0">(DE-588)4028859-6</subfield>
+      <subfield code="0">https://d-nb.info/gnd/4028859-6</subfield>
+      <subfield code="0">(DE-101)040288595</subfield>
+      <subfield code="a">Jugend</subfield>
+      <subfield code="2">gnd</subfield>
+    </datafield>
+    <datafield tag="385" ind1=" " ind2=" ">
+      <subfield code="8">2\p</subfield>
+      <subfield code="0">(DE-588)4030550-8</subfield>
+      <subfield code="0">https://d-nb.info/gnd/4030550-8</subfield>
+      <subfield code="0">(DE-101)040305503</subfield>
+      <subfield code="a">Kind</subfield>
+      <subfield code="2">gnd</subfield>
+    </datafield>
+    <datafield tag="490" ind1="1" ind2=" ">
+      <subfield code="a">Interplanetar</subfield>
+      <subfield code="v">4</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">(Produktform)Hardback</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">(Zielgruppe)Allgemein</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">(BISAC Subject Heading)CGN007040</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">(VLB-WN)1181: Hardcover, Softcover / Belletristik/Comic, Cartoon, Humor, Satire/Comic</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Planeten</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Sonnensystem</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Uranus</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Weltall</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Eisriese</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Science</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Alien</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Raumschiff</subfield>
+    </datafield>
+    <datafield tag="700" ind1="1" ind2=" ">
+      <subfield code="8">4\p</subfield>
+      <subfield code="0">(isni)0000000390881309</subfield>
+      <subfield code="a">Sachse, Harald</subfield>
+      <subfield code="e">Übersetzer</subfield>
+      <subfield code="4">trl</subfield>
+    </datafield>
+    <datafield tag="700" ind1="1" ind2=" ">
+      <subfield code="8">5\p</subfield>
+      <subfield code="a">Dallocchio, Federico</subfield>
+      <subfield code="e">Illustrator</subfield>
+      <subfield code="4">ill</subfield>
+    </datafield>
+    <datafield tag="710" ind1="2" ind2=" ">
+      <subfield code="8">6\p</subfield>
+      <subfield code="0">(DE-588)1064208258</subfield>
+      <subfield code="0">https://d-nb.info/gnd/1064208258</subfield>
+      <subfield code="0">(DE-101)1064208258</subfield>
+      <subfield code="a">Splitter Verlag</subfield>
+      <subfield code="e">Verlag</subfield>
+      <subfield code="4">pbl</subfield>
+      <subfield code="2">gnd</subfield>
+    </datafield>
+    <datafield tag="830" ind1=" " ind2="0">
+      <subfield code="a">Interplanetar</subfield>
+      <subfield code="v">4</subfield>
+    </datafield>
+    <datafield tag="856" ind1="4" ind2="2">
+      <subfield code="m">X:MVB</subfield>
+      <subfield code="q">text/html</subfield>
+      <subfield code="u">https://services.dnb.de/plus/idn/1423076036/blurb/</subfield>
+      <subfield code="3">Inhaltstext</subfield>
+    </datafield>
+    <datafield tag="883" ind1="1" ind2=" ">
+      <subfield code="8">1\p</subfield>
+      <subfield code="a">vlb</subfield>
+      <subfield code="d">20261027</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#vlb</subfield>
+    </datafield>
+    <datafield tag="883" ind1="1" ind2=" ">
+      <subfield code="8">2\p</subfield>
+      <subfield code="a">vlb</subfield>
+      <subfield code="d">20261027</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#vlb</subfield>
+    </datafield>
+    <datafield tag="883" ind1="1" ind2=" ">
+      <subfield code="8">3\p</subfield>
+      <subfield code="a">vlb</subfield>
+      <subfield code="d">20261027</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#vlb</subfield>
+    </datafield>
+    <datafield tag="883" ind1="1" ind2=" ">
+      <subfield code="8">4\p</subfield>
+      <subfield code="a">vlb</subfield>
+      <subfield code="d">20261027</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#vlb</subfield>
+    </datafield>
+    <datafield tag="883" ind1="1" ind2=" ">
+      <subfield code="8">5\p</subfield>
+      <subfield code="a">vlb</subfield>
+      <subfield code="d">20261027</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#vlb</subfield>
+    </datafield>
+    <datafield tag="883" ind1="1" ind2=" ">
+      <subfield code="8">6\p</subfield>
+      <subfield code="a">adb</subfield>
+      <subfield code="d">20261027</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#adb</subfield>
+    </datafield>
+    <datafield tag="883" ind1="1" ind2=" ">
+      <subfield code="8">7\p</subfield>
+      <subfield code="a">vlb</subfield>
+      <subfield code="d">20261027</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#vlb</subfield>
+    </datafield>
+    <datafield tag="883" ind1="1" ind2=" ">
+      <subfield code="8">8\p</subfield>
+      <subfield code="a">vlb</subfield>
+      <subfield code="d">20261027</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#vlb</subfield>
+    </datafield>
+    <datafield tag="925" ind1="w" ind2=" ">
+      <subfield code="a">c</subfield>
+    </datafield>
+    <datafield tag="926" ind1="1" ind2=" ">
+      <subfield code="a">XAB</subfield>
+      <subfield code="o">93</subfield>
+      <subfield code="q">Publisher</subfield>
+      <subfield code="v">1.6</subfield>
+      <subfield code="x">Graphic Novel</subfield>
+    </datafield>
+    <datafield tag="926" ind1="2" ind2=" ">
+      <subfield code="a">XQA</subfield>
+      <subfield code="o">93</subfield>
+      <subfield code="q">Publisher</subfield>
+      <subfield code="v">1.6</subfield>
+      <subfield code="x">Graphic Novel / Comic / Manga: Memoiren, wahre Geschichten und Sachliteratur</subfield>
+    </datafield>
+    <datafield tag="926" ind1="2" ind2=" ">
+      <subfield code="a">PGS</subfield>
+      <subfield code="o">93</subfield>
+      <subfield code="q">Publisher</subfield>
+      <subfield code="v">1.6</subfield>
+      <subfield code="x">Sonnensystem: Sonne und Planeten</subfield>
+    </datafield>
+  </record></metadata></record><record><header><identifier>oai:dnb.de/dnb-all:reiheN/1423075552</identifier><datestamp>2026-10-27T21:37:45Z</datestamp><setSpec>dnb-all:reiheN</setSpec></header><metadata><record type="Bibliographic" xmlns="http://www.loc.gov/MARC21/slim">
+    <leader>00000nam a22000008c 4500</leader>
+    <controlfield tag="001">1423075552</controlfield>
+    <controlfield tag="003">DE-101</controlfield>
+    <controlfield tag="005">20261027223745.0</controlfield>
+    <controlfield tag="007">tu</controlfield>
+    <controlfield tag="008">261027s2027    gw ||||| |||| 00||||ger  </controlfield>
+    <datafield tag="015" ind1=" " ind2=" ">
+      <subfield code="a">26,N45</subfield>
+      <subfield code="2">dnb</subfield>
+    </datafield>
+    <datafield tag="016" ind1="7" ind2=" ">
+      <subfield code="2">DE-101</subfield>
+      <subfield code="a">1423075552</subfield>
+    </datafield>
+    <datafield tag="020" ind1=" " ind2=" ">
+      <subfield code="a">9783987189869</subfield>
+      <subfield code="c">: EUR 19.00 (DE), EUR 19.50 (AT)</subfield>
+      <subfield code="9">978-3-98718-986-9</subfield>
+    </datafield>
+    <datafield tag="020" ind1=" " ind2=" ">
+      <subfield code="a">398718986X</subfield>
+      <subfield code="9">3-98718-986-X</subfield>
+    </datafield>
+    <datafield tag="024" ind1="3" ind2=" ">
+      <subfield code="a">9783987189869</subfield>
+    </datafield>
+    <datafield tag="028" ind1="5" ind2="2">
+      <subfield code="a">Bestellnummer 98718986</subfield>
+    </datafield>
+    <datafield tag="035" ind1=" " ind2=" ">
+      <subfield code="a">(DE-599)DNB1423075552</subfield>
+    </datafield>
+    <datafield tag="040" ind1=" " ind2=" ">
+      <subfield code="a">1145</subfield>
+      <subfield code="b">ger</subfield>
+      <subfield code="c">DE-101</subfield>
+      <subfield code="d">9999</subfield>
+    </datafield>
+    <datafield tag="041" ind1=" " ind2=" ">
+      <subfield code="a">ger</subfield>
+      <subfield code="h">eng</subfield>
+    </datafield>
+    <datafield tag="044" ind1=" " ind2=" ">
+      <subfield code="c">XA-DE-SN</subfield>
+    </datafield>
+    <datafield tag="082" ind1="7" ind2="4">
+      <subfield code="8">5\p</subfield>
+      <subfield code="a">830</subfield>
+      <subfield code="a">B</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="2">23sdnb</subfield>
+    </datafield>
+    <datafield tag="100" ind1="1" ind2=" ">
+      <subfield code="8">2\p</subfield>
+      <subfield code="a">Zander, Liv</subfield>
+      <subfield code="e">Verfasser</subfield>
+      <subfield code="4">aut</subfield>
+    </datafield>
+    <datafield tag="240" ind1="1" ind2="0">
+      <subfield code="8">4\p</subfield>
+      <subfield code="a">Crown Me Yours</subfield>
+    </datafield>
+    <datafield tag="245" ind1="1" ind2="0">
+      <subfield code="a">Crown Me Yours</subfield>
+      <subfield code="c">Liv Zander, Dahlia Brüning</subfield>
+    </datafield>
+    <datafield tag="250" ind1=" " ind2=" ">
+      <subfield code="a">1. Auflage</subfield>
+    </datafield>
+    <datafield tag="263" ind1=" " ind2=" ">
+      <subfield code="a">202711</subfield>
+    </datafield>
+    <datafield tag="264" ind1=" " ind2="1">
+      <subfield code="a">Oelsnitz</subfield>
+      <subfield code="b">VAJONA</subfield>
+      <subfield code="c">2027</subfield>
+    </datafield>
+    <datafield tag="300" ind1=" " ind2=" ">
+      <subfield code="a">320 Seiten</subfield>
+      <subfield code="c">21 cm, 400 g</subfield>
+    </datafield>
+    <datafield tag="336" ind1=" " ind2=" ">
+      <subfield code="a">Text</subfield>
+      <subfield code="b">txt</subfield>
+      <subfield code="2">rdacontent</subfield>
+    </datafield>
+    <datafield tag="337" ind1=" " ind2=" ">
+      <subfield code="a">ohne Hilfsmittel zu benutzen</subfield>
+      <subfield code="b">n</subfield>
+      <subfield code="2">rdamedia</subfield>
+    </datafield>
+    <datafield tag="338" ind1=" " ind2=" ">
+      <subfield code="a">Band</subfield>
+      <subfield code="b">nc</subfield>
+      <subfield code="2">rdacarrier</subfield>
+    </datafield>
+    <datafield tag="385" ind1=" " ind2=" ">
+      <subfield code="8">1\p</subfield>
+      <subfield code="0">(DE-588)4028859-6</subfield>
+      <subfield code="0">https://d-nb.info/gnd/4028859-6</subfield>
+      <subfield code="0">(DE-101)040288595</subfield>
+      <subfield code="a">Jugend</subfield>
+      <subfield code="2">gnd</subfield>
+    </datafield>
+    <datafield tag="490" ind1="1" ind2=" ">
+      <subfield code="a">Crown Me Duett</subfield>
+      <subfield code="v">2</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">(Produktform)Paperback / softback</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">(Zielgruppe)Dark Romantasy - ab 16 Jahren</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">(Produktform (spezifisch))mit Klappen</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">(Produktform (spezifisch))Paperback</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">(VLB-WN)1110: Hardcover, Softcover / Belletristik/Erzählende Literatur</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">GT0001: Enemies to Lovers</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">VAJONA</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Booktok</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Liv Zander</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Bookstagram</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Dark Romance</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Morally Gray</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Dark Romantasy</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Enemies to Lovers</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Crown Me Dead</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Crown Me Yours</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Forbidden Love</subfield>
+    </datafield>
+    <datafield tag="655" ind1=" " ind2="7">
+      <subfield code="0">(DE-101)1010789759</subfield>
+      <subfield code="a">Erzählende Literatur</subfield>
+      <subfield code="2">gatbeg</subfield>
+    </datafield>
+    <datafield tag="700" ind1="1" ind2=" ">
+      <subfield code="8">3\p</subfield>
+      <subfield code="a">Brüning, Dahlia</subfield>
+      <subfield code="e">Verfasser</subfield>
+      <subfield code="4">aut</subfield>
+    </datafield>
+    <datafield tag="830" ind1=" " ind2="0">
+      <subfield code="a">Crown Me Duett</subfield>
+      <subfield code="v">2</subfield>
+    </datafield>
+    <datafield tag="856" ind1="4" ind2="2">
+      <subfield code="m">X:MVB</subfield>
+      <subfield code="q">text/html</subfield>
+      <subfield code="u">https://services.dnb.de/plus/idn/1423075552/blurb/</subfield>
+      <subfield code="3">Inhaltstext</subfield>
+    </datafield>
+    <datafield tag="883" ind1="1" ind2=" ">
+      <subfield code="8">1\p</subfield>
+      <subfield code="a">vlb</subfield>
+      <subfield code="d">20261027</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#vlb</subfield>
+    </datafield>
+    <datafield tag="883" ind1="1" ind2=" ">
+      <subfield code="8">2\p</subfield>
+      <subfield code="a">vlb</subfield>
+      <subfield code="d">20261027</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#vlb</subfield>
+    </datafield>
+    <datafield tag="883" ind1="1" ind2=" ">
+      <subfield code="8">3\p</subfield>
+      <subfield code="a">vlb</subfield>
+      <subfield code="d">20261027</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#vlb</subfield>
+    </datafield>
+    <datafield tag="883" ind1="1" ind2=" ">
+      <subfield code="8">4\p</subfield>
+      <subfield code="a">vlb</subfield>
+      <subfield code="d">20261027</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#vlb</subfield>
+    </datafield>
+    <datafield tag="883" ind1="1" ind2=" ">
+      <subfield code="8">5\p</subfield>
+      <subfield code="a">vlb</subfield>
+      <subfield code="d">20261027</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#vlb</subfield>
+    </datafield>
+    <datafield tag="925" ind1="w" ind2=" ">
+      <subfield code="a">c</subfield>
+    </datafield>
+    <datafield tag="926" ind1="1" ind2=" ">
+      <subfield code="a">FRV</subfield>
+      <subfield code="o">93</subfield>
+      <subfield code="q">Publisher</subfield>
+      <subfield code="v">1.6</subfield>
+      <subfield code="x">Dark Romance</subfield>
+    </datafield>
+    <datafield tag="926" ind1="2" ind2=" ">
+      <subfield code="a">FRX</subfield>
+      <subfield code="o">93</subfield>
+      <subfield code="q">Publisher</subfield>
+      <subfield code="v">1.6</subfield>
+      <subfield code="x">Erotische Liebesromane</subfield>
+    </datafield>
+    <datafield tag="926" ind1="2" ind2=" ">
+      <subfield code="a">FMT</subfield>
+      <subfield code="o">93</subfield>
+      <subfield code="q">Publisher</subfield>
+      <subfield code="v">1.6</subfield>
+      <subfield code="x">Dark Fantasy</subfield>
+    </datafield>
+  </record></metadata></record><record><header><identifier>oai:dnb.de/dnb-all:reiheN/1423075366</identifier><datestamp>2026-10-27T21:37:44Z</datestamp><setSpec>dnb-all:reiheN</setSpec></header><metadata><record type="Bibliographic" xmlns="http://www.loc.gov/MARC21/slim">
+    <leader>00000nam a22000008c 4500</leader>
+    <controlfield tag="001">1423075366</controlfield>
+    <controlfield tag="003">DE-101</controlfield>
+    <controlfield tag="005">20261027223744.0</controlfield>
+    <controlfield tag="007">tu</controlfield>
+    <controlfield tag="008">261027s2027    gw ||||| |||| 00||||ger  </controlfield>
+    <datafield tag="015" ind1=" " ind2=" ">
+      <subfield code="a">26,N45</subfield>
+      <subfield code="2">dnb</subfield>
+    </datafield>
+    <datafield tag="016" ind1="7" ind2=" ">
+      <subfield code="2">DE-101</subfield>
+      <subfield code="a">1423075366</subfield>
+    </datafield>
+    <datafield tag="020" ind1=" " ind2=" ">
+      <subfield code="a">9798894741932</subfield>
+      <subfield code="c">: EUR 19.99 (DE), EUR 20.60 (AT)</subfield>
+      <subfield code="9">979-88-947419-3-2</subfield>
+    </datafield>
+    <datafield tag="024" ind1="3" ind2=" ">
+      <subfield code="a">9798894741932</subfield>
+    </datafield>
+    <datafield tag="035" ind1=" " ind2=" ">
+      <subfield code="a">(DE-599)DNB1423075366</subfield>
+    </datafield>
+    <datafield tag="040" ind1=" " ind2=" ">
+      <subfield code="a">1145</subfield>
+      <subfield code="b">ger</subfield>
+      <subfield code="c">DE-101</subfield>
+      <subfield code="d">9999</subfield>
+    </datafield>
+    <datafield tag="041" ind1=" " ind2=" ">
+      <subfield code="a">ger</subfield>
+    </datafield>
+    <datafield tag="044" ind1=" " ind2=" ">
+      <subfield code="c">XA-DE</subfield>
+    </datafield>
+    <datafield tag="082" ind1="7" ind2="4">
+      <subfield code="8">2\p</subfield>
+      <subfield code="a">290</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="2">23sdnb</subfield>
+    </datafield>
+    <datafield tag="100" ind1="1" ind2=" ">
+      <subfield code="8">1\p</subfield>
+      <subfield code="a">Hardt, Kerstin</subfield>
+      <subfield code="e">Verfasser</subfield>
+      <subfield code="4">aut</subfield>
+    </datafield>
+    <datafield tag="245" ind1="1" ind2="0">
+      <subfield code="a">Neurobiologie der Lebenskraft</subfield>
+      <subfield code="b">Wie du den wahren Ursprung deiner Erschöpfung erkennst und auflöst</subfield>
+      <subfield code="c">Kerstin Hardt</subfield>
+    </datafield>
+    <datafield tag="250" ind1=" " ind2=" ">
+      <subfield code="a">1. Auflage</subfield>
+    </datafield>
+    <datafield tag="263" ind1=" " ind2=" ">
+      <subfield code="a">202702</subfield>
+    </datafield>
+    <datafield tag="264" ind1=" " ind2="1">
+      <subfield code="a">[S.l.] @</subfield>
+      <subfield code="b">Remote Verlag</subfield>
+      <subfield code="c">2027</subfield>
+    </datafield>
+    <datafield tag="336" ind1=" " ind2=" ">
+      <subfield code="a">Text</subfield>
+      <subfield code="b">txt</subfield>
+      <subfield code="2">rdacontent</subfield>
+    </datafield>
+    <datafield tag="337" ind1=" " ind2=" ">
+      <subfield code="a">ohne Hilfsmittel zu benutzen</subfield>
+      <subfield code="b">n</subfield>
+      <subfield code="2">rdamedia</subfield>
+    </datafield>
+    <datafield tag="338" ind1=" " ind2=" ">
+      <subfield code="a">Band</subfield>
+      <subfield code="b">nc</subfield>
+      <subfield code="2">rdacarrier</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">(Produktform)Paperback / softback</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">(Produktform (spezifisch))Taschenbuch</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">(VLB-WN)2934: Taschenbuch / Sachbücher/Anthroposophie</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Resilienz</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Stress</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Trauma</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Burnout</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Balance</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Innere Ruhe</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Mentale Stärke und Resilienz</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Gelassenheit</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Mindset</subfield>
+    </datafield>
+    <datafield tag="653" ind1=" " ind2=" ">
+      <subfield code="a">Energie</subfield>
+    </datafield>
+    <datafield tag="856" ind1="4" ind2="2">
+      <subfield code="m">X:MVB</subfield>
+      <subfield code="q">text/html</subfield>
+      <subfield code="u">https://services.dnb.de/plus/idn/1423075366/blurb/</subfield>
+      <subfield code="3">Inhaltstext</subfield>
+    </datafield>
+    <datafield tag="883" ind1="1" ind2=" ">
+      <subfield code="8">1\p</subfield>
+      <subfield code="a">vlb</subfield>
+      <subfield code="d">20261027</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#vlb</subfield>
+    </datafield>
+    <datafield tag="883" ind1="1" ind2=" ">
+      <subfield code="8">2\p</subfield>
+      <subfield code="a">vlb</subfield>
+      <subfield code="d">20261027</subfield>
+      <subfield code="q">DE-101</subfield>
+      <subfield code="u">https://d-nb.info/provenance/plan#vlb</subfield>
+    </datafield>
+    <datafield tag="925" ind1="w" ind2=" ">
+      <subfield code="a">c</subfield>
+    </datafield>
+    <datafield tag="926" ind1="1" ind2=" ">
+      <subfield code="a">PSAN2</subfield>
+      <subfield code="o">93</subfield>
+      <subfield code="q">Publisher</subfield>
+      <subfield code="v">1.6</subfield>
+      <subfield code="x">Entwicklungsneurobiologie</subfield>
+    </datafield>
+    <datafield tag="926" ind1="2" ind2=" ">
+      <subfield code="a">V</subfield>
+      <subfield code="o">93</subfield>
+      <subfield code="q">Publisher</subfield>
+      <subfield code="v">1.6</subfield>
+      <subfield code="x">Gesundheit, Beziehungen und Persönlichkeitsentwicklung</subfield>
+    </datafield>
+    <datafield tag="926" ind1="2" ind2=" ">
+      <subfield code="a">MBNH9</subfield>
+      <subfield code="o">93</subfield>
+      <subfield code="q">Publisher</subfield>
+      <subfield code="v">1.6</subfield>
+      <subfield code="x">Gesundheitspsychologie</subfield>
+    </datafield>
+    <datafield tag="926" ind1="2" ind2=" ">
+      <subfield code="a">VX</subfield>
+      <subfield code="o">93</subfield>
+      <subfield code="q">Publisher</subfield>
+      <subfield code="v">1.6</subfield>
+      <subfield code="x">Körper und Geist</subfield>
+    </datafield>
+    <datafield tag="926" ind1="2" ind2=" ">
+      <subfield code="a">VFJ</subfield>
+      <subfield code="o">93</subfield>
+      <subfield code="q">Publisher</subfield>
+      <subfield code="v">1.6</subfield>
+      <subfield code="x">Umgang mit / Ratgeber zu persönlichen, sozialen und gesundheitlichen Themen</subfield>
+    </datafield>
+  </record></metadata></record><resumptionToken cursor="100" completeListSize="4112"/></ListRecords></OAI-PMH>

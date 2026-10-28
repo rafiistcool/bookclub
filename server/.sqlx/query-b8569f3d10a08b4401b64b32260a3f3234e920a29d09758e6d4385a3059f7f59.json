@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE harvest_state\n                 SET resumption_token = $2, token_issued_at = now(),\n                     records_seen = records_seen + $3\n                 WHERE source = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b8569f3d10a08b4401b64b32260a3f3234e920a29d09758e6d4385a3059f7f59"
+}

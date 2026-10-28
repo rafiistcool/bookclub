@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT source FROM harvest_state ORDER BY source",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "source",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "harvest_state",
+            "name": "source"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8d914aab86a9be79386b78257a164de065639cf2392c1cdec997363d0504c41e"
+}

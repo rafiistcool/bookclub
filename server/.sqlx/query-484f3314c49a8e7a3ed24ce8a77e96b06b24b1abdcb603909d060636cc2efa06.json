@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT GREATEST(\n                      COALESCE(EXTRACT(EPOCH FROM last_error_at + make_interval(secs => $2) - now()), 0),\n                      CASE WHEN run_started_at IS NOT NULL OR last_success_at IS NULL THEN 0\n                           ELSE EXTRACT(EPOCH FROM last_success_at + make_interval(secs => $2) - now())\n                      END\n                  )::float8 AS \"wait!\"\n           FROM harvest_state WHERE source = ANY($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "wait!",
+        "type_info": "Float8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "484f3314c49a8e7a3ed24ce8a77e96b06b24b1abdcb603909d060636cc2efa06"
+}
