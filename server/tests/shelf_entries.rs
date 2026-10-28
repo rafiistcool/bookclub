@@ -701,6 +701,64 @@ async fn patch_changes_the_edition_and_the_rating_visibility(db: PgPool) {
         .assert_status(400);
 }
 
+/// The client's abandoned books in `year` of the stats.
+async fn dnf_in(client: &TestClient, year: i32) -> i64 {
+    let res = client.get(&format!("/api/stats?year={year}")).await;
+    res.assert_status(200);
+    res.json()["dnf"].as_i64().unwrap()
+}
+
+/// Hiding or showing a rating is no change to the entry: a PATCH with only `rating_visibility`
+/// leaves `updated_at` and the column alone, so an abandoned book stays in the year of its
+/// last change in the stats. Any other field sent with it still moves `updated_at`.
+#[sqlx::test]
+async fn a_rating_visibility_change_alone_is_no_change(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let dropped = add(
+        &ada,
+        &circe(&app).await,
+        json!({"status": "did_not_finish", "rating": 2, "dnf_reason": "Too slow"}),
+    )
+    .await;
+    add(
+        &ada,
+        &app.ol_work("OL2W", "Song", "").await,
+        json!({"status": "did_not_finish"}),
+    )
+    .await;
+    // Last changed in 2025; it sits below the newer book in its column.
+    sqlx::query("UPDATE shelf_entries SET updated_at = '2025-03-01T12:00:00Z' WHERE id = $1")
+        .bind(dropped["id"].as_i64().unwrap())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(dnf_in(&ada, 2025).await, 1);
+
+    for visibility in ["only_me", "audience"] {
+        let item = patch(
+            &ada,
+            &dropped["id"],
+            json!({"rating_visibility": visibility}),
+        )
+        .await;
+        assert_eq!(item["rating_visibility"], visibility);
+        assert_eq!(item["updated_at"], "2025-03-01T12:00:00Z");
+        assert_eq!(item["position"], 1);
+        assert_eq!(dnf_in(&ada, 2025).await, 1);
+    }
+
+    let edited = patch(
+        &ada,
+        &dropped["id"],
+        json!({"rating_visibility": "only_me", "dnf_reason": "Too slow, really"}),
+    )
+    .await;
+    assert_eq!(edited["rating_visibility"], "only_me");
+    assert_ne!(edited["updated_at"], "2025-03-01T12:00:00Z");
+    assert_eq!(dnf_in(&ada, 2025).await, 0);
+}
+
 /// The list is ordered by the status text (alphabetically), then position and id.
 #[sqlx::test]
 async fn the_list_is_ordered_by_status_text(db: PgPool) {

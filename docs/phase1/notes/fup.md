@@ -116,7 +116,9 @@ Owner: FUP. FUP takes five items the Wave 3 packages found and left for the inte
 - **Frontend test reads server source:** `timezone.test.ts` reads `server/src/tz.rs` through `node:fs` (Vite serves nothing outside `frontend/`), as `server/tests/api_error_copy.rs` reads `frontend/src/i18n/apiErrors.ts`. It needs the whole repository checked out, which CI has.
 - **Root `Dockerfile`:** still fails at `COPY --from=frontend /src/backend/app/static`, on purpose (`notes/fe.md`). FUP did not touch it.
 
-### Changes outside FUP's files (apply them)
+### Changes outside FUP's files (applied by the integrator)
+
+**Applied** on `phase-1` after the merge, both patches unchanged, plus the endpoint-map §7 sentence. `a_rating_visibility_change_alone_is_no_change` was checked to fail without the `entries.rs` change and to pass with it. The text below is kept as the record.
 
 The review asked FUP to finish these. They were written and passed every check, but five of the files are not on FUP's list (`work-plan.md` file ownership), so the gate refused them. They were reverted to `phase1-green`, and so was `server/tests/shelf_entries.rs`, whose only change was the test of the reverted code. Each is needed for one reason:
 

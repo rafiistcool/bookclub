@@ -368,6 +368,7 @@ Updates one of the caller's shelf entries.
 7. If `shelf_position` is not null: `place_on_shelf(entry, shelf_position)` (§2.5).
 8. If `shelf_position` is null, **or** status is not null, **or** position is not null: `place_item(entry, status, position, stamp_dates = status != previous_status)`.
    - This means **every PATCH except a `shelf_position`-only one** (`shelf_position` possibly combined with rating/take/dnf_reason/progress/finished_on, but without status or position) re-sequences the column and **bumps `updated_at`**. A rating-only PATCH bumps `updated_at` **(probed)**. A `shelf_position`-only PATCH leaves `updated_at` and all reading metadata untouched **(test)**.
+   - **Phase 1:** a PATCH with only the new `rating_visibility` skips `place_item` too, so it leaves the column and `updated_at` as they are (`docs/phase1/notes/fup.md` decision 8).
    - Dates are stamped only when the status actually changed. A same-status PATCH never re-stamps, so a cleared `finished_at` stays null **(test)**.
 9. If `finished_on` is present:
    - `finished_at` = `datetime.combine(finished_on, 12:00, tz=zone)` converted to UTC, or null. Noon local time in the instance zone; for example Berlin 2025-08-01 gives `2025-08-01T10:00:00Z`, and Kiritimati (UTC+14) 2025-07-01 gives `2025-06-30T22:00:00Z`.
@@ -1062,7 +1063,7 @@ Matched books are copied into the catalog. A Goodreads ISBN could set `edition_i
    - `rating`, `take`, `dnf_reason`, `progress` and `finished_on` need tri-state deserialisation (`Option<Option<T>>` with `#[serde(default, deserialize_with=…)]`): absent means keep, null means clear.
    - `status`, `position` and `shelf_position` treat null as absent.
    - The "Nothing to update" check uses presence, not value, for the five tri-state fields, and runs **before** the 404 ownership check.
-2. **When `place_item` runs.** It runs on every PATCH unless `shelf_position` is set and both `status` and `position` are null or absent. It bumps `updated_at` and renumbers the column. A `shelf_position`-only PATCH must leave `updated_at` byte-identical (the test deep-compares items).
+2. **When `place_item` runs.** It runs on every PATCH unless `shelf_position` is set and both `status` and `position` are null or absent (Phase 1: or the PATCH sets nothing but `rating_visibility`). It bumps `updated_at` and renumbers the column. A `shelf_position`-only PATCH must leave `updated_at` byte-identical (the test deep-compares items).
 3. **Date stamping.**
    - PATCH stamps only on an actual status change. POST and import always stamp with `changed=False`.
    - `finished_on` is applied **after** stamping and then clamps `started_at`.
