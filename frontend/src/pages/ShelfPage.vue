@@ -250,7 +250,10 @@ onMounted(load);
 
     <div v-if="loaded && !error" class="shelf-view-toolbar">
       <ShelfViewSwitch active="books" />
-      <RouterLink class="btn btn-ghost btn-sm shelf-quotes-link" to="/quotes">{{ t("quotes.title") }}</RouterLink>
+      <span class="shelf-extra-links">
+        <RouterLink class="btn btn-ghost btn-sm" to="/diary">{{ t("diaryPage.title") }}</RouterLink>
+        <RouterLink class="btn btn-ghost btn-sm" to="/quotes">{{ t("quotes.title") }}</RouterLink>
+      </span>
     </div>
 
     <div v-if="!loaded" class="book-grid" aria-hidden="true">

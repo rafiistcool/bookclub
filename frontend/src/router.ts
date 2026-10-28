@@ -60,6 +60,7 @@ const router = createRouter({
         { path: "discover", component: () => import("./pages/DiscoverPage.vue") },
         { path: "shelf", component: () => import("./pages/ShelfPage.vue") },
         { path: "shelf/physical", component: () => import("./pages/PhysicalShelfPage.vue") },
+        { path: "diary", component: () => import("./pages/DiaryPage.vue") },
         { path: "quotes", component: () => import("./pages/QuotesPage.vue") },
         { path: "clubs", component: ClubsPage },
         { path: "clubs/new", component: () => import("./pages/NewClubPage.vue") },

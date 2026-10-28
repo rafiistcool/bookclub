@@ -66,4 +66,16 @@ describe("relativeDay", () => {
     expect(relativeDay(new Date(2026, 7, 20).toISOString())).toBe("12 days ago");
     expect(relativeDay(new Date(2026, 7, 4).toISOString())).toBe("4 weeks ago");
   });
+
+  it("counts the days in the given zone, the club's for a meeting", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-01T20:00:00Z"));
+    // 23:30 UTC is already 01:30 the next day in Berlin.
+    expect(relativeDay("2026-09-01T23:30:00Z", "UTC")).toBe("today");
+    expect(relativeDay("2026-09-01T23:30:00Z", "Europe/Berlin")).toBe("tomorrow");
+    // 08:00 UTC on the 3rd is still the 2nd in Honolulu.
+    expect(relativeDay("2026-09-03T08:00:00Z", "UTC")).toBe("in 2 days");
+    expect(relativeDay("2026-09-03T08:00:00Z", "Pacific/Honolulu")).toBe("tomorrow");
+    expect(relativeDay("2026-09-01T23:30:00Z", "Not/AZone")).not.toBe("");
+  });
 });

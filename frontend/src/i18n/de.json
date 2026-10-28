@@ -147,7 +147,13 @@
     "yourData": "Deine Daten",
     "exportBlurb": "Lade alles herunter, was du angelegt hast — Profil, Regal, Tagebuch, Zitate und Bilder — als eine ZIP-Datei.",
     "exportData": "Meine Daten exportieren",
-    "currentPassword": "Aktuelles Passwort"
+    "currentPassword": "Aktuelles Passwort",
+    "timezone": "Zeitzone",
+    "timezoneBlurb": "Deine Lesedaten, das „heute“ im Regal und die Zeiten deiner Tagebucheinträge und Zitate richten sich nach dieser Zone. Treffen und Fristen eines Clubs stehen in der Zone des Clubs.",
+    "timezoneSaved": "Zeitzone auf {zone} gestellt",
+    "timezoneFailed": "Die Zeitzone konnte nicht gespeichert werden",
+    "deviceZone": "Dieses Gerät ist auf {zone} eingestellt.",
+    "useDeviceZone": "{zone} verwenden"
   },
   "theme": {
     "paper": "Papier",
@@ -216,7 +222,8 @@
     "wholeDiscussion": "Das ganze Gespräch →",
     "noPickMemberBody": "Ein Admin legt das nächste Buch fest. Nominiere bis dahin eins für die Abstimmung.",
     "toVote": "Abstimmen",
-    "seeOverlap": "Gemeinsame Wünsche ansehen"
+    "seeOverlap": "Gemeinsame Wünsche ansehen",
+    "toDiary": "Dein Tagebuch"
   },
   "shelf": {
     "title": "Mein Regal",
@@ -950,6 +957,16 @@
     "pageN": "S. {n}",
     "save": "Zitat behalten",
     "onlyMeHint": "Nur du siehst dieses Zitat"
+  },
+  "diaryPage": {
+    "title": "Tagebuch",
+    "lede": "Alles, was du über deine Bücher geschrieben hast, das Neueste zuerst. Geschrieben wird auf der Seite eines Buchs.",
+    "yours": "Deine Einträge",
+    "empty": "Noch nichts geschrieben. Öffne ein Buch in deinem Regal und halte einen Gedanken fest.",
+    "toShelf": "Zu deinem Regal",
+    "replyTo": "deine Antwort an {name}",
+    "lookFurther": "Weiter zurück suchen",
+    "reply": "deine Antwort"
   },
   "verify": {
     "working": "Deine Adresse wird bestätigt…",

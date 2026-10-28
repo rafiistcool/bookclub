@@ -79,15 +79,33 @@ export function monogram(title: string): string {
   return letter ? letter.toUpperCase() : "?";
 }
 
-/** "in 3 days" / "today" / "2 weeks ago", for meeting dates. */
-export function relativeDay(iso: string | null | undefined): string {
+/** The calendar day of `date` in `timeZone` (the device's zone without one), as a UTC midnight. */
+function calendarDay(date: Date, timeZone?: string): number {
+  if (timeZone) {
+    try {
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone, year: "numeric", month: "2-digit", day: "2-digit",
+      }).formatToParts(date);
+      const part = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+      return Date.UTC(part("year"), part("month") - 1, part("day"));
+    } catch {
+      // An unknown zone: count in the device's.
+    }
+  }
+  return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+/**
+ * "in 3 days" / "today" / "2 weeks ago", for meeting dates. Days are counted
+ * in `timeZone`, the club's for a meeting, so "tomorrow" matches the date the
+ * club sees.
+ */
+export function relativeDay(iso: string | null | undefined, timeZone?: string): string {
   if (!iso) return "";
   const target = new Date(iso);
   if (Number.isNaN(target.getTime())) return "";
-  const startOfDay = (date: Date) =>
-    new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
   const days = Math.round(
-    (startOfDay(target) - startOfDay(new Date())) / 86_400_000,
+    (calendarDay(target, timeZone) - calendarDay(new Date(), timeZone)) / 86_400_000,
   );
   if (days === 0) return t("relative.today");
   if (days === 1) return t("relative.tomorrow");

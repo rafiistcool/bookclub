@@ -84,3 +84,35 @@ export function countEntries(items: DiaryEntry[]): number {
     0,
   );
 }
+
+/**
+ * The reader's own diary writing (`/diary`): entries and replies they wrote in
+ * the personal scope. Club posts belong to the club's discussion instead.
+ */
+export function isOwnDiaryEntry(item: { entry: { mine: boolean; club: unknown; deleted: boolean } }): boolean {
+  return item.entry.mine && !item.entry.club && !item.entry.deleted;
+}
+
+/**
+ * Reads the combined feed (`load(before)`, newest first) until it has `want`
+ * items that pass `keep`, the feed ends, or `maxPages` pages were read. The
+ * feed has no author filter, so `/diary` picks the reader's own entries out
+ * of it. `cursor` is the last id read (the next call's `before`), which can be
+ * past the last kept item.
+ */
+export async function scanFeed<T extends { entry: { id: number } }>(
+  load: (before: number | undefined) => Promise<{ items: T[]; has_more: boolean }>,
+  keep: (item: T) => boolean,
+  options: { before?: number; want: number; maxPages: number },
+): Promise<{ items: T[]; hasMore: boolean; cursor: number | undefined }> {
+  const items: T[] = [];
+  let cursor = options.before;
+  let hasMore = true;
+  for (let page = 0; page < options.maxPages && hasMore && items.length < options.want; page += 1) {
+    const answer = await load(cursor);
+    items.push(...answer.items.filter(keep));
+    hasMore = answer.has_more && answer.items.length > 0;
+    cursor = answer.items[answer.items.length - 1]?.entry.id ?? cursor;
+  }
+  return { items, hasMore, cursor };
+}

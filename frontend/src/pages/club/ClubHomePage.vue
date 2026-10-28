@@ -60,7 +60,7 @@ const finishedCount = computed(
   () => readers.value.filter((row) => row.status === "finished").length,
 );
 
-const meetingCountdown = computed(() => relativeDay(pick.value?.meeting_at));
+const meetingCountdown = computed(() => relativeDay(pick.value?.meeting_at, timezone.value));
 
 const leader = computed(() => {
   const nominations = vote.value?.nominations ?? [];

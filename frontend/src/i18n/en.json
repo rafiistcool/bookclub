@@ -147,7 +147,13 @@
     "yourData": "Your data",
     "exportBlurb": "Download everything you added — profile, shelf, diary, quotes and pictures — as one ZIP file.",
     "exportData": "Export my data",
-    "currentPassword": "Current password"
+    "currentPassword": "Current password",
+    "timezone": "Time zone",
+    "timezoneBlurb": "Your reading dates, the shelf's “today” and the times of your diary entries and quotes use this zone. Club meetings and deadlines use each club's own zone.",
+    "timezoneSaved": "Time zone set to {zone}",
+    "timezoneFailed": "Could not save the time zone",
+    "deviceZone": "This device is set to {zone}.",
+    "useDeviceZone": "Use {zone}"
   },
   "theme": {
     "paper": "Paper",
@@ -216,7 +222,8 @@
     "wholeDiscussion": "The whole discussion →",
     "noPickMemberBody": "An admin sets the next book. Nominate one for the vote in the meantime.",
     "toVote": "Vote",
-    "seeOverlap": "See shared wants"
+    "seeOverlap": "See shared wants",
+    "toDiary": "Your diary"
   },
   "shelf": {
     "title": "Your shelf",
@@ -950,6 +957,16 @@
     "pageN": "p. {n}",
     "save": "Keep quote",
     "onlyMeHint": "Only you can see this quote"
+  },
+  "diaryPage": {
+    "title": "Diary",
+    "lede": "Everything you wrote about your books, newest first. You write on a book's page.",
+    "yours": "Your entries",
+    "empty": "Nothing written yet. Open a book on your shelf and note down a thought.",
+    "toShelf": "Open your shelf",
+    "replyTo": "your reply to {name}",
+    "lookFurther": "Look further back",
+    "reply": "your reply"
   },
   "verify": {
     "working": "Confirming your address…",

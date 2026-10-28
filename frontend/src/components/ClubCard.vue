@@ -29,7 +29,7 @@ const { t } = useI18n();
       </span>
       <span v-else class="fine subtle">{{ t("clubs.noPick") }}</span>
       <span v-if="club.current_pick?.meeting_at" class="finer subtle">
-        {{ t("clubs.meeting", { when: relativeDay(club.current_pick.meeting_at) }) }}
+        {{ t("clubs.meeting", { when: relativeDay(club.current_pick.meeting_at, club.timezone) }) }}
       </span>
     </span>
   </RouterLink>

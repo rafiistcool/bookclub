@@ -9,6 +9,7 @@ import DeleteAccount from "../components/DeleteAccount.vue";
 import FavoritesEditor from "../components/FavoritesEditor.vue";
 import GoodreadsImport from "../components/GoodreadsImport.vue";
 import LanguageSwitch from "../components/LanguageSwitch.vue";
+import TimeZoneSetting from "../components/TimeZoneSetting.vue";
 import { MODES, THEMES, useTheme } from "../stores/theme";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
@@ -152,6 +153,8 @@ onMounted(() => {
         <LanguageSwitch />
       </div>
     </section>
+
+    <TimeZoneSetting />
 
     <section aria-labelledby="appearance">
       <div class="section-head">

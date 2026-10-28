@@ -5,11 +5,13 @@ import { bookOut, post } from "../test/fixtures";
 import type { DiaryFeedItem } from "../types";
 
 const diaryFeed = vi.fn();
+const editDiaryEntry = vi.fn();
 
 vi.mock("../api/client", () => ({
   ApiError: class ApiError extends Error {},
   api: {
     diaryFeed: (...args: unknown[]) => diaryFeed(...args),
+    editDiaryEntry: (...args: unknown[]) => editDiaryEntry(...args),
   },
 }));
 
@@ -39,8 +41,12 @@ function feedItem(overrides: Partial<DiaryFeedItem> = {}): DiaryFeedItem {
   };
 }
 
-async function mountClub(items: DiaryFeedItem[], props: { club?: string } = {}) {
+async function mountClub(items: DiaryFeedItem[], props: { club?: string; mine?: boolean } = {}) {
   diaryFeed.mockResolvedValue({ items, has_more: false, timezone: "UTC" });
+  return mountFeed(props);
+}
+
+async function mountFeed(props: { club?: string; mine?: boolean; pageSize?: number } = {}) {
   const wrapper = mount(DiaryFeed, {
     props,
     global: {
@@ -56,6 +62,7 @@ describe("DiaryFeed (recently written)", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     diaryFeed.mockReset();
+    editDiaryEntry.mockReset();
   });
 
   it("does not leak a spoiler-flagged excerpt when the viewer is behind", async () => {
@@ -127,5 +134,69 @@ describe("DiaryFeed (recently written)", () => {
       club: "readers-ab12",
     });
     expect(scoped.find(".feed-club").exists()).toBe(false);
+  });
+
+  describe("with mine (/diary)", () => {
+    const own = (id: number, overrides: Partial<DiaryFeedItem["entry"]> = {}) =>
+      feedItem({ entry: post({ id, author: "ada", mine: true, body: `Entry ${id}`, ...overrides }) });
+
+    it("lists only the reader's own diary writing, read from the combined feed", async () => {
+      const club = { slug: "readers-ab12", name: "Readers" };
+      diaryFeed
+        .mockResolvedValueOnce({
+          items: [feedItem(), own(10), own(9, { club }), { ...own(8, { parent_id: 2 }), parent_author: "anni" }],
+          has_more: true,
+          timezone: "UTC",
+        })
+        .mockResolvedValueOnce({ items: [own(7, { visibility: "only_me" })], has_more: false, timezone: "UTC" });
+      const wrapper = await mountFeed({ mine: true, pageSize: 3 });
+      // The feed has no author filter: 50-item pages, read on until enough are found.
+      expect(diaryFeed.mock.calls).toEqual([
+        [undefined, 50],
+        [8, 50],
+      ]);
+      expect(wrapper.findAll(".feed-body").map((row) => row.text())).toEqual([
+        "Entry 10",
+        "Entry 8",
+        "Only you Entry 7",
+      ]);
+      // Rows lead with the book; a reply says whom it answered.
+      const reply = wrapper.findAll(".feed-head")[1];
+      expect(reply.text()).toContain("The Wedding People");
+      expect(reply.text()).toContain("your reply to anni");
+      expect(wrapper.text()).not.toContain(SECRET);
+      // Roots carry their "Only me" switch; replies have no visibility of their own.
+      expect(wrapper.findAll(".feed-only-me")).toHaveLength(2);
+      expect(wrapper.find(".feed-load-more").exists()).toBe(false);
+    });
+
+    it("switches an entry to only me and back", async () => {
+      diaryFeed.mockResolvedValue({ items: [own(10)], has_more: false, timezone: "UTC" });
+      editDiaryEntry.mockResolvedValue(post({ id: 10, mine: true, visibility: "only_me" }));
+      const wrapper = await mountFeed({ mine: true });
+      await wrapper.get(".feed-only-me input").setValue(true);
+      await flushPromises();
+      expect(editDiaryEntry).toHaveBeenCalledWith(10, { visibility: "only_me" });
+      expect(wrapper.get(".only-me-badge").text()).toBe("Only you");
+
+      editDiaryEntry.mockResolvedValue(post({ id: 10, mine: true, visibility: "audience" }));
+      await wrapper.get(".feed-only-me input").setValue(false);
+      await flushPromises();
+      expect(editDiaryEntry).toHaveBeenLastCalledWith(10, { visibility: "audience" });
+      expect(wrapper.find(".only-me-badge").exists()).toBe(false);
+    });
+
+    it("offers to look further back when the newest pages hold nothing of the reader's", async () => {
+      diaryFeed.mockResolvedValue({ items: [feedItem()], has_more: true, timezone: "UTC" });
+      const wrapper = await mountFeed({ mine: true });
+      expect(diaryFeed).toHaveBeenCalledTimes(5);
+      expect(wrapper.text()).toContain("Nothing written yet");
+      diaryFeed.mockClear();
+      diaryFeed.mockResolvedValue({ items: [own(3)], has_more: false, timezone: "UTC" });
+      await wrapper.get(".feed-load-more").trigger("click");
+      await flushPromises();
+      expect(diaryFeed).toHaveBeenCalledWith(11, 50);
+      expect(wrapper.get(".feed-body").text()).toBe("Entry 3");
+    });
   });
 });

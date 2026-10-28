@@ -159,7 +159,11 @@ onMounted(() => {
         <DiaryFeed
           :heading="hasClubs ? t('home.recentlyWritten') : t('home.yourNotes')"
           :empty-text="hasClubs ? t('home.nothingWritten') : t('home.noNotes')"
-        />
+        >
+          <template #head>
+            <RouterLink to="/diary">{{ t("home.toDiary") }}</RouterLink>
+          </template>
+        </DiaryFeed>
       </section>
       <section v-if="hasClubs" class="section">
         <ActivityFeed :heading="t('activity.heading')" />
