@@ -156,16 +156,26 @@ async fn reporting_creates_a_queue_item_and_an_admin_removes_the_cover(db: PgPoo
 
 /// Acceptance (#43): after a takedown, a refresh, a first-view enrichment and a re-upload of the
 /// same file leave `cover_media_id` NULL and request no cover; nothing fetches the picture
-/// again.
+/// again. "The same file" is both the file Open Library sent and the WebP files readers saved
+/// from the cover's URLs (all they ever had).
 #[sqlx::test]
 async fn after_a_takedown_nothing_brings_the_cover_back(db: PgPool) {
     let app = TestApp::new(db).await;
     let ada = app.user("ada").await;
     let root = app.admin("root").await;
-    let (work, public_id, served_bytes) = shown_ol_cover(&app).await;
+    let (work, public_id, ol_bytes) = shown_ol_cover(&app).await;
     ada.post("/api/shelf", json!({"work_id": work}))
         .await
         .assert_status(201);
+    let mut saved = Vec::new();
+    for variant in ["l", "s"] {
+        let res = app
+            .anon()
+            .get(&format!("/media/{public_id}/{variant}"))
+            .await;
+        res.assert_status(200);
+        saved.push(res.body.to_vec());
+    }
     // Open Library still lists cover 111 for the work.
     Mock::given(method("GET"))
         .and(path("/works/OL1W.json"))
@@ -210,14 +220,26 @@ async fn after_a_takedown_nothing_brings_the_cover_back(db: PgPool) {
             .await
             .unwrap();
     assert!(enriched, "the enrichment ran");
-    // A re-upload of the same file.
-    ada.post_multipart(
-        &format!("/api/books/works/{work}/cover"),
-        vec![Part::file("circe.jpg", "image/jpeg", served_bytes)],
-    )
-    .await
-    .assert_detail(400, "This picture was removed");
+    // A re-upload of the same file: Open Library's JPEG, or the large or small WebP a reader
+    // saved. The work has no cover, so an accepted upload would be its cover at once.
+    for (name, bytes) in [
+        ("circe.jpg", ol_bytes),
+        ("l.webp", saved[0].clone()),
+        ("s.webp", saved[1].clone()),
+    ] {
+        ada.post_multipart(
+            &format!("/api/books/works/{work}/cover"),
+            vec![Part::file(name, "image/jpeg", bytes)],
+        )
+        .await
+        .assert_detail(400, "This picture was removed");
+    }
     assert_eq!(cover_of(&app, work).await, None);
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM catalog_edit_requests")
+            .await,
+        0
+    );
     // Neither the picture's URL, the spine backfill nor the prefetch worker's fetch asks for it.
     app.anon()
         .get(&format!("/media/{public_id}/s"))

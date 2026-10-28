@@ -377,16 +377,29 @@ async fn uploads_are_limited_to_30_a_day(db: PgPool) {
         .assert_status(200);
 }
 
-/// The same file as a taken-down picture is refused; the book keeps no cover.
+/// The same file as a taken-down picture is refused, and so is either WebP another reader saved
+/// from its URLs; the book keeps no cover and no request is filed.
 #[sqlx::test]
 async fn an_upload_of_a_removed_picture_is_refused(db: PgPool) {
     let app = TestApp::new(db).await;
     let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
     let root = app.admin("root").await;
     let work = app.work("My Zine").await;
     let data = png(40, 60, [200, 30, 30]);
     let res = upload(&ada, &work.id.to_string(), data.clone(), None).await;
     let public_id = public_id(&res.json()["book"]["cover_url"]);
+    // What bob has: the served WebP variants, not ada's PNG.
+    let mut saved = Vec::new();
+    for variant in ["l", "s"] {
+        let res = app
+            .anon()
+            .get(&format!("/media/{public_id}/{variant}"))
+            .await;
+        res.assert_status(200);
+        assert_ne!(res.body.to_vec(), data);
+        saved.push(res.body.to_vec());
+    }
     root.delete(&format!("/api/admin/media/{public_id}"))
         .await
         .assert_status(204);
@@ -394,7 +407,13 @@ async fn an_upload_of_a_removed_picture_is_refused(db: PgPool) {
     upload(&ada, &work.id.to_string(), data, None)
         .await
         .assert_detail(400, "This picture was removed");
+    for bytes in saved {
+        upload(&bob, &work.id.to_string(), bytes, None)
+            .await
+            .assert_detail(400, "This picture was removed");
+    }
     assert_eq!(work_cover(&app, work.id).await, (None, None));
+    assert!(open_requests(&app).await.is_empty());
     assert_eq!(app.scalar_i64("SELECT count(*) FROM media").await, 1);
     assert!(app.media.keys().is_empty());
 }

@@ -12,8 +12,9 @@
 //!    becomes a `cover_replace` request for the admin queue (CAT's approve applies it): 202
 //!    `{request_id}`.
 //!
-//! An upload whose original bytes match a taken-down picture is refused (400 `This picture was
-//! removed`). 30 uploads per user and day.
+//! An upload whose bytes match a taken-down picture, the file it was uploaded or fetched as or
+//! one of the WebP variants it was served as, is refused (400 `This picture was removed`) before
+//! anything is stored. 30 uploads per user and day.
 
 use axum::Json;
 use axum::extract::State;
@@ -107,12 +108,12 @@ pub async fn upload_cover(
         .upload_user
         .check_and_hit(&format!("u:{}", user.id))
         .map_err(|wait| wait.into_error(msg::SLOW_DOWN))?;
-    refuse_removed(&state, &data).await?;
     let processed = state
         .media_service
         .process(PictureKind::Cover, data)
         .await
         .map_err(picture_error)?;
+    refuse_removed(&state, &processed.sha256).await?;
     let public_id = new_public_id();
     store_variants(
         state.media.as_ref(),

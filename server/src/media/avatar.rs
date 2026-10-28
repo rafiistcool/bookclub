@@ -4,15 +4,15 @@
 //! An upload stores the new picture under a new public id, then, in one transaction under the
 //! user-row lock, deletes the user's previous avatar rows, registers the new one and points
 //! `users.avatar_media_id` at it; the old bytes are deleted after the commit. A picture taken
-//! down by an admin keeps its row (and hash), so the same file cannot come back.
+//! down by an admin keeps its row (and hash), and the takedown records the hash of the served
+//! `a` variant too, so neither the uploaded file nor the one readers saved can come back.
 
 use axum::Json;
 use axum::extract::State;
 use axum::http::HeaderMap;
-use bytes::Bytes;
 use sqlx::PgConnection;
 
-use super::pipeline::{PictureKind, sha256};
+use super::pipeline::PictureKind;
 use super::service::store_variants;
 use super::shared::urls::{new_public_id, storage_prefix};
 use super::shared::{NewMedia, is_removed_hash, register};
@@ -48,12 +48,12 @@ pub async fn put_avatar(
     multipart: Result<ApiMultipart, AppError>,
 ) -> ApiResult<Json<UserOut>> {
     let (data, _) = read_picture(&headers, multipart).await?;
-    refuse_removed(&state, &data).await?;
     let processed = state
         .media_service
         .process(PictureKind::Avatar, data)
         .await
         .map_err(picture_error)?;
+    refuse_removed(&state, &processed.sha256).await?;
     let public_id = new_public_id();
     store_variants(
         state.media.as_ref(),
@@ -141,11 +141,21 @@ pub async fn delete_avatar(
     Ok(Json(user_out(&mut conn, user.id).await?))
 }
 
-/// 400 `This picture was removed` when an admin took down a picture with these bytes.
-pub async fn refuse_removed(state: &AppState, data: &Bytes) -> ApiResult<()> {
-    let hash = sha256(data);
+/// 400 `This picture was removed` when an upload with this SHA-256 ([`Processed::sha256`], the
+/// bytes as received, hashed on the blocking pool) is a picture an admin took down: its
+/// original bytes (`media.sha256` of a removed row) or one of the variants it was served as
+/// (`media_removed_hashes`, recorded by the takedown).
+///
+/// [`Processed::sha256`]: super::pipeline::Processed::sha256
+pub async fn refuse_removed(state: &AppState, sha256: &[u8; 32]) -> ApiResult<()> {
     let mut conn = state.db.acquire().await?;
-    if is_removed_hash(&mut conn, &hash).await? {
+    let served = sqlx::query_scalar!(
+        r#"SELECT EXISTS (SELECT 1 FROM media_removed_hashes WHERE sha256 = $1) AS "removed!""#,
+        &sha256[..]
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    if served || is_removed_hash(&mut conn, sha256).await? {
         return Err(AppError::bad_request(PICTURE_REMOVED));
     }
     Ok(())

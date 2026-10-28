@@ -19,7 +19,6 @@ use futures::future::join_all;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use super::color::dominant_color;
 use super::service::CoverOutcome;
 use crate::AppState;
 use crate::auth::extract::CurrentUser;
@@ -147,11 +146,11 @@ async fn resolve(state: &AppState, picture: &Pending) -> anyhow::Result<Option<S
     if let Some(color) = row.dominant_color {
         return Ok(Some(color));
     }
-    // A stored picture without a colour: sample its largest variant.
+    // A stored picture without a colour: sample its largest variant (on the blocking pool).
     let color = match (&row.storage_key, row.variants.first()) {
         (Some(prefix), Some(variant)) => {
             match state.media.get(&format!("{prefix}/{variant}")).await? {
-                Some(bytes) => dominant_color(&bytes).unwrap_or_default(),
+                Some(bytes) => state.media_service.dominant_color(bytes).await?,
                 None => String::new(),
             }
         }

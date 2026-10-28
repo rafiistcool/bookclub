@@ -33,6 +33,7 @@ use tokio::sync::{Semaphore, mpsc};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
+use super::color::dominant_color;
 use super::pipeline::{self, PictureError, PictureKind, Processed};
 use crate::AppState;
 use crate::config::Config;
@@ -136,6 +137,14 @@ impl MediaService {
     /// Runs the picture pipeline on the blocking pool, at most two pictures at a time.
     pub async fn process(&self, kind: PictureKind, data: Bytes) -> Result<Processed, PictureError> {
         self.inner.process(kind, data).await
+    }
+
+    /// The spine colour of stored picture bytes (`color::dominant_color`; `""` when none is
+    /// usable), sampled on the blocking pool under the pipeline's two-at-a-time limit.
+    pub async fn dominant_color(&self, data: Bytes) -> anyhow::Result<String> {
+        let _permit = self.inner.pictures.acquire().await?;
+        let color = tokio::task::spawn_blocking(move || dominant_color(&data)).await?;
+        Ok(color.unwrap_or_default())
     }
 
     /// Makes sure the bytes of an Open Library cover row are stored, fetching them once if
@@ -337,6 +346,17 @@ pub async fn store_variants(
             .await?;
     }
     Ok(())
+}
+
+/// SHA-256 of each of `data`, computed on the blocking pool.
+pub async fn sha256_all(data: Vec<Bytes>) -> anyhow::Result<Vec<[u8; 32]>> {
+    let hashes = tokio::task::spawn_blocking(move || {
+        data.iter()
+            .map(|bytes| pipeline::sha256(bytes))
+            .collect::<Vec<_>>()
+    })
+    .await?;
+    Ok(hashes)
 }
 
 /// Records that Open Library has no usable picture for the row: not asked again for 7 days,

@@ -1,26 +1,30 @@
 //! Notice and takedown (endpoint-map §6): any signed-in reader reports a cover, an instance
 //! admin removes or dismisses it.
 //!
-//! **A takedown** ([`take_down`]), in one transaction: the media row is locked and gets
+//! **A takedown** ([`take_down`]), in one transaction: the media row is locked, the hashes of
+//! its original bytes and of every stored variant go into `media_removed_hashes`, the row gets
 //! `removed_at` (and loses `storage_key`), then `ingest::clear_media` clears every cover that
 //! showed it, then the picture's open reports are resolved as `removed`. That order (media row,
 //! catalog rows, reports) is the one ingest, `set_cover` and `merge_works` lock in, so a takedown
 //! waits for an ingest that is attaching the picture and then clears it too. The bytes are
 //! deleted after the commit. The row stays, with its hash: `ingest::ol_cover_media` never hands
 //! it out again, no fetch or backfill downloads it again, `/media/…` answers 410, and an upload
-//! of the same file is refused.
+//! of the same file, or of a variant a reader saved from `/media/…`, is refused.
 
 use std::collections::HashMap;
 
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use sqlx::PgConnection;
 use time::OffsetDateTime;
 use utoipa::ToSchema;
 
 use super::delete_prefixes;
+use super::service::sha256_all;
+use super::shared::MediaStore;
 use super::shared::urls::{cover_urls, storage_prefix};
 use crate::AppState;
 use crate::auth::extract::{CurrentUser, InstanceAdmin};
@@ -256,7 +260,7 @@ pub async fn resolve_report(
     let status = if body.action == "remove" {
         if let Some(media_id) = report.media_id {
             // Resolves the picture's open reports, this one included.
-            prefixes = take_down_locked(&mut tx, media_id, admin.id).await?;
+            prefixes = take_down_locked(&mut tx, state.media.as_ref(), media_id, admin.id).await?;
         }
         "removed"
     } else {
@@ -320,23 +324,26 @@ pub async fn take_down(
         .await?
         .ok_or_else(|| AppError::not_found(msg::NOT_FOUND))?;
     let mut tx = state.db.begin().await?;
-    let prefixes = take_down_locked(&mut tx, media_id, admin.id).await?;
+    let prefixes = take_down_locked(&mut tx, state.media.as_ref(), media_id, admin.id).await?;
     tx.commit().await?;
     delete_prefixes(state.media.as_ref(), &prefixes).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// The takedown inside the caller's transaction (see the module docs): locks the media row,
-/// sets `removed_at` and clears `storage_key`, clears every cover that shows it, and resolves
-/// the picture's open reports as `removed` by `admin_id`. Returns the storage prefixes to
-/// delete after the commit (empty when the picture was removed already).
+/// records the hashes it must not come back under, sets `removed_at` and clears `storage_key`,
+/// clears every cover that shows it, and resolves the picture's open reports as `removed` by
+/// `admin_id`. Returns the storage prefixes to delete after the commit (empty when the picture
+/// was removed already).
 pub async fn take_down_locked(
     conn: &mut PgConnection,
+    store: &dyn MediaStore,
     media_id: i64,
     admin_id: i64,
-) -> sqlx::Result<Vec<String>> {
+) -> ApiResult<Vec<String>> {
     let Some(row) = sqlx::query!(
-        r#"SELECT kind, public_id, storage_key, removed_at IS NOT NULL AS "removed!"
+        r#"SELECT kind, public_id, storage_key, variants, sha256,
+                  removed_at IS NOT NULL AS "removed!"
            FROM media WHERE id = $1 FOR UPDATE"#,
         media_id
     )
@@ -347,6 +354,11 @@ pub async fn take_down_locked(
     };
     let mut prefixes = Vec::new();
     if !row.removed {
+        let stored = match &row.storage_key {
+            Some(prefix) => stored_variants(store, prefix, &row.variants).await?,
+            None => Vec::new(),
+        };
+        record_removed_hashes(conn, media_id, row.sha256, stored).await?;
         sqlx::query!(
             "UPDATE media SET removed_at = now(), storage_key = NULL WHERE id = $1",
             media_id
@@ -366,6 +378,59 @@ pub async fn take_down_locked(
     .execute(&mut *conn)
     .await?;
     Ok(prefixes)
+}
+
+/// The bytes of every stored variant, as `/media/{public_id}/{variant}` served them. A variant
+/// whose bytes are missing is skipped (nothing can have been served from it).
+async fn stored_variants(
+    store: &dyn MediaStore,
+    prefix: &str,
+    variants: &[String],
+) -> anyhow::Result<Vec<(String, Bytes)>> {
+    let mut stored = Vec::new();
+    for variant in variants {
+        let key = format!("{prefix}/{variant}");
+        match store.get(&key).await? {
+            Some(bytes) => stored.push((variant.clone(), bytes)),
+            None => tracing::warn!(key, "a stored variant of a picture taken down has no bytes"),
+        }
+    }
+    Ok(stored)
+}
+
+/// Records the hashes a taken-down picture must not come back under (`media_removed_hashes`,
+/// checked by every upload): the bytes as received (`original`, a copy of `media.sha256` that
+/// outlives the row) and every stored variant, the bytes readers actually saw and saved. An
+/// Open Library cover taken down before its first fetch has neither: we never had its bytes,
+/// and fetching them now would download the removed picture again.
+async fn record_removed_hashes(
+    conn: &mut PgConnection,
+    media_id: i64,
+    original: Option<Vec<u8>>,
+    stored: Vec<(String, Bytes)>,
+) -> anyhow::Result<()> {
+    let (names, bytes): (Vec<String>, Vec<Bytes>) = stored.into_iter().unzip();
+    let mut hashes: Vec<Vec<u8>> = sha256_all(bytes)
+        .await?
+        .into_iter()
+        .map(|hash| hash.to_vec())
+        .collect();
+    let mut variants: Vec<Option<String>> = names.into_iter().map(Some).collect();
+    if let Some(original) = original {
+        hashes.insert(0, original);
+        variants.insert(0, None);
+    }
+    sqlx::query!(
+        "INSERT INTO media_removed_hashes (sha256, media_id, variant)
+         SELECT sha256, $1, variant FROM UNNEST($2::bytea[], $3::text[]) AS h (sha256, variant)
+         ON CONFLICT (sha256) DO NOTHING",
+        media_id,
+        &hashes,
+        &variants as &[Option<String>]
+    )
+    .execute(conn)
+    .await?;
+    Ok(())
 }
 
 /// The [`ReportOut`]s of `ids`, in that order (missing ids are left out).

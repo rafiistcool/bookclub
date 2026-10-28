@@ -394,18 +394,25 @@ async fn served_pixel(app: &TestApp, client: &TestClient, x: u32, y: u32) -> [u8
         .0
 }
 
-/// An avatar an admin took down disappears from the account, its URL answers 410, and the same
-/// file cannot be uploaded again; another picture can.
+/// An avatar an admin took down disappears from the account, its URL answers 410, and neither
+/// the uploaded file nor the WebP a reader saved from its URL can be uploaded again; another
+/// picture can, and becomes the avatar.
 #[sqlx::test]
 async fn a_taken_down_avatar_cannot_come_back(db: PgPool) {
     let app = TestApp::new(db).await;
     let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
     let root = app.admin("root").await;
     let picture = png(48, [180, 40, 40]);
     upload(&ada, picture.clone(), "me.png", "image/png")
         .await
         .assert_status(200);
     let url = avatar_url(&ada).await.as_str().unwrap().to_owned();
+    // What every reader has: the served WebP, not ada's PNG.
+    let served = app.anon().get(&url).await;
+    served.assert_status(200);
+    let served = served.body.to_vec();
+    assert_ne!(served, picture);
     root.delete(&format!("/api/admin/media/{}", public_id(&url)))
         .await
         .assert_status(204);
@@ -417,13 +424,74 @@ async fn a_taken_down_avatar_cannot_come_back(db: PgPool) {
     upload(&ada, picture, "again.png", "image/png")
         .await
         .assert_detail(400, "This picture was removed");
+    upload(&bob, served.clone(), "saved.webp", "image/webp")
+        .await
+        .assert_detail(400, "This picture was removed");
+    upload(&ada, served, "saved.webp", "image/webp")
+        .await
+        .assert_detail(400, "This picture was removed");
+    assert_eq!(avatar_url(&bob).await, Value::Null);
+    assert!(app.media.keys().is_empty(), "{:?}", app.media.keys());
+
     upload(&ada, png(48, [1, 2, 3]), "other.png", "image/png")
         .await
         .assert_status(200);
-    // The removed row stays (with its hash), the new one is the avatar.
+    // The new picture is the avatar; the removed row stays (with its hash).
+    let new_url = avatar_url(&ada).await.as_str().unwrap().to_owned();
+    assert_ne!(new_url, url);
+    app.anon().get(&new_url).await.assert_status(200);
+    let new_id = app
+        .scalar_i64(&format!(
+            "SELECT id FROM media WHERE public_id = '{}'",
+            public_id(&new_url)
+        ))
+        .await;
+    assert_eq!(
+        app.scalar_i64("SELECT avatar_media_id FROM users WHERE username = 'ada'")
+            .await,
+        new_id
+    );
     assert_eq!(
         app.scalar_i64("SELECT count(*) FROM media WHERE removed_at IS NOT NULL")
             .await,
         1
     );
+}
+
+/// The hashes of a taken-down avatar outlive its row: account deletion deletes the row, and
+/// neither file can come back under a new account.
+#[sqlx::test]
+async fn a_taken_down_avatar_stays_out_after_the_account_is_deleted(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let root = app.admin("root").await;
+    let picture = png(48, [180, 40, 40]);
+    upload(&ada, picture.clone(), "me.png", "image/png")
+        .await
+        .assert_status(200);
+    let url = avatar_url(&ada).await.as_str().unwrap().to_owned();
+    let served = app.anon().get(&url).await.body.to_vec();
+    root.delete(&format!("/api/admin/media/{}", public_id(&url)))
+        .await
+        .assert_status(204);
+    ada.delete_json("/api/auth/me", json!({"password": PASSWORD}))
+        .await
+        .assert_status(204);
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM media").await, 0);
+    assert_eq!(
+        app.scalar_i64(
+            "SELECT count(*) FROM media_removed_hashes WHERE media_id IS NULL AND variant IS NULL"
+        )
+        .await,
+        1
+    );
+
+    let carol = app.user("carol").await;
+    upload(&carol, picture, "me.png", "image/png")
+        .await
+        .assert_detail(400, "This picture was removed");
+    upload(&carol, served, "saved.webp", "image/webp")
+        .await
+        .assert_detail(400, "This picture was removed");
+    assert_eq!(avatar_url(&carol).await, Value::Null);
 }

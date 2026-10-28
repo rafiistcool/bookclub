@@ -4,8 +4,11 @@
 
 mod common;
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use axum::http::header::CONTENT_TYPE;
 use bookclub_server::catalog::shared::books::{BookRef, book_out};
 use bookclub_server::catalog::shared::ingest::{self, Mode, Source, WorkRecord};
 use bookclub_server::media::service::run_prefetch;
@@ -14,6 +17,7 @@ use common::*;
 use image::codecs::jpeg::JpegEncoder;
 use image::{ExtendedColorType, ImageEncoder, Rgb, RgbImage};
 use sqlx::PgPool;
+use tokio::sync::{Notify, Semaphore};
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, ResponseTemplate};
@@ -338,7 +342,7 @@ async fn a_stored_picture_without_bytes_is_404(db: PgPool) {
 }
 
 /// The prefetch worker fetches queued covers before anyone asks; removed and unknown rows are
-/// skipped, and it stops when told to.
+/// skipped, it stops when told to, and it can be started again.
 #[sqlx::test]
 async fn the_prefetch_worker_stores_queued_covers(db: PgPool) {
     let app = TestApp::new(db).await;
@@ -357,17 +361,7 @@ async fn the_prefetch_worker_stores_queued_covers(db: PgPool) {
         .prefetch(&[first, removed, second, 999_999, first]);
     let shutdown = CancellationToken::new();
     let worker = tokio::spawn(run_prefetch(app.state.clone(), shutdown.clone()));
-    for _ in 0..500 {
-        let stored = app
-            .scalar_i64(&format!(
-                "SELECT count(*) FROM media WHERE id IN ({first}, {second}) AND storage_key IS NOT NULL"
-            ))
-            .await;
-        if stored == 2 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    wait_until_stored(&app, &[first, second]).await;
     shutdown.cancel();
     tokio::time::timeout(Duration::from_secs(10), worker)
         .await
@@ -386,47 +380,114 @@ async fn the_prefetch_worker_stores_queued_covers(db: PgPool) {
         .assert_status(200);
     assert_eq!(cover_requests(&app).await, 2);
 
-    // The worker can be started again (the queue is handed back).
-    app.state.media_service.prefetch(&[second]);
+    // The worker can be started again (the queue is handed back): a restarted worker fetches a
+    // cover queued after the first one stopped.
+    let (_, fourth, _) = ol_cover_work(&app, "OL4W", 444).await;
+    serve_cover(&app, 444, jpeg([25, 50, 100], 60, 90)).await;
+    app.state.media_service.prefetch(&[fourth]);
     let shutdown = CancellationToken::new();
     let worker = tokio::spawn(run_prefetch(app.state.clone(), shutdown.clone()));
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    wait_until_stored(&app, &[fourth]).await;
     shutdown.cancel();
-    worker.await.unwrap();
-    assert_eq!(cover_requests(&app).await, 2);
+    tokio::time::timeout(Duration::from_secs(10), worker)
+        .await
+        .expect("the restarted worker stops")
+        .unwrap();
+    assert_eq!(cover_requests(&app).await, 3);
+    let last = app.upstream_requests().await.pop().unwrap();
+    assert_eq!(last.url.path(), "/b/id/444-L.jpg");
+}
+
+/// Waits (up to 10 s) until every row of `ids` has stored bytes.
+async fn wait_until_stored(app: &TestApp, ids: &[i64]) {
+    let list = ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+    let sql =
+        format!("SELECT count(*) FROM media WHERE id IN ({list}) AND storage_key IS NOT NULL");
+    for _ in 0..500 {
+        if app.scalar_i64(&sql).await == ids.len() as i64 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("the covers {ids:?} were not stored within 10 s");
+}
+
+/// A cover host on this machine that holds every answer until the test releases it, so a test
+/// can act while a fetch is in flight without guessing how long anything takes. (wiremock
+/// computes its answer under a lock that its request log needs too, so it cannot wait for a
+/// signal.)
+struct GatedCoverHost {
+    /// The base URL, for `OPENLIBRARY_COVERS_URL`.
+    url: String,
+    /// Notified when a request has arrived (and waits).
+    arrived: Arc<Notify>,
+    /// One permit answers one waiting request.
+    release: Arc<Semaphore>,
+    /// Requests received.
+    requests: Arc<AtomicUsize>,
+}
+
+impl GatedCoverHost {
+    /// Serves `body` as every `/b/id/…` cover, each answer only after a release.
+    async fn start(body: Vec<u8>) -> Self {
+        let arrived = Arc::new(Notify::new());
+        let release = Arc::new(Semaphore::new(0));
+        let requests = Arc::new(AtomicUsize::new(0));
+        let handler = {
+            let (arrived, release, requests) = (arrived.clone(), release.clone(), requests.clone());
+            move || {
+                let (arrived, release, requests, body) = (
+                    arrived.clone(),
+                    release.clone(),
+                    requests.clone(),
+                    body.clone(),
+                );
+                async move {
+                    requests.fetch_add(1, Ordering::SeqCst);
+                    arrived.notify_one();
+                    release.acquire().await.unwrap().forget();
+                    ([(CONTENT_TYPE, "image/jpeg")], body)
+                }
+            }
+        };
+        let router = axum::Router::new().route("/b/id/{file}", axum::routing::get(handler));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        GatedCoverHost {
+            url,
+            arrived,
+            release,
+            requests,
+        }
+    }
 }
 
 /// A takedown while the fetch waits for Open Library: the fetched bytes are not kept, and the
-/// waiting request answers 410.
+/// waiting request answers 410. The cover host answers only after the takedown committed.
 #[sqlx::test]
 async fn a_takedown_during_a_fetch_leaves_no_bytes(db: PgPool) {
-    let app = TestApp::new(db).await;
+    let covers = GatedCoverHost::start(jpeg([200, 30, 30], 100, 150)).await;
+    let app = TestApp::with_env(db, &[("OPENLIBRARY_COVERS_URL", &covers.url)]).await;
     let root = app.admin("root").await;
     let (_, media_id, public_id) = ol_cover_work(&app, "OL1W", 111).await;
-    Mock::given(method("GET"))
-        .and(path("/b/id/111-L.jpg"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_bytes(jpeg([200, 30, 30], 100, 150))
-                .set_delay(Duration::from_secs(1)),
-        )
-        .mount(&app.upstream)
-        .await;
     let anon = app.anon();
     let url = format!("/media/{public_id}/l");
     let take_down = async {
-        for _ in 0..200 {
-            if cover_requests(&app).await > 0 {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        covers.arrived.notified().await;
         root.delete(&format!("/api/admin/media/{public_id}"))
             .await
             .assert_status(204);
+        covers.release.add_permits(1);
     };
-    let (res, ()) = tokio::join!(anon.get(&url), take_down);
+    let (res, ()) = tokio::time::timeout(Duration::from_secs(30), async {
+        tokio::join!(anon.get(&url), take_down)
+    })
+    .await
+    .expect("the fetch and the takedown finish");
     res.assert_detail(410, "This picture was removed");
+    assert_eq!(covers.requests.load(Ordering::SeqCst), 1);
+    assert!(app.upstream_requests().await.is_empty());
     assert!(app.media.keys().is_empty(), "{:?}", app.media.keys());
     let row: (Option<String>, bool) =
         sqlx::query_as("SELECT storage_key, removed_at IS NOT NULL FROM media WHERE id = $1")
