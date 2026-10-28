@@ -36,7 +36,7 @@ const alreadyIn = computed(() =>
   Boolean(club.value && session.user?.clubs.some((row) => row.slug === club.value!.slug)),
 );
 const loginLink = computed(() => ({ path: "/login", query: { next: `/join/${code.value}` } }));
-const signupLink = computed(() => ({ path: "/register", query: { code: code.value } }));
+const signupLink = computed(() => ({ path: "/signup", query: { code: code.value } }));
 
 async function load() {
   try {

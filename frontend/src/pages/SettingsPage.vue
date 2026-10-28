@@ -3,7 +3,9 @@ import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { api, ApiError } from "../api/client";
+import AccountSettings from "../components/AccountSettings.vue";
 import Avatar from "../components/Avatar.vue";
+import DeleteAccount from "../components/DeleteAccount.vue";
 import FavoritesEditor from "../components/FavoritesEditor.vue";
 import GoodreadsImport from "../components/GoodreadsImport.vue";
 import LanguageSwitch from "../components/LanguageSwitch.vue";
@@ -83,6 +85,12 @@ async function logout() {
   await router.push("/login");
 }
 
+/** The session already ended on the server (signed out here, or the account is gone). */
+function toLogin(message?: string) {
+  if (message) toast.show(message);
+  void router.replace("/login");
+}
+
 onMounted(() => {
   void loadFavorites();
 });
@@ -124,6 +132,8 @@ onMounted(() => {
         </div>
       </div>
     </section>
+
+    <AccountSettings @logged-out="toLogin()" />
 
     <section class="section" aria-labelledby="favorites">
       <div class="section-head">
@@ -221,6 +231,8 @@ onMounted(() => {
       </p>
       <a class="btn btn-ghost backup-btn" href="/api/auth/me/export" download>{{ t("settings.exportData") }}</a>
     </section>
+
+    <DeleteAccount @deleted="toLogin(t('account.deleted'))" />
 
     <hr class="divider" />
 

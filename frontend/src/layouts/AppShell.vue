@@ -3,6 +3,7 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import Avatar from "../components/Avatar.vue";
+import EmailPrompt from "../components/EmailPrompt.vue";
 import NavIcon from "../components/NavIcon.vue";
 import { NAV_ITEMS, isActive } from "../nav";
 import { useService } from "../stores/service";
@@ -56,6 +57,7 @@ const avatarUrl = computed(() => session.user?.avatar_url ?? null);
     </aside>
 
     <main class="main">
+      <EmailPrompt />
       <RouterView />
     </main>
 

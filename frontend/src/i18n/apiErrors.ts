@@ -10,6 +10,8 @@ const API_ERROR_KEYS: Record<string, string> = {
   // Accounts and sign-in
   "Not signed in": "errors.notSignedIn",
   "That username is already taken": "errors.usernameTaken",
+  "Username must be 2–32 characters: lowercase letters, numbers, underscore": "errors.usernameRule",
+  "Password must be at least 8 characters": "errors.passwordShort",
   "That invite code is not valid": "errors.inviteInvalid",
   "Sign-up needs an invite code right now": "errors.signupNeedsInvite",
   "Too many attempts. Wait a few minutes.": "errors.tooManyAttempts",
@@ -50,6 +52,10 @@ const API_ERROR_KEYS: Record<string, string> = {
   "Percent milestones go up to 100": "errors.percentMax",
   "A range needs a unit": "errors.rangeNeedsUnit",
   "Replies and club posts cannot be private": "errors.repliesNotPrivate",
+  "No entry with that id": "errors.noEntry",
+  "That entry is not on this book": "errors.entryNotOnBook",
+  "You can only edit your own entries": "errors.editOwnEntries",
+  "You can only delete your own entries": "errors.deleteOwnEntries",
 
   // Club picks, milestones and the next-up vote
   "No club pick yet": "errors.noPickYet",
@@ -96,6 +102,11 @@ const API_ERROR_KEYS: Record<string, string> = {
   "At most 3 favourites": "errors.tooManyFavourites",
   "You already have 3 favourites": "errors.favouritesFull",
   "Search history entry not found": "errors.historyNotFound",
+  "Paste the line you want to keep": "errors.quoteEmpty",
+  "Keep it to 1000 characters": "errors.quoteTooLong",
+  "No quote with that id": "errors.noQuote",
+  "You can only edit your own quotes": "errors.editOwnQuotes",
+  "You can only delete your own quotes": "errors.deleteOwnQuotes",
   "An import is already running": "errors.importRunning",
   "No such import": "errors.noSuchImport",
   "The import stopped unexpectedly. Try again.": "errors.importStopped",

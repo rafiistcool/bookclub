@@ -42,6 +42,7 @@ export type {
   MilestoneOut,
   MilestoneUnit,
   PickThreadOut,
+  QuoteOut,
   VoteSuggestionOut,
   CustomBookIn,
   DiaryEntryIn,

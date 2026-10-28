@@ -26,18 +26,25 @@ import type {
   MilestoneIn,
   MilestoneListOut,
   MilestoneOut,
+  NotificationsIn,
+  NotificationsOut,
   OverlapOut,
   PickPostIn,
   PickThreadOut,
   PostOut,
   PostPatchIn,
   PreferencesIn,
+  QuoteIn,
+  QuoteListOut,
+  QuoteOut,
+  QuotePatchIn,
   RegisterIn,
   ReportCreated,
   ReportIn,
   SearchHistoryOut,
   SearchPage,
   ServiceConfig,
+  SessionList,
   ShelfAddIn,
   ShelfItemOut,
   ShelfListOut,
@@ -161,6 +168,29 @@ export const api = {
     request<UserOut>("/api/auth/me/avatar", { method: "PUT", body: upload(file) }),
   deleteAvatar: () => request<UserOut>("/api/auth/me/avatar", { method: "DELETE" }),
 
+  /** The link from the verification mail (`/verify-email#token=…`). Needs no session. */
+  verifyEmail: (token: string) => request<void>("/api/auth/verify-email", json("POST", { token })),
+  resendVerification: () => request<void>("/api/auth/verify-email/resend", { method: "POST" }),
+  changeEmail: (email: string, currentPassword: string) =>
+    request<void>("/api/auth/me/email", json("PUT", { email, current_password: currentPassword })),
+  dismissEmailPrompt: () => request<void>("/api/auth/me/email-prompt/dismiss", { method: "POST" }),
+  /** Always 204, whether or not the address belongs to an account. */
+  requestPasswordReset: (email: string) =>
+    request<void>("/api/auth/password-reset", json("POST", { email })),
+  confirmPasswordReset: (token: string, newPassword: string) =>
+    request<void>("/api/auth/password-reset/confirm", json("POST", { token, new_password: newPassword })),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<void>(
+      "/api/auth/password",
+      json("PATCH", { current_password: currentPassword, new_password: newPassword }),
+    ),
+  sessions: () => request<SessionList>("/api/auth/sessions"),
+  endSession: (id: number) => request<void>(`/api/auth/sessions/${id}`, { method: "DELETE" }),
+  notifications: () => request<NotificationsOut>("/api/auth/notifications"),
+  saveNotifications: (body: NotificationsIn) =>
+    request<NotificationsOut>("/api/auth/notifications", json("PATCH", body)),
+  deleteAccount: (password: string) => request<void>("/api/auth/me", json("DELETE", { password })),
+
   myFavorites: () => request<FavoritesOut>("/api/auth/me/favorites"),
   replaceFavorites: (workIds: number[]) =>
     request<FavoritesOut>("/api/auth/me/favorites", json("PUT", { work_ids: workIds })),
@@ -220,6 +250,20 @@ export const api = {
   importGoodreads: (file: File) =>
     request<ImportJobOut>("/api/shelf/import", { method: "POST", body: upload(file) }),
   importJob: (id: number) => request<ImportJobOut>(`/api/shelf/import/${id}`),
+
+  /** Quotes the viewer may see: one work's, one reader's, or both. */
+  quotes: (params: { work?: number; username?: string; limit?: number } = {}) => {
+    const query = new URLSearchParams();
+    if (params.work) query.set("work", String(params.work));
+    if (params.username) query.set("username", params.username);
+    if (params.limit) query.set("limit", String(params.limit));
+    const qs = query.toString();
+    return request<QuoteListOut>(`/api/quotes${qs ? `?${qs}` : ""}`);
+  },
+  addQuote: (body: QuoteIn) => request<QuoteOut>("/api/quotes", json("POST", body)),
+  editQuote: (id: number, body: QuotePatchIn) =>
+    request<QuoteOut>(`/api/quotes/${id}`, json("PATCH", body)),
+  deleteQuote: (id: number) => request<void>(`/api/quotes/${id}`, { method: "DELETE" }),
 
   diary: (workId: number | string) => request<DiaryOut>(`${workPath(workId)}/posts`),
   addDiaryEntry: (workId: number | string, body: DiaryEntryIn) =>

@@ -248,7 +248,10 @@ onMounted(load);
 
     <p v-if="error" class="error">{{ error }}</p>
 
-    <div v-if="loaded && !error" class="shelf-view-toolbar"><ShelfViewSwitch active="books" /></div>
+    <div v-if="loaded && !error" class="shelf-view-toolbar">
+      <ShelfViewSwitch active="books" />
+      <RouterLink class="btn btn-ghost btn-sm shelf-quotes-link" to="/quotes">{{ t("quotes.title") }}</RouterLink>
+    </div>
 
     <div v-if="!loaded" class="book-grid" aria-hidden="true">
       <TileSkeleton :count="9" />
@@ -353,7 +356,7 @@ onMounted(load);
 </template>
 
 <style scoped>
-.shelf-view-toolbar { margin-bottom: var(--space-5); }
+.shelf-view-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-5); }
 .shelf-head { position: relative; padding-right: 42px; margin-bottom: var(--space-6); }
 .shelf-head > div { min-width: 0; }
 .shelf-head h1 { font-size: clamp(1.5rem, 6.7vw, 2rem); }

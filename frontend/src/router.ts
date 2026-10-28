@@ -32,10 +32,20 @@ const router = createRouter({
       meta: { guest: true },
     },
     {
-      path: "/register",
-      component: () => import("./pages/RegisterPage.vue"),
+      path: "/signup",
+      component: () => import("./pages/SignupPage.vue"),
       meta: { guest: true },
     },
+    // The old sign-up path; `?code=` comes along.
+    { path: "/register", redirect: (to) => ({ path: "/signup", query: to.query }) },
+    {
+      path: "/forgot-password",
+      component: () => import("./pages/ForgotPasswordPage.vue"),
+      meta: { guest: true },
+    },
+    // Mail links (`#token=…`). Public: a signed-in reader may open them too.
+    { path: "/verify-email", component: () => import("./pages/VerifyEmailPage.vue") },
+    { path: "/reset-password", component: () => import("./pages/ResetPasswordPage.vue") },
     {
       // An invite link. Public: a reader who is signed out signs in or up first.
       path: "/join/:code",
@@ -50,6 +60,7 @@ const router = createRouter({
         { path: "discover", component: () => import("./pages/DiscoverPage.vue") },
         { path: "shelf", component: () => import("./pages/ShelfPage.vue") },
         { path: "shelf/physical", component: () => import("./pages/PhysicalShelfPage.vue") },
+        { path: "quotes", component: () => import("./pages/QuotesPage.vue") },
         { path: "clubs", component: ClubsPage },
         { path: "clubs/new", component: () => import("./pages/NewClubPage.vue") },
         {

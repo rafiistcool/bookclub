@@ -7,6 +7,7 @@ import { api, ApiError } from "../api/client";
 import Avatar from "../components/Avatar.vue";
 import BookCover from "../components/BookCover.vue";
 import BookDiary from "../components/BookDiary.vue";
+import QuoteList from "../components/QuoteList.vue";
 import ClubBookActions from "../components/ClubBookActions.vue";
 import ReportCoverSheet from "../components/ReportCoverSheet.vue";
 import { clubsFor } from "../clubActions";
@@ -565,6 +566,10 @@ watch(param, load);
 
       <section class="section">
         <BookDiary ref="diary" :work-id="book.id" />
+      </section>
+
+      <section class="section">
+        <QuoteList :work-id="book.id" :empty-text="t('quotes.emptyBook')" />
       </section>
 
       <section v-if="book.subjects.length" class="section">

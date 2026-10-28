@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { ApiError } from "../api/client";
@@ -8,15 +8,22 @@ import { clearJoinCode, parseInviteCode, pendingJoinCode } from "../invites";
 import { useClubs } from "../stores/clubs";
 import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
+import { useToast } from "../stores/toast";
 
+/**
+ * Sign-up. In `open` mode (`ServiceConfig.signup`) anyone may create an
+ * account and an invite code is optional (a club invite also joins the
+ * club); in `invite` mode the code is required. The browser's time zone and
+ * the UI language go along.
+ */
 const { t } = useI18n();
-
 const service = useService();
-
 const session = useSession();
 const router = useRouter();
 const route = useRoute();
 const clubs = useClubs();
+const toast = useToast();
+
 const username = ref("");
 const email = ref("");
 const password = ref("");
@@ -24,6 +31,8 @@ const password = ref("");
 const invite = ref(
   typeof route.query.code === "string" ? parseInviteCode(route.query.code) : pendingJoinCode() ?? "",
 );
+const inviteOnly = computed(() => service.signup !== "open");
+const showInvite = ref(inviteOnly.value || Boolean(invite.value));
 const show = ref(false);
 const error = ref("");
 const pending = ref(false);
@@ -34,11 +43,12 @@ async function submit() {
   try {
     await session.register({
       username: username.value,
-      email: email.value,
+      email: email.value.trim(),
       password: password.value,
-      inviteCode: invite.value,
+      inviteCode: parseInviteCode(invite.value),
     });
     clearJoinCode();
+    toast.show(t("auth.checkInbox", { email: email.value.trim() }));
     // A club invite made the new account a member: open that club.
     const joined = session.user?.clubs[0];
     if (joined) {
@@ -58,19 +68,23 @@ async function submit() {
 <template>
   <main class="auth-page">
     <h1 class="wordmark">{{ service.name }}</h1>
-    <p class="lede">{{ t("auth.joinLede") }}</p>
+    <p class="lede">{{ inviteOnly ? t("auth.signupInviteLede") : t("auth.signupLede") }}</p>
     <form @submit.prevent="submit">
       <p v-if="error" class="error">{{ error }}</p>
-      <label class="field">
-        <span>{{ t("auth.inviteCode") }}</span>
+      <label v-if="showInvite" class="field">
+        <span>{{ inviteOnly ? t("auth.inviteCode") : t("auth.inviteCodeOptional") }}</span>
         <input
           v-model="invite"
           name="invite"
           autocomplete="one-time-code"
           autocapitalize="characters"
-          required
+          spellcheck="false"
+          :required="inviteOnly"
         />
       </label>
+      <button v-else class="text-btn invite-toggle" type="button" @click="showInvite = true">
+        {{ t("auth.haveInviteCode") }}
+      </button>
       <label class="field">
         <span>{{ t("auth.username") }}</span>
         <input
@@ -80,6 +94,7 @@ async function submit() {
           spellcheck="false"
           required
         />
+        <span class="field-hint">{{ t("auth.usernameHint") }}</span>
       </label>
       <label class="field">
         <span>{{ t("auth.email") }}</span>
@@ -91,6 +106,7 @@ async function submit() {
           spellcheck="false"
           required
         />
+        <span class="field-hint">{{ t("auth.emailHint") }}</span>
       </label>
       <label class="field">
         <span>{{ t("auth.password") }}</span>
@@ -125,6 +141,10 @@ async function submit() {
 <style scoped>
 .lede {
   margin: var(--space-2) 0 var(--space-6);
+}
+
+.invite-toggle {
+  margin: 0 0 var(--space-3) calc(-1 * var(--space-2));
 }
 
 .auth-alt {

@@ -65,7 +65,7 @@ describe("JoinPage", () => {
     expect(api.acceptInvite).not.toHaveBeenCalled();
     expect(pendingJoinCode()).toBe("7K3M9QX2HD");
     const links = wrapper.findAllComponents(RouterLinkStub).map((link) => link.props("to"));
-    expect(links).toContainEqual({ path: "/register", query: { code: "7K3M9QX2HD" } });
+    expect(links).toContainEqual({ path: "/signup", query: { code: "7K3M9QX2HD" } });
     expect(links).toContainEqual({ path: "/login", query: { next: "/join/7K3M9QX2HD" } });
   });
 

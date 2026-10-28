@@ -23,7 +23,7 @@ const pending = ref(false);
 /** Coming from an invite link: sign-up keeps the code. */
 const signupLink = computed(() => {
   const code = joinCodeFromNext(route.query.next) ?? pendingJoinCode();
-  return code ? { path: "/register", query: { code } } : "/register";
+  return code ? { path: "/signup", query: { code } } : "/signup";
 });
 
 async function submit() {
@@ -49,6 +49,7 @@ async function submit() {
       <label class="field">
         <span>{{ t("auth.username") }}</span>
         <input v-model="username" name="username" autocomplete="username" required />
+        <span class="field-hint">{{ t("auth.usernameOrEmail") }}</span>
       </label>
       <label class="field">
         <span>{{ t("auth.password") }}</span>
@@ -69,8 +70,11 @@ async function submit() {
         {{ pending ? t("auth.signingIn") : t("auth.signIn") }}
       </button>
     </form>
+    <p class="fine auth-forgot">
+      <RouterLink to="/forgot-password">{{ t("auth.forgotPassword") }}</RouterLink>
+    </p>
     <p class="muted fine auth-alt">
-      {{ t("auth.haveInvite") }}
+      {{ service.signup === "open" ? t("auth.newHere") : t("auth.haveInvite") }}
       <RouterLink :to="signupLink">{{ t("auth.createAccount") }}</RouterLink>
     </p>
     <div class="auth-locale">
@@ -82,6 +86,10 @@ async function submit() {
 <style scoped>
 .lede {
   margin: var(--space-2) 0 var(--space-6);
+}
+
+.auth-forgot {
+  margin-top: var(--space-3);
 }
 
 .auth-alt {
