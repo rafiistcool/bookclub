@@ -27,6 +27,7 @@ use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use super::record::PRIVATE_KEY;
 use crate::AppState;
 use crate::auth::extract::CurrentUser;
 use crate::catalog::shared::books::{BookRef, book_outs};
@@ -209,10 +210,10 @@ pub async fn home_feed(
                   e.pick_id, e.payload, e.created_at, q.body AS "quote_body?",
                   q.page AS "quote_page?",
                   (e.kind = 'shelf_finished' AND e.actor_id IS DISTINCT FROM $1
-                   AND NOT EXISTS (
+                   AND (e.payload ? 'private' OR NOT EXISTS (
                        SELECT 1 FROM shelf_entries s
                        WHERE s.user_id = e.actor_id AND s.work_id = e.work_id
-                         AND bc_can_see_item($1, s.user_id, s.rating_visibility))) AS "hide_rating!"
+                         AND bc_can_see_item($1, s.user_id, s.rating_visibility)))) AS "hide_rating!"
            FROM events e
            LEFT JOIN users u ON u.id = e.actor_id
            LEFT JOIN quotes q ON e.kind = 'quote_added' AND q.user_id = e.actor_id
@@ -328,10 +329,10 @@ pub async fn club_feed(
                   e.pick_id, e.payload, e.created_at, q.body AS "quote_body?",
                   q.page AS "quote_page?",
                   (e.kind = 'shelf_finished' AND e.actor_id IS DISTINCT FROM $1
-                   AND NOT EXISTS (
+                   AND (e.payload ? 'private' OR NOT EXISTS (
                        SELECT 1 FROM shelf_entries s
                        WHERE s.user_id = e.actor_id AND s.work_id = e.work_id
-                         AND bc_can_see_item($1, s.user_id, s.rating_visibility))) AS "hide_rating!"
+                         AND bc_can_see_item($1, s.user_id, s.rating_visibility)))) AS "hide_rating!"
            FROM events e
            LEFT JOIN users u ON u.id = e.actor_id
            LEFT JOIN quotes q ON e.kind = 'quote_added' AND q.user_id = e.actor_id
@@ -446,7 +447,8 @@ async fn items(
 }
 
 /// The payload as the API serves it: `reaction` names its post's author (`author`, from
-/// `author_id`), a `shelf_finished` the caller may not rate loses `rating` and `take`, and a
+/// `author_id`), a `shelf_finished` the caller may not rate (sealed to its actor, or its entry
+/// only-me or gone) loses `rating` and `take`, the seal itself is never shown, and a
 /// `quote_added` shows the quote as it is now (`excerpt`, `page`), never the text it was added
 /// with: that text may have been only-me, and an edit made the quote what its owner shares.
 fn served_payload(row: &EventRow, authors: &HashMap<i64, String>) -> Value {
@@ -461,9 +463,12 @@ fn served_payload(row: &EventRow, authors: &HashMap<i64, String>) -> Value {
                 .and_then(|id| authors.get(&id).cloned());
             payload.insert("author".into(), author.map_or(Value::Null, Value::String));
         }
-        "shelf_finished" if row.hide_rating => {
-            payload.remove("rating");
-            payload.remove("take");
+        "shelf_finished" => {
+            payload.remove(PRIVATE_KEY);
+            if row.hide_rating {
+                payload.remove("rating");
+                payload.remove("take");
+            }
         }
         "quote_added" => {
             if let Some(body) = &row.quote_body {
@@ -524,6 +529,20 @@ mod tests {
         assert_eq!(gone, json!({"emoji": "🔥", "author": null}));
         let unknown = served_payload(&row("reaction", json!({"emoji": "🔥"}), false), &authors);
         assert_eq!(unknown, json!({"emoji": "🔥", "author": null}));
+    }
+
+    #[test]
+    fn the_seal_is_never_served() {
+        let payload = json!({"rating": 2, "take": "Meh", "private": true});
+        let authors = HashMap::new();
+        assert_eq!(
+            served_payload(&row("shelf_finished", payload.clone(), false), &authors),
+            json!({"rating": 2, "take": "Meh"})
+        );
+        assert_eq!(
+            served_payload(&row("shelf_finished", payload, true), &authors),
+            json!({})
+        );
     }
 
     #[test]

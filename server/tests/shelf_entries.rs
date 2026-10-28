@@ -888,9 +888,11 @@ async fn shelf_writes_record_their_events(db: PgPool) {
                 json!({"status": "currently_reading"})
             ),
             ("progress".to_owned(), json!({"progress": 50})),
-            // Recorded as {"rating": 4, "take": "Great"}; the removal took them out again
-            // (security review 2026-10-28 #2).
-            ("shelf_finished".to_owned(), json!({})),
+            // The removal sealed them to the reader (security review 2026-10-28 #2).
+            (
+                "shelf_finished".to_owned(),
+                json!({"rating": 4, "take": "Great", "private": true})
+            ),
             ("shelf_dnf".to_owned(), json!({})),
             ("shelf_finished".to_owned(), json!({})),
             ("shelf_removed".to_owned(), json!({"status": "finished"})),

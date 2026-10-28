@@ -23,7 +23,7 @@ use super::ordering::{
 };
 use super::{OwnerQuery, lock_user, resolve_owner};
 use crate::AppState;
-use crate::activity::{EventKind, NewEvent, hide_finished_ratings, record};
+use crate::activity::{EventKind, NewEvent, PRIVATE_KEY, record, seal_finished_ratings};
 use crate::auth::extract::CurrentUser;
 use crate::catalog::shared::books::{
     BookRef, book_outs, edition_outs, require_edition_of, require_work,
@@ -511,8 +511,8 @@ async fn patch_entry(
     }
     save_entry(conn, &entry).await?;
     if entry.rating_visibility == Visibility::OnlyMe {
-        // A rating or take the earlier events show while it was audience is private now.
-        hide_finished_ratings(conn, Some(entry.user_id), Some(&[entry.work_id])).await?;
+        // A rating or take the earlier events showed while it was audience is private now.
+        seal_finished_ratings(conn, Some(entry.user_id), Some(&[entry.work_id])).await?;
     }
 
     if entry.status != previous_status {
@@ -586,9 +586,9 @@ pub async fn remove_entry(
     sqlx::query!("DELETE FROM shelf_entries WHERE id = $1", entry_id)
         .execute(&mut *tx)
         .await?;
-    // The finished events keep no rating or take: adding the work again (audience by default)
-    // must not bring back what this entry showed or hid.
-    hide_finished_ratings(&mut tx, Some(user.id), Some(&[entry.work_id])).await?;
+    // The finished events' rating and take become the reader's own: adding the work again
+    // (audience by default) must not bring back what this entry showed or hid.
+    seal_finished_ratings(&mut tx, Some(user.id), Some(&[entry.work_id])).await?;
     let leftovers = column_ids(&mut tx, user.id, entry.status, entry_id).await?;
     write_positions(&mut tx, &leftovers).await?;
     tx.commit().await?;
@@ -795,8 +795,8 @@ pub fn visibility_text(visibility: Visibility) -> &'static str {
 
 /// The event of an entry that landed in `status` (added, or moved by a PATCH): `shelf_finished`
 /// `{rating?, take?}`, `shelf_dnf` `{reason?}`, else `shelf_added` or `shelf_moved` `{status}`.
-/// An only-me rating and take never enter the payload, which outlives the entry and its
-/// visibility (`activity::hide_finished_ratings`).
+/// An only-me rating and take are sealed to the actor ([`PRIVATE_KEY`]) when they are written:
+/// the payload outlives the entry and its visibility (`activity::seal_finished_ratings`).
 async fn status_event(
     conn: &mut PgConnection,
     user_id: i64,
@@ -807,13 +807,15 @@ async fn status_event(
     added: bool,
 ) -> sqlx::Result<()> {
     let non_empty = |text: &str| (!text.is_empty()).then(|| text.to_owned());
-    let shared = rating_visibility == Visibility::Audience;
+    let sealed = rating_visibility == Visibility::OnlyMe
+        && (fields.rating.is_some() || !fields.take.is_empty());
     let (kind, payload) = match status {
         ShelfStatus::Finished => (
             EventKind::ShelfFinished,
             json!({
-                "rating": fields.rating.filter(|_| shared),
-                "take": non_empty(&fields.take).filter(|_| shared),
+                "rating": fields.rating,
+                "take": non_empty(&fields.take),
+                PRIVATE_KEY: sealed.then_some(true),
             }),
         ),
         ShelfStatus::DidNotFinish => (

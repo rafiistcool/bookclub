@@ -314,9 +314,10 @@ async fn seen_payloads(v: &Viewers, viewer: &TestClient, id: i64) -> Vec<Value> 
     seen
 }
 
-/// Security review 2026-10-28 #2: an event outlives its entry. An only-me rating and take never
-/// enter the payload, and a removed entry's events lose theirs, so adding the work again (as
-/// "start reading" on the club page does, audience by default) brings nothing back.
+/// Security review 2026-10-28 #2: an event outlives its entry. An only-me rating and take are
+/// sealed to their reader when they are written, so adding the work again (as "start reading"
+/// on the club page does, audience by default) shows them to nobody else. The reader still
+/// sees their own.
 #[sqlx::test]
 async fn a_private_rating_stays_hidden_when_the_work_comes_back(db: PgPool) {
     let app = TestApp::new(db).await;
@@ -335,7 +336,10 @@ async fn a_private_rating_stays_hidden_when_the_work_comes_back(db: PgPool) {
     let events = finished_events(&app, &v.owner, &circe).await;
     assert_eq!(events.len(), 1);
     let (id, payload) = events[0].clone();
-    assert_eq!(payload, json!({}));
+    assert_eq!(
+        payload,
+        json!({"rating": 1, "take": "A gift I hated", "private": true})
+    );
 
     v.owner
         .delete(&format!("/api/shelf/{entry}"))
@@ -352,12 +356,14 @@ async fn a_private_rating_stays_hidden_when_the_work_comes_back(db: PgPool) {
         seen_payloads(&v, &v.co_member, id).await,
         [json!({}), json!({})]
     );
+    let own = json!({"rating": 1, "take": "A gift I hated"});
+    assert_eq!(seen_payloads(&v, &v.owner, id).await, [own.clone(), own]);
 }
 
-/// A removed entry's events lose a rating that was public too: whatever the reader shows of the
+/// A removed entry's events seal a rating that was public too: whatever the reader shows of the
 /// work from now on comes from the new entry.
 #[sqlx::test]
-async fn a_removed_entry_takes_its_ratings_out_of_its_events(db: PgPool) {
+async fn a_removed_entry_seals_the_ratings_of_its_events(db: PgPool) {
     let app = TestApp::new(db).await;
     let v = Viewers::new(&app).await;
     let circe = app.work("Circe").await;
@@ -381,7 +387,15 @@ async fn a_removed_entry_takes_its_ratings_out_of_its_events(db: PgPool) {
         .assert_status(204);
     assert_eq!(
         finished_events(&app, &v.owner, &circe).await[0].1,
-        json!({})
+        json!({"rating": 4, "take": "Fine", "private": true})
+    );
+    v.owner
+        .post("/api/shelf", json!({"work_id": circe.id}))
+        .await
+        .assert_status(201);
+    assert_eq!(
+        seen_payloads(&v, &v.co_member, id).await,
+        [json!({}), json!({})]
     );
 }
 
@@ -415,10 +429,10 @@ async fn a_take_written_while_only_me_stays_hidden_after_the_entry_opens_up(db: 
     );
 }
 
-/// Making a shared rating only-me takes it out of the stored events too, so no later change (a
-/// merge onto an audience entry, a visibility flip) can show it again.
+/// Making a shared rating only-me seals it in the stored events too, so no later change (a merge
+/// onto an audience entry, a visibility flip) can show it to others again.
 #[sqlx::test]
-async fn making_a_rating_only_me_takes_it_out_of_the_events(db: PgPool) {
+async fn making_a_rating_only_me_seals_it_in_the_events(db: PgPool) {
     let app = TestApp::new(db).await;
     let v = Viewers::new(&app).await;
     let circe = app.work("Circe").await;
@@ -437,9 +451,21 @@ async fn making_a_rating_only_me_takes_it_out_of_the_events(db: PgPool) {
         )
         .await
         .assert_status(200);
+    let (id, payload) = finished_events(&app, &v.owner, &circe).await[0].clone();
     assert_eq!(
-        finished_events(&app, &v.owner, &circe).await[0].1,
-        json!({})
+        payload,
+        json!({"rating": 5, "take": "Loved it", "private": true})
+    );
+    v.owner
+        .patch(
+            &format!("/api/shelf/{}", added.json()["id"]),
+            json!({"rating_visibility": "audience"}),
+        )
+        .await
+        .assert_status(200);
+    assert_eq!(
+        seen_payloads(&v, &v.co_member, id).await,
+        [json!({}), json!({})]
     );
 }
 
