@@ -62,6 +62,7 @@ const router = createRouter({
         { path: "shelf/physical", component: () => import("./pages/PhysicalShelfPage.vue") },
         { path: "diary", component: () => import("./pages/DiaryPage.vue") },
         { path: "quotes", component: () => import("./pages/QuotesPage.vue") },
+        { path: "stats", component: () => import("./pages/StatsPage.vue") },
         { path: "clubs", component: ClubsPage },
         { path: "clubs/new", component: () => import("./pages/NewClubPage.vue") },
         {
@@ -74,6 +75,7 @@ const router = createRouter({
             { path: "members", component: () => import("./pages/club/ClubMembersPage.vue") },
             { path: "overlap", component: () => import("./pages/club/ClubOverlapPage.vue") },
             { path: "events", component: () => import("./pages/club/ClubEventsPage.vue") },
+            { path: "stats", component: () => import("./pages/club/ClubStatsPage.vue") },
           ],
         },
         // The Club tab: never rendered itself, it always leads on.
@@ -82,6 +84,10 @@ const router = createRouter({
         {
           path: "u/:username/shelf",
           component: () => import("./pages/MemberPhysicalShelfPage.vue"),
+        },
+        {
+          path: "u/:username/stats",
+          component: () => import("./pages/StatsPage.vue"),
         },
         {
           path: "u/:username",

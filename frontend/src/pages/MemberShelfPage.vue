@@ -78,6 +78,7 @@ watch(() => route.params.username, load);
     <FavoritePortrait v-if="loaded && !error" :items="favorites" />
     <div v-if="loaded && !error && items.length" class="member-shelf-switch">
       <ShelfViewSwitch active="books" :base="`/u/${username}`" />
+      <RouterLink class="btn btn-ghost btn-sm" :to="`/u/${username}/stats`">{{ t("stats.short") }}</RouterLink>
     </div>
 
     <p v-if="error" class="error">{{ error }}</p>
@@ -125,6 +126,11 @@ watch(() => route.params.username, load);
 }
 
 .member-shelf-switch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
   margin-bottom: var(--space-3);
 }
 

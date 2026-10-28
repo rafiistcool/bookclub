@@ -5,6 +5,7 @@ import type {
   ClubList,
   ClubOut,
   ClubPatchIn,
+  ClubStatsOut,
   ClubPickCurrentOut,
   ClubPickHistoryOut,
   ClubPickOut,
@@ -29,6 +30,7 @@ import type {
   NotificationsIn,
   NotificationsOut,
   OverlapOut,
+  PersonalStatsOut,
   PickPostIn,
   PickThreadOut,
   PostOut,
@@ -356,4 +358,15 @@ export const api = {
     request<OverlapOut>(
       `${clubPath(slug)}/overlap${includeReading ? "?include_reading=true" : ""}`,
     ),
+
+  /** A reader's year in books: the caller's without `username`; the newest year without `year`. */
+  personalStats: (params: { username?: string; year?: number } = {}) => {
+    const query = new URLSearchParams();
+    if (params.username) query.set("username", params.username);
+    if (params.year) query.set("year", String(params.year));
+    const qs = query.toString();
+    return request<PersonalStatsOut>(`/api/stats${qs ? `?${qs}` : ""}`);
+  },
+  clubStats: (slug: string, year?: number) =>
+    request<ClubStatsOut>(`${clubPath(slug)}/stats${year ? `?year=${year}` : ""}`),
 };

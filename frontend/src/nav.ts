@@ -14,7 +14,7 @@ export type NavItem = {
 export const NAV_ITEMS: readonly NavItem[] = [
   { to: "/", labelKey: "nav.home", icon: "home", bottomBar: true },
   { to: "/discover", labelKey: "nav.discover", icon: "discover", bottomBar: true },
-  { to: "/shelf", labelKey: "nav.shelf", icon: "shelf", bottomBar: true, also: ["/diary", "/quotes"] },
+  { to: "/shelf", labelKey: "nav.shelf", icon: "shelf", bottomBar: true, also: ["/diary", "/quotes", "/stats"] },
   // `/club` leads to the last-used club, the only club, or the club list (router.ts).
   { to: "/club", labelKey: "nav.club", icon: "club", bottomBar: true, also: ["/c", "/clubs"] },
   { to: "/settings", labelKey: "nav.settings", shortLabelKey: "nav.settingsShort", icon: "settings", bottomBar: true },

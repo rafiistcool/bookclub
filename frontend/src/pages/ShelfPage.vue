@@ -253,6 +253,7 @@ onMounted(load);
       <span class="shelf-extra-links">
         <RouterLink class="btn btn-ghost btn-sm" to="/diary">{{ t("diaryPage.title") }}</RouterLink>
         <RouterLink class="btn btn-ghost btn-sm" to="/quotes">{{ t("quotes.title") }}</RouterLink>
+        <RouterLink class="btn btn-ghost btn-sm" to="/stats">{{ t("stats.short") }}</RouterLink>
       </span>
     </div>
 

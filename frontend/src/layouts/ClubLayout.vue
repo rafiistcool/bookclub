@@ -34,6 +34,7 @@ const tabs = computed(() => {
     { to: `${base}/members`, label: t("clubNav.members") },
     { to: `${base}/overlap`, label: t("clubNav.overlap") },
     { to: `${base}/events`, label: t("clubNav.events") },
+    { to: `${base}/stats`, label: t("clubNav.stats") },
   ];
 });
 
