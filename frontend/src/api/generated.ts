@@ -232,7 +232,8 @@ export interface paths {
          *     - Personal data, sessions, memberships and the user's activity events go with the account;
          *       picks, nominations, invites and catalog rows keep existing without the name.
          *
-         *     A wrong password counts as a login failure (429 after ten).
+         *     The password is checked under the current-password limits (10 checks per session in ten
+         *     minutes, 30 per account an hour; then 429).
          */
         delete: operations["auth_delete_me"];
         options?: never;
@@ -250,7 +251,7 @@ export interface paths {
         get?: never;
         /**
          * Uploads a profile picture: centre-cropped, 256×256, WebP, metadata (EXIF, GPS) dropped. The
-         *     previous picture is deleted.
+         *     previous picture is deleted. Ten uploads per account an hour, and one at a time.
          */
         put: operations["media_put_avatar"];
         post?: never;
@@ -271,7 +272,8 @@ export interface paths {
         get?: never;
         /**
          * Changes the account's address. The answer is the same whether or not the address is in use.
-         * @description - The current password is checked first; a wrong one counts as a login failure.
+         * @description - The per-account limit (3 an hour) is checked first, then the current password (under the
+         *       current-password limits), and only then is the change counted.
          *     - Without an address, or with an unverified one, the new address replaces it at once (still
          *       unverified) and gets a verification link.
          *     - A verified address stays until the new one is verified: the link goes to the new address,
@@ -283,8 +285,8 @@ export interface paths {
          *       nothing.
          *
          *     Every earlier open verification link and every open reset link is voided. Shares the
-         *     per-account limit with resend (3 an hour); mail to one address is also limited (6 a day,
-         *     silently).
+         *     per-account limit with resend (3 an hour); mail to one address is also limited (6 links and
+         *     6 of each notice a day, silently).
          */
         put: operations["auth_change_email"];
         post?: never;
@@ -321,7 +323,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Downloads everything the service stores about the signed-in user. Five exports an hour. */
+        /**
+         * Downloads everything the service stores about the signed-in user. Five exports an hour, one
+         *     at a time per account and two at a time on the instance.
+         */
         get: operations["auth_export_me"];
         put?: never;
         post?: never;
@@ -428,11 +433,13 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Changes the password. It shares the login failure limit (10 wrong current passwords in ten
-         *     minutes, then 429); a right current password clears it. Every other session and bearer
-         *     token of the user is deleted, and every open reset link is voided, and so is a pending
-         *     address change of a verified account; the current session stays. A password change or reset that commits while this one verifies wins: this one then
-         *     answers `Current password is wrong`.
+         * Changes the password. The current password is checked under the current-password limits
+         *     (10 checks per session in ten minutes and 30 per account an hour, right or wrong; then 429).
+         *     Every other session and bearer token of the user is deleted, every open reset link is
+         *     voided, and so is a pending address change of a verified account. A cookie session gets a
+         *     new secret (`Set-Cookie`): a copy of the old cookie someone else holds stops working. A
+         *     bearer token keeps its secret. A password change or reset that commits while this one
+         *     verifies wins: this one then answers `Current password is wrong`.
          */
         patch: operations["auth_change_password"];
         trace?: never;
@@ -450,8 +457,8 @@ export interface paths {
          * Sends a reset link (valid one hour) when a verified account holds the address. The answer
          *     is always 204, and it does not wait for the lookup or the mail: the work runs in a
          *     background task, so neither the answer nor its timing tells whether an account exists.
-         * @description Five requests per IP address an hour (429). Three links per account an hour; over that the
-         *     request is silently dropped.
+         * @description Five requests per IP address an hour (429). Silently, nothing is sent while the account has
+         *     an open link (one an hour at most), and at most three links go to an account an hour.
          */
         post: operations["auth_request_password_reset"];
         delete?: never;
@@ -579,6 +586,30 @@ export interface paths {
          *     and voids every other open verification and reset link of the account.
          */
         post: operations["auth_verify_email"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/verify-email/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * What a verification link would do, without doing it: the account and the address. Public,
+         *     like the verification itself, and read-only. The verify page shows it and verifies only when
+         *     the reader confirms, so a link scanner that opens the page, or a click on a link someone
+         *     else's sign-up sent, never verifies an address for an account its owner does not know.
+         * @description The same links are accepted as by `POST /api/auth/verify-email`: open, the account's newest,
+         *     and for the address still pending.
+         */
+        post: operations["auth_preview_verification"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1071,8 +1102,9 @@ export interface paths {
          *     the removal no longer work for that person; a newer invite does.
          * @description The removal also revokes every active invite of the club the person knows, so a second
          *     account cannot walk back in with one: the invites they created or redeemed, and, when they
-         *     were an admin (admins list every invite), all of them. A link someone else forwarded to them
-         *     is beyond what the server knows; the admins revoke it.
+         *     are an admin (admins list every invite), all of them; when they were one before a demotion,
+         *     every invite created up to the demotion. A link someone else forwarded to them is beyond
+         *     what the server knows; the admins revoke it.
          */
         delete: operations["clubs_remove_member"];
         options?: never;
@@ -3451,6 +3483,13 @@ export interface components {
         VerifyEmailIn: {
             token: string;
         };
+        /** @description What a verification link would confirm, shown before the reader confirms it. */
+        VerifyEmailPreview: {
+            /** @description The account the address would belong to. */
+            username: string;
+            /** @description The address the link verifies. */
+            email: string;
+        };
         /**
          * @description Who may see a personal item: the owner's audience, or the owner only.
          * @enum {string}
@@ -3751,6 +3790,7 @@ export type TransferIn = components['schemas']['TransferIn'];
 export type UserOut = components['schemas']['UserOut'];
 export type UserSummary = components['schemas']['UserSummary'];
 export type VerifyEmailIn = components['schemas']['VerifyEmailIn'];
+export type VerifyEmailPreview = components['schemas']['VerifyEmailPreview'];
 export type Visibility = components['schemas']['Visibility'];
 export type VoteApplyIn = components['schemas']['VoteApplyIn'];
 export type VoteApplyOut = components['schemas']['VoteApplyOut'];
@@ -4304,6 +4344,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description `The server is busy. Try again in a moment.` */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
         };
     };
     auth_logout: {
@@ -4409,6 +4458,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description `The server is busy. Try again in a moment.` */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
         };
     };
     media_put_avatar: {
@@ -4453,6 +4511,15 @@ export interface operations {
             };
             /** @description `That picture is too large (50 MB max)` (by `Content-Length`, before the body is read) */
             413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Slow down a little. Try again later.` (10 an hour, or another upload of the account still running) */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4529,8 +4596,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description `Slow down a little. Try again later.` (3 an hour), or `Too many attempts. Wait a few minutes.` (wrong passwords) */
+            /** @description `Slow down a little. Try again later.` (3 an hour), or `Too many attempts. Wait a few minutes.` (current-password checks) */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `The server is busy. Try again in a moment.` */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4594,7 +4670,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description `Slow down a little. Try again later.` */
+            /** @description `Slow down a little. Try again later.` (5 an hour, another export of the account still running, or two exports running on the instance) */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -4893,7 +4969,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Changed */
+            /** @description Changed; a cookie session gets a new cookie (`Set-Cookie`) */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -4920,6 +4996,15 @@ export interface operations {
             };
             /** @description `Too many attempts. Wait a few minutes.` */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `The server is busy. Try again in a moment.` */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4998,6 +5083,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description `The server is busy. Try again in a moment.` */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
         };
     };
     auth_register: {
@@ -5042,6 +5136,15 @@ export interface operations {
             };
             /** @description Five sign-ups per IP address per hour */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `The server is busy. Try again in a moment.` */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5177,6 +5280,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description `The server is busy. Try again in a moment.` */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
         };
     };
     auth_verify_email: {
@@ -5210,6 +5322,39 @@ export interface operations {
             };
             /** @description `That email is already in use`: another account verified the address first */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    auth_preview_verification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VerifyEmailIn"];
+            };
+        };
+        responses: {
+            /** @description The account and the address the link would verify */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerifyEmailPreview"];
+                };
+            };
+            /** @description `That link has expired or was already used` */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5571,7 +5716,7 @@ export interface operations {
                  *     readinglog).
                  */
                 sort?: string;
-                /** @description 1 or more. */
+                /** @description 1 to 100. */
                 page?: number;
                 /** @description 1 to 40, default 24. */
                 limit?: number;
@@ -5609,7 +5754,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description `The library is busy. Try again in {n} seconds.` or `The library is busy. Wait a few seconds and try again.` */
+            /** @description `The library is busy. Try again in {n} seconds.` or `The library is busy. Wait a few seconds and try again.`; `Slow down a little. Try again later.` (60 catalog requests per account a minute) */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -5632,7 +5777,7 @@ export interface operations {
     catalog_subject: {
         parameters: {
             query?: {
-                /** @description 1 or more. */
+                /** @description 1 to 100. */
                 page?: number;
                 /** @description 1 to 40, default 12. */
                 limit?: number;
@@ -5682,7 +5827,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description The library is busy */
+            /** @description The library is busy, or `Slow down a little. Try again later.` (60 catalog requests per account a minute) */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -5741,7 +5886,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description The library is busy */
+            /** @description The library is busy, or `Slow down a little. Try again later.` (60 catalog requests per account a minute) */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -5800,7 +5945,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description Open Library is busy (importing an unknown `OL…W` id) */
+            /** @description Open Library is busy (importing an unknown `OL…W` id), or `Slow down a little. Try again later.` (60 catalog requests per account a minute) */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -5890,7 +6035,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description `Slow down a little. Try again later.` (30 uploads per day) */
+            /** @description `Slow down a little. Try again later.` (30 uploads per day, or another upload of the account still running) */
             429: {
                 headers: {
                     [name: string]: unknown;

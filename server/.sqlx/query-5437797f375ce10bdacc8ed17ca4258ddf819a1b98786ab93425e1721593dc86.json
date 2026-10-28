@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM club_memberships\n         WHERE club_id = $1 AND user_id = $2\n           AND CASE WHEN $3 THEN role <> 'owner' ELSE role = 'member' END\n         RETURNING admin_until",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "admin_until",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "club_memberships",
+            "name": "admin_until"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "5437797f375ce10bdacc8ed17ca4258ddf819a1b98786ab93425e1721593dc86"
+}

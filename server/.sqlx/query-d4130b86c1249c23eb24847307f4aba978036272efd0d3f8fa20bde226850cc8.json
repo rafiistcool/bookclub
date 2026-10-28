@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT e.id, e.club_id, e.actor_id, u.username AS \"actor?\", e.kind, e.work_id,\n                  e.pick_id, e.payload, e.created_at,\n                  (e.kind = 'shelf_finished' AND e.actor_id IS DISTINCT FROM $1\n                   AND NOT EXISTS (\n                       SELECT 1 FROM shelf_entries s\n                       WHERE s.user_id = e.actor_id AND s.work_id = e.work_id\n                         AND bc_can_see_item($1, s.user_id, s.rating_visibility))) AS \"hide_rating!\"\n           FROM events e\n           LEFT JOIN users u ON u.id = e.actor_id\n           WHERE (e.club_id = $2\n                  OR (e.club_id IS NULL AND EXISTS (\n                      SELECT 1 FROM club_memberships m\n                      WHERE m.club_id = $2 AND m.user_id = e.actor_id\n                        AND m.joined_at <= e.created_at)))\n             AND ($3::int8 IS NULL OR e.id < $3)\n             AND ($4::int8 IS NULL OR e.actor_id = $4)\n             AND (e.kind <> 'quote_added' OR e.actor_id = $1 OR EXISTS (\n                  SELECT 1 FROM bc_visible_quotes($1) q\n                  WHERE q.user_id = e.actor_id\n                    AND q.id = CASE WHEN jsonb_typeof(e.payload -> 'quote_id') = 'number'\n                                         AND e.payload ->> 'quote_id' ~ '^[0-9]{1,18}$'\n                                    THEN (e.payload ->> 'quote_id')::int8 END))\n           ORDER BY e.id DESC\n           LIMIT $5",
+  "query": "SELECT e.id, e.club_id, e.actor_id, u.username AS \"actor?\", e.kind, e.work_id,\n                  e.pick_id, e.payload, e.created_at, q.body AS \"quote_body?\",\n                  q.page AS \"quote_page?\",\n                  (e.kind = 'shelf_finished' AND e.actor_id IS DISTINCT FROM $1\n                   AND NOT EXISTS (\n                       SELECT 1 FROM shelf_entries s\n                       WHERE s.user_id = e.actor_id AND s.work_id = e.work_id\n                         AND bc_can_see_item($1, s.user_id, s.rating_visibility))) AS \"hide_rating!\"\n           FROM events e\n           LEFT JOIN users u ON u.id = e.actor_id\n           LEFT JOIN quotes q ON e.kind = 'quote_added' AND q.user_id = e.actor_id\n                AND q.id = CASE WHEN jsonb_typeof(e.payload -> 'quote_id') = 'number'\n                                     AND e.payload ->> 'quote_id' ~ '^[0-9]{1,18}$'\n                                THEN (e.payload ->> 'quote_id')::int8 END\n           WHERE (e.club_id = $2\n                  OR (e.club_id IS NULL AND EXISTS (\n                      SELECT 1 FROM club_memberships m\n                      WHERE m.club_id = $2 AND m.user_id = e.actor_id\n                        AND m.joined_at <= e.created_at)))\n             AND ($3::int8 IS NULL OR e.id < $3)\n             AND ($4::int8 IS NULL OR e.actor_id = $4)\n             AND (e.kind <> 'quote_added' OR e.actor_id = $1 OR EXISTS (\n                  SELECT 1 FROM bc_visible_quotes($1) q\n                  WHERE q.user_id = e.actor_id\n                    AND q.id = CASE WHEN jsonb_typeof(e.payload -> 'quote_id') = 'number'\n                                         AND e.payload ->> 'quote_id' ~ '^[0-9]{1,18}$'\n                                    THEN (e.payload ->> 'quote_id')::int8 END))\n           ORDER BY e.id DESC\n           LIMIT $5",
   "describe": {
     "columns": [
       {
@@ -104,6 +104,28 @@
       },
       {
         "ordinal": 9,
+        "name": "quote_body?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "quotes",
+            "name": "body"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "quote_page?",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "quotes",
+            "name": "page"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
         "name": "hide_rating!",
         "type_info": "Bool",
         "origin": "Expression"
@@ -128,8 +150,10 @@
       true,
       false,
       false,
+      false,
+      true,
       null
     ]
   },
-  "hash": "38453f409da171152b4ae4148b496d749bfde1c7b4ff7b868d39d02fa9e602ac"
+  "hash": "d4130b86c1249c23eb24847307f4aba978036272efd0d3f8fa20bde226850cc8"
 }
