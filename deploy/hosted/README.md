@@ -89,6 +89,8 @@ In production, only after the legacy import, which needs an empty database (see 
 
    The admin mints further invites on the Invites tab of `/admin`.
 
+The admin page `/admin` holds the catalog requests and the picture reports, each with its age, an "Overdue" mark after 72 hours, and a "Decided" view with the history and the 90-day figures. "Edit as admin", on a book page and in the queue, changes a book's facts at once. "Take down a picture by URL", above the open reports, records an emailed notice with its arrival time. Instance admins with a verified address get a mail when new reports arrive (at most one an hour) and a digest of new catalog requests (at most one a day), through `SMTP_URL`.
+
 ## Updates and rollback
 
 `BOOKCLUB_TAG=stable` follows the highest release (see "Releases"). To update:
@@ -138,7 +140,59 @@ To run a second stack on the same Docker host, from another directory, give its 
 
 ## Reverse proxy
 
-TLS ends at the Caddy that already serves git.tillhome.de, which forwards to `BOOKCLUB_LISTEN:BOOKCLUB_PORT`. In `.env`, `TRUSTED_PROXIES` is that Caddy's address as the VM sees it, with `/32` (Q7). If it is wrong, every user lands in one rate-limit bucket. The site block is `Caddyfile.example` next to this file, and `verify-limits.sh` checks the app's limits through it.
+TLS ends at the Caddy that already serves git.tillhome.de, which forwards to `BOOKCLUB_LISTEN:BOOKCLUB_PORT`. `Caddyfile.example` next to this file is its site block.
+
+1. Copy the block into that Caddyfile, or `import` the file. Set two variables in Caddy's environment:
+   - `BOOKCLUB_HOST`: the public host name.
+   - `BOOKCLUB_UPSTREAM`: the app VM's address and published port, e.g. `10.0.20.5:8080`. Without it the block proxies to `127.0.0.1:8080`.
+2. In the app's `.env`, set `TRUSTED_PROXIES` to this Caddy's address as the app VM sees it, with `/32` (Q7), and run `docker compose up -d --wait app`. If it is wrong, every user lands in Caddy's one rate-limit bucket, and one client can lock everyone out of sign-up and reset.
+3. Install the logrotate rule from the comment above the block's `log` as `/etc/logrotate.d/bookclub-access` (root-owned, mode 0644; logrotate ignores a group- or world-writable file), on the host that holds `/var/log/caddy`. If Caddy runs in a container, bind-mount that directory from the host. Check it with `logrotate -d /etc/logrotate.d/bookclub-access`. If logrotate refuses the directory's permissions, add `su <caddy user> <caddy group>` to the rule.
+4. Check and load: `caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`, then `caddy reload`.
+5. From home, run `verify-limits.sh` (next section), then make one sign-up attempt from a second network, such as a phone on mobile data. That attempt must not get 429.
+6. Open `https://<host>/login?next=/join/TEST` and `https://<host>/join/TEST` in a browser, then check that `grep -c TEST /var/log/caddy/bookclub-access.log` prints 0.
+
+What the block does:
+
+- `request_body max_size 51MiB` (53,477,376 bytes). The app answers 413 itself, from `Content-Length` and before reading the body, above 52,432,896 bytes, so a client always gets the app's JSON 413. Caddy's limit is the backstop for bodies it has to read, such as chunked ones. Caddy's `50MB` (50,000,000 bytes) would cut off uploads the app accepts.
+- HSTS `max-age=31536000` without `includeSubDomains` (add it, and consider `preload`, once the final domain is in place), a `Permissions-Policy` that denies camera, microphone, location, payment and motion sensors (clipboard and Web Share keep their defaults, because the invite pages use them), and no `Server` header.
+- It does not repeat the headers the app sets: CSP, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Cache-Control`.
+- zstd and gzip for `/assets/*` only. API answers mix personal data with text a client sent, the pattern compression side channels need.
+- `reverse_proxy` with an active health check on `/api/health` every 15 s. While the app is down or restarting, Caddy answers 503 for up to one interval after the app is back.
+- An access log in `/var/log/caddy/bookclub-access.log`, kept at most 7 days. It holds client addresses, which the privacy text must state.
+  - Caddy 2.10 rolls a log file only by size (it has no `roll_interval`), and `roll_keep_for` counts from the roll, not from the oldest line. At beta traffic a 50 MiB file would hold lines for weeks. So the block sets `roll_disabled`, and logrotate on the host rolls the file every day, empty or not (`daily`, `rotate 5`, `maxage 7`, `copytruncate`). The live file holds at most a day, the 5 old files the 5 days before, so no line is older than 6 days plus the timer's delay.
+  - `copytruncate`, because Caddy keeps the file open. Caddy opens it in append mode, so after the truncate it writes at the start of the empty file. Lines written between the copy and the truncate can be lost.
+  - The URI keeps only the path, as in the app's own log, which logs the path without the query. A query becomes `?{redacted}`: search terms, `/signup?code=…`, and `/login?next=/join/<code>`, which the app sends a signed-out reader to from an invite. Invite codes in the path become `/join/{redacted}` and `/api/invites/{redacted}/…`.
+  - `Referer`, which repeats such URLs, is dropped. Caddy leaves out `Cookie` and `Authorization` by default.
+- A commented `rate_limit` block for Q16 option B. It needs a Caddy built with `github.com/mholt/caddy-ratelimit` (xcaddy) and `order rate_limit before basicauth` in the global options.
+- Caddy replaces any `X-Forwarded-For` an untrusted client sends with the client's address. The app reads it only from `TRUSTED_PROXIES` and takes the right-most untrusted address.
+- For a local test, uncomment `tls internal`, or put `local_certs` in the global options.
+
+The cutover adds a temporary gate and later a redirect for the old host (`docs/phase2/cutover.md` §3.5–3.6, `deploy/legacy-origin/Caddyfile.example`). The gate's `respond` runs before this block's bare `reverse_proxy`; if `reverse_proxy` ever moves into a `handle`, the gate must become `handle @cutover_closed { respond … }`.
+
+## Checking the limits (`verify-limits.sh`)
+
+From a checkout, on a machine outside the VM's network:
+
+```sh
+deploy/hosted/verify-limits.sh https://<host>
+# with `tls internal`:
+VERIFY_LIMITS_CURL_FLAGS=--insecure deploy/hosted/verify-limits.sh https://<host>
+```
+
+- It needs bash (3.2 or later, so macOS's `/bin/bash` will do) and curl, and creates nothing:
+  - the sign-ups carry an invite code that does not exist, so each answers 400 and rolls back;
+  - the logins use made-up names;
+  - the reset asks for an `example.invalid` address that no account holds.
+- It first checks `GET /api/health` for 200 `"ok"`, then:
+  1. sign-up: 5 × 400, then 429;
+  2. login with one unknown name: 10 × 401, then 429 (the per-name limit);
+  3. login per address: attempts 12 to 30, with fresh names, 401; the 31st 429;
+  4. reset: 5 × 204, then 429.
+- Each 429 must carry `Retry-After` and the app's detail `Too many attempts. Wait a few minutes.`
+- Every request also sends a different forged `X-Forwarded-For`. If the proxy passed it on and the app trusted it, no 429 would come, and the script says so.
+- Exit 0 when every check passes, 1 when one fails, 2 on a usage error.
+- **It uses up the caller's budgets:** sign-up and reset for an hour, login for 10 minutes. Run it once, and do not run it from an address that people need to sign in from right away. A second run within the hour fails at the first check with a hint that the address is already limited. So does a sign-in from the same address in the 10 minutes before: the per-address login check then fails at attempt 30 with that hint.
+- Search is limited per account inside the app (`catalog_user`, 60 a minute), not per address, and is not checked.
 
 ## The legacy import
 
@@ -309,11 +363,37 @@ When the database or the pictures are lost, on this VM or on a new one set up as
    rm -rf /var/lib/bookclub-backup/restore
    ```
 
+## Legal texts
+
+The app shows the imprint, the privacy policy and the terms of use at `/imprint`, `/privacy` and `/terms`, read from `/srv/bookclub/legal` (`LEGAL_DIR=/app/legal`). While the directory is empty, the app serves and links none, and invite mode works; open sign-up needs all six files.
+
+1. Generate the texts (eRecht24 or a lawyer) from the facts in `docs/legal/`, and export each as an HTML fragment. Six UTF-8 files of at most 512 KiB each: `imprint.de.html`, `imprint.en.html`, `privacy.de.html`, `privacy.en.html`, `terms.de.html`, `terms.en.html`. A missing language falls back to the other. The app shows text, headings, lists, tables and links only; pictures, scripts and styles are dropped.
+2. Write `manifest.json` next to them. `terms_version` (1 to 64 letters, digits, `.`, `_` and `-`) is required once a terms file exists; `updated` is optional and shown as "Last updated":
+
+   ```json
+   {
+     "terms_version": "2026-11-01",
+     "updated": {"imprint": "2026-11-01", "privacy": "2026-11-01", "terms": "2026-11-01"}
+   }
+   ```
+
+3. Install them and restart the app, which reads them only at startup:
+
+   ```sh
+   install -o 1000 -g 1000 -m 0640 imprint.*.html privacy.*.html terms.*.html manifest.json /srv/bookclub/legal/
+   docker compose restart app
+   docker compose ps app
+   ```
+
+4. Open `/imprint`, `/privacy` and `/terms` signed out, in both languages.
+
+A new `terms_version` asks every account to accept the terms again (a prompt in the app; new sign-ups accept them with the form), so change it only when the terms change. If the app does not start, `docker compose logs app` names `LEGAL_DIR` and the file: text files without `manifest.json`, an invalid manifest, a file that is empty, too large or not UTF-8, or a development placeholder.
+
 ## Open sign-up
 
 `SIGNUP_MODE=invite` is the closed beta: sign-up needs an invite. Switch to `open` (#55) only when every gate is green (work plan §5, steps 23 to 25):
 
-- The legal texts are in `/srv/bookclub/legal`, and `/imprint`, `/privacy` and `/terms` show them signed out. Outside `DEV_MODE` the server refuses `SIGNUP_MODE=open` while one of the files is missing, and names the missing ones.
+- The legal texts are in `/srv/bookclub/legal` (see "Legal texts"), and `/imprint`, `/privacy` and `/terms` show them signed out. Outside `DEV_MODE` the server refuses `SIGNUP_MODE=open` while one of the files is missing, and names the missing ones.
 - `send-test-mail` to Gmail, Outlook and GMX arrives, and mail-tester shows SPF, DKIM and DMARC passing.
 - `verify-limits.sh` passed from home, and a sign-up attempt from a second network (a phone on mobile data) was not limited.
 - A takedown ran end to end, within the target time.
@@ -337,6 +417,7 @@ The answer holds `"signup":"open"` (the address is `BOOKCLUB_LISTEN` and `BOOKCL
 - `bind source path does not exist: …` (from `docker compose up`): create the directory as in "First boot".
 - `TRUSTED_PROXIES entry "CHANGE_ME" is not a CIDR or an IP address`: a value in `.env` is still the placeholder.
 - `SMTP_URL must use TLS without DEV_MODE: …`: use `smtps://` or `?tls=required`.
+- `SIGNUP_MODE=open needs the legal texts outside DEV_MODE: …` or `LEGAL_DIR/…`: see "Legal texts".
 - `cannot reach the database (gave up after 60 s)`: check `docker compose ps postgres` and `POSTGRES_PASSWORD`.
 
 ## Still to come

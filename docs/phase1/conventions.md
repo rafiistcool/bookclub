@@ -29,6 +29,8 @@ server/
   .sqlx/                          # committed offline query data (§13)
   src/
     main.rs                       # clap CLI: serve | import-legacy | rematch-legacy | make-admin | beta-invite | openapi
+                                  #   | healthcheck | send-test-mail (§16)
+    healthcheck.rs                # `bookclub-server healthcheck` (DEP #51; `mod healthcheck;` in main.rs, the binary crate)
     lib.rs                        # AppState, app(state), openapi(): router assembly only
     config.rs                     # Config::from_env (§11)
     error.rs                      # AppError, ApiResult, ErrorBody, error::msg (§4)
@@ -57,7 +59,10 @@ server/
     posts/…                       # POSTS: diary entries and pick discussions, reactions, feeds
     picks/… votes/… overlap.rs    # CLUB
     admin/{mod.rs, invites.rs}    # W1: the /api/admin router and its guard, sign-up invites
+    admin/{queue,summary,notify}.rs  # ADM (#54): queue paging, GET /api/admin/summary, the admin notification job (§16)
+    legal.rs                      # LEG (#53): LEGAL_DIR, GET /api/legal/{doc}, terms acceptance (§5.9)
     importer/…                    # IMP
+  legal-placeholder/              # LEG: the DEV_MODE legal texts (compiled in with include_str!) and a manifest.json
   tests/
     common/…                      # test harness (W1, frozen, §17)
     <area>_*.rs                   # one or more integration test files per package
@@ -72,7 +77,7 @@ pub fn routes() -> utoipa_axum::router::OpenApiRouter<crate::AppState>
 
 This is utoipa-axum's wrapper around `axum::Router<AppState>`. It collects the OpenAPI paths of the handlers it routes. Every routed handler carries `#[utoipa::path]` (§14), so no route can go undocumented.
 
-Modules with instance-admin routes (`admin::invites`, `catalog`, `media`) expose them separately, never inside `routes()`:
+Modules with instance-admin routes (`admin`, `catalog`, `media`) expose them separately, never inside `routes()`. `admin::admin_routes()` merges `admin::invites` and `admin::summary` (ADM #54):
 
 ```rust
 pub fn admin_routes() -> OpenApiRouter<crate::AppState>   // every path starts with /api/admin/
@@ -89,17 +94,18 @@ fn api_router() -> OpenApiRouter<AppState> {
         .merge(shelf::routes()).merge(posts::routes())
         .merge(picks::routes()).merge(votes::routes()).merge(overlap::routes())
         .merge(activity::routes())
+        .merge(legal::routes())                               // LEG (#53): GET /api/legal/{doc}
 }
 fn admin_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
-        .merge(admin::invites::admin_routes()).merge(catalog::admin_routes()).merge(media::admin_routes())
+        .merge(admin::admin_routes()).merge(catalog::admin_routes()).merge(media::admin_routes())
 }
 pub fn openapi() -> utoipa::openapi::OpenApi { api_router().merge(admin_router()).split_for_parts().1 }
 pub fn app(state: AppState) -> axum::Router {
     let (api, _) = api_router().split_for_parts();
     let (admin, _) = admin_router().split_for_parts();
     // One guard for every admin route: a handler that forgets its InstanceAdmin argument is still guarded.
-    // axum panics on a route layer over an empty router; admin::invites always has routes.
+    // axum panics on a route layer over an empty router; admin::admin_routes always has routes.
     let admin = admin.route_layer(axum::middleware::from_extractor_with_state::<InstanceAdmin, AppState>(state.clone()));
     /* api.merge(admin), the SPA/404/405 fallbacks (spa::fallback, spa::method_not_allowed) and the layers of §3,
        then .with_state(state) */
@@ -172,8 +178,9 @@ pub enum ImportError { TargetNotEmpty, Source(String), Upstream(String), Db(sqlx
 `main.rs` maps `ImportError::TargetNotEmpty` to exit code 2 (message `target database already has users`) and every other error to exit code 1. Because `Args` and `RematchArgs` are flattened, IMP adds flags without touching `main.rs`.
 
 **Startup (`serve`):**
-1. tracing
-2. `Config::from_env`
+1. tracing, on stderr (§19)
+2. `Config::from_env` (it also reads `LEGAL_DIR`, §5.9)
+2a. `FsMediaStore::new(media_dir).check_writable()` (DEP #51): create `MEDIA_DIR`, write and remove a probe file `.write-probe.<16 hex>`, else exit non-zero with `MEDIA_DIR <path> is not writable: <cause>`, so a wrong mount fails before the 60 s connect retry. `import-legacy` runs it too; `rematch-legacy`, `make-admin` and `beta-invite` store no media and skip it.
 3. connect the pool, retrying every 2 s for up to 60 s, then exit non-zero
 4. `sqlx::migrate!("./migrations").run(&pool)`
 5. build `AppState`
@@ -183,7 +190,7 @@ pub enum ImportError { TargetNotEmpty, Source(String), Upstream(String), Db(sqlx
 
 **Layers, outermost first:**
 1. tower-http `SetRequestId` / `PropagateRequestId` (`x-request-id`)
-2. `SetResponseHeader` `Referrer-Policy: same-origin` on every response (no URL of ours leaks to a third party), and, overriding too, `Content-Security-Policy: frame-ancestors 'none'`, `X-Frame-Options: DENY` and `X-Content-Type-Options: nosniff` (security review 2026-10-28 #10: a same-site page, such as a sibling subdomain behind the shared proxy, would get the Lax session cookie into a frame of ours and could trick a click on a one-tap action like joining a club). They sit outside the layers below so their own answers (the panic 500, a CORS preflight, the origin check's 403) carry them too. HSTS is the reverse proxy's (#51), which terminates TLS.
+2. `SetResponseHeader` `Referrer-Policy: same-origin` on every response (no URL of ours leaks to a third party), and, overriding too, `X-Frame-Options: DENY` and `X-Content-Type-Options: nosniff`; `Content-Security-Policy: frame-ancestors 'none'` only where the answer has no policy yet (`if_not_present`): the SPA fallback sets the full shell policy (`spa::SHELL_CSP`, GATE #55, see "Fallbacks"), which also forbids framing (security review 2026-10-28 #10: a same-site page, such as a sibling subdomain behind the shared proxy, would get the Lax session cookie into a frame of ours and could trick a click on a one-tap action like joining a club). They sit outside the layers below so their own answers (the panic 500, a CORS preflight, the origin check's 403) carry them too. HSTS and `Permissions-Policy` are the reverse proxy's (#51, `deploy/hosted/Caddyfile.example`), which terminates TLS.
 3. `TraceLayer`
 4. `CatchPanicLayer`, answering 500 `{"detail":"Internal Server Error"}`
 4a. the request deadline (`serve::deadline`, `serve::REQUEST_DEADLINE` = 600 s): a request that has not produced its response within 10 minutes, reading its body included, answers 408 `{"detail":"The request took too long"}` and its handler is dropped (the transaction rolls back). Long enough for a 50 MB upload over a slow uplink; a streamed response body (the export) does not count. A client that sends its body one byte at a time holds a task for 10 minutes, not for days.
@@ -191,6 +198,7 @@ pub enum ImportError { TargetNotEmpty, Source(String), Upstream(String), Db(sqlx
 5. CORS: only when `CORS_ORIGINS` is set (Phase 4 apps), or for the Vite origin in DEV_MODE
 6. the origin check (§5.8)
 7. `auth::session::maintain_cookie`: the session extractor cannot touch the response, so it leaves a note in a per-request slot that this layer reads: a cookie that resolved to no live session gets a clearing `Set-Cookie` on the 401, and a cookie session that slid gets its cookie again (§5.1). A handler that sets the session cookie itself (login, logout) wins.
+7a. `legal::terms_scope` (LEG #53): runs each request with the configuration's terms version in a tokio task-local, so the frozen `auth::user_out` can fill `UserOut.needs_terms` (§5.9). It only wraps the handlers; its place among the inner layers does not matter.
 8. `DefaultBodyLimit::max(1 MiB)`; upload routes override it per route (§4.6)
 
 A `route_layer` on the API and admin routes (so not the SPA fallback) adds `Cache-Control: no-store` to every answer whose handler set none (security review 2026-10-28 #11): API answers carry personal data (the account, shelves, a club's invite codes) and set no `Vary: Cookie`, so a caching proxy keyed without the cookie would hand one user's answer to the next, and a browser would keep them on disk after a logout. `/media` and the export set their own and keep them.
@@ -201,6 +209,7 @@ Apart from the header read timeout and the request deadline, there are no global
 - An unknown `/api/…` path (and `/api` itself) or `/media/…` path gets 404 `{"detail":"Not found"}`, whatever the method.
 - A wrong method gets `method_not_allowed_fallback` → 405 `{"detail":"Method Not Allowed"}`.
 - Every other GET or HEAD gets the SPA shell when `STATIC_DIR` is set (`spa.rs`: `ServeDir` for files; `index.html` with `Cache-Control: no-store`; `/assets/*` with `public, max-age=31536000, immutable`; a missing asset is a JSON 404, never the shell). Other methods on those paths get the JSON 405; without `STATIC_DIR` they are all JSON 404s.
+- Every answer of the SPA fallback (the shell, `/assets/*`, the other built files, a missing asset's JSON 404) carries `Content-Security-Policy: <spa::SHELL_CSP>` (GATE #55): `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; manifest-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`. Scripts, styles, pictures, fonts, fetches and the manifest come from the own origin only; `data:` and `blob:` pictures, the `blob:` manifest of `frontend/src/brand.ts` and inline styles are allowed; no plugins, no framing. So `frontend/index.html` has no inline script (the theme boot script is `frontend/public/theme-init.js`), and `frontend/src/thirdParty.test.ts` keeps third-party loads and inline scripts out of the sources. API, `/media` and other JSON answers keep `frame-ancestors 'none'` (layer 2); `tests/platform.rs::the_spa_carries_the_shell_policy` checks both.
 
 ## 4. Errors, extraction, validation
 
@@ -307,6 +316,8 @@ impl Validator {
 ```
 
 Strict JSON numbers and booleans are a reasoned change: pydantic accepted `"50"`, `true` and `50.0`. Status codes stay 400.
+
+A route whose JSON body is optional (ADM's `DELETE /api/admin/media/{public_id}`, #54) uses `media::reports::OptionalJson<T>`: an empty body or the JSON `null` is `None`, anything else goes through `ApiJson` with its 400s. It may move to `extract.rs` when a second route needs it.
 
 ### 4.4 Tri-state fields
 
@@ -440,7 +451,7 @@ pub async fn role_in(conn: &mut PgConnection, user_id: i64, club_id: i64) -> sql
 pub async fn club_refs(conn: &mut PgConnection, club_ids: &[i64]) -> sqlx::Result<HashMap<i64, ClubRef>>;
 ```
 
-`auth::user_out(conn: &mut PgConnection, user_id: i64) -> ApiResult<UserOut>` (W1, frozen) builds the full `UserOut` including `clubs`; MED's avatar endpoints return it. `pending_email` is the address of the newest open verification link (highest `id`, §5.5) of an account whose own address is verified (an email change waiting for confirmation), else null; `clubs` are ordered newest join first; a user that no longer exists is 401 `Not signed in`.
+`auth::user_out(conn: &mut PgConnection, user_id: i64) -> ApiResult<UserOut>` (W1, frozen) builds the full `UserOut` including `clubs`; MED's avatar endpoints return it. `pending_email` is the address of the newest open verification link (highest `id`, §5.5) of an account whose own address is verified (an email change waiting for confirmation), else null; `clubs` are ordered newest join first; a user that no longer exists is 401 `Not signed in`. `needs_terms` (LEG #53) is true while the operator's terms are configured and `users.terms_version` is not their current version (imported accounts, sign-ups from before the terms, everyone after a new version); `user_out` has no configuration, so it reads the version through `legal::needs_terms` from the task-local that `legal::terms_scope` sets per request (§3 layer 7a; false outside a request, §5.9).
 
 - **Club data rule:**
   - On `/api/clubs/{slug}/…` routes, every query on club data takes `club_id` **only** from the `ClubMember` extractor.
@@ -621,7 +632,7 @@ The response is a ZIP that contains `data.json` and `media/`. It is `auth::expor
 
 | Key | Source (`table.column`) |
 |---|---|
-| `profile` | `users` row minus `password_hash`, plus `pending_email` (as in `UserOut`: null unless the account's own address is verified, §5.5 "No enumeration") |
+| `profile` | `users` row minus `password_hash` (so `terms_version` and `terms_accepted_at` too, without code: `the_export_holds_the_accepted_terms`), plus `pending_email` (as in `UserOut`: null unless the account's own address is verified, §5.5 "No enumeration") |
 | `sessions` | `sessions.user_id`: label, kind, created, last used (never `token_hash`) |
 | `shelf_entries` (with work titles) | `shelf_entries.user_id` |
 | `physical_shelf_layout` | `physical_shelf_layouts.user_id` |
@@ -643,8 +654,8 @@ The response is a ZIP that contains `data.json` and `media/`. It is `auth::expor
 | `events` | `events.actor_id` |
 | `import_jobs` | `import_jobs.user_id` |
 | `catalog_contributions` (works and editions the user added) | `works.created_by`, `editions.created_by` |
-| `edit_requests` (filed / decided) | `catalog_edit_requests.created_by`, `catalog_edit_requests.decided_by` |
-| `reports` (filed / resolved) | `reports.created_by`, `reports.resolved_by` |
+| `edit_requests` (filed / decided) | `catalog_edit_requests.created_by`, `catalog_edit_requests.decided_by` (the rows carry `notified_at`, migration 2100: when the admins were first told; no user reference) |
+| `reports` (filed / resolved) | `reports.created_by`, `reports.resolved_by` (with `notified_at`, as above) |
 | `uploaded_media` (avatars and cover photos) | `media.uploaded_by` |
 
 **`media/`** holds the avatar file and the cover photos the user uploaded: every stored variant of every `uploaded_media` row (`uploaded_by` = the user, plus the current avatar) that was not taken down, as `media/<public_id>/<variant>.<webp|jpg>`, stored without recompression. Each `uploaded_media` entry lists its paths in `files`; a removed picture is listed with `files: []`.
@@ -662,6 +673,18 @@ On top of that, the **origin check layer** answers 403 `{"detail":"Cross-site re
 - carries an `Origin` header that is not `PUBLIC_URL`'s origin, not in `CORS_ORIGINS`, and not the Vite origin in DEV_MODE.
 
 Any cookie counts, not only a literal session cookie: the check fails closed instead of depending on how the session extractor parses cookie names (it reads the raw name, §5.1, but a check that never parses names cannot drift from it). Bearer-token requests skip the check. **The frontend sends nothing extra.** It is `auth::origin::check` (W1, implemented in step 1); the cookie name is `session::cookie_name(config)` (§5.1).
+
+### 5.9 Legal texts and terms acceptance (LEG #53, `legal.rs`)
+
+- **The texts.** The operator keeps six HTML fragments in `LEGAL_DIR` (§11): `{imprint,privacy,terms}.{de,en}.html`, as a generator exports them, UTF-8, non-empty, at most 512 KiB each, plus `manifest.json`: `{"terms_version": "2026-11-01", "updated": {"imprint": "2026-11-01", "privacy": …, "terms": …}}`. `LegalTexts::configure`, called from `Config::from_lookup` (not `main.rs`), reads them once at startup; a change needs a restart.
+  - The manifest is required once a text file exists, and unknown keys are refused. `terms_version` is 1 to 64 of `[A-Za-z0-9._-]` (the column check `users_terms_version_format`) and required once a terms file exists; a new value makes every account accept again. `updated` is optional per document (`YYYY-MM-DD`).
+  - **An absent or empty `LEGAL_DIR`** (a path that does not exist, or a directory with neither the manifest nor any of the six texts) serves no texts and logs a warning, in DEV_MODE too. The hosted compose file mounts the empty `/srv/bookclub/legal` at `/app/legal` before any text exists, so the first deploy relies on this. Still errors: a path that is not a directory, texts without a manifest, an invalid manifest, a bad file. Errors name `LEGAL_DIR` and the file.
+  - **Outside DEV_MODE**, startup refuses a file carrying the placeholder marker (`data-legal-placeholder`), and refuses `SIGNUP_MODE=open` unless all six files are there (the error lists the missing ones). `SIGNUP_MODE=invite` starts with any subset.
+  - A document missing in one language falls back to the other (`LegalDocumentOut.fallback`).
+- **Placeholders.** DEV_MODE without `LEGAL_DIR` serves the six marked files of `server/legal-placeholder/`, compiled into the binary (`include_str!`). They carry **no** terms version, so development sign-ups (and every test) need no acceptance. `LEGAL_DIR=legal-placeholder` (from `server/`) loads the same files with their manifest (terms version `placeholder`) to try the acceptance.
+- **Terms acceptance.** `legal::accepted_terms(config, given)` decides for sign-up and `POST /api/auth/terms`: without configured terms nothing is stored (a given version is ignored on sign-up, refused by the accept route); with terms, `given` must equal the current version, else 400 `msg::TERMS_CHANGED`. Sign-up stores `users.terms_version` and `terms_accepted_at = now()` in the same insert (migration 2200; `users_terms_accepted_together`: both NULL or both set). Accepting the version already accepted keeps the first time. `UserOut.needs_terms` is §5.3's rule.
+- **Serving.** `GET /api/legal/{doc}` is public (§17.7) and carries the API's `Cache-Control: no-store`. `/api/config` lists the served documents (`legal`), the current `terms_version` and `contact_email` (`CONTACT_EMAIL`, the public contact and takedown address).
+- **The SPA** shows the texts at `/imprint`, `/privacy` and `/terms` (top-level routes outside the AppShell) and puts the operator's HTML through `sanitizeLegalHtml` (`frontend/src/pages/LegalPage.vue`, an allow-list of text elements and attributes; no picture, script, style or handler survives) before `v-html`. Any other place that renders server HTML must use it too.
 
 ## 6. Visibility policy (#46)
 
@@ -825,7 +848,7 @@ pub fn registration_group(isbn: &Isbn13) -> &str;      // prefix + group, e.g. "
 
 ### 7.2 Ingest: the only writer of catalog fields, with field-level provenance
 
-Every catalog field of `works`, `editions`, `authors`, `work_authors` and `edition_contributors` is written by `ingest`. Three narrow exceptions write through dedicated functions with the same rules: covers (`set_cover`/`clear_media`, used by MED and CAT), admin edits (`apply_admin_fields`, CAT's approve) and merges (`catalog::merge_works`, CAT). The importer may also set `works.details_fetched_at` directly (the legacy value).
+Every catalog field of `works`, `editions`, `authors`, `work_authors` and `edition_contributors` is written by `ingest`. Three narrow exceptions write through dedicated functions with the same rules: covers (`set_cover`/`clear_media`, used by MED and CAT), admin edits (`apply_admin_fields`: CAT's approve, and ADM's direct `PATCH /api/admin/works/{work_id}` and `PATCH /api/admin/editions/{edition_id}`, #54) and merges (`catalog::merge_works`, CAT). The importer may also set `works.details_fetched_at` directly (the legacy value).
 
 **Provenance.** `works.field_sources` and `editions.field_sources` record, per field that holds a value, which source wrote it. Ranks: `admin` (an approved edit request or a direct admin edit) > `user` (entered by a reader) > `dnb` = `openlibrary` > `legacy` (bare facts from the legacy import).
 - An empty field (NULL, `''`, `{}`) may be filled; the new provenance is the writer's.
@@ -960,6 +983,12 @@ pub fn match_key(title: &str, surname: &str) -> String;  pub fn search_extra(wor
 - **Concurrency:** writes of an edition take transaction-level advisory locks on its ISBN, IDN and OL edition id, and `DnbTitleAuthor` on the match key (the two-key lock space `(0x62630100, hash)`, separate from `jobs::lock_ids`); `upsert_dnb_record` takes all of a record's keys at once. Inserts also use `ON CONFLICT DO NOTHING` and merge into the winner. Callers run a multi-statement ingest in one transaction (HAR per page, CAT per lookup), or the locks end with each statement.
 - **Deadlocks:** the advisory locks of one call are taken in a fixed order before its row locks, so concurrent single-record ingests serialise on their identifiers and deadlock only in rare cases (an IDN moving between two editions of one work while the other edition is re-ingested). Locks are not ordered across calls: a transaction that ingests several records (HAR's page) holds the advisory and row locks of earlier records while it asks for the next ones, and a concurrent ingest (a CAT lookup, another page) can hold them the other way round. Postgres then aborts one transaction with SQLSTATE 40P01 after `deadlock_timeout`. Every ingest caller is ready for that: the aborted transaction is rolled back and retried as a whole (HAR retries the page a few times, then fails the run; CAT retries the lookup once). Test with `error::is_deadlock`. HAR may instead commit per record or small batch, as long as the cursor is written with the last one (work-plan HAR).
 - **Covers and takedowns:** the media rows a write attaches are locked `FOR SHARE` (`ol_cover_media`, `set_cover`) before any catalog row is locked, and the lock lasts until the caller's transaction ends. A takedown's `UPDATE media SET removed_at` then waits for an attaching transaction, and its `clear_media` sees the new reference; MED's takedown sets `removed_at` before it calls `clear_media`, in one transaction.
+  - **Lock order around a picture** (ADM #54): everything that touches a picture's reports or cover requests locks its media row first, so takedowns, reports, dismissals and cover approvals take turns instead of deadlocking:
+    - **Takedown** (`media::reports::take_down_locked`, for the direct takedown and `remove`): media `FOR UPDATE` → works and editions (`clear_media`) → reports → `catalog_edit_requests` (it rejects the picture's open `cover_replace` requests with the note `media::reports::TAKEN_DOWN_NOTE`).
+    - **Cover approval** (`approve_edit_request`): the request's picture `FOR SHARE` (`lock_request_media`, before the request row) → the request row `FOR UPDATE` → catalog rows.
+    - **Report:** media `FOR SHARE` → `pg_advisory_xact_lock(0x6263_0200, hashtext('<user id>:<media id>'))` (the two-key space for one reader's reports of one picture, beside ingest's `0x6263_0100` and `jobs::lock_ids`) → the reports row.
+    - **Dismiss:** media `FOR NO KEY UPDATE` → reports.
+    - Each lock has a race test that fails without it (`catalog_requests.rs::a_takedown_rejects_a_cover_request_an_admin_is_approving`, `media_reports.rs::a_report_filed_during_a_takedown_sees_the_removal`, `a_dismissal_waits_for_a_report_being_filed_and_closes_it_too`, `two_reports_at_once_by_one_reader_are_one_report`).
 - `upsert_work_stubs` writes `author_names` only (author records come with the full record) and inserts records without an `ol_work_id` one by one.
 
 ### 7.3 Rules ingest maintains
@@ -1068,6 +1097,7 @@ pub trait MediaStore: Send + Sync {
     async fn delete_prefix(&self, prefix: &str) -> anyhow::Result<()>;
 }
 pub struct FsMediaStore { root: PathBuf }   // writes to a temp file, then renames (atomic)
+impl FsMediaStore { pub async fn check_writable(&self) -> anyhow::Result<()>; }  // DEP (#51): startup probe, §3 step 2a
 pub struct MemMediaStore { … }             // tests: new(), keys() (sorted), content_type(key)
 // Both refuse keys that are not relative paths of plain components ("..", absolute, empty).
 
@@ -1126,9 +1156,13 @@ pub struct LogEmail;        // logs to and subject, plus the full body, at INFO:
 pub struct SmtpEmail { … }  // lettre AsyncSmtpTransport<Tokio1Executor>, rustls, pooled; from SMTP_URL;
                             // parses `to` as lettre::Address and sends to Mailbox::new(None, address)
 // tests: CapturingEmail (tests/common) keeps every message
+pub fn test_mail(config: &Config, to: &str) -> Email;   // DEP (#51): the `send-test-mail` message (§16)
 ```
 
-- **Templates** are plain text only, in English and German by `users.locale`, in `email/templates.rs`: verify, reset, email changed (to the old address), and "someone tried to use your address" (sent to a verified address instead of a verification link when a sign-up or an email change named it, §5.5; it says what was tried and links to login and password reset, and contains no link that changes anything).
+- **Headers** (DEP #51): `SmtpEmail` sets `Message-ID: <uuid-v4@domain of EMAIL_FROM>` on every mail (the UUID from `auth::random`; lettre 0.11 adds none by itself), and lettre adds `Date`.
+- **`email::test_mail`** is English: subject `<SERVICE_NAME> test mail`, a body naming the service and `PUBLIC_URL`, no link that does anything. It lives in `email/mod.rs`, not in `templates.rs`.
+
+- **Templates** are plain text only, in English and German by `users.locale`, in `email/templates.rs`: verify, reset, email changed (to the old address), and "someone tried to use your address" (sent to a verified address instead of a verification link when a sign-up or an email change named it, §5.5; it says what was tried and links to login and password reset, and contains no link that changes anything), and since ADM (#54) the two admin mails.
 
   ```rust
   pub struct Site<'a> { pub service: &'a str, pub public_url: &'a str }        // auth::mail::site(&config)
@@ -1138,6 +1172,11 @@ pub struct SmtpEmail { … }  // lettre AsyncSmtpTransport<Tokio1Executor>, rust
   pub fn reset_password(site: Site, to: Recipient, link: &str) -> Email;
   pub fn email_changed(site: Site, to: Recipient, new_address: &str) -> Email;
   pub fn address_in_use(site: Site, to: Recipient, attempt: Attempt) -> Email;  // links: {PUBLIC_URL}/login, /forgot-password
+  // ADM (#54), to instance admins (§16 "admin notification"): counts and the oldest item's age only,
+  // never a reporter, another username or what a report says.
+  pub struct QueueNews { pub new: i64, pub open: i64, pub oldest_hours: i64 }
+  pub fn admin_reports(site: Site, to: Recipient, news: QueueNews) -> Email;          // link: {PUBLIC_URL}/admin?tab=reports
+  pub fn admin_requests_digest(site: Site, to: Recipient, news: QueueNews) -> Email;  // link: {PUBLIC_URL}/admin?tab=requests
   ```
 - **Provider:** an EU-hosted transactional provider with a DPA, reached over SMTP. The choice is Rafael's decision; record it in #39. SMTP keeps any provider swappable.
 
@@ -1290,7 +1329,7 @@ pub async fn get_text(o: &Outbound, t: &HostThrottle, url: Url, policy: &RetryPo
 | Variable | Default | Meaning |
 |---|---|---|
 | `DATABASE_URL` | required | Postgres URL |
-| `BIND_ADDR` | `127.0.0.1:8080` | listen address (the Docker image sets `0.0.0.0:8080`) |
+| `BIND_ADDR` | `127.0.0.1:8080` | listen address (the root `Dockerfile`'s image sets `0.0.0.0:8080`); `healthcheck` reads only this (§16) |
 | `PUBLIC_URL` | required unless `DEV_MODE` (then `http://localhost:5173`) | origin for email and invite links, the UA contact, the origin check and ICS; reduced to scheme://host[:port] |
 | `SERVICE_NAME` | `Bookclub` | `/api/config.name`, email copy |
 | `DEV_MODE` | `false` | `COOKIE_SECURE` defaults to false, `EMAIL_TRANSPORT` to `log` (and allows it); the Vite origin is allowed for CORS and the origin check |
@@ -1298,12 +1337,13 @@ pub async fn get_text(o: &Outbound, t: &HostThrottle, url: Url, policy: &RetryPo
 | `SIGNUP_MODE` | `invite` | `invite` (closed beta) or `open` (#55) |
 | `TRUSTED_PROXIES` | required unless `DEV_MODE` (then empty) | comma-separated CIDRs whose `X-Forwarded-For` is trusted, or `none` (§10.2) |
 | `CORS_ORIGINS` | empty | extra allowed origins (Phase 4 Capacitor origins) |
-| `STATIC_DIR` | unset | built SPA (`frontend/dist`). When unset, no SPA routes are served |
-| `MEDIA_DIR` | `./data/media` | `FsMediaStore` root |
+| `STATIC_DIR` | unset | built SPA (`frontend/dist`; the image sets `/app/static`). When unset, no SPA routes are served |
+| `MEDIA_DIR` | `./data/media` | `FsMediaStore` root (the image sets `/data/media`, owned by uid 1000). `serve` and `import-legacy` refuse to start when they cannot write a probe file there (§3 step 2a) |
+| `LEGAL_DIR` | unset | the operator's legal texts and `manifest.json` (LEG #53, §5.9); read once at startup. Unset: DEV_MODE serves the placeholders, production none. A path that does not exist or holds no text and no manifest serves none (with a warning). Outside DEV_MODE, `SIGNUP_MODE=open` needs all six files. The hosted setup sets `/app/legal` |
 | `EMAIL_TRANSPORT` | `log` if `DEV_MODE`, else `smtp` | `log` is refused at startup without `DEV_MODE`: `LogEmail` writes every mail, reset links included, to the log (§19) |
 | `SMTP_URL` | – | e.g. `smtps://user:pass@smtp.provider.eu:465`. Without `DEV_MODE` it must be encrypted: `smtps://` or `smtp://…?tls=required` (STARTTLS that must succeed). Plain `smtp://` (unencrypted in lettre) and `?tls=opportunistic` (strippable by an on-path attacker) are refused at startup unless the host is `localhost` or a loopback address (a relay on the same host), because the mail carries reset links and the URL the SMTP password (security review 2026-10-28 #13) |
 | `EMAIL_FROM` | – | `Bookclub <noreply@…>` |
-| `CONTACT_EMAIL` | required unless `DEV_MODE` | contact in the outbound User-Agent |
+| `CONTACT_EMAIL` | required unless `DEV_MODE` | contact in the outbound User-Agent, and the public contact and takedown address (`/api/config.contact_email`, LEG #53) |
 | `OPENLIBRARY_URL` / `OPENLIBRARY_COVERS_URL` | `https://openlibrary.org` / `https://covers.openlibrary.org` | tests point these at wiremock |
 | `DNB_SRU_URL` / `DNB_OAI_URL` | `https://services.dnb.de/sru/dnb` / `https://services.dnb.de/oai/repository` | |
 | `DNB_HARVEST` | `false` | enable the harvester job (enable it after the legacy import) |
@@ -1318,6 +1358,7 @@ pub async fn get_text(o: &Outbound, t: &HostThrottle, url: Url, policy: &RetryPo
 - `TRUSTED_PROXIES` entries may also be bare IP addresses (a /32 or /128).
 - `CORS_ORIGINS` entries are reduced to `scheme://host[:port]` and may use any scheme with a host (`capacitor://localhost`).
 - `Config::allowed_origins()` (origin check) and `Config::cors_allowed_origins()` (CORS) apply the DEV_MODE Vite origins `http://localhost:5173` and `http://127.0.0.1:5173`.
+- `deploy/hosted/env.example` (DEP #51) names every variable the server reads, plus the compose variables (`BOOKCLUB_TAG`, `BOOKCLUB_LISTEN`, `BOOKCLUB_PORT`, `BOOKCLUB_DATA_DIR`, `BOOKCLUB_ENV_FILE`, `BOOKCLUB_RESTART`) and `POSTGRES_PASSWORD`; `tests/deploy_env.rs` fails when a variable is added to `config.rs` (or read with `env::var` anywhere in `server/src`) without a line there, and checks that the filled-in file and `deploy/hosted/ci.env` are production configurations.
 
 ## 12. JSON, time and text
 
@@ -1467,16 +1508,20 @@ pub async fn record(conn: &mut PgConnection, ev: NewEvent) -> sqlx::Result<i64>;
 
 - `jobs::spawn_all(state, shutdown) -> tokio::task::JoinSet<()>` starts (signatures in §3); `serve` cancels `shutdown` on SIGTERM/Ctrl+C and waits up to 10 s for the set:
   - `auth::cleanup` (hourly)
+  - `admin::notify::run` (ADM #54; `jobs::admin_notify_loop`, every 5 minutes, `admin::notify::RUN_EVERY`, the first tick at startup): per queue, when the queue's last mail (its newest `notified_at`, migration 2100) is at least the interval old (1 hour for reports, 24 hours for catalog requests) and open items without `notified_at` exist, it mails every user with `is_admin` and a verified address, in `users.locale` (§9), through `state.email` directly (15 s each, not `auth::mail::deliver`'s per-address limits), then stamps `notified_at = now()` on the items it counted, only when at least one mail went out. No setting; with `EMAIL_TRANSPORT=log` the mails go to the log.
   - `harvest::run_forever` (only when `DNB_HARVEST`)
   - `shelf::goodreads::resume` (once at startup: re-queues `queued`/`running` jobs)
   - the media prefetch worker (`MediaService`, §8)
 - Each periodic job:
-  - takes `pg_try_advisory_lock(<job id>)` for the run, which is safe if a second instance ever runs (`jobs::run_locked(db, lock_id, name, job)` does it, logs and never panics: a panicking job is caught, logged at ERROR and counts as failed, and its connection is closed rather than returned to the pool, so the session-level lock dies with it; the keys are `jobs::lock_ids`, e.g. `DNB_HARVEST` for HAR)
+  - takes `pg_try_advisory_lock(<job id>)` for the run, which is safe if a second instance ever runs (`jobs::run_locked(db, lock_id, name, job)` does it, logs and never panics: a panicking job is caught, logged at ERROR and counts as failed, and its connection is closed rather than returned to the pool, so the session-level lock dies with it; the keys are `jobs::lock_ids`: `AUTH_CLEANUP = 0x6263_0001`, `DNB_HARVEST = 0x6263_0002`, `ADMIN_NOTIFY = 0x6263_0003`)
   - logs start, end and duration
   - never panics (errors are logged)
 - Jobs are **not** started in tests. Tests call the job function directly.
 - **Goodreads jobs** run as `tokio::spawn` tasks started by the POST handler. The handler commits the job row first, so a crash is resumed at startup.
-- **The CLI** (clap, `main.rs`, W1) has `serve` (default), `import-legacy` (IMP fills `importer::run`), `rematch-legacy` (IMP fills `importer::rematch`: re-resolves legacy bare-facts editions by ISBN, legacy-mapping.md §3.3), `make-admin`, `beta-invite` and `openapi`. `import-legacy` and `rematch-legacy` connect and migrate like `serve`, build the production `AppState`, and print `importer::Report` with its `Display` impl (IMP keeps that impl).
+- **The CLI** (clap, `main.rs`, W1) has `serve` (default), `import-legacy` (IMP fills `importer::run`), `rematch-legacy` (IMP fills `importer::rematch`: re-resolves legacy bare-facts editions by ISBN, legacy-mapping.md §3.3), `make-admin`, `beta-invite` and `openapi`. `import-legacy` and `rematch-legacy` connect and migrate like `serve`, build the production `AppState`, and print `importer::Report` with its `Display` impl (IMP keeps that impl). DEP (#51) added two that never touch the database:
+  - `healthcheck` (`healthcheck.rs`, the image's `HEALTHCHECK`): reads only `BIND_ADDR` (`0.0.0.0` becomes `127.0.0.1`, `[::]` becomes `[::1]`), never `Config::from_env`, and GETs `/api/health` with reqwest, 3 s for the whole request and no proxy. Exit 0 and `GET <url> answered 200 OK` on stdout only on 200; otherwise exit 1 with `error: GET <url> answered …` (or the connection error) on stderr.
+  - `send-test-mail <address>`: the full configuration as for `serve`; the address must pass `auth::rules::valid_email`. It sends `email::test_mail` (§9) through the configured transport (`LogEmail` in DEV_MODE) and exits 1 with `error: SMTP send failed: …` when the server refuses.
+- **The legacy importer** (`importer/source.rs`, CUT #52) never opens the legacy file itself: it resolves a symlink, copies the file and its `-wal` and `-journal` into a private directory `$TMPDIR/bookclub-legacy-<16 hex>` (0700, files 0600), opens that copy with `SQLITE_OPEN_READ_ONLY` and removes it afterwards, so a WAL database on a read-only mount imports with its committed `-wal` rows (never `immutable=1`). A hot journal is refused with its reason. The hosted container's `/tmp` is a 64 MB tmpfs; `TMPDIR` moves the copy (`deploy/hosted/README.md`, "The legacy import").
 
 ## 17. Testing
 
@@ -1617,6 +1662,8 @@ pub struct Viewers {
 }
 ```
 
+**`common::legal_dir(terms_version) -> tempfile::TempDir`** (LEG #53, added at the end of `tests/common/mod.rs`): a `LEGAL_DIR` with all six texts (`<p>{doc} {locale}</p>`) and a manifest with that terms version; pass it as `("LEGAL_DIR", dir.path().to_str().unwrap())`. Phase 2 packages only add helpers to `tests/common/**` and record any change to an existing one in their notes.
+
 **`tests/common/routes.rs`** lists the documented operations for the route-wide guards (§17.7): `operations() -> Vec<Operation>` (from `bookclub_server::openapi()`), `find(&Method, path)`, and `outcome(&TestResponse) -> (u16, Value)` (the body as JSON, `null` when it is not). `Operation { method, path, params: Vec<(name, is_integer)>, has_body, tag }` has `label()` (`"GET /api/clubs"`), `fill(|name, is_integer| value)`, `fill_dummy(slug)` (§17.7's dummy values) and `send(&client, path, &body)` (the body as JSON when the operation takes one).
 
 `audience()` (`[&co_member]`) and `strangers()` (`[&other_club, &stranger, &former]`) list the viewers; `assert_hidden_like_unknown(viewer, |name| path, "owner")` asserts that a stranger's answer is a 404 identical to the one for the unknown name `visibility::UNKNOWN`. Paths use the usernames (`?username=owner`), code uses the fields (`v.co_member`). `tests/harness.rs` tests the harness itself.
@@ -1649,8 +1696,8 @@ Unit tests stay next to the code (`#[cfg(test)]`). They cover pure functions: IS
 ### 17.7 Route-wide guards (W1, generic, cover Wave 2 routes once they merge)
 
 They walk the OpenAPI document (`bookclub_server::openapi()`), fill path parameters with dummy values (`{slug}` of a real club, numeric ids `1`, other strings `x`) and send a body `{}` where one is expected:
-- `tests/auth_required.rs`: an anonymous caller gets **401** on every operation except the public allow-list: `GET /api/health`, `GET /api/config`, `GET /api/openapi.json`, `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/auth/tokens`, `POST /api/auth/verify-email`, `POST /api/auth/verify-email/preview`, `POST /api/auth/password-reset`, `POST /api/auth/password-reset/confirm`, `GET /api/invites/{code}`, `GET /media/{public_id}/{variant}`.
-- `tests/admin_guard.rs`: a signed-in non-admin gets **404 `Not found`** on every `/api/admin/*` operation.
+- `tests/auth_required.rs`: an anonymous caller gets **401** on every operation except the public allow-list: `GET /api/health`, `GET /api/config`, `GET /api/openapi.json`, `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/auth/tokens`, `POST /api/auth/verify-email`, `POST /api/auth/verify-email/preview`, `POST /api/auth/password-reset`, `POST /api/auth/password-reset/confirm`, `GET /api/invites/{code}`, `GET /media/{public_id}/{variant}`, `GET /api/legal/{doc}` (LEG #53).
+- `tests/admin_guard.rs`: a signed-in non-admin gets **404 `Not found`** on every `/api/admin/*` operation. Since ADM (#54) it asserts the exact list of admin operations (`ADMIN_OPERATIONS`, 12), so a new one fails until it is added there with real ids and a valid body, and the walk uses real seeded ids so an unguarded handler would act.
 - `tests/clubs_non_member.rs`: a signed-in non-member gets **404 `No such club`** on every `/api/clubs/{slug}/…` operation. It also seeds, in club A, a pick, a club post and a reply, and as a member of club B and as a clubless user calls every `/api/posts/{post_id}…` operation on them (404 `No entry with that id`), `POST /api/books/works/{work_id}/posts` with `parent_id` = the club post (400 `That entry is not on this book`) and `GET /api/diary?club=<A>` (404 `No such club`), and checks that `GET /api/books/works/{work_id}/posts`, `GET /api/diary` and `GET /api/activity` contain none of club A's post or event ids. Until POSTS and CLUB merge, those routes are absent from the document and the walker skips them.
 
 Details of the W1 implementation:
@@ -1747,6 +1794,7 @@ wiremock = "0.6.5"
 ## 19. Logging and operational rules
 
 - Use `tracing` with fields, not string formatting: `tracing::warn!(url = %u, status, latency_ms, "open library request failed")`.
+- **The log goes to stderr** (DEP #51), with ANSI colours only when stderr is a terminal. stdout carries only a command's result (`beta-invite`'s code and link, `openapi`'s JSON, the importer's report), so `docker compose exec app bookclub-server beta-invite | head -1` is the code and Docker's log files hold plain text.
 - **Never log:** passwords, tokens, cookies, email tokens, invite codes, the email body (except in `LogEmail` in dev) or full email addresses at INFO. The access log's `path` (the `TraceLayer` span in `lib.rs`) replaces the code in `/api/invites/{code}…` and `/join/{code}` with `{code}`.
 - `AppError::internal` logs the cause at ERROR with the request id.
 - **Outbound calls** log URL, status and latency: INFO on success, WARN on failure.
@@ -1804,7 +1852,9 @@ pub struct SearchPage { pub items: Vec<SearchHit>, pub page: i32, pub has_more: 
 pub struct UserOut {
     pub id: i64, pub username: String, pub email: Option<String>, pub email_verified: bool,
     pub pending_email: Option<String>,   // an email change waiting for confirmation: the newest open verification link's address, only while the account's own address is verified; else null
-    pub needs_email_prompt: bool, pub theme: String, pub color_mode: String, pub locale: String,
+    pub needs_email_prompt: bool,
+    pub needs_terms: bool,               // LEG (#53): the operator's terms are configured and not accepted in their current version (§5.3)
+    pub theme: String, pub color_mode: String, pub locale: String,
     pub timezone: String, pub avatar_url: Option<String>, pub is_admin: bool, pub clubs: Vec<ClubSummary>,
 }
 #[derive(Clone, Debug, Serialize, ToSchema)]
