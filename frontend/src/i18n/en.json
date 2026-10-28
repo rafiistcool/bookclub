@@ -599,6 +599,7 @@
     "invalidTimeZone": "That is not a valid time zone",
     "transferClubsFirst": "Hand over or delete your clubs first",
     "noSuchSession": "That session no longer exists",
+    "termsChanged": "The terms of use have changed. Have a look at them and try again.",
     "pictureRemoved": "This picture was removed",
     "noSuchClub": "That club does not exist, or you are not a member",
     "adminsOnly": "Only club admins can do that",
@@ -1249,5 +1250,43 @@
     "body": "There is nothing at this address. The link may be old or mistyped.",
     "toHome": "Home",
     "toDiscover": "Discover"
+  },
+  "legal": {
+    "nav": "Legal",
+    "short": {
+      "imprint": "Imprint",
+      "privacy": "Privacy",
+      "terms": "Terms"
+    },
+    "title": {
+      "imprint": "Imprint",
+      "privacy": "Privacy policy",
+      "terms": "Terms of use"
+    },
+    "inline": {
+      "privacy": "privacy policy",
+      "terms": "terms of use"
+    },
+    "privacyNote": "The {privacy} explains what we store about you.",
+    "updated": "Last updated {date}",
+    "onlyIn": {
+      "de": "This text is only available in German.",
+      "en": "This text is only available in English."
+    },
+    "missing": "This text is not online yet.",
+    "failed": "Could not load this text.",
+    "back": "← Back",
+    "contact": "Questions about your data, or content to report? Write to {email}.",
+    "settingsTitle": "Legal",
+    "settingsBlurb": "Who runs {name}, what it stores about you, and the rules for using it."
+  },
+  "terms": {
+    "signup": "By creating an account, you accept the {terms}.",
+    "promptTitle": "Terms of use",
+    "promptBody": "The {terms} of {name} are new or have changed. Please read them and accept them.",
+    "accept": "Accept the terms",
+    "accepting": "Saving…",
+    "accepted": "Thank you. You accepted the terms of use.",
+    "failed": "Could not save your answer"
   }
 }

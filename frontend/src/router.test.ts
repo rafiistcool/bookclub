@@ -140,3 +140,46 @@ describe("unknown paths", () => {
     expect(route.query).toEqual({ next: "/nonexistent/path" });
   });
 });
+
+/** A signed-out visit to `path`, from the login page. */
+async function guestVisit(path: string) {
+  vi.stubGlobal("localStorage", memoryStorage());
+  setActivePinia(createPinia());
+  me.mockRejectedValue(new ApiError("Not signed in", 401, "Not signed in"));
+  await router.push("/login");
+  const failure = await router.push(path).catch((error: unknown) => error);
+  expect(failure).toBeUndefined();
+  return router.currentRoute.value;
+}
+
+describe("legal pages", () => {
+  beforeEach(() => {
+    me.mockReset();
+    vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("opens the imprint, the privacy policy and the terms signed out, outside the app shell", async () => {
+    for (const doc of ["imprint", "privacy", "terms"]) {
+      const route = await guestVisit(`/${doc}`);
+      expect(route.fullPath).toBe(`/${doc}`);
+      expect(route.matched.map((record) => record.path)).toEqual([`/${doc}`]);
+      expect(route.matched[0]?.props.default).toEqual({ doc });
+    }
+  });
+
+  it("opens them signed in as well", async () => {
+    for (const path of ["/imprint", "/privacy", "/terms"]) {
+      expect(await landing(path, [READERS])).toBe(path);
+      expect(router.currentRoute.value.matched).toHaveLength(1);
+    }
+  });
+
+  it("sends the German names to the same pages", async () => {
+    expect((await guestVisit("/impressum")).fullPath).toBe("/imprint");
+    expect((await guestVisit("/datenschutz")).fullPath).toBe("/privacy");
+    expect((await guestVisit("/nutzungsbedingungen")).fullPath).toBe("/terms");
+    expect(await landing("/impressum", [READERS])).toBe("/imprint");
+  });
+});

@@ -27,6 +27,7 @@ const API_ERROR_KEYS: Record<string, string> = {
   "That is not a valid time zone": "errors.invalidTimeZone",
   "Transfer or delete your clubs first": "errors.transferClubsFirst",
   "No such session": "errors.noSuchSession",
+  "The terms of use have changed. Reload the page and try again.": "errors.termsChanged",
 
   // Pictures
   "That picture is too large (50 MB max)": "errors.pictureTooLarge",

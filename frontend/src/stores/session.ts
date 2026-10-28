@@ -51,7 +51,19 @@ export const useSession = defineStore("session", {
         this.ready = true;
       }
     },
-    async register(body: { username: string; email: string; password: string; inviteCode: string }) {
+    /**
+     * Creates the account and signs it in. `termsVersion` is the version of
+     * the terms the sign-up page showed (`/api/config.terms_version`); the
+     * server stores it as the acceptance, and refuses a missing or old one
+     * while terms are configured.
+     */
+    async register(body: {
+      username: string;
+      email: string;
+      password: string;
+      inviteCode: string;
+      termsVersion?: string | null;
+    }) {
       const locale = useLocale();
       const request: RegisterIn = {
         username: body.username,
@@ -60,6 +72,7 @@ export const useSession = defineStore("session", {
         invite_code: body.inviteCode || null,
         timezone: browserTimeZone(),
         locale: locale.locale,
+        terms_version: body.termsVersion ?? null,
       };
       try {
         this.user = await api.register(request);
@@ -77,6 +90,10 @@ export const useSession = defineStore("session", {
       const theme = useTheme();
       void theme.persist({ theme: theme.theme, color_mode: theme.mode });
       void useLocale().persist();
+    },
+    /** Accepts `termsVersion`, the current terms, for the signed-in account (`UserOut.needs_terms`). */
+    async acceptTerms(termsVersion: string) {
+      this.user = await api.acceptTerms(termsVersion);
     },
     async login(username: string, password: string) {
       await api.login({ username, password });

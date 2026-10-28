@@ -94,6 +94,7 @@ The browser never talks to these hosts; the server does, from its own IP address
 - No analytics, no error tracking, no CDN, no embedded media, no social plugins. GATE (#55) adds a Content-Security-Policy that limits the page to its own origin.
 - The only way out is a link the user clicks: "View on Open Library" on a book page, which opens in a new tab without a referrer (`frontend/src/pages/BookDetailPage.vue:412-420`).
 - The web app manifest and icons are local files (`frontend/public/`).
+- The legal pages show the operator's HTML without pictures, frames, styles or scripts, and links to other sites open in a new tab without a referrer (`frontend/src/legal.ts`), so a generator template cannot add a request to a third party.
 
 ## 7. Retention
 
@@ -129,8 +130,9 @@ The browser never talks to these hosts; the server does, from its own IP address
 Recommended option of Q13: a sentence with links above the sign-up button, with the version and the time stored.
 
 - The operator's `manifest.json` names the current terms version; `GET /api/config` publishes it as `terms_version` (`server/src/legal.rs`).
+- The sign-up page says, right above the button: "By creating an account, you accept the terms of use. The privacy policy explains what we store about you." Both are links (`frontend/src/pages/SignupPage.vue`). There is no checkbox.
 - A sign-up must send that version whenever the terms are configured; the server stores it with the time (`users.terms_version`, `users.terms_accepted_at`; `server/src/auth/signup.rs`).
-- Accounts without an acceptance of the current version (imported accounts, and everyone after a new version) see a one-time prompt (`UserOut.needs_terms`), which records the acceptance (`POST /api/auth/terms`, `server/src/auth/account.rs`).
+- Accounts without an acceptance of the current version (imported accounts, and everyone after a new version) see a prompt at the top of every page until they accept: "The terms of use of {service} are new or have changed. Please read them and accept them.", with an "Accept the terms" button (`frontend/src/components/TermsPrompt.vue`, `UserOut.needs_terms`). The button records the acceptance (`POST /api/auth/terms`, `server/src/auth/account.rs`). The prompt cannot be dismissed without accepting, and nothing else in the app is blocked meanwhile (to confirm with the lawyer).
 - Both columns are part of the export (§8).
 
 ## 10. Inside the service: who sees whose data

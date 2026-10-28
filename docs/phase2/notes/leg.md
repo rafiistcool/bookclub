@@ -12,7 +12,7 @@ Owner: LEG. These notes record what the legal package built, where it deviates f
 - `server/migrations/2200_users_terms.sql`: `users.terms_version`, `users.terms_accepted_at`.
 - Terms acceptance on the server: `RegisterIn.terms_version`, `UserOut.needs_terms`, `POST /api/auth/terms`.
 
-**Part 2 (open): the SPA.** Routes `/imprint`, `/privacy`, `/terms` outside the AppShell with the German aliases, `LegalPage.vue`, `LegalLinks.vue` on the auth pages, NotFound and the AppShell, the Legal section in Settings, the privacy link in `EmailPrompt.vue`, the terms sentence on sign-up, `TermsPrompt.vue`, the service and session stores, the `apiErrors.ts` mapping of `TERMS_CHANGED` with its en/de strings, and the browser check at `http://agents.lan:8084/imprint`.
+**Part 2 (done): the SPA.** The public pages `/imprint`, `/privacy` and `/terms` outside the AppShell with the German aliases, `LegalPage.vue` with an HTML sanitiser, `LegalLinks.vue` on the auth pages and the AppShell, the Legal section in Settings, the privacy link in `EmailPrompt.vue`, the terms sentence and `terms_version` on sign-up, `TermsPrompt.vue`, the service and session stores, and the `apiErrors.ts` mapping of `TERMS_CHANGED`. Checked in a browser against the worktree's server (below).
 
 ## Contract changes for the integrator
 
@@ -32,7 +32,7 @@ Owner: LEG. These notes record what the legal package built, where it deviates f
 
 ### Error strings (endpoint-map §11.3, `error::msg`)
 
-- `msg::TERMS_CHANGED` = `The terms of use have changed. Reload the page and try again.` (`server/src/error.rs`, under `// LEG (#53)`). Part 2 maps it in `apiErrors.ts` with en and de strings.
+- `msg::TERMS_CHANGED` = `The terms of use have changed. Reload the page and try again.` (`server/src/error.rs`, under `// LEG (#53)`). `apiErrors.ts` maps it to `errors.termsChanged`: "The terms of use have changed. Have a look at them and try again." / "Die Nutzungsbedingungen haben sich geändert. Sieh sie dir an und versuch es nochmal." The app fetches the new version itself on this error (below), so its copy does not ask for a reload, which would empty the sign-up form.
 
 ### Configuration (conventions §11)
 
@@ -81,6 +81,41 @@ Startup rules (`LegalTexts::configure`, called from `Config::from_lookup`; not i
 - `docs/phase1/endpoint-map.md` §0: the `needs_terms: bool` line in `UserOut`.
 - Generated: `server/.sqlx/` and `frontend/src/api/generated.ts`. `cargo sqlx prepare` on a fresh database also rewrote the `nullable` array of one unrelated query (`query-fb32f4f8…`, the reactions loader: three overridden `!` columns from `true` to `false`); it changes no code, and the integrator's regeneration settles it.
 
+### Frontend (Part 2: the SPA)
+
+**Routes** (`frontend/src/router.ts`; endpoint-map's SPA route list and CLAUDE.md "Frontend" can name them):
+
+- `/imprint`, `/privacy`, `/terms`: `LegalPage.vue` with the prop `doc`. Top-level records, declared before the AppShell, with no `meta`: public signed in and signed out, and not guest pages (a signed-in reader stays). Inside the AppShell its catch-all would send a signed-out visitor to `/login`.
+- `/impressum` → `/imprint`, `/datenschutz` → `/privacy`, `/nutzungsbedingungen` → `/terms` (redirect records).
+- The server's SPA fallback (`server/src/spa.rs`) already answers these paths with the shell; no server change.
+
+**Rendering the operator's HTML: a sanitiser, not a sandboxed iframe.** Decision (asked for in the Part 2 task):
+
+- `frontend/src/legal.ts` `sanitizeLegalHtml` parses the HTML with `DOMParser` (no script runs, nothing loads), keeps an allow-list of text elements (headings, paragraphs, lists, tables, links, emphasis, `section`/`aside`/`div`/`span`, `address`, `time`, …) and unwraps any other element, keeping its text. Script, style, frames, embeds, forms, `img`/`picture`/`video`/`audio`, SVG, MathML, `template`, `noscript` and comments are removed with their content. Attributes are an allow-list too: `id`, `lang`, `dir`, `title`, `data-legal-placeholder` everywhere, `href` on links, spans and `scope` on table cells, `start`/`type`/`reversed` on lists, `datetime` on `time`. So no `on*` handler, `style`, `class`, `target` or `src` survives. A link keeps its `href` only if it resolves to http, https, mailto or tel (`javascript:`, `data:`, `vbscript:`, `file:` and their obfuscated spellings go); a link to another origin gets `target="_blank" rel="noopener noreferrer"`. The result has no raw-text element, so re-parsing it in `v-html` builds the same tree (tested with the usual mutation-XSS payloads).
+- Why not the iframe: a `sandbox` iframe without `allow-same-origin` cannot be sized to its content or styled from the app (fonts, the four palettes, dark mode), links inside it navigate the frame, and every text would need its own stylesheet; with `allow-same-origin` and no scripts it is safe but still needs measuring and link plumbing. The texts are the operator's own files, so the threat is a careless template or a pasted snippet, not a hostile author; an allow-list covers that and keeps the page in the app's type. Pictures are dropped on purpose: the privacy facts say the browser contacts no third party (`docs/legal/privacy-facts.md` §6 now names this).
+- GATE's CSP (`script-src 'self'`, no inline handlers) is a second layer on top.
+- Links inside a text: `#section` scrolls within the text (the router's `scrollBehavior` would jump to the top), a path of this app goes through the router, anything else is left to the browser.
+
+**Components and pages:**
+
+- `LegalPage.vue`: wordmark, EN|DE switch, back link, the sanitised text in an `<article lang>` (the served locale), a note when the server fell back to the other language (`legal.onlyIn.*`), "Last updated …" from `updated`, and `LegalLinks` at the bottom. It reloads when the reader switches the language. A 404 (the operator has no such text) shows the title and "This text is not online yet." plus the contact address when `contact_email` is set; any other failure offers "Try again". It adds no heading of its own above the text: generator exports bring theirs.
+- `LegalLinks.vue`: "Imprint · Privacy · Terms" (`legal.short.*`), only the documents in `/api/config.legal`; nothing when there are none. On Login, Signup, ForgotPassword, ResetPassword, VerifyEmail and Join (below the language switch), and as a footer at the end of the AppShell's `<main>`, hidden on `/settings`, whose Legal section lists the same texts.
+- `TermsPrompt.vue`: in the AppShell above `EmailPrompt`, shown while `session.user.needs_terms`: "The terms of use of {name} are new or have changed. Please read them and accept them." plus the privacy sentence, and an "Accept the terms" button. It cannot be dismissed without accepting (EmailPrompt's "Not now" has no meaning here); the app is not blocked meanwhile. The button sends `service.terms_version` (fetched first if the store has none) through `session.acceptTerms`, which stores the returned `UserOut`.
+- Sign-up (Q13 option A): above the button, "By creating an account, you accept the {terms of use}. The {privacy policy} explains what we store about you." Each half shows only when the server has that text. The links open in a new tab, so the form keeps what was typed. `session.register` sends `terms_version: service.terms_version` (null without terms; the server ignores it then).
+- `TERMS_CHANGED` on sign-up or in the prompt: the app reloads the legal settings (`service.reloadLegal()`) and shows the error, so the next tap sends the new version without a page reload.
+- `EmailPrompt.vue`: the privacy sentence with a link after its body, when the server has a privacy policy.
+- `SettingsPage.vue`: a Legal section at the very end, after "Log out": a blurb, one link per served text (`legal.title.*`), and "Questions about your data, or content to report? Write to {email}." as a `mailto:` link when `CONTACT_EMAIL` is set. The section is hidden when there are neither texts nor a contact.
+
+**Stores and modules:**
+
+- `stores/service.ts`: the state is the whole `ServiceConfig` (`legal`, `terms_version`, `contact_email` added; `LEGAL_DEFAULTS` before the config arrives or when it fails), a getter `hasLegal(doc)`, and `reloadLegal()`, which patches only the three legal fields and keeps them when the request fails.
+- `stores/session.ts`: `register` takes an optional `termsVersion`; new `acceptTerms(version)`.
+- `api/client.ts` (add-only): `api.legal(doc, locale)` → `GET /api/legal/{doc}?locale=`, `api.acceptTerms(version)` → `POST /api/auth/terms`; two type imports.
+- `types.ts`: `LegalDoc` and `LegalDocumentOut` re-exported.
+- New `frontend/src/legal.ts`: `LEGAL_DOCS`, `legalPath`, `TERMS_CHANGED`, `isTermsChanged`, `sanitizeLegalHtml`.
+
+**i18n** (`en.json`, `de.json`): new top-level `legal` (`nav`, `short.*`, `title.*`, `inline.*`, `privacyNote`, `updated`, `onlyIn.{de,en}`, `missing`, `failed`, `back`, `contact`, `settingsTitle`, `settingsBlurb`) and `terms` (`signup`, `promptTitle`, `promptBody`, `accept`, `accepting`, `accepted`, `failed`), and `errors.termsChanged`.
+
 ### Frontend (Part 1 only what the generated types forced)
 
 - `frontend/src/types.ts`: `ServiceBrand` is now `Pick<ServiceConfig, "name" | "theme" | "theme_dark" | "public_url" | "signup">`, the branding part, so `brand.ts`'s `BRAND_DEFAULTS` stays valid without the legal fields. Part 2 gives the service store the legal fields.
@@ -97,11 +132,28 @@ Startup rules (`LegalTexts::configure`, called from `Config::from_lookup`; not i
 - `server/tests/auth_export.rs`: new `the_export_holds_the_accepted_terms`.
 - Unit tests: `legal::tests` (10: loading, fallback, the production rules, the manifest checks, bad files, exact document names, the version format, the task-local), `config::tests` (2 new: open sign-up needs the texts, `LEGAL_DIR` must exist; `rejects_bad_enums_and_bools` now uses invite mode for its valid case).
 
+Frontend (Part 2), `npx vitest run src/router.test.ts src/pages/LegalPage.test.ts src/pages/AuthPages.test.ts src/i18n/messages.test.ts src/legal.test.ts src/components/TermsPrompt.test.ts`:
+
+- `src/router.test.ts` (3 new): the three pages open signed out as top-level records with their `doc` prop, and signed in; the German aliases redirect, signed out and in.
+- `src/pages/LegalPage.test.ts` (6, new): the text in the reader's language without its script, handler, picture or `javascript:` link, the updated date and the links; the fallback note and `lang`; reloading on EN|DE; the 404 state with the contact; retry after a failure; `#section` scrolls, an own path goes through the router, an external link gets a new tab.
+- `src/pages/AuthPages.test.ts` (5 new): every auth page (Login, Signup, ForgotPassword, ResetPassword, VerifyEmail, Join) links the imprint, the privacy policy and the terms; only the served texts are linked; the sign-up sentence names both texts right above the button and sends the version; no version without terms; `TERMS_CHANGED` fetches the new version and the next try sends it.
+- `src/i18n/messages.test.ts` (1 new): every `LegalDoc` has `legal.title.*` and `legal.short.*`, and both `legal.onlyIn.*` exist, in both catalogs.
+- `src/legal.test.ts` (9, new): the sanitiser (kept structure and links, removed elements with their content, attributes, every `javascript:` spelling, unwrapped unknown elements, mutation-XSS payloads stay inert and the output is stable, own-origin links), `isTermsChanged`, and the en/de translation of `TERMS_CHANGED`.
+- `src/components/TermsPrompt.test.ts` (4, new): hidden without `needs_terms`; accepting sends the current version and hides it; `TERMS_CHANGED` fetches the new version, which the next tap accepts; a missing version is fetched first.
+
+Browser check (Part 2), with `playwright-cli` against the worktree's server (`STATIC_DIR=../frontend/dist BIND_ADDR=0.0.0.0:8084 PUBLIC_URL=http://agents.lan:8084 DEV_MODE=true`):
+
+- A fresh browser without cookies opens `http://agents.lan:8084/imprint`: the placeholder imprint renders (`/api/auth/me` 401, no redirect), with the legal links; `/datenschutz`, `/nutzungsbedingungen` and `/impressum` land on `/privacy`, `/terms` and `/imprint`; EN|DE reloads the text in German; dark mode and a 390 px viewport render.
+- With `LEGAL_DIR=legal-placeholder` (terms version `placeholder`): the sign-up sentence shows above the button; a sign-up with a `beta-invite` code stored `terms_version = placeholder` with a time; the AppShell footer shows the links; Settings ends with the Legal section.
+- Restarted with a copy of the placeholders whose manifest says `placeholder-2`: the same account sees `TermsPrompt` on Home; "Accept the terms" stored `placeholder-2`, showed the toast, and the prompt stayed gone after a reload.
+
 ## For the docs and the deployment
 
 - **README / SELFHOST (hosted):** how to generate the texts (eRecht24 or a lawyer), export them as HTML fragments, name the six files, write `manifest.json`, put them into `/srv/bookclub/legal` (DEP's README creates it, owned by uid 1000, work plan §0 item 8), restart, and check `/imprint`, `/privacy` and `/terms` signed out (work plan §5 step 19). Bumping `terms_version` makes everyone accept again.
 - **DEP:** mount `/srv/bookclub/legal` read-only and set `LEGAL_DIR` to the mount point in the compose file; add `LEGAL_DIR` to `deploy/hosted/env.example` (commented: required before `SIGNUP_MODE=open`).
 - **CLAUDE.md:** DEV_MODE serves placeholder legal pages; `LEGAL_DIR=legal-placeholder` (from `server/`) tries the terms acceptance; production refuses open sign-up without the six files.
+- **CLAUDE.md, Frontend:** the legal pages are top-level routes outside the AppShell (public); the operator's HTML goes through `sanitizeLegalHtml` (`src/legal.ts`) before `v-html`, and any new place that renders server HTML must use it too.
+- **endpoint-map, SPA routes:** `/imprint`, `/privacy`, `/terms` and the three German redirects.
 - **Work plan §5 step 26:** startup now enforces "Outside `DEV_MODE`, startup refuses this until the legal texts are present".
 
 ## Deviations
@@ -111,3 +163,7 @@ Startup rules (`LegalTexts::configure`, called from `Config::from_lookup`; not i
 - **`/api/config.legal`** is a list of the served documents, not a boolean, so the SPA can link only what exists while `SIGNUP_MODE=invite` runs with a partial set.
 - **`LegalDocumentOut.fallback`** is an addition to "the response says which one it served" (`locale`): it saves the SPA the comparison.
 - **The DEV_MODE placeholders have no terms version** (see Behaviour): the test harness runs in DEV_MODE, and other packages' tests register without one.
+- **No `LegalLinks` inside `NotFoundPage.vue`.** The not-found page renders inside the AppShell (it is the shell's catch-all, signed in only), and the shell's footer already shows the legal links under it; a second copy in the page would show them twice. `NotFoundPage.vue` is unchanged.
+- **New frontend files** not named in LEG's list, all new paths only LEG uses: `src/legal.ts` (the sanitiser and the terms helpers) with `src/legal.test.ts`, and `src/components/TermsPrompt.test.ts`.
+- **The AppShell's legal footer is hidden on `/settings`**, which lists the same texts in its Legal section.
+- **The en/de copy of `TERMS_CHANGED`** does not say "Reload the page" like the server's English: the app fetches the new version itself, and a reload would empty the sign-up form.

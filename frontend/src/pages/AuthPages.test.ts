@@ -14,6 +14,8 @@ const api: Record<string, ReturnType<typeof vi.fn>> = {
   requestPasswordReset: vi.fn(),
   confirmPasswordReset: vi.fn(),
   savePreferences: vi.fn(),
+  previewInvite: vi.fn(),
+  config: vi.fn(),
 };
 
 vi.mock("../api/client", () => {
@@ -34,18 +36,27 @@ import { i18n } from "../i18n";
 import { useLocale } from "../stores/locale";
 import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
+import { TERMS_CHANGED } from "../legal";
 import ForgotPasswordPage from "./ForgotPasswordPage.vue";
+import JoinPage from "./JoinPage.vue";
+import LoginPage from "./LoginPage.vue";
 import ResetPasswordPage from "./ResetPasswordPage.vue";
 import SignupPage from "./SignupPage.vue";
 import VerifyEmailPage from "./VerifyEmailPage.vue";
 
-async function mountAt(component: object, path: string, signup = "invite") {
+/** The legal part of `/api/config`: all three texts, terms without a version unless a test sets one. */
+const LEGAL = { legal: ["imprint", "privacy", "terms"] as const, terms_version: null, contact_email: null };
+
+async function mountAt(component: object, path: string, signup = "invite", legal: object = LEGAL) {
   const pinia = createPinia();
   setActivePinia(pinia);
   useService().signup = signup;
+  useService().$patch(legal);
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
+      { path: "/login", component: LoginPage },
+      { path: "/join/:code", component: JoinPage },
       { path: "/signup", component: SignupPage },
       { path: "/verify-email", component: VerifyEmailPage },
       { path: "/forgot-password", component: ForgotPasswordPage },
@@ -212,5 +223,92 @@ describe("auth pages", () => {
     const { wrapper } = await mountAt(ResetPasswordPage, "/reset-password");
     expect(wrapper.find("form").exists()).toBe(false);
     expect(wrapper.get(".error").text()).toBe("That link has expired or was already used");
+  });
+
+  it("links the imprint and the privacy policy on every page a signed-out visitor sees", async () => {
+    api.previewVerifyEmail.mockResolvedValue({ username: "ada", email: "ada@example.com" });
+    api.previewInvite.mockResolvedValue({ kind: "signup", club: null });
+    const pages: [object, string][] = [
+      [LoginPage, "/login"],
+      [SignupPage, "/signup"],
+      [ForgotPasswordPage, "/forgot-password"],
+      [ResetPasswordPage, "/reset-password#token=reset_1"],
+      [VerifyEmailPage, "/verify-email#token=tok_1"],
+      [JoinPage, "/join/7K3M9QX2HD"],
+    ];
+    for (const [page, path] of pages) {
+      const { wrapper } = await mountAt(page, path);
+      const links = wrapper.get("nav.legal-links").findAll("a");
+      expect(links.map((link) => [link.attributes("href"), link.text()]), path).toEqual([
+        ["/imprint", "Imprint"],
+        ["/privacy", "Privacy"],
+        ["/terms", "Terms"],
+      ]);
+      wrapper.unmount();
+    }
+  });
+
+  it("links only the texts the server has", async () => {
+    const { wrapper } = await mountAt(LoginPage, "/login", "invite", { ...LEGAL, legal: ["imprint"] });
+    expect(wrapper.get("nav.legal-links").findAll("a").map((link) => link.attributes("href"))).toEqual(["/imprint"]);
+    wrapper.unmount();
+    const none = await mountAt(SignupPage, "/signup", "invite", { ...LEGAL, legal: [] });
+    expect(none.wrapper.find("nav.legal-links").exists()).toBe(false);
+    expect(none.wrapper.find(".signup-terms").exists()).toBe(false);
+  });
+
+  it("names the terms above the sign-up button and accepts the version it showed", async () => {
+    api.register.mockResolvedValue(user({ clubs: [] }));
+    const { wrapper } = await mountAt(SignupPage, "/signup", "open", { ...LEGAL, terms_version: "2026-11-01" });
+    const sentence = wrapper.get("form .signup-terms");
+    // As the browser shows it, with runs of white space as one.
+    expect(sentence.text().replace(/\s+/g, " ")).toBe(
+      "By creating an account, you accept the terms of use. The privacy policy explains what we store about you.",
+    );
+    // A new tab, so the form keeps what was typed.
+    expect(sentence.get("a[href='/terms']").attributes("target")).toBe("_blank");
+    expect(sentence.get("a[href='/privacy']").attributes("target")).toBe("_blank");
+    // Right above the button.
+    expect(sentence.element.nextElementSibling?.getAttribute("type")).toBe("submit");
+
+    await wrapper.get("input[name=username]").setValue("neu");
+    await wrapper.get("input[name=email]").setValue("neu@example.com");
+    await wrapper.get("input[name=password]").setValue("long enough");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(api.register).toHaveBeenCalledWith(expect.objectContaining({ username: "neu", terms_version: "2026-11-01" }));
+  });
+
+  it("sends no terms version while no terms are configured", async () => {
+    api.register.mockResolvedValue(user({ clubs: [] }));
+    const { wrapper } = await mountAt(SignupPage, "/signup", "open", { ...LEGAL, legal: ["imprint", "privacy"] });
+    expect(wrapper.get(".signup-terms").text()).toBe("The privacy policy explains what we store about you.");
+    await wrapper.get("input[name=username]").setValue("neu");
+    await wrapper.get("input[name=email]").setValue("neu@example.com");
+    await wrapper.get("input[name=password]").setValue("long enough");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(api.register).toHaveBeenCalledWith(expect.objectContaining({ terms_version: null }));
+  });
+
+  it("fetches the new terms when they changed while the form was open", async () => {
+    api.register
+      .mockRejectedValueOnce(new ApiError("The terms of use have changed.", 400, TERMS_CHANGED))
+      .mockResolvedValueOnce(user({ clubs: [] }));
+    api.config.mockResolvedValue({ ...LEGAL, legal: [...LEGAL.legal], terms_version: "2026-12-01" });
+    const { wrapper, router } = await mountAt(SignupPage, "/signup", "open", { ...LEGAL, terms_version: "2026-11-01" });
+    await wrapper.get("input[name=username]").setValue("neu");
+    await wrapper.get("input[name=email]").setValue("neu@example.com");
+    await wrapper.get("input[name=password]").setValue("long enough");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(wrapper.get(".error").text()).toBe("The terms of use have changed.");
+    expect(api.config).toHaveBeenCalledTimes(1);
+    expect(useService().terms_version).toBe("2026-12-01");
+
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(api.register).toHaveBeenLastCalledWith(expect.objectContaining({ terms_version: "2026-12-01" }));
+    expect(router.currentRoute.value.path).toBe("/");
   });
 });

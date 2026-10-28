@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { LEGAL_DOCS } from "../legal";
 import de from "./de.json";
 import en from "./en.json";
 
@@ -51,6 +52,20 @@ describe("locale catalogs", () => {
       expect(text).not.toMatch(/Lieblinge/);
     }
     expect(de.favorites.heading).toBe("Lieblingsbücher");
+  });
+
+  it("names every legal document, and the languages a text may fall back to, in both catalogs", () => {
+    for (const catalog of [en, de]) {
+      for (const doc of LEGAL_DOCS) {
+        expect(typeof atPath(catalog, `legal.title.${doc}`), doc).toBe("string");
+        expect(typeof atPath(catalog, `legal.short.${doc}`), doc).toBe("string");
+      }
+      for (const locale of ["en", "de"]) {
+        expect(typeof atPath(catalog, `legal.onlyIn.${locale}`), locale).toBe("string");
+      }
+    }
+    expect(de.legal.title.imprint).toBe("Impressum");
+    expect(de.legal.title.privacy).toBe("Datenschutzerklärung");
   });
 
   it("keeps {placeholder} sets and | plural arity in lockstep", () => {
