@@ -312,7 +312,9 @@ fn announced_glitzerblume() -> String {
 struct GlitzerEdition {
     id: i64,
     work_id: i64,
+    isbn13: String,
     dnb_idn: Option<String>,
+    dnb_record_idn: Option<String>,
     withdrawn: bool,
 }
 
@@ -321,7 +323,8 @@ async fn glitzer_editions(app: &TestApp) -> Vec<GlitzerEdition> {
     let isbns: Vec<String> = GLITZERBLUME_ISBNS.map(str::to_owned).to_vec();
     sqlx::query_as!(
         GlitzerEdition,
-        r#"SELECT id, work_id, dnb_idn, withdrawn_at IS NOT NULL AS "withdrawn!"
+        r#"SELECT id, work_id, isbn13 AS "isbn13!", dnb_idn, dnb_record_idn,
+                  withdrawn_at IS NOT NULL AS "withdrawn!"
            FROM editions WHERE isbn13 = ANY($1) ORDER BY isbn13"#,
         &isbns
     )
@@ -330,9 +333,28 @@ async fn glitzer_editions(app: &TestApp) -> Vec<GlitzerEdition> {
     .unwrap()
 }
 
+/// The new-releases hits as `(work id, isbn)`.
+async fn listed(user: &TestClient) -> Vec<(i64, Option<String>)> {
+    let page = user.get("/api/books/new-releases").await;
+    page.assert_status(200);
+    page.json()["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|hit| {
+            (
+                hit["id"].as_i64().unwrap(),
+                hit["isbn"].as_str().map(str::to_owned),
+            )
+        })
+        .collect()
+}
+
 /// Acceptance (#42) for a record with two ISBNs: only the first ISBN's edition carries the IDN
-/// (conventions §7.5), so the deleted header withdraws only that one. The work still leaves
-/// new-releases, with both editions; other titles stay; a later live record brings it back.
+/// as `dnb_idn` (it is unique), but both carry the record's IDN as `dnb_record_idn` (conventions
+/// §7.5), so the deleted header withdraws both editions. Each one alone keeps the work in
+/// new-releases while it is live, and neither does once withdrawn; other titles stay. The record
+/// harvested again keeps one edition per ISBN and brings the work back.
 #[sqlx::test]
 async fn a_deleted_multi_isbn_record_leaves_new_releases(db: PgPool) {
     let app = TestApp::new(db).await;
@@ -346,6 +368,9 @@ async fn a_deleted_multi_isbn_record_leaves_new_releases(db: PgPool) {
     assert_eq!(editions[1].work_id, work_id, "one work");
     assert_eq!(editions[0].dnb_idn.as_deref(), Some(GLITZERBLUME_IDN));
     assert_eq!(editions[1].dnb_idn, None);
+    for edition in &editions {
+        assert_eq!(edition.dnb_record_idn.as_deref(), Some(GLITZERBLUME_IDN));
+    }
     assert_eq!(
         app.scalar_i64(&format!(
             "SELECT count(*) FROM editions WHERE work_id = {work_id}
@@ -355,12 +380,11 @@ async fn a_deleted_multi_isbn_record_leaves_new_releases(db: PgPool) {
         .await,
         2
     );
-    // Into the window, both on one day, as one 263 gives them.
-    for edition in &editions {
-        plan_in(&app, edition.id, 10).await;
-    }
-    let listed = ids(&ada.get("/api/books/new-releases").await.json());
-    assert!(listed.contains(&work_id), "{listed:?}");
+    // Only the second ISBN's edition in the window: it alone lists the work.
+    plan_in(&app, editions[0].id, 200).await;
+    plan_in(&app, editions[1].id, 10).await;
+    let second = (work_id, Some(editions[1].isbn13.clone()));
+    assert!(listed(&ada).await.contains(&second));
 
     let deleted =
         edit_glitzerblume(|record| record.replacen("<header>", r#"<header status="deleted">"#, 1));
@@ -370,26 +394,44 @@ async fn a_deleted_multi_isbn_record_leaves_new_releases(db: PgPool) {
         .iter()
         .map(|edition| edition.withdrawn)
         .collect();
-    assert_eq!(
-        withdrawn,
-        [true, false],
-        "the deleted header names the first"
-    );
-    let page = ada.get("/api/books/new-releases").await;
-    page.assert_status(200);
-    let listed = ids(&page.json());
-    assert!(!listed.contains(&work_id), "{listed:?}");
-    assert!(listed.contains(&other.id), "{listed:?}");
+    assert_eq!(withdrawn, [true, true], "the record's editions, both ISBNs");
+    // Neither edition lists the work any more, wherever its date lies.
+    for days in [10, 200] {
+        plan_in(&app, editions[0].id, days).await;
+        let hits = listed(&ada).await;
+        assert!(hits.iter().all(|(id, _)| *id != work_id), "{hits:?}");
+        assert!(hits.iter().any(|(id, _)| *id == other.id), "{hits:?}");
+    }
 
-    // The announcement is delivered again: the work is back.
+    // The announcement is delivered again, twice: the same two editions, live again.
     harvest(&app, SET_A, &[&announced]).await;
-    let editions = glitzer_editions(&app).await;
-    assert!(editions.iter().all(|edition| !edition.withdrawn));
-    for edition in &editions {
+    harvest(&app, SET_A, &[&announced]).await;
+    let again = glitzer_editions(&app).await;
+    let edition_ids =
+        |editions: &[GlitzerEdition]| editions.iter().map(|e| e.id).collect::<Vec<_>>();
+    assert_eq!(
+        edition_ids(&again),
+        edition_ids(&editions),
+        "one edition per ISBN"
+    );
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM editions WHERE work_id = {work_id}"
+        ))
+        .await,
+        2
+    );
+    assert!(again.iter().all(|edition| !edition.withdrawn));
+    assert!(
+        again
+            .iter()
+            .all(|edition| edition.dnb_record_idn.as_deref() == Some(GLITZERBLUME_IDN))
+    );
+    for edition in &again {
         plan_in(&app, edition.id, 10).await;
     }
-    let listed = ids(&ada.get("/api/books/new-releases").await.json());
-    assert!(listed.contains(&work_id), "{listed:?}");
+    let hits = listed(&ada).await;
+    assert!(hits.iter().any(|(id, _)| *id == work_id), "{hits:?}");
 }
 
 /// Waits until a session of this test's database waits for a lock.

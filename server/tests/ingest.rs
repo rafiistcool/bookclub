@@ -5,6 +5,7 @@
 use bookclub_server::catalog::shared::books::{
     self, BookRef, book_outs, edition_outs, require_edition_of, require_work,
 };
+use bookclub_server::catalog::shared::dnb_marc::DnbRecord;
 use bookclub_server::catalog::shared::ingest::{
     self, AuthorRecord, ContributorRole, CoverTarget, EditionRecord, Format, Mode, Source,
     WorkGrouping, WorkRecord,
@@ -1374,6 +1375,81 @@ async fn the_newest_record_owns_the_idn(db: PgPool) {
     .unwrap();
     assert_eq!(found.1, c_id);
     assert_eq!(row(&db, "editions", c_id).await["isbn13"], ISBN_C);
+}
+
+/// A DNB record `idn` with one edition per ISBN, as `map_record` gives it: the first edition
+/// carries the IDN as `dnb_idn`, every edition carries it as `dnb_record_idn`.
+fn dnb_record(idn: &str, isbns: &[&str]) -> DnbRecord {
+    DnbRecord {
+        idn: idn.into(),
+        work: dnb_work("Titel", &[("Ada Autorin", "Autorin, Ada", None)]),
+        editions: isbns
+            .iter()
+            .enumerate()
+            .map(|(i, raw)| EditionRecord {
+                dnb_idn: (i == 0).then(|| idn.into()),
+                dnb_record_idn: Some(idn.into()),
+                ..dnb_edition(raw, idn, "Titel")
+            })
+            .collect(),
+    }
+}
+
+/// `(dnb_idn, dnb_record_idn, withdrawn)` of an edition.
+async fn dnb_ids(db: &PgPool, edition: i64) -> (Value, Value, bool) {
+    let e = row(db, "editions", edition).await;
+    (
+        e["dnb_idn"].clone(),
+        e["dnb_record_idn"].clone(),
+        !e["withdrawn_at"].is_null(),
+    )
+}
+
+/// A deleted header withdraws every edition whose newest delivering record it names
+/// (`editions.dnb_record_idn`): all ISBNs of a multi-ISBN record, but not an edition a newer
+/// record delivered again. Re-delivering a record brings its editions back, one per ISBN.
+#[sqlx::test]
+async fn a_deleted_record_withdraws_the_editions_it_delivered_last(db: PgPool) {
+    let mut c = conn(&db).await;
+    let first =
+        ingest::upsert_dnb_record(&mut c, &dnb_record("100", &[ISBN_A, ISBN_B]), Mode::Replace)
+            .await
+            .unwrap();
+    let (a, b) = (first[0].1, first[1].1);
+    assert_eq!(first[1].0, first[0].0, "one work");
+    assert_eq!(dnb_ids(&db, a).await, (json!("100"), json!("100"), false));
+    assert_eq!(dnb_ids(&db, b).await, (Value::Null, json!("100"), false));
+
+    // A newer record delivers B first and a new ISBN C second.
+    let second =
+        ingest::upsert_dnb_record(&mut c, &dnb_record("200", &[ISBN_B, ISBN_C]), Mode::Replace)
+            .await
+            .unwrap();
+    assert_eq!(second[0], (first[0].0, b));
+    let c_id = second[1].1;
+    assert_eq!(dnb_ids(&db, b).await, (json!("200"), json!("200"), false));
+    assert_eq!(dnb_ids(&db, c_id).await, (Value::Null, json!("200"), false));
+
+    // Deleting the older record withdraws only what it delivered last.
+    ingest::withdraw_dnb_edition(&mut c, "100").await.unwrap();
+    assert_eq!(dnb_ids(&db, a).await, (json!("100"), json!("100"), true));
+    assert!(!dnb_ids(&db, b).await.2);
+    assert!(!dnb_ids(&db, c_id).await.2);
+    // Deleting the newer one withdraws both of its editions.
+    ingest::withdraw_dnb_edition(&mut c, "200").await.unwrap();
+    assert!(dnb_ids(&db, b).await.2);
+    assert!(dnb_ids(&db, c_id).await.2);
+
+    // The first record again: A and B are live and its own again; C stays withdrawn.
+    let again =
+        ingest::upsert_dnb_record(&mut c, &dnb_record("100", &[ISBN_A, ISBN_B]), Mode::Replace)
+            .await
+            .unwrap();
+    assert_eq!(again, first);
+    assert_eq!(dnb_ids(&db, a).await, (json!("100"), json!("100"), false));
+    assert_eq!(dnb_ids(&db, b).await, (json!("200"), json!("100"), false));
+    assert_eq!(dnb_ids(&db, c_id).await, (Value::Null, json!("200"), true));
+    assert_eq!(scalar_i64(&db, "SELECT count(*) FROM editions").await, 3);
 }
 
 #[sqlx::test]

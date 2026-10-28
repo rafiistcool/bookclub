@@ -547,6 +547,8 @@ fn map_record_until(record_xml: &str, latest: i32) -> Result<DnbRecord, MarcErro
         isbn13: isbn.map(|e| e.isbn.clone()),
         // editions.dnb_idn is unique: only the first ISBN's edition carries the record's IDN.
         dnb_idn: first.then(|| idn.clone()),
+        // Every edition carries the delivering record's IDN, so a deleted header withdraws all.
+        dnb_record_idn: Some(idn.clone()),
         title: Some(title.clone()),
         subtitle: subtitle.clone(),
         publisher: publisher_of(isbn.and_then(|e| e.qualifier.as_deref())),
@@ -650,9 +652,16 @@ mod tests {
                 Some(Format::Hardcover)
             ]
         );
-        // Only the first edition carries the IDN (editions.dnb_idn is unique).
+        // Only the first edition carries the IDN (editions.dnb_idn is unique); every edition
+        // carries the record's.
         let idns: Vec<Option<&str>> = rec.editions.iter().map(|e| e.dnb_idn.as_deref()).collect();
         assert_eq!(idns, [Some("123456789X"), None, None]);
+        let record_idns: Vec<Option<&str>> = rec
+            .editions
+            .iter()
+            .map(|e| e.dnb_record_idn.as_deref())
+            .collect();
+        assert_eq!(record_idns, [Some("123456789X"); 3]);
     }
 
     #[test]
@@ -794,6 +803,7 @@ mod tests {
         assert_eq!(edition.language.as_deref(), Some("ger"), "from 008");
         assert_eq!(edition.isbn13, None);
         assert_eq!(edition.dnb_idn.as_deref(), Some("123456789X"));
+        assert_eq!(edition.dnb_record_idn.as_deref(), Some("123456789X"));
         assert_eq!(year_of("September 2026", 2031), Some(2026));
         assert_eq!(year_of("[2026]", 2031), Some(2026));
         assert_eq!(year_of("2031", 2031), Some(2031));

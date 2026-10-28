@@ -187,7 +187,7 @@ Each package owns `server/tests/<prefix>_*.rs` for its tests and `server/tests/f
 - **Builds:**
   - **OAI-PMH `ListRecords` client** through `outbound::get_bytes` with `RetryPolicy::JOB` (`metadataPrefix=MARC21-xml`, set, `from`, resumption tokens; ≥ 1 s between pages; obeys 503 `Retry-After`).
   - **Envelope handling only.** Each `<record>` goes to the frozen W1 mapping `catalog::shared::dnb_marc::map_record` (conventions.md §7.5: the CC0 field list, format, multi-ISBN records, natural-order names, translators). HAR never parses MARC fields itself, and so never stores 520, 856 or any VLB text.
-  - **Deleted headers** (`<header status="deleted">`): `ingest::withdraw_dnb_edition(idn)`; the metadata is never mapped.
+  - **Deleted headers** (`<header status="deleted">`): `ingest::withdraw_dnb_edition(idn)`, which withdraws every edition the record delivered last, all its ISBNs (`editions.dnb_record_idn`, added in Wave 3 by INT); the metadata is never mapped.
   - **Ingest:** `ingest::upsert_dnb_record(record, Mode::Replace)` per record (the first edition with `WorkGrouping::DnbTitleAuthor`, the others into its work; conventions.md §7.2). A page transaction that Postgres aborts with a deadlock (`error::is_deadlock`) is rolled back and retried (conventions.md §7.2 "Deadlocks"). Replace means DNB-owned fields are replaced as a whole (None clears them), user and admin fields are never touched, a re-delivered record with a final title retitles a single-edition DNB work, and `planned_publication_date` only changes when the record carries 263. Grouping: an existing edition by ISBN or IDN first, else the `match_key` index among `source='dnb'` works.
   - **Sets:** every entry of `DNB_HARVEST_SETS` (default `dnb-all:reiheN,dnb:reiheA`), each with its own `harvest_state` row (`dnb:<setSpec>`). A reiheA record for a title harvested from reiheN finds the edition by ISBN or IDN and updates it.
   - **Cursor** in `harvest_state`:
@@ -363,6 +363,16 @@ Each package owns `server/tests/<prefix>_*.rs` for its tests and `server/tests/f
     - the #46 matrix completeness check: every personal data kind has self, co-member, stranger and unknown-name cases
 - **Acceptance (#49):** every Python test is checked off or reasoned.
 
+### INT: integrator follow-ups (#42, #45)
+
+Runs alongside FE and PAR. It does what the Wave 2 notes left "for the integrator" that is neither FE's nor PAR's (parity lines); `docs/phase1/notes/int.md` lists each item, done or not, with a reason.
+
+- **Owns:** `docs/phase1/{conventions,endpoint-map,work-plan}.md`, `docs/phase1/notes/int.md`, `server/migrations/12*.sql` (HAR's block), `server/src/catalog/shared/{dnb_marc,ingest}.rs`, `server/src/catalog/hits.rs`, `server/src/harvest/**`, `server/tests/{dnb_marc,ingest}.rs`, `server/tests/harvest_*.rs`, `server/tests/fixtures/dnb_oai/**`, plus minimal edits to the callers of functions it changes.
+- **Builds:**
+  - conventions §12 (the `created_label` zone of club items) and §13 (the club row lock of vote writes, the lock order of a club write, the migrations so far), as POSTS and CLUB built them.
+  - `editions.dnb_record_idn` (migration 1200): a deleted multi-ISBN DNB record withdraws all its editions (HAR's open point).
+  - One annotation of search hits and new-releases hits (`catalog::hits::annotated_hits`).
+
 ---
 
 ## Dependencies and concurrency summary
@@ -378,8 +388,9 @@ Each package owns `server/tests/<prefix>_*.rs` for its tests and `server/tests/f
 | CLUB | W1 | all of Wave 2 | It reads `shelf_entries`, `posts` and `quotes` with SQL only. |
 | IMP | W1 (`ingest`, `merge_rules`, `media::shared`) | all of Wave 2 | Its tests use `FakeCatalog` and `MemMediaStore`. |
 | OAPI | W1 | all of Wave 2 | The integrator regenerates `generated.ts` after each merge. Every §0 DTO is registered by W1, so its contract test passes alone. |
-| FE | all of Wave 2 merged (a stable OpenAPI) | PAR | Frontend only. |
-| PAR | all of Wave 2 merged | FE | Server tests and fixes only. |
+| FE | all of Wave 2 merged (a stable OpenAPI) | PAR, INT | Frontend only. |
+| PAR | all of Wave 2 merged | FE, INT | Server tests and fixes only. |
+| INT | all of Wave 2 merged | FE, PAR | Docs, the DNB withdraw fix and the hit annotation; one migration (1200). |
 
 **Suggested merge order in Wave 2:** CAT, MED, SHELF, POSTS, CLUB, HAR, IMP, then OAPI last, with one final regeneration. Any order works. At most 3 packages build at a time (ground rule 5); a sensible batching is {CAT, MED, SHELF}, then {POSTS, CLUB, HAR}, then {IMP, OAPI}.
 

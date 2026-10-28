@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, work_id, dnb_idn, withdrawn_at IS NOT NULL AS \"withdrawn!\"\n           FROM editions WHERE isbn13 = ANY($1) ORDER BY isbn13",
+  "query": "SELECT id, work_id, isbn13 AS \"isbn13!\", dnb_idn, dnb_record_idn,\n                  withdrawn_at IS NOT NULL AS \"withdrawn!\"\n           FROM editions WHERE isbn13 = ANY($1) ORDER BY isbn13",
   "describe": {
     "columns": [
       {
@@ -27,6 +27,17 @@
       },
       {
         "ordinal": 2,
+        "name": "isbn13!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "isbn13"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
         "name": "dnb_idn",
         "type_info": "Text",
         "origin": {
@@ -37,7 +48,18 @@
         }
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
+        "name": "dnb_record_idn",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "dnb_record_idn"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
         "name": "withdrawn!",
         "type_info": "Bool",
         "origin": "Expression"
@@ -52,8 +74,10 @@
       false,
       false,
       true,
+      true,
+      true,
       null
     ]
   },
-  "hash": "b1b475cda1da368d7c44ad9e23b4a12632fb6b4de4ee542d6e3e100c8759168d"
+  "hash": "16b4bf5523591bdf16c68439f6e3ded3b137bb61ee83f55eae5d36adc8685d56"
 }
