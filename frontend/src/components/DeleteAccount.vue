@@ -28,7 +28,7 @@ async function submit() {
   pending.value = true;
   try {
     await api.deleteAccount(password.value);
-    session.reset();
+    session.reset({ leavingDevice: true });
     emit("deleted");
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : t("account.deleteFailed");

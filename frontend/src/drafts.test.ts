@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { draftKey, loadDraft, saveDraft } from "./drafts";
+import { draftKey, forgetDrafts, loadDraft, saveDraft } from "./drafts";
 
 function memoryStorage(): Storage {
   const data = new Map<string, string>();
@@ -42,5 +42,25 @@ describe("note drafts", () => {
     });
     expect(() => saveDraft("key", "text")).not.toThrow();
     expect(loadDraft("key")).toBe("");
+  });
+
+  it("forgets every note on this device, and nothing else", () => {
+    vi.stubGlobal("localStorage", memoryStorage());
+    saveDraft(draftKey("ada", 7), "Only for me");
+    saveDraft(draftKey("ada", 7, "reply", 3), "A reply");
+    saveDraft(draftKey("grace", 9), "Hers");
+    localStorage.setItem("bookclub.theme", "forest");
+    forgetDrafts();
+    expect(localStorage.length).toBe(1);
+    expect(localStorage.getItem("bookclub.theme")).toBe("forest");
+  });
+
+  it("forgets nothing when storage is blocked, without failing", () => {
+    vi.stubGlobal("localStorage", {
+      get length(): number {
+        throw new Error("blocked");
+      },
+    });
+    expect(() => forgetDrafts()).not.toThrow();
   });
 });

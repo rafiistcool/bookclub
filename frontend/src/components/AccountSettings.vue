@@ -111,7 +111,7 @@ async function endSession(row: SessionOut) {
   try {
     await api.endSession(row.id);
     if (row.current) {
-      session.reset();
+      session.reset({ leavingDevice: true });
       emit("loggedOut");
       return;
     }

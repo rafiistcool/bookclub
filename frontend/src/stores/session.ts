@@ -1,9 +1,10 @@
 import { defineStore } from "pinia";
 import { api, ApiError } from "../api/client";
 import type { RegisterIn } from "../api/generated";
+import { forgetDrafts } from "../drafts";
 import { resetDiscoverBrowseCache } from "../pages/discoverCache";
 import type { User } from "../types";
-import { useClubs } from "./clubs";
+import { forgetLastClub, useClubs } from "./clubs";
 import { useLocale } from "./locale";
 import { browserTimeZone } from "../timezone";
 import { useTheme } from "./theme";
@@ -95,14 +96,25 @@ export const useSession = defineStore("session", {
       try {
         await api.logout();
       } finally {
-        this.reset();
+        this.reset({ leavingDevice: true });
       }
     },
-    /** Forget the signed-in user, after a logout or when the server ended the session. */
-    reset() {
+    /**
+     * Forget the signed-in user, after a logout or when the server ended the
+     * session. `leavingDevice` (the reader signed out here, ended this
+     * session or deleted the account) also forgets what the account left on
+     * this device: unsent notes and the last club. An expired session keeps
+     * them for the reader's next sign-in.
+     */
+    reset(options: { leavingDevice?: boolean } = {}) {
       this.user = null;
       forgetAccountState();
       useLocale().clearExplicit();
+      if (options.leavingDevice) {
+        forgetDrafts();
+        forgetLastClub();
+        useClubs().clear();
+      }
     },
   },
 });

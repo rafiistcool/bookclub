@@ -94,6 +94,30 @@ describe("session", () => {
     expect(api.register).toHaveBeenCalledTimes(1);
   });
 
+  it("forgets unsent notes and the last club when the reader leaves this device, not when the session expires", async () => {
+    // Security review 2026-10-28 #12: a shared browser must not keep a deleted or signed-out
+    // account's notes.
+    const session = useSession();
+    session.user = user();
+    const note = "bookclub.draft.ada.7";
+    localStorage.setItem(note, "Only for me");
+    localStorage.setItem("bookclub.club", "readers-ab12");
+    session.reset();
+    expect(localStorage.getItem(note)).toBe("Only for me");
+    expect(localStorage.getItem("bookclub.club")).toBe("readers-ab12");
+
+    session.user = user();
+    api.logout.mockResolvedValue(undefined);
+    await session.logout();
+    expect(localStorage.getItem(note)).toBeNull();
+    expect(localStorage.getItem("bookclub.club")).toBeNull();
+
+    localStorage.setItem(note, "Again");
+    session.user = user();
+    session.reset({ leavingDevice: true });
+    expect(localStorage.getItem(note)).toBeNull();
+  });
+
   it("forgets the previous account's Discover snapshot on logout, login and sign-up", async () => {
     const session = useSession();
     session.user = user();

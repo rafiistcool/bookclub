@@ -851,7 +851,7 @@ These are the inventory for #48's "back in the UI" work and for the parity check
 | `bookclub.theme` | localStorage | `paper\|slate\|forest\|ink` | theme store, `index.html` boot script |
 | `bookclub.mode` | localStorage | `light\|dark\|system` | same |
 | `bookclub.locale` | localStorage | `en\|de` | `i18n.applyLocale`, `detectLocale`, boot script |
-| `bookclub.draft.<user>.<workId>[.reply.<id>]` | localStorage | draft text | `drafts.ts` via `BookDiary` |
+| `bookclub.draft.<user>.<workId>[.reply.<id>]` | localStorage | draft text; every key is forgotten on sign-out here, ending the current session and account deletion, not on an expired session (security review 2026-10-28 #12) | `drafts.ts` via `BookDiary` |
 | `bookclub.asset-reload-at` | sessionStorage | ms timestamp | `assetRecovery.ts` |
 | Discover browse snapshot | module memory | trending and rows | `discoverCache.ts` |
 

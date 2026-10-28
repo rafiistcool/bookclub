@@ -27,6 +27,11 @@ function writeLastClub(slug: string | null) {
   }
 }
 
+/** Forgets the last club of this device (its reader signed out here or deleted the account). */
+export function forgetLastClub() {
+  writeLastClub(null);
+}
+
 /** Admins and the owner run the club: picks, the vote's end, invites, milestones, removals. */
 export function isClubAdmin(role: ClubRole | null | undefined): boolean {
   return role === "owner" || role === "admin";
