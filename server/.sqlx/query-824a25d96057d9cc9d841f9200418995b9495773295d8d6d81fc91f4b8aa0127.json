@@ -1,0 +1,84 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.user_id AS \"user_id!\", u.username, s.status AS \"status!: ShelfStatus\",\n                  s.rating, s.take AS \"take!\", s.dnf_reason AS \"dnf_reason!\", s.progress,\n                  med.public_id AS \"avatar_public_id?\"\n           FROM bc_visible_shelf($1) s\n           JOIN club_memberships m ON m.club_id = $2 AND m.user_id = s.user_id\n           JOIN users u ON u.id = s.user_id\n           LEFT JOIN media med ON med.id = u.avatar_media_id AND med.removed_at IS NULL\n           WHERE s.work_id = $3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "username",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "username"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "status!: ShelfStatus",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "rating",
+        "type_info": "Int4",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "take!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "dnf_reason!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "progress",
+        "type_info": "Int4",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "avatar_public_id?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "public_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      null,
+      null,
+      null,
+      null,
+      null,
+      true
+    ]
+  },
+  "hash": "824a25d96057d9cc9d841f9200418995b9495773295d8d6d81fc91f4b8aa0127"
+}

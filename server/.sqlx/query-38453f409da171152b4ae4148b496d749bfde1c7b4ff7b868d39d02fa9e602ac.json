@@ -1,0 +1,135 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT e.id, e.club_id, e.actor_id, u.username AS \"actor?\", e.kind, e.work_id,\n                  e.pick_id, e.payload, e.created_at,\n                  (e.kind = 'shelf_finished' AND e.actor_id IS DISTINCT FROM $1\n                   AND NOT EXISTS (\n                       SELECT 1 FROM shelf_entries s\n                       WHERE s.user_id = e.actor_id AND s.work_id = e.work_id\n                         AND bc_can_see_item($1, s.user_id, s.rating_visibility))) AS \"hide_rating!\"\n           FROM events e\n           LEFT JOIN users u ON u.id = e.actor_id\n           WHERE (e.club_id = $2\n                  OR (e.club_id IS NULL AND EXISTS (\n                      SELECT 1 FROM club_memberships m\n                      WHERE m.club_id = $2 AND m.user_id = e.actor_id\n                        AND m.joined_at <= e.created_at)))\n             AND ($3::int8 IS NULL OR e.id < $3)\n             AND ($4::int8 IS NULL OR e.actor_id = $4)\n             AND (e.kind <> 'quote_added' OR e.actor_id = $1 OR EXISTS (\n                  SELECT 1 FROM bc_visible_quotes($1) q\n                  WHERE q.user_id = e.actor_id\n                    AND q.id = CASE WHEN jsonb_typeof(e.payload -> 'quote_id') = 'number'\n                                         AND e.payload ->> 'quote_id' ~ '^[0-9]{1,18}$'\n                                    THEN (e.payload ->> 'quote_id')::int8 END))\n           ORDER BY e.id DESC\n           LIMIT $5",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "club_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "club_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "actor_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "actor_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "actor?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "username"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "work_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "work_id"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "pick_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "pick_id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "payload",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "payload"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "hide_rating!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "38453f409da171152b4ae4148b496d749bfde1c7b4ff7b868d39d02fa9e602ac"
+}

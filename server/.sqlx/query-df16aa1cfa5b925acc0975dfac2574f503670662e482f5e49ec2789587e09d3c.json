@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (SELECT 1 FROM next_up_nominations\n                          WHERE vote_id = $1 AND work_id = $2) AS \"nominated!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "nominated!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "df16aa1cfa5b925acc0975dfac2574f503670662e482f5e49ec2789587e09d3c"
+}

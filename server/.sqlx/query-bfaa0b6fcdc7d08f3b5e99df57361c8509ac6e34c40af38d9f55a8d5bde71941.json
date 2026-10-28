@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE milestones\n         SET title = $2, unit = $3, range_from = $4, range_to = $5, due_at = $6\n         WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Int4",
+        "Int4",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bfaa0b6fcdc7d08f3b5e99df57361c8509ac6e34c40af38d9f55a8d5bde71941"
+}

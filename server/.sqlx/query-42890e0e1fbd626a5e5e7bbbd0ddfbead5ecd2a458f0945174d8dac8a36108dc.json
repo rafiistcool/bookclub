@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT n.nominated_by AS \"nominated_by!\"\n           FROM next_up_nominations n\n           JOIN next_up_votes v ON v.id = n.vote_id\n           WHERE v.club_id = $1 AND v.ended_at IS NULL AND n.nominated_by IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "nominated_by!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "next_up_nominations",
+            "name": "nominated_by"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "42890e0e1fbd626a5e5e7bbbd0ddfbead5ecd2a458f0945174d8dac8a36108dc"
+}

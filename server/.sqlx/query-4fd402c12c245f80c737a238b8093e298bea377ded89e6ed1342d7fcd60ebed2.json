@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (SELECT 1 FROM club_picks\n                          WHERE club_id = $1 AND ended_at IS NULL AND work_id = $2) AS \"is_pick!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "is_pick!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "4fd402c12c245f80c737a238b8093e298bea377ded89e6ed1342d7fcd60ebed2"
+}
