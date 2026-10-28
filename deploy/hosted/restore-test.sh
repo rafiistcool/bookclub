@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# The weekly restore test (README.md, "Backups"; bookclub-restore-test.timer). It never touches
-# the running stack:
+# The weekly restore test (README.md, "Backups"; bookclub-restore-test.timer). It never writes
+# to the running stack:
 #   1. restic restore of the latest snapshot of BACKUP_HOST into BACKUP_DIR/restore-test,
 #      verifying every restored file against the repository;
 #   2. a throwaway postgres (RESTORE_POSTGRES_IMAGE, no network) and pg_restore --exit-on-error;
 #   3. the row count of every table and the newest migration must equal the backup's counts.tsv;
 #   4. every stored media file the restored database references (media.storage_key/<variant> of
-#      the rows not taken down) must be in the restored MEDIA_DIR and not empty;
+#      the rows not taken down) must be in the restored MEDIA_DIR and not empty. A missing one
+#      that the live database no longer references either was deleted by the app while the
+#      backup ran (backup.sh), and is logged but no failure;
 #   5. a heartbeat ping at the start, and with the exit status at the end.
 # The throwaway container and the restored files are removed in any case.
 #
@@ -26,6 +28,12 @@ readonly MEDIA_KEYS_SQL="SELECT m.storage_key || '/' || v.variant
 FROM media m CROSS JOIN LATERAL unnest(m.variants) AS v(variant)
 WHERE m.storage_key IS NOT NULL AND m.removed_at IS NULL
 ORDER BY 1;"
+
+# The media keys the running stack's database references now, or a failure when it does not
+# answer (the stack is down, as during a restore).
+live_media_keys() {
+    (cd "$COMPOSE_DIR" && docker compose exec -T postgres "${psql_tsv[@]}" -c "$MEDIA_KEYS_SQL")
+}
 
 # The scratch space: the throwaway container and WORK, the restored files and the comparisons.
 # A global, because the EXIT trap runs after restore_test has returned.
@@ -72,21 +80,42 @@ restore_test() {
 
     log "checking the media files the database references"
     docker exec "$CONTAINER" "${psql_tsv[@]}" -c "$MEDIA_KEYS_SQL" >"$WORK/media-keys"
-    local key checked=0 missing=0
+    local key checked=0
+    : >"$WORK/missing"
     while IFS= read -r key; do
         checked=$((checked + 1))
-        if [[ ! -s $media/$key ]]; then
-            missing=$((missing + 1))
-            ((missing > 10)) || log "missing or empty: $key"
-        fi
+        [[ -s $media/$key ]] || printf '%s\n' "$key" >>"$WORK/missing"
     done <"$WORK/media-keys"
-    ((missing == 0)) || die "$missing of $checked media files are missing or empty"
+
+    # The app deletes a picture's files right after the commit that deletes or takes down its
+    # row. A deletion between the dump and restic's read of the media therefore leaves the dump
+    # referencing files the snapshot does not hold. That is no loss when the live database no
+    # longer references them either; a file it still references is.
+    local deleted=0 lost=0
+    if [[ -s $WORK/missing ]]; then
+        if ! live_media_keys >"$WORK/live-keys"; then
+            log "warning: the live database does not answer, so every missing file counts"
+            cp "$WORK/media-keys" "$WORK/live-keys"
+        fi
+        while IFS= read -r key; do
+            if grep -qxF -e "$key" "$WORK/live-keys"; then
+                lost=$((lost + 1))
+                ((lost > 10)) || log "missing or empty: $key"
+            else
+                deleted=$((deleted + 1))
+                ((deleted > 10)) || log "deleted after the backup, no longer referenced: $key"
+            fi
+        done <"$WORK/missing"
+    fi
+    ((lost == 0)) || die "$lost of $checked media files are missing or empty"
+    local files="$checked media files"
+    ((deleted == 0)) || files="$((checked - deleted)) media files ($deleted deleted after the backup)"
 
     log "restore test passed: $(grep -vc '^(migration)' "$WORK/counts.tsv") tables," \
         "$(awk -F '\t' '$1 != "(migration)" { rows += $2 } END { print rows + 0 }' \
             "$WORK/counts.tsv") rows," \
         "migration $(awk -F '\t' '$1 == "(migration)" { print $2 }' "$WORK/counts.tsv")," \
-        "$checked media files"
+        "$files"
 }
 
 main() {

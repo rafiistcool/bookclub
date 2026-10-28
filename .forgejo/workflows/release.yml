@@ -9,6 +9,9 @@ on:
   push:
     tags: ["v*"]
 
+# Runs for different tags may overlap; deploy/hosted/release-tags.sh makes the order in which
+# they end irrelevant. A workflow-wide group would not help: a newer pending run cancels an older
+# pending one, which would drop that release.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
@@ -99,11 +102,13 @@ jobs:
 
   publish:
     name: Build and push image
-    runs-on: ubuntu-latest
+    # The runner whose job containers get the Docker daemon, as ci.yml's `image` job
+    # (docs/phase2/notes/dep.md, "The runner").
+    runs-on: docker
     needs: [frontend, server]
     steps:
-      # metadata-action skips the semver tags of a tag it cannot parse (v1.2, v1.2.3.4) with only
-      # a warning, which would leave `stable` as the one tag pushed.
+      # metadata-action skips the semver tag of a tag it cannot parse (v1.2, v1.2.3.4) with only
+      # a warning, which would leave the build without a tag to push.
       - name: The tag is a version
         shell: bash
         run: |
@@ -125,10 +130,9 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.REGISTRY_TOKEN }}
 
-      # v1.2.3 -> 1.2.3, 1.2 and stable. A pre-release (v1.3.0-rc.1) gets only its exact
-      # version: metadata-action skips {{major}}.{{minor}} for it, and `stable` is enabled only
-      # for versions without a "-". There is never a `latest` (flavor) and no floating major.
-      # deploy/hosted/compose.yaml follows `stable` unless BOOKCLUB_TAG pins a version.
+      # v1.2.3 -> 1.2.3 here; the floating tags 1.2 and stable follow in the last step, once
+      # this version is in the registry. There is never a `latest` (flavor) and no floating
+      # major. deploy/hosted/compose.yaml follows `stable` unless BOOKCLUB_TAG pins a version.
       - name: Image tags and labels
         id: meta
         uses: docker/metadata-action@v6
@@ -138,8 +142,6 @@ jobs:
             latest=false
           tags: |
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=stable,enable=${{ !contains(github.ref_name, '-') }}
           labels: |
             org.opencontainers.image.title=Bookclub
             org.opencontainers.image.description=Bookclub, the hosted book club service: the server and its web app in one image. Needs Postgres.
@@ -150,6 +152,7 @@ jobs:
       # in a layer of their own. image-manifest and oci-mediatypes store the cache as a plain OCI
       # image, which registries without BuildKit's cache manifest type accept.
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -162,3 +165,11 @@ jobs:
           sbom: false
           cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
           cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache,mode=max,image-manifest=true,oci-mediatypes=true
+
+      # 1.2 when this is the highest release of 1.2, stable when it is the highest of all,
+      # judged from the remote's tags now: a backport or a run that ends after a newer
+      # release's run moves neither. A pre-release moves nothing.
+      - name: Floating tags
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: deploy/hosted/release-tags.sh "$IMAGE" "$GITHUB_REF_NAME" "$DIGEST"

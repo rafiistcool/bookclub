@@ -17,7 +17,7 @@ x-logging: &logging
 services:
   postgres:
     image: postgres:17
-    restart: unless-stopped
+    restart: ${BOOKCLUB_RESTART:-unless-stopped}
     environment:
       POSTGRES_USER: bookclub
       POSTGRES_DB: bookclub
@@ -38,7 +38,7 @@ services:
 
   app:
     image: git.tillhome.de/rafiistcool/bookclub-server:${BOOKCLUB_TAG:-stable}
-    restart: unless-stopped
+    restart: ${BOOKCLUB_RESTART:-unless-stopped}
     env_file:
       # Not `required`, so that `docker compose --env-file env.example config` can check this
       # file in the repo, where no .env exists. On the VM a missing .env already stops compose

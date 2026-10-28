@@ -2,8 +2,11 @@
 # The nightly backup of the hosted service (README.md, "Backups"; bookclub-backup.timer):
 #   1. pg_dump -Fc --no-owner inside the postgres container, and the row count of every table in
 #      the same database snapshot (counts.tsv), into BACKUP_DIR/db;
-#   2. restic backup of that directory and then of MEDIA_DIR, so every media key the dump
-#      references was on disk before the media were read;
+#   2. restic backup of that directory and then of MEDIA_DIR. A picture saved while it runs is
+#      on disk before its row commits, so the dump never references one restic could not see.
+#      A picture deleted after the dump (a replaced avatar, a takedown, a deleted account) may
+#      be gone before restic reads it: restic then saves the snapshot without it and exits 3,
+#      which counts as a warning when every file it could not read was such a deletion;
 #   3. restic forget --prune: 7 daily, 4 weekly and 12 monthly snapshots;
 #   4. on CHECK_WEEKDAY (or with --check), restic check reading back 5 % of the data;
 #   5. a heartbeat ping at the start, and with the exit status at the end.
@@ -71,6 +74,23 @@ dump_database() {
     mv "$new" "$STAGE_DIR"
 }
 
+# True when every file restic could not read is one below MEDIA_DIR that no longer exists: the
+# app deleted it while restic ran. $1 is restic's stderr, whose lines for those files read
+# `error: lstat <path>: no such file or directory` (or open, readdirnames …). The snapshot holds
+# the rest, and the dump's row for such a file is gone or taken down in the live database, which
+# the restore test checks.
+only_deleted_media() {
+    local line path found=0
+    while IFS= read -r line; do
+        [[ $line == error:* ]] || continue
+        [[ $line =~ ^error:\ [a-z]+\ (/.*):\ no\ such\ file\ or\ directory$ ]] || return 1
+        path=${BASH_REMATCH[1]}
+        [[ $path == "${MEDIA_DIR%/}/"* && ! -e $path ]] || return 1
+        found=1
+    done <"$1"
+    ((found))
+}
+
 backup() {
     local check=$1
     cd "$COMPOSE_DIR"
@@ -87,9 +107,21 @@ backup() {
 
     log "restic backup of $STAGE_DIR and $MEDIA_DIR to $RESTIC_REPOSITORY"
     # The media store's half-written files (.<variant>.<hex>.tmp) are renamed or gone a moment
-    # later; the next backup has the real file.
+    # later; the next backup has the real file. restic's stderr is kept to tell deletions apart
+    # from files it could not read (exit 3, the snapshot is saved either way).
+    local errors=$BACKUP_DIR/restic-backup.stderr status=0
     restic_ backup --tag bookclub --exclude '.*.tmp' --exclude '.write-probe.*' \
-        "$STAGE_DIR" "$MEDIA_DIR"
+        "$STAGE_DIR" "$MEDIA_DIR" 2>"$errors" || status=$?
+    cat "$errors" >&2
+    if ((status == 3)) && only_deleted_media "$errors"; then
+        log "warning: the app deleted the pictures above while restic read the media;" \
+            "the snapshot was saved without them"
+    elif ((status == 3)); then
+        die "restic could not read the files above (exit 3; the snapshot was saved without them)"
+    elif ((status != 0)); then
+        die "restic backup exited $status"
+    fi
+    rm -f "$errors"
 
     log "restic forget --prune"
     restic_ forget --host "$BACKUP_HOST" --tag bookclub \

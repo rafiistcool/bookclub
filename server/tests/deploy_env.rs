@@ -7,6 +7,7 @@
 //!   `/api/health`, `send-test-mail` delivers one message with a `Message-ID` on the sender's
 //!   domain and fails on an SMTP error, and `serve` and `import-legacy` refuse a `MEDIA_DIR`
 //!   they cannot write before they touch the database.
+//! - `deploy/hosted/smoke-test.sh` refuses names that are not CI's before it runs `docker`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -261,6 +262,10 @@ fn ci_env_is_a_production_configuration() {
         values["BOOKCLUB_DATA_DIR"].starts_with('/'),
         "a path on the daemon's host, not one compose resolves on the job's file system"
     );
+    assert_eq!(
+        values["BOOKCLUB_RESTART"], "no",
+        "a stack a cancelled run left behind must not come back with the daemon"
+    );
     for name in compose_variables() {
         assert!(values.contains_key(&name), "ci.env does not set {name}");
     }
@@ -301,10 +306,22 @@ fn stderr(output: &Output) -> String {
 /// Nothing listens there.
 const UNREACHABLE_DB: &str = "postgres://bookclub:x@127.0.0.1:1/bookclub";
 
+/// Where the healthcheck's environment points HTTP proxies: nothing listens there, so a request
+/// that went through the proxy would fail.
+const DEAD_PROXY: &str = "http://127.0.0.1:1";
+
+/// `bookclub-server healthcheck` with `BIND_ADDR`, and with a proxy in the environment that it
+/// must not use: a container may have HTTP_PROXY set, and reqwest does not bypass loopback on
+/// its own.
 async fn healthcheck(bind_addr: &str) -> (Output, Duration) {
     let started = Instant::now();
     let output = run(
-        bin().arg("healthcheck").env("BIND_ADDR", bind_addr),
+        bin()
+            .arg("healthcheck")
+            .env("BIND_ADDR", bind_addr)
+            .env("HTTP_PROXY", DEAD_PROXY)
+            .env("http_proxy", DEAD_PROXY)
+            .env("ALL_PROXY", DEAD_PROXY),
         Duration::from_secs(20),
     )
     .await;
@@ -517,11 +534,23 @@ async fn send_test_mail_refuses_what_is_no_plain_address() {
     );
 }
 
-/// The check runs before the database connection, which would retry for 60 s here.
+/// The check runs before the database connection, which would retry for 60 s here. Two kinds
+/// of `MEDIA_DIR`: one below a regular file, which cannot be created, and `/proc`, which exists
+/// but takes no new file even from uid 0 (as a root-owned bind mount is for the image's uid
+/// 1000); only the probe file catches the second.
 #[tokio::test]
 async fn serve_and_import_legacy_refuse_a_media_dir_they_cannot_write() {
     let file = tempfile::NamedTempFile::new().unwrap();
-    let media_dir = file.path().join("media");
+    let mut media_dirs = vec![file.path().join("media")];
+    if cfg!(target_os = "linux") {
+        media_dirs.push(PathBuf::from("/proc"));
+    }
+    for media_dir in media_dirs {
+        refuse_media_dir(&media_dir).await;
+    }
+}
+
+async fn refuse_media_dir(media_dir: &Path) {
     let expected = format!("MEDIA_DIR {} is not writable", media_dir.display());
     let import = [
         "import-legacy",
@@ -539,7 +568,7 @@ async fn serve_and_import_legacy_refuse_a_media_dir_they_cannot_write() {
                 .args(args)
                 .env("DEV_MODE", "true")
                 .env("DATABASE_URL", UNREACHABLE_DB)
-                .env("MEDIA_DIR", &media_dir),
+                .env("MEDIA_DIR", media_dir),
             Duration::from_secs(20),
         )
         .await;
@@ -548,6 +577,67 @@ async fn serve_and_import_legacy_refuse_a_media_dir_they_cannot_write() {
             stderr(&output).contains(&expected),
             "{args:?}: {}",
             stderr(&output)
+        );
+    }
+}
+
+// ---- smoke-test.sh --------------------------------------------------------------------------
+
+/// `deploy/hosted/smoke-test.sh --down` with `vars` over ci.env's values. `docker` is a bash
+/// function (imported from the environment) that only records that it ran, so nothing reaches a
+/// real daemon. Returns the output and whether `docker` ran.
+fn smoke_test_down(vars: &[(&str, &str)]) -> (Output, bool) {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("docker-ran");
+    let mut command = std::process::Command::new("bash");
+    command
+        .arg(repo().join("deploy/hosted/smoke-test.sh"))
+        .arg("--down")
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("SMOKE_TEST_MARKER", &marker)
+        .env("BASH_FUNC_docker%%", r#"() { : >"$SMOKE_TEST_MARKER"; }"#);
+    for (name, value) in vars {
+        command.env(name, value);
+    }
+    let output = command.output().unwrap();
+    (output, marker.exists())
+}
+
+/// The teardown removes the data directory as root, the compose project with its volumes, and
+/// the image tag that the environment names. A shell that loaded the production `.env` must not
+/// turn that against production, so the script refuses names that are not CI's before it runs
+/// a single `docker` command.
+#[test]
+fn smoke_test_refuses_names_that_are_not_ci_names() {
+    let (output, docker_ran) = smoke_test_down(&[]);
+    assert!(docker_ran, "ci.env's own names pass: {}", stderr(&output));
+    let (output, docker_ran) = smoke_test_down(&[
+        ("COMPOSE_PROJECT_NAME", "bookclub-ci-4711"),
+        ("BOOKCLUB_TAG", "ci-4711"),
+        ("BOOKCLUB_DATA_DIR", "/tmp/bookclub-ci-4711/"),
+    ]);
+    assert!(docker_ran, "CI's per-run names pass: {}", stderr(&output));
+
+    for (name, value) in [
+        ("BOOKCLUB_DATA_DIR", "/srv/bookclub"),
+        ("BOOKCLUB_DATA_DIR", "/tmp/"),
+        ("BOOKCLUB_DATA_DIR", "/tmp"),
+        ("BOOKCLUB_DATA_DIR", "/tmp/bookclub-ci-1/media"),
+        ("BOOKCLUB_DATA_DIR", "/tmp/bookclub-ci-1/.."),
+        ("BOOKCLUB_DATA_DIR", "/tmp/../srv/bookclub-ci"),
+        ("COMPOSE_PROJECT_NAME", "bookclub"),
+        ("COMPOSE_PROJECT_NAME", "bookclub-staging"),
+        ("BOOKCLUB_TAG", "stable"),
+        ("BOOKCLUB_TAG", "0.11.0"),
+    ] {
+        let (output, docker_ran) = smoke_test_down(&[(name, value)]);
+        assert!(!output.status.success(), "{name}={value}");
+        assert!(!docker_ran, "{name}={value} reached docker");
+        let stderr = stderr(&output);
+        assert!(
+            stderr.contains(&format!("{name}=")) && stderr.contains("is not a CI"),
+            "{name}={value}: {stderr}"
         );
     }
 }

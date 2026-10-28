@@ -8,6 +8,8 @@ on:
   push:
     tags: ["v*"]
 
+# Runs for different tags may overlap; deploy/hosted/release-tags.sh makes the order in which
+# they end irrelevant.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
@@ -107,8 +109,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [frontend, server]
     steps:
-      # metadata-action skips the semver tags of a tag it cannot parse (v1.2, v1.2.3.4) with only
-      # a warning, which would leave `stable` as the one tag pushed.
+      # metadata-action skips the semver tag of a tag it cannot parse (v1.2, v1.2.3.4) with only
+      # a warning, which would leave the build without a tag to push.
       - name: The tag is a version
         shell: bash
         run: |
@@ -128,8 +130,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # v1.2.3 -> 1.2.3, 1.2 and stable. A pre-release (v1.3.0-rc.1) gets only its exact
-      # version. Never `latest`, and no floating major.
+      # v1.2.3 -> 1.2.3 here; 1.2 and stable follow in the last step. Never `latest`, and no
+      # floating major.
       - name: Image tags and labels
         id: meta
         uses: docker/metadata-action@v6
@@ -139,14 +141,13 @@ jobs:
             latest=false
           tags: |
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=stable,enable=${{ !contains(github.ref_name, '-') }}
           labels: |
             org.opencontainers.image.title=Bookclub
             org.opencontainers.image.description=Bookclub, the hosted book club service: the server and its web app in one image. Needs Postgres.
             org.opencontainers.image.documentation=https://git.tillhome.de/rafiistcool/bookclub/src/branch/main/deploy/hosted/README.md
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -158,3 +159,8 @@ jobs:
           sbom: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Floating tags
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: deploy/hosted/release-tags.sh "$IMAGE" "$GITHUB_REF_NAME" "$DIGEST"

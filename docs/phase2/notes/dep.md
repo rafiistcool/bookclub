@@ -18,7 +18,7 @@ Owner: DEP. These notes record what DEP built, the decisions behind it, the cont
 | `deploy/hosted/compose.yaml` | The app and Postgres for one VM. |
 | `deploy/hosted/env.example` | Every setting, for compose and the server. |
 | `deploy/hosted/README.md` | The first runbook: first boot, the first account, updates and rollback, staging, start-up errors. |
-| `server/tests/deploy_env.rs` | The deployment contract, checked without Docker (13 tests). |
+| `server/tests/deploy_env.rs` | The deployment contract, checked without Docker (15 tests after part 2 and the review). |
 
 ### The image (`Dockerfile`)
 
@@ -58,7 +58,7 @@ As in the work plan, plus these choices:
 - **The bind mounts** use the long syntax with `create_host_path: false`, under `${BOOKCLUB_DATA_DIR:-/srv/bookclub}` (`/media` → `/data/media`, `/legal` → `/app/legal`, read-only). A missing directory stops `docker compose up` instead of being created as root, and `BOOKCLUB_DATA_DIR` lets staging, CI and tests use another directory.
 - **`env_file`** is `${BOOKCLUB_ENV_FILE:-.env}` with `required: false`. Compose reads `.env` next to `compose.yaml` both for interpolation and, through `env_file`, as the app's environment. `required: false` lets `docker compose -f deploy/hosted/compose.yaml --env-file deploy/hosted/env.example config -q` pass in the repo, where no `.env` exists. On the VM a missing `.env` already stops compose at `${POSTGRES_PASSWORD:?…}`, and the server refuses to start without `DATABASE_URL`. Part 2's CI sets `BOOKCLUB_ENV_FILE=ci.env` inside `ci.env`.
 - `DATABASE_URL=postgres://bookclub:${POSTGRES_PASSWORD}@postgres:5432/bookclub` in the env file: compose interpolates `${…}` inside `env_file` files from the project environment (checked with Compose v5.6.1), so the password is set once.
-- The rest as planned: `read_only`, `tmpfs: /tmp:size=64m` (the server writes no temporary files), `cap_drop: [ALL]`, `no-new-privileges`, json-file logs (10 MB × 5), `stop_grace_period: 30s`, `restart: unless-stopped`, `depends_on: postgres: service_healthy`, and a `pg_isready` healthcheck with `start_interval: 1s`.
+- The rest as planned: `read_only`, `tmpfs: /tmp:size=64m` (the server writes no temporary files), `cap_drop: [ALL]`, `no-new-privileges`, json-file logs (10 MB × 5), `stop_grace_period: 30s`, `restart: ${BOOKCLUB_RESTART:-unless-stopped}` (a variable since the review, so CI can set `no`), `depends_on: postgres: service_healthy`, and a `pg_isready` healthcheck with `start_interval: 1s`.
 - It needs Compose 2.24 or newer (`env_file` with `path` and `required`) and Engine 25 or newer (`start_interval`). The README says so.
 
 ### `deploy/hosted/env.example` and `tests/deploy_env.rs`
@@ -73,14 +73,14 @@ As in the work plan, plus these choices:
     - `env_example_sets_what_production_needs`: no name twice, the required variables set, `DNB_HARVEST=false`, `LEGAL_DIR=/app/legal`, and `DATABASE_URL` built from `POSTGRES_PASSWORD`.
     - `env_example_filled_in_is_a_production_configuration`: as shipped, `Config::from_lookup` refuses it over `TRUSTED_PROXIES`. With that one value filled in it is accepted, with no DEV_MODE, Secure cookies, SMTP and no harvest.
   - **The binary**, run with an empty environment:
-    - healthcheck: a 200 passes; a 503, a 30 s delay (it gives up after 3 s) and a closed port fail. The mock server is wiremock on `127.0.0.1`, reached through `BIND_ADDR=0.0.0.0:<port>`.
+    - healthcheck: a 200 passes; a 503, a 30 s delay (it gives up after 3 s) and a closed port fail. The mock server is wiremock on `127.0.0.1`, reached through `BIND_ADDR=0.0.0.0:<port>`. Every run has `HTTP_PROXY`, `http_proxy` and `ALL_PROXY` set to `http://127.0.0.1:1`, where nothing listens, so the 200 case passes only while `healthcheck.rs` keeps `.no_proxy()` (reqwest 0.13.5 does not bypass loopback on its own; without the call the 200 and the 3 s cases fail).
     - send-test-mail against a fake SMTP server in the test, with no DEV_MODE: one message with `Message-ID: <uuid@mail.example.com>`, `Date`, `From`, `To` and `Subject`, and stdout `sent a test mail to …`. A 550 on `RCPT` exits non-zero with `SMTP send failed` and `550`. A mailbox such as `Ada <ada@example.test>` is refused.
     - the log on stderr, without escape codes, and only the result on stdout.
-    - `serve` and `import-legacy` with `MEDIA_DIR` below a regular file exit non-zero with the message, before the database. The test fails at its 20 s limit if the check ever moves after the connect retry.
+    - `serve` and `import-legacy` with `MEDIA_DIR` below a regular file, and with `MEDIA_DIR=/proc`, exit non-zero with the message, before the database. `/proc` exists but takes no new file even from uid 0, as a root-owned bind mount is for uid 1000: only the probe file catches it, so a `check_writable` cut down to `create_dir_all` fails this case (it then runs into the 20 s limit). The test fails at its 20 s limit if the check ever moves after the connect retry.
   - **Unit tests:**
     - `healthcheck::tests`: the URL for each `BIND_ADDR` form, and a bad `BIND_ADDR` names the variable.
     - `email::tests`: the `Message-ID` shape, domain and uniqueness, and the test mail's text.
-    - `media::shared::store::tests`: the check creates the root and leaves nothing behind, and its error is exactly `MEDIA_DIR <path> is not writable`.
+    - `media::shared::store::tests`: the check creates the root and leaves nothing behind, its error is exactly `MEDIA_DIR <path> is not writable`, and `MEDIA_DIR /proc is not writable` for an existing root that refuses the probe file (Linux only).
     - `main.rs`: the new commands parse.
 
 ### Contract changes for the integrator
@@ -156,34 +156,38 @@ No routes, DTOs, `error::msg` strings, migrations or frontend files changed. `ge
 | `.github/workflows/release.yml` | Its GitHub copy (disabled on GitHub): the same jobs, `ghcr.io/<owner>/bookclub-server`, a `gha` cache. |
 | `.forgejo/workflows/ci.yml`, `.github/workflows/ci.yml` | A new `image` job, identical in both. The Python `backend` job stays. |
 | `deploy/hosted/smoke-test.sh` | The `image` job's steps, runnable locally. |
+| `deploy/hosted/release-tags.sh` | The release's floating tags `X.Y` and `stable`, moved after the push (review fix). |
 | `deploy/hosted/ci.env` | The settings the smoke test boots `compose.yaml` with. |
 | `deploy/hosted/backup.sh`, `restore-test.sh`, `backup-lib.sh` | The nightly backup, the weekly restore test, and what both share. |
 | `deploy/hosted/backup.env.example` | Their settings. |
 | `deploy/hosted/systemd/bookclub-{backup,restore-test}.{service,timer}` | The units and timers. |
 | `deploy/hosted/README.md` | Completed: releases, the reverse proxy (pointer), the legacy import, backups, restore, open sign-up. |
-| `server/tests/deploy_env.rs` | `ci_env_is_a_production_configuration`; the env-file parser now takes a path (14 tests). |
+| `server/tests/deploy_env.rs` | `ci_env_is_a_production_configuration`; the env-file parser now takes a path; `smoke_test_refuses_names_that_are_not_ci_names` (review fix; 15 tests). |
 
 ### The release workflow (`.forgejo/workflows/release.yml`)
 
 - **Jobs:**
   - `frontend` is unchanged.
   - `server` is a byte-for-byte copy of `ci.yml`'s server job (`diff` against `ci.yml` is empty in both directories).
-  - `publish` needs both. The `backend` (pytest) job is gone, and line 4's GHCR comment now names the Forgejo registry.
+  - `publish` needs both and runs on the runner labelled `docker` (see "The runner"). The `backend` (pytest) job is gone, and line 4's GHCR comment now names the Forgejo registry.
 - **`publish`:**
-  1. The tag must match `^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`, else the run fails. metadata-action only warns about a tag it cannot parse, such as `v1.2`, and would then push `stable` alone.
+  1. The tag must match `^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`, else the run fails. metadata-action only warns about a tag it cannot parse, such as `v1.2`, and would then leave the build without a tag.
   2. `docker/setup-buildx-action@v4`: the docker-container driver. The default `docker` driver cannot export a registry cache.
   3. `docker/login-action@v4` to `git.tillhome.de` with `${{ github.repository_owner }}` and `secrets.REGISTRY_TOKEN`, as before.
-  4. `docker/metadata-action@v6` for `git.tillhome.de/rafiistcool/bookclub-server` (the workflow-level `env.IMAGE`), with `flavor: latest=false` and these tags:
-     - `type=semver,pattern={{version}}`
-     - `type=semver,pattern={{major}}.{{minor}}`, which metadata-action skips for a pre-release
-     - `type=raw,value=stable,enable=${{ !contains(github.ref_name, '-') }}`
-
-     There is no `{{major}}` tag. Its labels set `title`, `description` and `documentation` to the Dockerfile's values; metadata-action adds `version`, `revision`, `created`, `source` and `url`.
+  4. `docker/metadata-action@v6` for `git.tillhome.de/rafiistcool/bookclub-server` (the workflow-level `env.IMAGE`), with `flavor: latest=false` and the one tag `type=semver,pattern={{version}}`. The floating tags follow in step 6. There is no `{{major}}` tag. Its labels set `title`, `description` and `documentation` to the Dockerfile's values; metadata-action adds `version`, `revision`, `created`, `source` and `url`.
   5. `docker/build-push-action@v7`: `linux/amd64`, `provenance: false` and `sbom: false`, so each tag is one plain image manifest without an attestation index next to it. The cache is `cache-from: type=registry,ref=…:buildcache`, and `cache-to` the same with `mode=max,image-manifest=true,oci-mediatypes=true`.
      - `mode=max` keeps the stages' layers, including the Rust dependency layer that part 1 split out.
      - The two OCI options store the cache as a plain OCI image, which registries without BuildKit's cache manifest type accept.
      - The cache appears as the tag `buildcache` of `bookclub-server` in the Forgejo package list.
+  6. **Floating tags** (review fix): `deploy/hosted/release-tags.sh "$IMAGE" "$GITHUB_REF_NAME" <digest of step 5>`.
+     - It lists the release tags `vX.Y.Z` (no pre-releases) on the remote at that moment (`git ls-remote --tags --refs origin 'v*'`, so the shallow checkout is enough), sorted with `sort -V`.
+     - `X.Y` moves when the tag is the highest of its minor line, `stable` when it is the highest of all, and a pre-release moves nothing.
+     - It moves them with `docker buildx imagetools create --prefer-index=false --tag IMAGE:<name> IMAGE@<digest>`: a registry-side copy of the plain manifest, no pull, no index around it.
+     - **Why after the push, from the remote's tags:** before, `stable` was set by every non-pre-release tag, and two runs (`concurrency` is per ref) could end in either order. A hotfix `v0.11.1` minutes after `v0.11.0`, or a backport `v0.10.5`, could leave `stable` on the older version, and a pull of `stable` after a migration then stops at startup (`migration N was previously applied but is missing`). Now a run that is no longer the highest moves nothing, whichever run ends last. The decision falls seconds before the retag, while a newer release's run needs its full checks and build first.
+     - **Not a workflow-wide `concurrency` group:** a newer pending run cancels an older pending one in the same group, which would drop that release. The per-ref group stays, with a comment saying so.
+     - If the newest release's run fails, `stable` stays on the release before it until that version is released again (README, "Releases").
 - **The GitHub copy** pushes to `ghcr.io/${{ github.repository_owner }}/bookclub-server` with `GITHUB_TOKEN`, caches with `type=gha`, and runs `server` against `localhost`, as `ci.yml` there does. It is amd64 only now (it was amd64 and arm64 through QEMU, which a Rust release build would make very slow).
+- **The GitHub copy** runs `publish` on `ubuntu-latest` (GitHub's hosted VMs have their own daemon) and the same `release-tags.sh` step.
 - **Before the first release:** item 23 still holds. The repo has no `REGISTRY_TOKEN` action secret. It needs a token of `rafiistcool` with `write:package`. Without it, `publish` fails at the login, after the tests.
 
 ### The CI image smoke job (`image` in `ci.yml`)
@@ -197,14 +201,18 @@ No routes, DTOs, `error::msg` strings, migrations or frontend files changed. `ge
      - `/` must be `text/html` with `Cache-Control: no-store`.
      - The first `/assets/*.js` the shell names must be `immutable`.
   5. `docker compose exec -T app bookclub-server healthcheck`.
-  6. On a failure: `compose ps -a` and the last 200 log lines. Always: `down -v --remove-orphans`, the data directory removed, and the built image removed.
+  6. On a failure: `compose ps -a` and the last 200 log lines. Always: `down -v --remove-orphans`, the data directory removed if this run made it, and the built image removed.
 - **Why everything goes through the daemon:** the Forgejo runner runs jobs in a container (`catthehacker/ubuntu:act-24.04`, oapi notes). With the host's Docker socket, bind-mount sources and published ports belong to the daemon's host, not to the job container.
   - A `busybox:1.37.0` helper container therefore creates (`install -d -o 1000 -g 1000 -m 0750`) and removes the data directory, which must be an absolute path on the daemon's host.
   - The requests come from the compose network, as the work plan asked.
 - **Per-run names:** the job sets `COMPOSE_PROJECT_NAME=bookclub-ci-<run_id>`, `BOOKCLUB_TAG=ci-<run_id>` and `BOOKCLUB_DATA_DIR=/tmp/bookclub-ci-<run_id>`. Compose gives the environment precedence over `--env-file`, and the script does the same. `ci.env` publishes on `127.0.0.1` port `0`, a free port, so parallel runs on one daemon never collide.
-- **A cancelled run:** a last step with `if: cancelled()` runs `smoke-test.sh --down`. The stack's `restart: unless-stopped` would otherwise keep a half-finished run's containers alive on the runner's daemon. Whether Forgejo's runner runs `cancelled()` steps is not known; the script's own trap covers every other end.
+- **Only CI names** (review fix): the teardown runs `rm -rf` on the data directory as root, `down -v` on the project and `docker image rm` on the tag, all named by the environment. Before it asks Docker anything, the script therefore refuses a `COMPOSE_PROJECT_NAME` that does not match `^bookclub-ci([-_][a-z0-9_-]*)?$`, a `BOOKCLUB_TAG` that does not match `^ci([-_.][A-Za-z0-9_.-]*)?$`, and a `BOOKCLUB_DATA_DIR` (trailing slashes stripped) that does not match `^/tmp/bookclub-ci[A-Za-z0-9_.-]*$`, for `--down` too. A shell that loaded the production `.env` (`BOOKCLUB_DATA_DIR=/srv/bookclub`, `BOOKCLUB_TAG=stable`, `COMPOSE_PROJECT_NAME=bookclub`) or `BOOKCLUB_DATA_DIR=/tmp/` now stops there. The data directory is made with `mkdir` (no `-p`): one that already exists stops the run (`remove it with smoke-test.sh --down`), and the teardown removes the directory only if this run made it, or with `--down`. `deploy_env.rs` checks the refusal with `docker` replaced by a bash function from the environment, so no daemon is involved.
+- **A cancelled run** (review fix): a last step with `if: cancelled()` runs `smoke-test.sh --down`. Whether Forgejo's runner runs `cancelled()` steps is not known, and a killed job container runs no trap. Three things now keep leftovers from piling up on the runner's daemon:
+  - `ci.env` sets `BOOKCLUB_RESTART=no` (compose.yaml: `restart: ${BOOKCLUB_RESTART:-unless-stopped}`), so a leftover stack does not come back with the daemon.
+  - Before it builds, `smoke-test.sh` sweeps what earlier runs left: stacks of `bookclub-ci…` projects whose every container is older than `STALE_MINUTES` (default 120), through `docker compose -p <project> down -v --remove-orphans` with compose.yaml; `ci…` tags of the image that no container uses and that were tagged before that (`.Metadata.LastTagTime`; a daemon that records no time keeps them); and `/tmp/bookclub-ci…` directories older than that on the daemon's host, removed through the busybox helper. Its own names are never swept.
+  - The job has `timeout-minutes: 60`, so a stack older than 120 minutes is never a running job's.
 - **`ci.env`:**
-  - `COMPOSE_PROJECT_NAME=bookclub-ci` (never `bookclub`), `BOOKCLUB_TAG=ci`, `BOOKCLUB_LISTEN=127.0.0.1`, `BOOKCLUB_PORT=0`, `BOOKCLUB_DATA_DIR=/tmp/bookclub-ci` and `BOOKCLUB_ENV_FILE=ci.env`.
+  - `COMPOSE_PROJECT_NAME=bookclub-ci` (never `bookclub`), `BOOKCLUB_TAG=ci`, `BOOKCLUB_LISTEN=127.0.0.1`, `BOOKCLUB_PORT=0`, `BOOKCLUB_DATA_DIR=/tmp/bookclub-ci`, `BOOKCLUB_ENV_FILE=ci.env` and `BOOKCLUB_RESTART=no`.
   - A production configuration without `DEV_MODE`: `TRUSTED_PROXIES=none`, `SMTP_URL=smtp://localhost:2525` (loopback, accepted without TLS; nothing listens and no mail is sent), and `.invalid` addresses.
   - Compose reads `COMPOSE_PROJECT_NAME` from an `--env-file` too (checked with Compose v5.6.1), so a local `docker compose --env-file deploy/hosted/ci.env …` never touches a `bookclub` project.
 - **`ci_env_is_a_production_configuration`** (`deploy_env.rs`):
@@ -212,8 +220,13 @@ No routes, DTOs, `error::msg` strings, migrations or frontend files changed. `ge
   - It points compose at itself, is not the `bookclub` project, and has an absolute data directory.
   - It sets every compose variable and everything `env.example` must set.
   - `Config::from_lookup` accepts it, without DEV_MODE, with SMTP and no harvest.
+  - It sets `BOOKCLUB_RESTART=no`.
   - Mutations that each fail it: a non-loopback plain `SMTP_URL`, `BOOKCLUB_ENV_FILE=.env`, `COMPOSE_PROJECT_NAME=bookclub`, an added `DEV_MODE=true`, and an unknown name.
-- **The runner (item 24):** the job needs a Docker daemon it can reach, with Compose 2.24 or newer. If the first run fails at `docker version`, the runner's `config.yml` must hand job containers the daemon, in its `container` section: `docker_host`, or `valid_volumes` and `options` for `/var/run/docker.sock`. Every run builds the image without a registry cache; only the daemon's own build cache helps. The run time on the runner is not known. Locally, the build took about 2 minutes with the dependency layer cached and about 4 minutes cold (part 1).
+- **`smoke_test_refuses_names_that_are_not_ci_names`** (`deploy_env.rs`, review fix): `smoke-test.sh --down` with `docker` as a bash function imported from the environment (`BASH_FUNC_docker%%`) that only records a call. ci.env's names and CI's per-run names (with a trailing slash) reach `docker`. `/srv/bookclub`, `/tmp/`, `/tmp`, `/tmp/bookclub-ci-1/media`, `/tmp/bookclub-ci-1/..`, `/tmp/../srv/bookclub-ci`, the projects `bookclub` and `bookclub-staging`, and the tags `stable` and `0.11.0` each exit 1 with `<NAME>=… is not a CI …` and never call it. With the guard removed, the test fails.
+- **The runner (item 24; changed by the review):** the Docker daemon is root on its host, so only one runner hands it to job containers, and only `image` (ci.yml) and `publish` (release.yml) run there, through `runs-on: docker`. The `ubuntu-latest` runner keeps running the other jobs, whose npm and cargo build scripts come from any pull request, without the socket. `image` also skips pull requests from forks: `if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository`.
+  - **What Rafael sets up:** a second runner registration (its own `.runner` file and `config.yml`, best on a VM or LXC that does not also serve Forgejo or Caddy) with the label `docker:docker://ghcr.io/catthehacker/ubuntu:act-24.04`. Only its `config.yml` hands job containers the daemon, in the `container` section: `docker_host` set so that the runner mounts the daemon into job containers (`automount` in current Forgejo runners; check the runner version's config reference), or `valid_volumes: ["/var/run/docker.sock"]` with `options: -v /var/run/docker.sock:/var/run/docker.sock`. Its daemon needs Compose 2.24 or newer. The existing runner stays as it is.
+  - Until that runner exists, the `image` job of the Wave 1 PR waits for a runner instead of failing. A job that fails at `docker version` means the `container` settings above are missing.
+  - Every run builds the image without a registry cache; only the daemon's own build cache helps. The run time on the runner is not known. Locally, the build took about 2 minutes with the dependency layer cached and about 4 minutes cold (part 1).
 
 ### Backups
 
@@ -225,7 +238,10 @@ No routes, DTOs, `error::msg` strings, migrations or frontend files changed. `ge
      - The dump and its counts therefore always describe the same moment. A plain `pg_dump` followed by a count would make the restore test fail at random whenever anyone wrote in between.
      - The pair goes to `BACKUP_DIR/db.new`, is checked (non-empty dump, a `(migration)` line, `pg_restore --list` reads it back), and then replaces `BACKUP_DIR/db`.
   2. **`counts.tsv`** is `table<TAB>rows` for every table in `public`, ordered by name, then `(migration)<TAB><max successful _sqlx_migrations.version>`. `counts_sql` in `backup-lib.sh` writes the query for both scripts.
-  3. **`restic backup --tag bookclub BACKUP_DIR/db MEDIA_DIR`**, excluding the media store's temporary files (`.*.tmp`, `.write-probe.*`). The dump comes first, so the media are read after it.
+  3. **`restic backup --tag bookclub BACKUP_DIR/db MEDIA_DIR`**, excluding the media store's temporary files (`.*.tmp`, `.write-probe.*`). The dump comes first, so the media are read after it. That covers pictures added meanwhile (the file is on disk before its row commits), not pictures deleted meanwhile (review fix):
+     - The app deletes a picture's files right after the commit that deletes its row or takes it down: a replaced or deleted avatar (`media/avatar.rs`), a takedown (`media/reports.rs`), a deleted account (`auth/deletion.rs`). One that lands between the dump and restic's read leaves the dump referencing files the snapshot does not hold.
+     - When restic listed the directory before the deletion, it reports `error: lstat <path>: no such file or directory` (seen in a race test with restic 0.17.3), saves the snapshot without the file and exits 3. Before, `set -e` then stopped `backup.sh` before `forget` and the check, and the heartbeat reported a failure.
+     - Now restic's stderr goes to a file (and on to the log). Exit 3 counts as a warning when every `error:` line has the form `error: <op> <path>: no such file or directory` with `<path>` below `MEDIA_DIR` and no longer there: `warning: the app deleted the pictures above while restic read the media; the snapshot was saved without them`. Any other unreadable file stops the backup with `restic could not read the files above (exit 3; …)`, any other exit with `restic backup exited N`.
   4. **`restic forget --host BACKUP_HOST --tag bookclub --keep-daily 7 --keep-weekly 4 --keep-monthly 12 --prune`.** While the history is shorter than the policy, restic also keeps the oldest snapshot (documented restic behaviour; seen as 2 snapshots on one day).
   5. **`restic check --read-data-subset=5%`** on `CHECK_WEEKDAY` (7, Sunday), or with `--check`.
   6. **Before it starts,** `MEDIA_DIR` must exist and equal the `/data/media` mount source of the app container (`docker inspect`). Without an app container, as during a restore, it only warns.
@@ -234,6 +250,8 @@ No routes, DTOs, `error::msg` strings, migrations or frontend files changed. `ge
   2. `RESTORE_POSTGRES_IMAGE` (`postgres:17`) runs with `--network none`. The script waits for `pg_isready -h 127.0.0.1`, because the image's first start runs a temporary server on the socket only. Then `pg_restore --exit-on-error --no-owner`.
   3. `diff -u` of `counts_sql` on the copy against the snapshot's `counts.tsv`.
   4. Every `media.storage_key/<variant>` of the rows that are not taken down must be in the restored `MEDIA_DIR` and not empty. It checks **every** key, not a sample: the restore has all files anyway, and a sample could miss the one deleted file.
+     - **Deleted during the backup** (review fix): for the missing keys, the script asks the running stack's database (`docker compose exec -T postgres psql …` in `COMPOSE_DIR`, read only) which keys it references now. A missing key it no longer references was deleted by the app after the dump (see `backup.sh` step 3): logged as `deleted after the backup, no longer referenced: <key>`, counted in the last line (`… 1 media files (1 deleted after the backup)`), no failure. A missing key it still references is lost: `missing or empty: <key>` and exit 1. When the database does not answer (the stack is down, as during a restore), every missing key counts as lost.
+     - The README no longer says that every picture the dump references is in the snapshot.
   5. An EXIT trap removes the container and the scratch directory, whatever the outcome.
 - **Shared (`backup-lib.sh`):**
   - `load_config` reads `backup.env` next to the scripts, or `BACKUP_ENV`.
@@ -262,15 +280,24 @@ Parts that rest on other Wave 1 packages, for the integrator to check after thei
 
 ### Contract changes for the integrator (part 2)
 
-No routes, DTOs, `error::msg` strings, migrations, server code or frontend files changed. `generated.ts` and `server/.sqlx/` are unchanged. There are no new server variables; `ci.env` and `backup.env.example` are not server settings.
+No routes, DTOs, `error::msg` strings, migrations, server code or frontend files changed. `generated.ts` and `server/.sqlx/` are unchanged. There are no new server variables; `ci.env` and `backup.env.example` are not server settings. The review added one compose variable, `BOOKCLUB_RESTART` (`#BOOKCLUB_RESTART=unless-stopped` in `env.example`, `no` in `ci.env`), and no server code (only tests).
 
 - **`CLAUDE.md`, "CI and releases":**
-  - The `image` job builds the root `Dockerfile` and boots it with `deploy/hosted/compose.yaml` and `ci.env`. Locally: `deploy/hosted/smoke-test.sh`; on the agents VM `CARGO_JOBS=3 deploy/hosted/smoke-test.sh`, then `docker builder prune -f`.
-  - The job needs the Docker daemon in the runner's job containers.
-  - A `vX.Y.Z` tag publishes `git.tillhome.de/rafiistcool/bookclub-server` with `X.Y.Z`, `X.Y` and `stable` (`X.Y.Z-rc.N`: only the exact tag), never `latest`. The secret is `REGISTRY_TOKEN`.
+  - The `image` job builds the root `Dockerfile` and boots it with `deploy/hosted/compose.yaml` and `ci.env`. Locally: `deploy/hosted/smoke-test.sh`; on the agents VM `CARGO_JOBS=3 deploy/hosted/smoke-test.sh`, then `docker builder prune -f`. It accepts only CI names (`bookclub-ci…`, `ci…`, `/tmp/bookclub-ci…`) and first removes what cancelled runs left behind (`STALE_MINUTES`, default 120).
+  - `image` (ci.yml) and `publish` (release.yml) run on the runner labelled `docker`, the only one that hands job containers the Docker daemon; `image` skips pull requests from forks.
+  - A `vX.Y.Z` tag publishes `git.tillhome.de/rafiistcool/bookclub-server` with `X.Y.Z`; `deploy/hosted/release-tags.sh` then moves `X.Y` and `stable` only when the tag is the highest release of its minor line or of all (`X.Y.Z-rc.N`: only the exact tag), never `latest`. The secret is `REGISTRY_TOKEN`.
   - "Older releases are still on GHCR" stays true for the Python image.
 - **`CLAUDE.md`, "Request flow":** replace "Do not cut a Python release from `phase-1`…" with: a `v*` tag now publishes the Rust image `bookclub-server`, and the Python image `bookclub` gets no new versions.
-- **`CLAUDE.md`, deployment pointer:** `deploy/hosted/README.md` is the operator runbook (backups, restore, import, open sign-up); the scripts are shellcheck-clean (`koalaman/shellcheck:v0.10.0 -x deploy/hosted/*.sh`), the workflows actionlint-clean (`rhysd/actionlint:1.7.7`).
+- **`CLAUDE.md`, deployment pointer:** `deploy/hosted/README.md` is the operator runbook (backups, restore, import, open sign-up); the scripts are shellcheck-clean (`koalaman/shellcheck:v0.10.0 -x deploy/hosted/*.sh`), the workflows actionlint-clean (`rhysd/actionlint:1.7.7`, which needs the runner label `docker` declared; see the next item).
+- **New file for the integrator: `.github/actionlint.yaml`.** actionlint knows only GitHub's runner labels and reports `label "docker" is unknown` for `runs-on: docker`. It reads its list of self-hosted labels from `.github/actionlint.yaml`, which is not among DEP's files, so DEP did not add it. Content:
+
+  ```yaml
+  self-hosted-runner:
+    labels:
+      - docker
+  ```
+
+  Until it exists: `docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.7 -ignore 'label "docker" is unknown' .forgejo/workflows/*.yml .github/workflows/*.yml`.
 - **`SELFHOST.md` §7 "Releases"** describes the Python image's tags (`1.2.3`, `1.2`, `1`, `latest` on `rafiistcool/bookclub`). That is no longer what a tag publishes. CUT-R deletes `SELFHOST.md`; until then, a pointer to `deploy/hosted/README.md`, "Releases".
 - **`docs/phase2/cutover.md` (CUT):** its compose directory and paths agree with the README's (`/opt/bookclub`, `/srv/bookclub/import`). Its checklist item "Backups run, and `restore-test.sh` has passed once (`deploy/hosted/README.md`)" now has the commands behind it.
 
@@ -344,12 +371,82 @@ No routes, DTOs, `error::msg` strings, migrations, server code or frontend files
 - **The units' sandbox:** `sudo systemd-run --wait` with the service's properties (`Type=oneshot`, `Nice`, I/O priority, `PrivateTmp`, `ProtectSystem=full`, `NoNewPrivileges`, `Requires=` and `After=docker.service`) ran `backup.sh` and `restore-test.sh` as root. Both exited 0. `BindPaths=` exposed the staging directories, which lie under `/tmp` only on this VM.
 - **Teardown:** the README's staging wipe (`down -v`, then `find … -mindepth 1 -delete`). Then the repositories, staging directories, the sftp server, the listener and the test images were removed, and `docker builder prune -f` ran.
 
-**Not verified:**
-- **`docker compose pull` from `git.tillhome.de`:** no `bookclub-server` tag is published yet, and this VM has no `docker login` there (`unauthorized`).
+**Not verified** (see "Review round 1" below for what the review added):
+- **`docker compose pull` from `git.tillhome.de`:** no `bookclub-server` tag is published yet, and this VM has no `docker login` there (`unauthorized`). The same commands ran against a local registry.
 - **The release workflow:** it has never run, because no tag was pushed. Also untested: metadata-action and the registry cache against Forgejo's registry, and the `REGISTRY_TOKEN` secret.
-- **The `image` job on the Forgejo runner:** its first run is the Wave 1 PR (amendment 4; item 24).
+- **The `image` job on the Forgejo runner:** its first run is the Wave 1 PR (amendment 4; item 24), on the runner labelled `docker`.
 - **The README commands that need the production VM or accounts:**
-  - `systemctl` and `journalctl` (the units were not installed into this VM's `/etc/systemd`)
+  - `systemctl` and `journalctl` on the VM itself (they ran in a systemd 257 container, see below)
   - the Storage Box key upload and its host-key fingerprints
   - healthchecks.io
   - `git tag` and `git push` of a release
+
+## Review round 1
+
+A review of DEP raised ten findings; all were checked against the code. The fixes are described in place above; this section lists them and what was run.
+
+### Fixed
+
+| Finding | Fix |
+|---|---|
+| A cancelled CI run leaves its stack, image and data directory on the runner's daemon (two findings) | `BOOKCLUB_RESTART=no` in `ci.env`; `smoke-test.sh` sweeps stale `bookclub-ci…` stacks, unused `ci…` tags and `/tmp/bookclub-ci…` directories older than `STALE_MINUTES`; `timeout-minutes: 60` on the job ("The CI image smoke job") |
+| `smoke-test.sh` deletes whatever the environment names (two findings) | Names must look like CI's, checked before any `docker` call; `mkdir` without `-p`, and the teardown removes only a directory the run made; `smoke_test_refuses_names_that_are_not_ci_names` |
+| The PR-triggered `image` job needs the host daemon on the shared runner | `runs-on: docker` for `image` and `publish`; `image` skips fork pull requests ("The runner") |
+| `stable` and `X.Y` can move back to an older version | The exact version is pushed first; `release-tags.sh` moves the floating tags only for the highest release, from the remote's tags at that moment ("The release workflow", step 6) |
+| A picture deleted between the dump and restic's read fails the backup (restic exit 3) or the restore test (two findings) | `backup.sh` treats exit 3 as a warning when every unreadable file is a vanished picture below `MEDIA_DIR`; `restore-test.sh` excuses missing pictures the live database no longer references; README reworded ("Backups") |
+| No test covers the `MEDIA_DIR` write probe | `/proc` cases in `store.rs` and `deploy_env.rs` |
+| The healthcheck's `.no_proxy()` is untested | `deploy_env.rs` runs the healthcheck with `HTTP_PROXY`, `http_proxy` and `ALL_PROXY` pointing at a dead port |
+
+### Verified by hand (review round 1, on the agents VM)
+
+Docker 29.9.2, Compose v5.6.1, buildx v0.38.1.
+
+**Tests against mutations** (each restored afterwards):
+- Without `.no_proxy()` in `healthcheck.rs`: `healthcheck_succeeds_only_on_a_200` and `healthcheck_gives_up_after_three_seconds` fail.
+- `check_writable` cut down to `create_dir_all`: `the_writability_check_writes_into_an_existing_root` fails, and `serve_and_import_legacy_refuse_a_media_dir_they_cannot_write` runs into its 20 s limit.
+- The name checks removed from `smoke-test.sh`: `smoke_test_refuses_names_that_are_not_ci_names` fails.
+
+**`smoke-test.sh`**
+- Leftovers: a stack `bookclub-ci-left` (both containers with restart policy `no`), its tag `ci-left`, an unused tag `ci-orphan`, and the directories `/tmp/bookclub-ci-left` and `/tmp/bookclub-ci-orphan`.
+  - A `--no-build` run with the default 120 minutes passed and left all of them alone.
+  - A run with `STALE_MINUTES=0` and a build removed the stack with its volume and networks, the three unused `ci…` tags (one of them the earlier `--no-build` run's image) and both directories. It then built, passed and tore down. No container, volume, network, image or directory of any run was left.
+- An existing `/tmp/bookclub-ci-dep2` with a file in it: exit 1 with `/tmp/bookclub-ci-dep2 already exists on the daemon's host (remove it with deploy/hosted/smoke-test.sh --down)`; the directory and its file were still there.
+- `--down` against a stack left running: the containers, the volume, both networks, the data directory and the image were removed.
+
+**Releases** (no tag pushed, nothing sent to Forgejo)
+- `release-tags.sh --plan` against a local bare repository: `v0.11.0` alone gives `0.11 stable`; after `v0.11.1`, `v0.11.0` gives nothing and `v0.11.1` gives `0.11 stable`; a backport `v0.10.5` gives `0.10`; `v0.11.10` sorts above `v0.11.1`; pre-releases and `phase1-green` give nothing; a tag the remote does not have is an error.
+- A local `registry:2.8.3` and a `docker-container` buildx builder (`network=host`):
+  - The root Dockerfile built and pushed as `0.11.1` with the workflow's options (`provenance=false`, `sbom=false`, `cache-to type=registry,…:buildcache,mode=max,image-manifest=true,oci-mediatypes=true`): 5 min 57 s cold, 58 s of it the cache export. The cache is an OCI image manifest with the config type `application/vnd.buildkit.cacheconfig.v0` and 20 layers.
+  - After `docker buildx prune -af` on the builder, a build as `0.11.2` took 12 s: every step `CACHED` from the registry.
+  - Overlapping runs: `v0.11.2`'s step ended first and pointed `0.11` and `stable` at it; `v0.11.1`'s step ended last and moved nothing. `0.11` and `stable` had the manifest bytes of `0.11.2` (an OCI image manifest, no index).
+- Staging, with a `compose.override.yaml` that named `localhost:5001/…` instead of `git.tillhome.de/…`: the README's `docker compose pull app` and `docker compose up -d --wait app` ran `stable` (the image of 0.11.2). With `BOOKCLUB_TAG=0.11.1`, the same two commands rolled back to 0.11.1 (`docker compose images app`), healthy.
+
+**Backups** (`bookclub-staging` from this branch, two accounts with avatars, a local restic repository)
+- Baseline: `backup.sh` and `restore-test.sh` exit 0.
+- **The race's outcome:** the dump from before a deletion and the media from after it, put into one snapshot with `backup.sh restic backup --tag bookclub <BACKUP_DIR>/db <MEDIA_DIR>`. A replaced avatar, a deleted avatar and an admin takedown each gave exit 0, `deleted after the backup, no longer referenced: avatars/…/a` and `… (1 deleted after the backup)`. The previous `restore-test.sh` failed the same snapshot with `1 of 2 media files are missing or empty`.
+- A file removed from disk while its row stayed: exit 1, `missing or empty: avatars/…/a`.
+- The race's snapshot with the stack's postgres stopped: exit 1 after `warning: the live database does not answer, so every missing file counts`.
+- **restic exit 3**, from stub images (`RESTIC_IMAGE`) that run restic 0.17.3 and then print one `error:` line and exit 3:
+  - `error: lstat <MEDIA_DIR>/avatars/zz/zzgone/a: no such file or directory` and `error: open <MEDIA_DIR>/avatars/zz/zzgone: no such file or directory`: the warning, then `forget`, `backup done`, exit 0.
+  - `permission denied`, a path that still exists, a path below `BACKUP_DIR`, and an `error:` line of another form: exit 1 with `restic could not read the files above`.
+- A real race (restic 0.17.3 reading 8,000 files while a process deleted and rewrote directories) printed `error: lstat <path>: no such file or directory` and `Warning: at least one source file could not be read`, and exited 3: the form the script expects.
+
+**systemd** (a stand-in for the VM)
+- A Debian 13 container with systemd 257 as PID 1: privileged, its own cgroup namespace, `tmp.mount` masked, the host's Docker socket and CLI mounted, the staging directories at their own paths.
+- Two stand-ins: a `docker.service` that only exists (the daemon runs outside the container), and a drop-in `BindPaths=<staging directory>`, because the staging lies under `/tmp`, which `PrivateTmp` hides.
+- The README's commands as written: `cp deploy/hosted/systemd/bookclub-* /etc/systemd/system/`, `systemctl daemon-reload`, `systemctl enable --now bookclub-backup.timer bookclub-restore-test.timer`, `systemctl list-timers 'bookclub-*'` (next runs Thu 03:30 and Sun 05:30 plus the random delay), `systemctl start bookclub-backup`, `systemctl start bookclub-restore-test` (both exit 0; `Result=success`, `PrivateTmp=yes`, `ProtectSystem=full`, `NoNewPrivileges=yes`, `Nice=10`, I/O priority 7), and `journalctl -u bookclub-backup -u bookclub-restore-test`, which showed the dump, the snapshot, `backup done` and `restore test passed`.
+
+**Lint**
+- shellcheck v0.10.0 `-x` on all five scripts, from the repo root and from `deploy/hosted/`: clean.
+- actionlint 1.7.7 on all four workflows: clean with the proposed `.github/actionlint.yaml` (passed as `-config-file`) and with `-ignore 'label "docker" is unknown'`.
+- `docker compose -f deploy/hosted/compose.yaml --env-file deploy/hosted/env.example config -q`: exit 0; with `ci.env` both services get `restart: "no"`.
+
+**Cleanup:** the staging stack (`down -v`), the systemd container and image, the stub images, the local registry and its builder, the test images, and `docker builder prune -f`.
+
+### Still open after the review
+
+- **`docker compose pull` from `git.tillhome.de`:** needs a published tag and `docker login` on the VM (Rafael, items 11 and 23). Only a local registry stood in.
+- **The release workflow on Forgejo:** it runs on the first `v*` tag. Untested there: metadata-action, the login with `REGISTRY_TOKEN` (a `rafiistcool` token with `write:package`, item 23), whether Forgejo's registry takes the cache manifest (config type `application/vnd.buildkit.cacheconfig.v0`) and `imagetools create`, and `git ls-remote` with the checkout's credentials.
+- **The runner labelled `docker` (item 24):** Rafael registers it as described in "The runner". The `image` job of the Wave 1 PR waits for it.
+- **README commands no VM here can run:** the Storage Box key upload and host-key fingerprints (a local sftp server stood in), the healthchecks.io account (a local listener stood in), `git tag` and `git push` of a release, and `systemctl`/`journalctl` on the production VM itself.
+- **GATE's Caddy and `verify-limits.sh` sections** (amendment 16) are not on this branch: they are in `docs/phase2/notes/gate.md` on GATE's branch, and the integrator moves them into `deploy/hosted/README.md` after GATE merges. DEP's "Reverse proxy" section already points at both files.

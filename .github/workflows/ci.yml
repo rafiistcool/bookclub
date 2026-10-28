@@ -50,10 +50,13 @@ jobs:
 
   # The production image (#51): build the root Dockerfile without pushing, boot it with
   # deploy/hosted/compose.yaml and ci.env, and ask /api/health, / and a script from a container on
-  # the compose network (deploy/hosted/smoke-test.sh). The job needs the Docker daemon, and the
-  # names below are unique per run, so runs that share a daemon do not collide.
+  # the compose network (deploy/hosted/smoke-test.sh). The names below are unique per run, so
+  # runs that share a daemon do not collide. On Forgejo the job runs on a runner of its own
+  # (label `docker`); GitHub's hosted runners are VMs with a Docker daemon of their own.
   image:
     runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 60
     env:
       COMPOSE_PROJECT_NAME: bookclub-ci-${{ github.run_id }}
       BOOKCLUB_TAG: ci-${{ github.run_id }}

@@ -91,7 +91,7 @@ In production, only after the legacy import, which needs an empty database (see 
 
 ## Updates and rollback
 
-`BOOKCLUB_TAG=stable` follows the newest release. To update:
+`BOOKCLUB_TAG=stable` follows the highest release (see "Releases"). To update:
 
 ```sh
 docker compose pull app
@@ -118,10 +118,12 @@ git push origin v0.11.0
 | Tag | From `v1.2.3` | From `v1.3.0-rc.1` |
 |---|---|---|
 | exact version | `1.2.3`, never moves | `1.3.0-rc.1`, never moves |
-| minor | `1.2`, moves with each patch release | none |
-| `stable` | moves with each release | none |
+| minor | `1.2`, if `v1.2.3` is the highest `v1.2.*` release | none |
+| `stable` | if `v1.2.3` is the highest release of all | none |
 
-There is no `latest` and no floating major. A tag that is not `vX.Y.Z` or `vX.Y.Z-<pre-release>` fails the run. The workflow logs in with the repository secret `REGISTRY_TOKEN`, a Forgejo token with `write:package`. The old Python image `rafiistcool/bookclub` is never touched.
+The exact version is pushed first. Then `release-tags.sh` compares the tag with the release tags (`vX.Y.Z`, no pre-releases) that the repository has at that moment, and points the floating tags at the new image only if it is the highest. A backport such as `v0.10.5` after `v0.11.0` therefore moves `0.10` but not `stable`, and of two release runs that overlap, the older version never moves `stable` back, whichever run ends last. If the newest release's run fails, `stable` stays where it was until that version is released again.
+
+There is no `latest` and no floating major. A tag that is not `vX.Y.Z` or `vX.Y.Z-<pre-release>` fails the run. The publish job runs on the Forgejo runner with the label `docker` and logs in with the repository secret `REGISTRY_TOKEN`, a Forgejo token with `write:package`. The old Python image `rafiistcool/bookclub` is never touched.
 
 ## Staging
 
@@ -187,7 +189,7 @@ The importer reads a private copy of the database and its `-wal` in the containe
 `backup.sh` runs every night at 03:30 (plus up to 30 minutes), from `bookclub-backup.timer`:
 
 1. `pg_dump -Fc --no-owner` inside the postgres container, and in the same database snapshot the row count of every table and the newest migration (`counts.tsv`), into `/var/lib/bookclub-backup/db`. A dump and its counts therefore always agree.
-2. `restic backup` of that directory and of `/srv/bookclub/media`. The dump comes first, so every picture it references was on disk before the media were read.
+2. `restic backup` of that directory and of `/srv/bookclub/media`. The dump comes first: a picture is on disk before its row commits, so the dump never references a picture saved after restic read the media. A picture deleted in between (a replaced profile picture, a takedown, a deleted account) can be missing from the snapshot while the dump still references it. restic then saves the snapshot without it and names it as a file it could not read. `backup.sh` logs that as a warning and goes on when every such file is a picture that no longer exists, and fails otherwise.
 3. `restic forget --prune`, keeping 7 daily, 4 weekly and 12 monthly snapshots.
 4. On Sundays, `restic check --read-data-subset=5%`, which reads back 5 % of the stored data.
 5. A heartbeat ping when it starts, and one with its exit status and the end of its log when it ends.
@@ -253,14 +255,14 @@ The importer reads a private copy of the database and its `-wal` in the containe
 
 ### The restore test
 
-`restore-test.sh` restores the newest snapshot into `/var/lib/bookclub-backup/restore-test` and checks it without touching the running stack:
+`restore-test.sh` restores the newest snapshot into `/var/lib/bookclub-backup/restore-test` and checks it without changing the running stack:
 
 1. restic verifies every restored file against the repository.
 2. A throwaway `postgres:17` without a network runs `pg_restore --exit-on-error` on the dump.
 3. The row count of every table and the newest migration must equal the backup's `counts.tsv`.
-4. Every stored picture the restored database references (`media.storage_key` and its variants, except taken-down rows) must be in the restored media, and not empty.
+4. Every stored picture the restored database references (`media.storage_key` and its variants, except taken-down rows) must be in the restored media, and not empty. A missing one that the running database no longer references either was deleted while the backup ran (see "Backups"): the test logs it as `deleted after the backup` and does not fail. A missing one that the running database still references fails the test, and so does every missing one while the running database does not answer.
 
-It removes the container and the restored files afterwards, and ends with a line such as `restore test passed: 31 tables, 1830 rows, migration 1900, 52 media files`. Any difference fails it, and the heartbeat alerts. By hand: `/opt/bookclub/restore-test.sh`, or `systemctl start bookclub-restore-test`.
+It removes the container and the restored files afterwards, and ends with a line such as `restore test passed: 31 tables, 1830 rows, migration 1900, 52 media files`, or `… 51 media files (1 deleted after the backup)`. Any other difference fails it, and the heartbeat alerts. The test only reads from the running stack. By hand: `/opt/bookclub/restore-test.sh`, or `systemctl start bookclub-restore-test`.
 
 ### Restoring for real
 

@@ -300,6 +300,19 @@ mod tests {
         );
     }
 
+    /// A root that exists but takes no new file, as a root-owned bind mount is for uid 1000:
+    /// `create_dir_all` succeeds there, so only the probe file catches it. `/proc` refuses new
+    /// files even to uid 0, which a mode-0555 directory would not (CI may run as root).
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn the_writability_check_writes_into_an_existing_root() {
+        let error = FsMediaStore::new("/proc")
+            .check_writable()
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "MEDIA_DIR /proc is not writable");
+    }
+
     #[tokio::test]
     async fn refuses_keys_that_leave_the_root() {
         let dir = tempfile::tempdir().unwrap();
