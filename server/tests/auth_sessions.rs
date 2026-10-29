@@ -763,13 +763,27 @@ async fn extractor_order(db: PgPool) {
 
 /// `deploy/hosted/revoke-access.sql`, which the runbook runs on a database restored after a
 /// compromise of the VM (security review, Phase 2 Wave 2): every cookie session and app token,
-/// every open club and sign-up invite, and every unused email link stop working, while the
-/// password still signs in. Run against the current schema, so the file cannot go stale.
+/// every open club and sign-up invite, every unused email link and every pending friend request
+/// stop working, while the password still signs in and accepted friendships stay (reviewed by
+/// hand). Run against the current schema, so the file cannot go stale.
 #[sqlx::test]
 async fn the_revocation_after_a_compromise_ends_every_reusable_access(db: PgPool) {
     let app = TestApp::new(db).await;
     let ada = app.user("ada").await;
     let club = app.club(&ada, "Readers").await;
+    // A pending request turns into a friendship with one click by the account it is for, like an
+    // open invite into a membership (FRIENDS security review): a planted one from every account
+    // to an account the attacker keeps would make it everyone's audience.
+    let planted = app.user("planted").await;
+    let dora = app.user("dora").await;
+    dora.post("/api/friends/requests", json!({"username": "planted"}))
+        .await
+        .assert_status(200);
+    for (from, to) in [(&ada, "dora"), (&dora, "ada")] {
+        from.post("/api/friends/requests", json!({"username": to}))
+            .await
+            .assert_status(200);
+    }
     let phone = app
         .anon()
         .with_bearer(token(&app, "ada", "phone").await["token"].as_str().unwrap());
@@ -832,4 +846,25 @@ async fn the_revocation_after_a_compromise_ends_every_reusable_access(db: PgPool
         .await
         .assert_status(204);
     again.get("/api/auth/me").await.assert_status(200);
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM friendships WHERE accepted_at IS NULL")
+            .await,
+        0
+    );
+    let friends = again.get("/api/friends").await;
+    friends.assert_status(200);
+    assert_eq!(friends.json()["friends"][0]["user"]["username"], "dora");
+    planted.get("/api/auth/me").await.assert_status(401);
+    let planted = app.anon();
+    planted
+        .post(
+            "/api/auth/login",
+            json!({"username": "planted", "password": PASSWORD}),
+        )
+        .await
+        .assert_status(204);
+    planted
+        .post("/api/friends/requests/dora/accept", json!({}))
+        .await
+        .assert_detail(404, "No such friend request");
 }
