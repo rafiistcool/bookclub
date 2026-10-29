@@ -14,7 +14,7 @@ use super::service::{Busy, NoAnswer, persist};
 use super::shared::books::{BookRef, book_out};
 use super::shared::isbn::{Isbn13, parse_isbn};
 use super::shared::lookup::{LookupError, Resolved, local_isbn};
-use super::{INVALID_ISBN, ISBN_NOT_FOUND, ISBN_UNAVAILABLE, busy};
+use super::{INVALID_ISBN, ISBN_NOT_FOUND, ISBN_UNAVAILABLE, busy, upstream_turn};
 use crate::AppState;
 use crate::auth::extract::CurrentUser;
 use crate::error::{ApiResult, AppError, ErrorBody};
@@ -108,7 +108,8 @@ pub struct IsbnHitOut {
 /// Looks an ISBN up and stores what it found. ISBN-10 input becomes its ISBN-13 and checksums
 /// must hold. German-language ISBNs (978-3) are asked at the DNB first, then at Open Library
 /// (also while the DNB is busy); every other ISBN only at Open Library. A book that is already
-/// in the catalog is answered without an outbound call.
+/// in the catalog is answered without an outbound call. A valid ISBN counts against the
+/// account's catalog requests like a search, also when the answer is local.
 #[utoipa::path(
     get,
     path = "/api/books/isbn/{isbn}",
@@ -121,7 +122,7 @@ pub struct IsbnHitOut {
         (status = 400, body = ErrorBody, description = "`That is not a valid ISBN-10 or ISBN-13`"),
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
         (status = 404, body = ErrorBody, description = "`No book found for that ISBN`"),
-        (status = 429, body = ErrorBody, description = "Every source asked is busy"),
+        (status = 429, body = ErrorBody, description = "Every source asked is busy, or `Slow down a little. Try again later.` (60 catalog requests per account a minute)"),
         (status = 502, body = ErrorBody, description = "`Could not look that ISBN up right now. Try again.`")
     )
 )]
@@ -131,6 +132,9 @@ pub async fn lookup_isbn(
     ApiPath(raw): ApiPath<String>,
 ) -> ApiResult<Json<IsbnHitOut>> {
     let isbn = parse_isbn(&raw).ok_or_else(|| AppError::bad_request(INVALID_ISBN))?;
+    // After the check, so an invalid ISBN costs nothing. A local hit takes the turn too: it is
+    // cheap, and a scan is one lookup at a time (#56). Scans share `ol_api` with the cover job.
+    let _turn = upstream_turn(&state, user.id).await?;
     let resolved = resolve_isbn(&state, &isbn, false, ISBN_UNAVAILABLE)
         .await?
         .ok_or_else(|| AppError::not_found(ISBN_NOT_FOUND))?;

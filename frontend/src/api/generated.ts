@@ -1049,7 +1049,8 @@ export interface paths {
          * Looks an ISBN up and stores what it found. ISBN-10 input becomes its ISBN-13 and checksums
          *     must hold. German-language ISBNs (978-3) are asked at the DNB first, then at Open Library
          *     (also while the DNB is busy); every other ISBN only at Open Library. A book that is already
-         *     in the catalog is answered without an outbound call.
+         *     in the catalog is answered without an outbound call. A valid ISBN counts against the
+         *     account's catalog requests like a search, also when the answer is local.
          */
         get: operations["catalog_lookup_isbn"];
         put?: never;
@@ -7302,7 +7303,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description Every source asked is busy */
+            /** @description Every source asked is busy, or `Slow down a little. Try again later.` (60 catalog requests per account a minute) */
             429: {
                 headers: {
                     [name: string]: unknown;
