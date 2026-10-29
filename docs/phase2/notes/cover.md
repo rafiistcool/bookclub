@@ -6,7 +6,7 @@ Scope: #74. Rafael's requirement (2026-10-29): every book from a catalog or the 
 
 ## Status
 
-Design only, revised after the review of 2026-10-29 ("Design review" at the end lists every finding and what became of it). Nothing is built yet.
+Design revised after the review of 2026-10-29 ("Design review" lists every finding and what became of it). **Part 1, the server, is built** ("Part 1: the server" at the end: what was built, the decisions and deviations, and what the integrator moves). Part 2, the SPA (§5.4, §5.5, the `apiErrors.ts` mapping and the i18n keys), the browser check and `cutover.md` (§8.2 steps 8–10) follow.
 
 ## Summary
 
@@ -577,3 +577,58 @@ Two critics reviewed the first design (84a53fa). Each finding was checked agains
 | 27 | Tier 2 never stops searching unread DNB books, and `rematch-legacy` has its own throttle | Accepted: tier 2 stops after 2 misses until in use, and the rematch pass paces itself at 2 s (§1, §4.3). |
 | 28 | The `reader_book` path cannot be reached from the UI | Accepted with 17: the reason value, its label and its tests are dropped (§3, §5.2). |
 | 29 | A legal citation goes stale when `ol_cover_search` is added | Accepted: `privacy-facts.md` cites `openlibrary.rs:375-525` and `legal_docs.rs` checks only that the line exists; listed for the integrator (§8.3). |
+
+## Part 1: the server
+
+Built on `phase2/cover` in the order of §8.2 steps 1–8 (the SPA itself is Part 2). Everything in §1–§4, §5.1–§5.3 and §6 is server code now; the shared checks of §7 are edited as recorded there.
+
+### What was built
+
+| Where | What |
+|---|---|
+| `server/migrations/2300_cover_search.sql` | `media.ol_gone_at` (+ CHECK), `bc_cover_missing`, `cover_search`, `cover_suggestions` with its indexes, `works_cover_missing_idx`, `media_failing_idx`, and two helper functions (deviation 1). Comments on every new table, column and function. |
+| `catalog/covers/matching.rs` | `fold`, `TitleKeys` (main, rest, full, numbers), `relate`, `Person`, `escape`, `Language`/`language_hint`, `Book::query`, `verdict` with `choose_cover`; 18 table tests with the series fixtures of §7. |
+| `catalog/shared/lookup.rs` | `CoverQuery`, `CoverAnswer` (+ `refused`, deviation 2), `CoverDoc`, `CoverEdition`; `cover_candidates` and `cover_by_isbn` with default bodies. |
+| `catalog/openlibrary.rs`, `service.rs` | `COVER_SEARCH_FIELDS`, `COVER_SEARCH_LIMIT`, `map_cover_docs`, `ol_cover_search` (escaping, the 4xx/`docs`/`error` mapping inside the fetch closure, cache key `cover\|<title>\|<author>\|<lang>`); the trait impl through `lookup_error`. |
+| `catalog/shared/ingest.rs` | `clear_media` upserts `cover_search.takedown_at` for the works it cleared; `clear_gone_media`; `ol_cover_medias` skips gone rows; `nfc` and `clean_line` are `pub(crate)`. |
+| `media/service.rs` | `recheck_cover` → `RecheckOutcome`, `probe_covers`, `CoverFetch::Gone` (404/410 apart from refused redirects and oversize), the removed-hash refusal of every Open Library fetch (`settle_taken_down` → `clear_media`), `ensure_cover` never fetches a gone row. |
+| `catalog/covers/search.rs` | `facts`, `search_one` (inherit, the ISBN check through `attach_checked_cover`, the title search, `apply` with the re-check under the work lock), `write_suggestion` (§3 decision 3), `record`/`record_failure` (the §4.1 table), `Pacer`, `Context`, `Outcome`. |
+| `catalog/covers/dead.rs` | `due_rows`, `failing_rows_of`, `recheck` (probe once per run, before the first row is marked gone), `mark_gone`. |
+| `catalog/covers/job.rs`, `jobs.rs` | `run` (moot close, prefetch, dead check, 30 due works), `due_works` (tiers, the 2-miss stop, unpublished DNB works out), `Breaker`, `run_once`, `JobSettings` with the constants of §4.4; `lock_ids::COVER_SEARCH = 0x6263_0004` and `cover_search_loop` with the breaker. |
+| `catalog/covers/admin.rs`, `catalog/mod.rs` | The five catalog routes of §5.1, `COVER_EXISTS`, `SCOPE_CHOICES`, the DTOs of §5.2 (+ `MissingCoverOut.failed_at`, deviation 4), `cover_counts` for the summary. |
+| `media/cover.rs`, `media/mod.rs` | `PUT /api/admin/works/{work_id}/cover` (`media_admin_set_cover`): the reader upload's steps moved into `receive`, shared by both routes; the upload body limit on the admin route. |
+| `admin/summary.rs` | `AdminSummary.covers: AdminCoverSummary {suggestions, missing}`. |
+| `importer/covers.rs`, `mod.rs`, `report.rs`, `rematch.rs` | The import step (savepoint per book, breaker, 3 throttle waits, budget), the rematch pass (paced, a transaction per book), `CoverSearchLine`, `Report.covers` and `without_cover`, the line and the section; hidden flags `--cover-budget-ms` and `--cover-pace-ms` for tests. |
+| `server/.sqlx/`, `frontend/src/api/generated.ts` | Regenerated (fresh database; `npm run gen:api`). |
+
+Tests: `cover_search.rs` (25), `cover_search_client.rs` (7), `cover_admin.rs` (8), `cover_import.rs` (7), the unit tests in `matching.rs`, `job.rs` and `report.rs`; the helpers they share are `tests/common_cover/mod.rs` (`#[path]`-included, like the legacy harness). Mutation checks: without the gone filter of `ol_cover_medias`, the removed-hash refusal or the `searched_at` guard, `a_picture_open_library_no_longer_has_is_gone`, `a_taken_down_picture_never_comes_back_under_another_cover_id` and `two_searches_at_once_count_one_miss` fail.
+
+Shared checks edited as §7 records: `admin_guard.rs` (22 operations, the two tables watched, an open suggestion seeded, a JSON body for the multipart PUT because `InstanceAdmin` refuses before the body is read, and the approval among the requests that act for an admin), `admin_summary.rs` (the whole summary gains `covers`), `parity_importer.rs` (cover searches, `q` starting with `title:(`, counted apart: 7 and 11 stay; each rematch searches the same books again), `parity_schema.rs` and `docs/phase1/parity-checklist.md` (both tables under "Neither"), `importer_books.rs` and the legacy harness (the new hidden flags), `frontend/src/pages/AdminPage.test.ts` (the summary fixture gains `covers`). `auth_export.rs`, `jobs.rs`, `importer_*.rs`, `shelf_import.rs`, `api_error_copy.rs`, `openapi_contract.rs` and `legal_docs.rs` pass unchanged.
+
+### Decisions taken while building
+
+1. **Dominance needs another title-equal work.** With one title-equal work on the page, "only" decides, and it needs `numFound` ≤ 10; a single title-equal work among more than 10 results is `several_works`. Otherwise the `numFound` rule of §2.3 would never apply.
+2. **Matching details** the design left open: the generic segments also cover `mystery`, `a memoir`, `psychothriller`, `historischer roman` and `roman taschenbuch`; the comparison without numbers also drops volume words (`band`, `bd`, `volume`, `vol`, `teil`, `tome`, `tomo`, `nr`, `no`, `folge`, `part`, `livre`, `libro`, `deel`); Roman numerals are ii–xx including `v` and `x` (`i` is a word too often); `jr`, `sr` and `ii`/`iii` after a surname are skipped; a leading article is only dropped when another word follows (`Die` stays a title); brackets are dropped from the rest as well as the main title (they still count for the numbers). The suggestion's `language` is the edition's when the picture is an edition's, else null.
+3. **"Search now"** checks a reader's own book (404) before taking the account's `upstream_turn`, re-checks every failing Open Library picture of the work and its editions at once (with the probe), and answers 409 `This book has a cover now` when the work still has a cover after that (a picture that is still failing counts as a cover, §1). It ignores candidate rules 4 and 5 (an admin's empty field, a reader's photo waiting): an admin asked. `uncertain` and `blocked` answer as `no_match`.
+4. **The admin's direct cover** keeps the reader upload's limits too (one upload at a time, 30 a day per account), as §5.1 says "same 400/413/429".
+5. **An unconfirmed 404** (the probe failed) sets `fetch_failed_at` to now, so the row waits another day instead of being fetched again on every run. No stored Open Library picture to probe with counts as a failed probe: nothing is marked gone on an instance that never stored one.
+6. **The import's unavailable book** is rolled back with its savepoint like the books after it, so none of them has a `cover_search` row and the job takes them first. `rematch-legacy` runs against the live server and keeps the failure row (the book backs off), except in a dry run.
+7. **The approval's `cover_search` row** gets `outcome = attached`, the attached ids and reset counters, but not `searched_at` (no search answered).
+
+### Deviations from the design
+
+1. **Two more SQL functions in 2300:** `bc_cover_in_use(work_id)` (tier 1: the seven tables of §1) and `bc_cover_suggestion_moot(suggestion_id)` (§4.4 step 1), so the job, the admin lists, the summary and the dead check share one definition each, like `bc_cover_missing`. Plus the index `cover_suggestions_ol_work_idx` for the decided-work filter.
+2. **`CoverAnswer.refused: Option<u16>`:** the status of a refused query (4xx other than 429), so it reaches `cover_search.last_error` as §2.1 asks; `Fetch::Failed` keeps no status, so the fetch closure stores it in an uncached marker answer.
+3. **`cover_search.searched_at` is when the result was recorded** (`clock_timestamp()` at the write), not the attempt's start. The guard stays "applies only when the stored `searched_at` is older than this attempt's start", which with the write time means "no other attempt recorded a result since this one started": two searches at once record one result and count one miss. With the start stored, a search that started first and finished last would have counted a second miss.
+4. **`MissingCoverOut.failed_at`:** when the failing picture last failed, for §5.5's "failed to load on <date>".
+5. **`RecheckOutcome` and `CoverFetch::Gone`** in MED's `media/service.rs`: the recheck's outcomes, and 404/410 apart from the other "no cover" answers (`NoCover` now means a refused redirect or a body over 1.5 MB). `ensure_cover` maps them back to `CoverOutcome` unchanged.
+6. **`facts` reads no takedown flag:** `apply` reads it under the work lock anyway (§4.1), so reading it before the remote step too would be a second query that decides nothing.
+7. **Report counts:** "imported cover ids not fetched yet" counts imported works whose cover is an Open Library picture without bytes, the ones the search attached included (counted from the outcomes, so a rolled-back rematch reports what the real one does); `rematch-legacy` counts "still without a cover" from its outcomes for the same reason. `uncertain` and `blocked` count as "no match" in the line and the section; a book whose throttle waits gave up reads "not searched (Open Library busy)", the books after it "stopped after an outage".
+8. **Not tested on its own:** `blocked` getting the miss backoff. It shares `record`'s miss branch with `no_match` (tested), and no test reaches it without a race the re-check under the lock already catches.
+
+### For the integrator (in addition to §8.3)
+
+- `conventions.md` §7.4 also names `CoverAnswer.refused`; §8 names `RecheckOutcome`, `CoverFetch::Gone`, `MediaService::recheck_cover` and `probe_covers`, and that `ensure_cover` never fetches a gone row; §13 also lists `bc_cover_in_use` and `bc_cover_suggestion_moot`; §17.2 lists `FakeCatalog::on_covers`, `on_isbn_cover`, `fail_covers`, `cover_calls` and `tests/common_cover/mod.rs` (`Hook`: a lookup that acts during the remote step).
+- `endpoint-map.md` §4: operation ids `catalog_admin_list_cover_suggestions`, `catalog_admin_approve_cover_suggestion`, `catalog_admin_reject_cover_suggestion`, `catalog_admin_list_missing_covers`, `catalog_admin_search_cover`; §6 `media_admin_set_cover`; §11 `This book has a cover now` (to be mapped in `apiErrors.ts` in Part 2) and the admin-only `Input should be 'in_use' or 'all'`.
+- `CLAUDE.md`: no new test file reads docs; the server's background jobs now include the cover search (every 10 minutes, `lock_ids::COVER_SEARCH`).
+- `import-legacy` gained the hidden `--cover-budget-ms`, `rematch-legacy` the hidden `--cover-pace-ms` (tests only, like `--retry-wait-ms`).
