@@ -331,6 +331,32 @@ describe("AdminCovers", () => {
     expect(useToast().items.at(-1)?.message).toBe("Could not search the library right now. Try again.");
   });
 
+  it("keeps a book whose picture still does not load after Search now, with the new date", async () => {
+    api.adminMissingCovers.mockResolvedValue(
+      page([missingRow({ book: bookOut({ id: 43, title: "Momo" }), state: "failing", failed_at: "2026-10-26T03:00:00Z" })]),
+    );
+    const wrapper = await mountCovers();
+    await showMissing(wrapper);
+    const row = () => wrapper.get(".missing-item");
+    const firstNote = () => row().findAll(".cover-notes li")[0]!.text();
+    expect(firstNote()).toBe("Open Library's picture failed to load on 26 Oct 2026.");
+
+    api.adminSearchCover.mockResolvedValueOnce({
+      outcome: "failing",
+      book: bookOut({ id: 43, title: "Momo" }),
+      suggestion: null,
+      failed_at: "2026-10-29T09:00:00Z",
+      failing_edition_id: 13,
+    });
+    await buttonIn(row(), "Search now").trigger("click");
+    await flushPromises();
+    expect(useToast().items.at(-1)?.message).toBe("Open Library's picture still does not load. Upload a picture instead.");
+    expect(wrapper.findAll(".missing-item")).toHaveLength(1);
+    expect(firstNote()).toBe("Open Library's picture of edition 13 failed to load on 29 Oct 2026.");
+    expect(row().get("label.cover-photo").text()).toBe("Upload for edition 13");
+    expect(wrapper.emitted("changed")).toBeUndefined();
+  });
+
   it("uploads a picture as the cover of the book, or of the edition whose picture fails", async () => {
     api.adminMissingCovers.mockResolvedValue(
       page([

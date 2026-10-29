@@ -190,7 +190,8 @@ describe("the cover search for an admin", () => {
     expect(coverSearchMessage("suggested")).toBe("Found a possible cover. It waits under Suggestions.");
     expect(coverSearchMessage("no_match")).toBe("No match on Open Library.");
     expect(coverSearchMessage("whatever")).toBe("No match on Open Library.");
-    expect(["attached", "inherited", "isbn", "suggested", "no_match"].filter(coverFound)).toEqual([
+    expect(coverSearchMessage("failing")).toBe("Open Library's picture still does not load. Upload a picture instead.");
+    expect(["attached", "inherited", "isbn", "suggested", "no_match", "failing"].filter(coverFound)).toEqual([
       "attached",
       "inherited",
       "isbn",

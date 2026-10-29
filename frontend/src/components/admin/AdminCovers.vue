@@ -166,6 +166,11 @@ async function searchNow(row: MissingRow) {
       row.suggestion_id = answer.suggestion?.id ?? row.suggestion_id;
       suggestionsStale = true;
       emit("changed");
+    } else if (answer.outcome === "failing") {
+      // Fetched again and still not loading: the row stays, with the new date.
+      row.state = "failing";
+      row.failed_at = answer.failed_at ?? row.failed_at;
+      row.failing_edition_id = answer.failing_edition_id ?? null;
     } else {
       row.outcome = "no_match";
       row.searched_at = new Date().toISOString();
@@ -173,7 +178,7 @@ async function searchNow(row: MissingRow) {
       row.failures = 0;
     }
   } catch (err) {
-    // 409: it has a cover (again) now; 404: no longer a catalog book here.
+    // 409: it has a cover that loads now; 404: no longer a catalog book here.
     if (err instanceof ApiError && (err.status === 409 || err.status === 404)) covered(row);
     toast.show(failed(err, t("admin.covers.searchFailed")));
   } finally {

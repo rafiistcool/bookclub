@@ -245,8 +245,12 @@ export function coverCandidateUrl(suggestion: Pick<CoverSuggestionOut, "ol_work_
   return null;
 }
 
-/** The outcomes of "Search now" (`CoverSearchOut.outcome`). */
-export const COVER_SEARCH_OUTCOMES = ["attached", "inherited", "isbn", "suggested", "no_match"] as const;
+/**
+ * The outcomes of "Search now" (`CoverSearchOut.outcome`). `failing`: the
+ * book's own Open Library picture, or that of an edition readers use, still
+ * does not load; the search cannot replace it, an upload can.
+ */
+export const COVER_SEARCH_OUTCOMES = ["attached", "inherited", "isbn", "suggested", "no_match", "failing"] as const;
 
 /** What "Search now" came to, in words. */
 export function coverSearchMessage(outcome: string): string {

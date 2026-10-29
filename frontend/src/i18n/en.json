@@ -1445,7 +1445,8 @@
         "inherited": "The book took the cover of one of its editions.",
         "isbn": "Open Library had the cover of an edition's ISBN.",
         "suggested": "Found a possible cover. It waits under Suggestions.",
-        "no_match": "No match on Open Library."
+        "no_match": "No match on Open Library.",
+        "failing": "Open Library's picture still does not load. Upload a picture instead."
       },
       "state": {
         "photoWaiting": "A reader's photo waits in the Requests tab.",
