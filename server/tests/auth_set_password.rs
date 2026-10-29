@@ -1,19 +1,24 @@
 //! Mail off (MOVE, the private move #52; docs/phase3/work-plan.md §5.2):
 //! `bookclub-server set-password <username>`, the password reset without mail, does in one
 //! transaction what the reset confirm does, with a generated password
-//! (`auth::reset::set_password`); and `EMAIL_TRANSPORT=none` sends nothing while sign-up and the
-//! reset request carry on.
+//! (`auth::reset::set_password`); and `EMAIL_TRANSPORT=none` sends nothing while sign-up, the
+//! reset request and the admin notifications carry on.
 
 mod common;
 
 use std::net::IpAddr;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use bookclub_server::auth::mail;
+use bookclub_server::AppState;
+use bookclub_server::admin::notify::{self, NotifyRun};
+use bookclub_server::auth::mail::{self, MailKind};
 use bookclub_server::auth::reset::set_password;
+use bookclub_server::email::Email;
 use common::*;
 use serde_json::json;
 use sqlx::PgPool;
+use tracing_subscriber::fmt::MakeWriter;
 
 const LINK_EXPIRED: &str = "That link has expired or was already used";
 
@@ -39,6 +44,47 @@ async fn set(app: &TestApp, username: &str) -> Option<String> {
     set_password(&mut conn, &app.state.passwords, username)
         .await
         .unwrap()
+}
+
+/// A production configuration with mail off and no SMTP account, through `AppState::new`, so
+/// `lib.rs` picks `email::NoEmail`.
+fn mail_off_state(db: PgPool) -> AppState {
+    let env: Vec<(&str, &str)> = PRODUCTION_ENV
+        .iter()
+        .filter(|(key, _)| !matches!(*key, "SMTP_URL" | "EMAIL_FROM"))
+        .copied()
+        .chain([("EMAIL_TRANSPORT", "none")])
+        .collect();
+    test_state_with(db, test_config(&env))
+}
+
+/// The plain-text output of a `tracing` subscriber.
+#[derive(Clone, Default)]
+struct Log(Arc<Mutex<Vec<u8>>>);
+
+impl Log {
+    fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
+}
+
+impl std::io::Write for Log {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> MakeWriter<'a> for Log {
+    type Writer = Log;
+
+    fn make_writer(&'a self) -> Log {
+        self.clone()
+    }
 }
 
 #[sqlx::test]
@@ -184,13 +230,7 @@ async fn a_suspended_account_stays_suspended(db: PgPool) {
 /// next request is not held back by a link nobody received.
 #[sqlx::test]
 async fn with_mail_off_sign_up_works_and_reset_links_are_voided(db: PgPool) {
-    let env: Vec<(&str, &str)> = PRODUCTION_ENV
-        .iter()
-        .filter(|(key, _)| !matches!(*key, "SMTP_URL" | "EMAIL_FROM"))
-        .copied()
-        .chain([("EMAIL_TRANSPORT", "none")])
-        .collect();
-    let state = test_state_with(db.clone(), test_config(&env));
+    let state = mail_off_state(db.clone());
     let client = TestClient::for_router(bookclub_server::app(state));
     sqlx::query(
         "INSERT INTO club_invites (club_id, code, max_uses, expires_at)
@@ -246,4 +286,82 @@ async fn with_mail_off_sign_up_works_and_reset_links_are_voided(db: PgPool) {
     .await
     .unwrap();
     assert_eq!(open, 0);
+}
+
+/// With mail off, `deliver` writes one INFO line with the kind only: no WARN for every mail,
+/// and no address, subject or link, so a reset link never reaches the log.
+#[sqlx::test]
+async fn with_mail_off_a_mail_is_one_info_line_with_the_kind_only(db: PgPool) {
+    let state = mail_off_state(db);
+    let log = Log::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(log.clone())
+        .with_ansi(false)
+        .with_max_level(tracing::Level::INFO)
+        .finish();
+    let mail = Email {
+        to: "ada@example.test".into(),
+        subject: "Reset your password".into(),
+        text: "https://books.example.com/reset-password#token=SECRETTOKEN".into(),
+    };
+    // `#[sqlx::test]` runs on a current-thread runtime, so this thread's subscriber sees all
+    // that `deliver` logs.
+    let sent = {
+        let _guard = tracing::subscriber::set_default(subscriber);
+        mail::deliver(&state, mail, MailKind::Link).await
+    };
+    assert!(!sent);
+    let text = log.text();
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|line| line.contains("bookclub_server"))
+        .collect();
+    assert_eq!(lines.len(), 1, "{text}");
+    for part in [
+        " INFO ",
+        "bookclub_server::auth::mail",
+        "mail not sent: mail is off",
+        "kind=Link",
+    ] {
+        assert!(lines[0].contains(part), "{part:?} not in {text}");
+    }
+    for leak in [
+        "WARN",
+        "ada@example.test",
+        "Reset your password",
+        "SECRETTOKEN",
+    ] {
+        assert!(!text.contains(leak), "{leak:?} in {text}");
+    }
+}
+
+/// With mail off the admin notification job sends nothing and stamps nothing (§5.2: callers
+/// treat the mail as not sent), so the news still reaches a verified admin once mail is on.
+/// With mail off no address can be verified; this admin's was verified before.
+#[sqlx::test]
+async fn with_mail_off_admin_news_stays_unstamped(db: PgPool) {
+    let app = TestApp::new(db).await;
+    app.admin("root").await;
+    let ada = app.user("ada").await;
+    let work = app.work("Circe").await;
+    ada.post(
+        &format!("/api/books/works/{}/edit-requests", work.id),
+        json!({"fields": {"pages": 393}}),
+    )
+    .await
+    .assert_status(201);
+    let stamped = "SELECT count(*) FROM catalog_edit_requests WHERE notified_at IS NOT NULL";
+
+    let off = mail_off_state(app.db.clone());
+    let mut conn = app.db.acquire().await.unwrap();
+    assert_eq!(
+        notify::run(&off, &mut conn).await.unwrap(),
+        NotifyRun::default()
+    );
+    assert_eq!(app.scalar_i64(stamped).await, 0);
+
+    let on = notify::run(&app.state, &mut conn).await.unwrap();
+    assert_eq!(on.digest_mails, 1);
+    assert_eq!(app.scalar_i64(stamped).await, 1);
+    assert_eq!(app.email.sent_to("root@example.test").len(), 1);
 }
