@@ -713,6 +713,7 @@ pub async fn search_cover(
         pacer: &mut pacer,
         always_suggest: true,
         forced: true,
+        rollback: false,
     };
     let outcome = search_one(&mut conn, &mut ctx, work_id).await?;
     let (name, suggestion) = match outcome {

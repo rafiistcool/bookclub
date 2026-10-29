@@ -6,7 +6,8 @@
 //!    A work whose edition has a usable cover takes it (inherit, no request); a DNB work whose
 //!    one ISBN cover check never ran gets that check first.
 //! 2. **remote:** `CatalogLookup::cover_candidates`, outside any transaction of ours (the
-//!    import's own transaction aside).
+//!    import's own transaction aside): every step before it has committed (or, with
+//!    [`Context::rollback`], rolled back), so no lock is held across the request or the pace.
 //! 3. **apply** (one transaction, a savepoint inside the caller's): the picture's media row
 //!    first, then the work `FOR UPDATE`, re-checked; then the cover, or a suggestion; then the
 //!    `cover_search` row.
@@ -17,7 +18,7 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use sqlx::{Connection, PgConnection};
+use sqlx::{Connection, PgConnection, Postgres, Transaction};
 use time::OffsetDateTime;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -141,6 +142,20 @@ pub struct Context<'a> {
     pub always_suggest: bool,
     /// An admin's "Search now": also books an admin left empty or a reader's photo waits for.
     pub forced: bool,
+    /// Every write is rolled back instead of committed, and a failure is not recorded
+    /// (`rematch-legacy --dry-run`): the outcome is what a real search would come to, and
+    /// nothing stays. Each step still ends its own transaction before the next request, so no
+    /// lock is held across Open Library's answer.
+    pub rollback: bool,
+}
+
+/// Ends one step's transaction: commits it, or rolls it back with [`Context::rollback`].
+async fn finish(tx: Transaction<'_, Postgres>, rollback: bool) -> sqlx::Result<()> {
+    if rollback {
+        tx.rollback().await
+    } else {
+        tx.commit().await
+    }
 }
 
 /// An edition cover the work can take.
@@ -385,7 +400,7 @@ pub async fn search_one(
         let mut tx = conn.begin().await?;
         let outcome = inherit(&mut tx, work_id, cover).await?;
         record(&mut tx, &facts, outcome, started, Written::default()).await?;
-        tx.commit().await?;
+        finish(tx, ctx.rollback).await?;
         return Ok(outcome);
     }
     if facts.source == "dnb"
@@ -413,16 +428,19 @@ pub async fn search_one(
                 if covered && let Some(media_id) = media {
                     let outcome = Outcome::Isbn { media_id };
                     record(&mut tx, &facts, outcome, started, Written::default()).await?;
-                    tx.commit().await?;
+                    finish(tx, ctx.rollback).await?;
                     return Ok(outcome);
                 }
-                // Open Library has no cover for the ISBN: the check is done, the title
-                // search follows in the same attempt.
-                tx.commit().await?;
+                // Open Library has no cover for the ISBN: the check is done (committed before
+                // the title search's request, so the work's row is not locked meanwhile), and
+                // the title search follows in the same attempt.
+                finish(tx, ctx.rollback).await?;
             }
             Err(LookupError::Throttled) => return Ok(Outcome::Throttled),
             Err(LookupError::Unavailable) => {
-                record_failure(conn, work_id, "the ISBN cover check had no answer").await?;
+                if !ctx.rollback {
+                    record_failure(conn, work_id, "the ISBN cover check had no answer").await?;
+                }
                 return Ok(Outcome::Unavailable);
             }
             Err(LookupError::Db(error)) => return Err(error),
@@ -438,7 +456,7 @@ pub async fn search_one(
             Written::default(),
         )
         .await?;
-        tx.commit().await?;
+        finish(tx, ctx.rollback).await?;
         return Ok(Outcome::NoMatch);
     };
     if !ctx.pacer.wait().await {
@@ -448,7 +466,9 @@ pub async fn search_one(
         Ok(answer) => answer,
         Err(LookupError::Throttled) => return Ok(Outcome::Throttled),
         Err(LookupError::Unavailable) => {
-            record_failure(conn, work_id, "Open Library's search had no answer").await?;
+            if !ctx.rollback {
+                record_failure(conn, work_id, "Open Library's search had no answer").await?;
+            }
             return Ok(Outcome::Unavailable);
         }
         Err(LookupError::Db(error)) => return Err(error),
@@ -529,7 +549,7 @@ async fn apply(
                 ..Written::default()
             };
             record(&mut tx, facts, Outcome::NoMatch, started, written).await?;
-            tx.commit().await?;
+            finish(tx, ctx.rollback).await?;
             return Ok(Outcome::NoMatch);
         }
         Verdict::Clear(pick) => (pick, None),
@@ -546,29 +566,29 @@ async fn apply(
             Written::default(),
         )
         .await?;
-        tx.commit().await?;
+        finish(tx, ctx.rollback).await?;
         return Ok(Outcome::NoMatch);
     };
     let Some(now) = candidate_state(&mut tx, facts.work_id, true).await? else {
-        tx.commit().await?;
+        finish(tx, ctx.rollback).await?;
         return Ok(Outcome::Skipped);
     };
     if !now.candidate(ctx.forced) || now.match_key != facts.match_key {
         // Nothing written: the work has a cover now, or it is due again with its new key.
-        tx.commit().await?;
+        finish(tx, ctx.rollback).await?;
         return Ok(Outcome::Skipped);
     }
     if let Some(suggestion_id) = open_suggestion(&mut tx, facts.work_id).await? {
         let outcome = Outcome::Suggested { suggestion_id };
         record(&mut tx, facts, outcome, started, Written::default()).await?;
-        tx.commit().await?;
+        finish(tx, ctx.rollback).await?;
         return Ok(outcome);
     }
     // A reader's photo on an edition that landed during the remote step: inherit instead.
     if let Some(cover) = edition_cover(&mut tx, facts.work_id).await? {
         let outcome = inherit(&mut tx, facts.work_id, cover).await?;
         record(&mut tx, facts, outcome, started, Written::default()).await?;
-        tx.commit().await?;
+        finish(tx, ctx.rollback).await?;
         return Ok(outcome);
     }
     // A takedown that landed during the remote step turns an attach into a suggestion.
@@ -607,7 +627,7 @@ async fn apply(
         error: None,
     };
     record(&mut tx, facts, outcome, started, written).await?;
-    tx.commit().await?;
+    finish(tx, ctx.rollback).await?;
     Ok(outcome)
 }
 

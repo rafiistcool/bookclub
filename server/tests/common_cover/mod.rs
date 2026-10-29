@@ -258,6 +258,7 @@ pub async fn search_on(
         pacer: &mut pacer,
         always_suggest: true,
         forced,
+        rollback: false,
     };
     search_one(conn, &mut ctx, work_id).await.unwrap()
 }

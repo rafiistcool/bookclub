@@ -8,9 +8,12 @@
 //!   budget (5 minutes) stop the search; the books after it are "not searched" and have no
 //!   `cover_search` row, so the job takes them first once the server runs. A cover is not part
 //!   of the data: nothing here makes the import fail.
-//! - **rematch-legacy**, after its ISBN pass, each book in a transaction of its own (rolled back
-//!   with `--dry-run`), 2 seconds between two Open Library requests (it runs next to the
-//!   server's job); throttling is waited out, an unavailable answer stops the pass.
+//! - **rematch-legacy**, after its ISBN pass, as the server's job searches: each step of a book
+//!   commits on its own (with `--dry-run` it is rolled back), so no lock is held across Open
+//!   Library's answer or the pace, which is 2 seconds between two Open Library requests (it runs
+//!   next to the server's job); throttling is waited out, an unavailable answer stops the pass.
+//!   A dry run's cover pass sees the books as they were before the ISBN pass (whose changes
+//!   were rolled back too), and its report says so.
 //!
 //! The report gets the `cover search` line and the `without a cover` section (with titles: the
 //! report file is private).
@@ -58,6 +61,12 @@ impl Fate {
             Fate::Searched(Outcome::Suggested { .. }) => {
                 ("suggested, review it on the admin page", Bucket::Suggested)
             }
+            // No candidate any more when the search applied (a reader's photo waits for it, or
+            // its title or author changed meanwhile), and still without a cover.
+            Fate::Searched(Outcome::Skipped) => (
+                "not searched (it changed during the search)",
+                Bucket::NotSearched,
+            ),
             Fate::Searched(_) => ("no match on Open Library", Bucket::NoMatch),
             Fate::Unavailable => (
                 "not searched (Open Library unavailable)",
@@ -275,6 +284,8 @@ impl Importer {
                 pacer: &mut pacer,
                 always_suggest: true,
                 forced: false,
+                // The import's dry run rolls back the whole transaction.
+                rollback: false,
             };
             match search_one(&mut savepoint, &mut ctx, work_id).await {
                 Ok(Outcome::Throttled) => {
@@ -359,20 +370,49 @@ pub(crate) async fn rematch_covers(
         }
         fates.insert(work, fate);
     }
-    // Counted from the outcomes, so a dry run reports what the real run does.
+    // Counted from the outcomes, so a dry run reports what the real one does with the same
+    // answers. A book the search skipped wrote nothing, so the database tells whether it is
+    // still without a cover (a reader's photo or a title change came first) or has one now.
+    let skipped: Vec<i64> = fates
+        .iter()
+        .filter(|(_, fate)| matches!(fate, Fate::Searched(Outcome::Skipped)))
+        .map(|(work, _)| *work)
+        .collect();
+    let still: HashSet<i64> = sqlx::query_scalar!(
+        "SELECT id FROM works
+         WHERE id = ANY($1) AND merged_into_id IS NULL AND bc_cover_missing(cover_media_id)",
+        &skipped
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .collect();
     let missing: HashSet<i64> = candidates
         .iter()
         .map(|(_, work)| *work)
-        .filter(|work| !fates.get(work).is_some_and(|fate| fate.covered()))
+        .filter(|work| match fates.get(work) {
+            Some(Fate::Searched(Outcome::Skipped)) => still.contains(work),
+            fate => !fate.is_some_and(|fate| fate.covered()),
+        })
         .collect();
     let (line, section) =
         summarize(&mut conn, &candidates, &fates, &missing, &imported, false).await?;
     report.covers = Some(line);
     report.without_cover = section;
+    if args.dry_run {
+        report.notes.push(
+            "cover search: a dry run searches the imported books as they were before the ISBN \
+             pass above (its upgrades were rolled back), so a real run may search fewer books \
+             and count otherwise"
+                .to_owned(),
+        );
+    }
     Ok(())
 }
 
-/// One book of `rematch-legacy` in a transaction of its own; throttling is waited out.
+/// One book of `rematch-legacy`, searched as the server's job searches: each step commits on
+/// its own (rolled back with `dry_run`), so no lock is held across Open Library's answer or the
+/// pace. Throttling is waited out; a deadlock with the live server is retried.
 async fn rematch_one(
     conn: &mut PgConnection,
     lookup: &dyn CatalogLookup,
@@ -384,16 +424,15 @@ async fn rematch_one(
 ) -> Result<Fate, ImportError> {
     let mut deadlocks = 0;
     loop {
-        let mut tx = conn.begin().await?;
         let mut ctx = Context {
             lookup,
             pacer: &mut *pacer,
             always_suggest: true,
             forced: false,
+            rollback: dry_run,
         };
-        match search_one(&mut tx, &mut ctx, work_id).await {
+        match search_one(conn, &mut ctx, work_id).await {
             Ok(Outcome::Throttled) => {
-                tx.rollback().await?;
                 tracing::info!(
                     work_id,
                     wait_ms = wait.as_millis() as u64,
@@ -402,29 +441,13 @@ async fn rematch_one(
                 tokio::time::sleep(wait).await;
                 report.lookup_wait += wait;
             }
-            Ok(Outcome::Unavailable) => {
-                if dry_run {
-                    tx.rollback().await?;
-                } else {
-                    tx.commit().await?;
-                }
-                return Ok(Fate::Unavailable);
-            }
-            Ok(outcome) => {
-                if dry_run {
-                    tx.rollback().await?;
-                } else {
-                    tx.commit().await?;
-                }
-                return Ok(Fate::Searched(outcome));
-            }
+            Ok(Outcome::Unavailable) => return Ok(Fate::Unavailable),
+            Ok(outcome) => return Ok(Fate::Searched(outcome)),
             Err(error) if is_deadlock(&error) && deadlocks < DEADLOCK_RETRIES => {
                 deadlocks += 1;
-                tx.rollback().await?;
             }
             Err(sqlx::Error::Database(error)) => {
                 tracing::warn!(work_id, %error, "the cover search of an imported book was rolled back");
-                tx.rollback().await?;
                 return Ok(Fate::Database);
             }
             Err(error) => return Err(ImportError::Db(error)),

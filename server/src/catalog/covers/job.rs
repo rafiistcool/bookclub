@@ -233,6 +233,7 @@ pub async fn run(
             pacer: &mut pacer,
             always_suggest: false,
             forced: false,
+            rollback: false,
         };
         let outcome = search_one(conn, &mut ctx, work_id).await?;
         if outcome.answered() {

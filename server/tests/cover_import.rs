@@ -9,6 +9,7 @@ mod cover;
 #[path = "fixtures/legacy/harness.rs"]
 mod legacy;
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bookclub_server::importer::{self, CoverSearchLine, RematchArgs, Report};
@@ -305,4 +306,101 @@ async fn rematch_searches_paces_and_reports(db: PgPool) {
         app.scalar_i64("SELECT count(*) FROM cover_search").await,
         CANDIDATES as i64
     );
+}
+
+async fn rematch_with(
+    app: &TestApp,
+    lookup: Arc<dyn bookclub_server::catalog::shared::lookup::CatalogLookup>,
+    dry_run: bool,
+) -> Report {
+    importer::rematch(
+        app.db.clone(),
+        lookup,
+        RematchArgs {
+            dry_run,
+            retry_wait_ms: Some(0),
+            cover_pace_ms: Some(0),
+        },
+    )
+    .await
+    .unwrap()
+}
+
+/// `rematch-legacy` runs next to the live server: a DNB book's ISBN check is committed before
+/// the title search asks Open Library, so the book's row is not locked while it waits for the
+/// answer (the job, a reader's upload or an admin would wait meanwhile). In a dry run too.
+#[sqlx::test]
+async fn rematch_holds_no_lock_across_the_title_search(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let (work, _) = app
+        .dnb_work("Der Schwarm", "Frank Schätzing", "9783161484100")
+        .await;
+    use_work(&app, work.id).await;
+    for dry_run in [true, false] {
+        let hook = Hook {
+            db: app.db.clone(),
+            // Fails ("could not obtain lock on row") while the rematch holds the row.
+            sql: Some(format!(
+                "SELECT id FROM works WHERE id = {} FOR UPDATE NOWAIT",
+                work.id
+            )),
+            barrier: None,
+            answer: answer(Vec::new()),
+        };
+        let report = rematch_with(&app, Arc::new(hook), dry_run).await;
+        assert_eq!(report.covers.clone().unwrap().no_match, 1, "{dry_run}");
+    }
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM works WHERE id = {} AND details_fetched_at IS NOT NULL",
+            work.id
+        ))
+        .await,
+        1,
+        "the real run's ISBN check stays done"
+    );
+}
+
+/// A book the rematch could not apply its search to (a reader's photo came first during the
+/// remote step) is not reported as "no match"; a dry run says that its cover pass sees the
+/// books before the ISBN pass.
+#[sqlx::test]
+async fn rematch_reports_a_book_that_changed_and_what_a_dry_run_sees(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let reader = app.user("ada").await;
+    let work = legacy_work(&app, "Momo", "Michael Ende").await;
+    let photo = upload_media(&app).await;
+    let hook = Hook {
+        db: app.db.clone(),
+        sql: Some(format!(
+            "INSERT INTO catalog_edit_requests (kind, work_id, media_id, created_by)
+             VALUES ('cover_replace', {work}, {photo}, {})",
+            reader.id()
+        )),
+        barrier: None,
+        answer: answer(vec![doc(61, "Momo", "", "Michael Ende", Some(6100), 30)]),
+    };
+    let report = rematch_with(&app, Arc::new(hook), true).await;
+    let covers = report.covers.clone().unwrap();
+    assert_eq!(
+        (covers.without, covers.no_match, covers.not_searched),
+        (1, 0, 1)
+    );
+    assert_eq!(
+        section(&report),
+        [format!(
+            "book {} \"Momo\" by Michael Ende: not searched (it changed during the search)",
+            app.scalar_i64(&format!(
+                "SELECT legacy_book_id FROM legacy_work_keys WHERE work_id = {work}"
+            ))
+            .await
+        )]
+    );
+    assert!(
+        report.lines.iter().any(|line| line
+            .contains("a dry run searches the imported books as they were before the ISBN pass")),
+        "{:?}",
+        report.lines
+    );
+    assert_eq!(cover_of(&app, work).await, None);
 }
