@@ -44,8 +44,8 @@ A completeness review checked this plan against the code at 84006bd. Where this 
 
 17. LEG needs no code in `server/src/auth/export.rs`: the profile section is `to_jsonb(u) - 'password_hash'` (`export.rs:151-160`), so new `users` columns are exported automatically. LEG adds only a test assertion, and `export.rs` leaves LEG's shared list.
 18. LEG's rule "refuse open sign-up without the legal texts" lives in `config.rs` or `legal.rs`, not in `main.rs` (DEP's).
-19. ADM2 also owns `server/tests/auth_export.rs`: any new foreign key to `users` changes its pinned table count (`in_schema.len() == 28`, `:204`).
-20. A suspended account cannot log in, so it loses in-app export and deletion (DSGVO Art. 15, 17 and 20). ADM2 documents a manual path through `CONTACT_EMAIL` in `docs/legal/takedown.md`, and the privacy facts state it.
+19. ADM2 also owns `server/tests/auth_export.rs`: any new foreign key to `users` changes its pinned table count (`in_schema.len() == 28`, `:204`). ADM2's `reports.target_user_id` made it 29.
+20. A suspended account cannot log in, so it loses in-app export and deletion (DSGVO Art. 15, 17 and 20). ADM2 documents a manual path through `CONTACT_EMAIL` in `docs/legal/takedown.md`, and the privacy facts state it. **Done** with ADM2's merge (f6e28e8): `takedown.md` §7, `privacy-facts.md` §8, `vvt.md` activity 11.
 21. LEG2 owns `server/src/auth/mod.rs` (`cleanup`), `server/tests/jobs.rs` and `docs/legal/**`, plus `server/src/auth/deletion.rs` if the purge of empty sign-ups reuses it.
 
 **New Wave 2 task: BRAND (after Q1).** The chosen name goes into:
@@ -65,6 +65,10 @@ A completeness review checked this plan against the code at 84006bd. Where this 
     - `server/src/ratelimit.rs:273-302` are the thresholds; the limit tests are in `server/tests/auth_*.rs`.
     - The `ci.yml` server job is lines 52-108.
     - The staging deploy in §3 depends on A7, A8 (or an interim SMTP account) and A10–A15, not on A6.
+
+**Added at ADM2's merge (2026-10-29)**
+
+27. A package that adds a foreign key to `users`, an operation with a `username` parameter, or a schema with a rating or take field owns the add-only rows for it in `server/tests/parity_visibility.rs`: `every_personal_column_route_and_rating_field_is_in_the_matrix` fails until each is classified, with the kinds that serve it or the reason it is not personal data (conventions.md §6.5). The same kind of rule as item 19. ADM2 needed three such rows (`reports.target_user_id`, the suspend and unsuspend routes) in a file outside its list, and the ownership gate reverted them once (9f404ae, undone in 9b9a42a).
 
 ---
 
@@ -457,10 +461,10 @@ All five run in parallel. They need no answer from Rafael. Where an answer is st
 
 ### 2.3 Wave 2: after the Wave 1 merge and Rafael's answers
 
-**Status (2026-10-29):** LEG2 and DEP2 are merged into `phase-2`, and their notes are applied to `conventions.md`, `endpoint-map.md`, `CLAUDE.md`, `README.md`, `deploy/hosted/README.md`, `cutover.md` and `security-review.md`. Open items are in each notes file.
-- **LEG2:** merged (236726e). The integrator runs `auth::delete_rejected_cover_photos` in the hourly job, with a test (9296688). Open: at ADM2's merge, `users.suspended_at` and `reports.target_user_id` in the purge and the `takedown.md` retention line (`notes/leg2.md`, "When merging ADM2"); the heartbeat filter that blanks public ids in `backup-lib.sh` and `update.sh` before the pings (`notes/leg2.md`, "When merging DEP2"; until then `processors.md`, `privacy-facts.md` §0 and §5 and `vvt.md` activity 13 mark it as to do); the go-live values marked "to confirm" and "to sign" (`privacy-facts.md` §0).
+**Status (2026-10-29):** LEG2, DEP2 and ADM2 are merged into `phase-2`, and their notes are applied to `conventions.md`, `endpoint-map.md`, `CLAUDE.md`, `README.md`, `deploy/hosted/README.md`, `cutover.md`, `security-review.md` and LEG2's legal documents. Open items are in each notes file.
+- **LEG2:** merged (236726e). The integrator runs `auth::delete_rejected_cover_photos` in the hourly job, with a test (9296688). "When merging ADM2" is done (139087e: suspended accounts and avatar reports keep an account out of the purge, the `takedown.md` retention line), and so is "When merging DEP2" (7d8e413: `log_tail` in `backup-lib.sh` blanks every public id before the heartbeat pings, with two tests in `deploy_env.rs`; the "to do" marks are gone from `processors.md`, `privacy-facts.md` and `vvt.md`). Open: the go-live values marked "to confirm" and "to sign" (`privacy-facts.md` §0).
 - **DEP2:** merged (bc37d39). `v0.11.0-rc.1` published `bookclub-server:0.11.0-rc.1` (run 13). The integrator added the update timer's stop and start to `cutover.md` 3.3 and 3.6, and DEP2's additions to §5 items 10, 12, 13 and 15.1. Open: after the first final release (`v0.11.0`), `bookclub-server` must hold `0.11.0`, `0.11` and `stable` with one digest; everything that needs the VM, the Storage Box or healthchecks.io (`notes/dep2.md`, "Not verified").
-- **ADM2:** in its worktree (`phase2/adm2`), not merged yet. Its merge also applies LEG2's "When merging ADM2", and brings the integrator's two fixes from the Wave 2 security review (`b074148`, `44a281f`; `notes/adm2.md`, "Security review fixes").
+- **ADM2:** merged (f6e28e8), with the integrator's two fixes from the Wave 2 security review (b074148, 44a281f; `notes/adm2.md`, "Security review fixes"). The integrator's follow-ups are done: the 403 on token creation in the OpenAPI document (e4f4de9), `PLANNED` emptied in `legal_docs.rs` (4ec27ea), the contact line on the sign-in page (bb89098), "Report" on each reader-added edition in the edition list (5de12cd), and `takedown.md` §4 on the held profile picture (f2c6269). Open (`notes/adm2.md`, "Open points"): operator commands that export or delete a suspended account without unsuspending it, the statement of reasons on a suspension (by hand for now), the `[removed]` placeholder, who suspended (not stored), and the admin page's wording for a gone profile picture.
 - **CUT2:** rehearsed on 2026-10-29 at 8ecc528 (`notes/cut2.md`): both runs exited 0 in about 20 s with 0 s lookup wait, `compare.sh` matched every count and both accounts, and the slug is `bookclub-8rqp`. Waiting for Rafael's browser check at `http://agents.lan:8080` and the #38 post (counts, slug, run time and lookup wait only); then the copy, the rehearsal database and the worktree are deleted (Q14 A).
 
 #### ADM2: reports on user content, decision notices, suspension (#54, #55)
@@ -576,10 +580,10 @@ All five run in parallel. They need no answer from Rafael. Where an answer is st
 
 | Item | Waits on | Unblocks |
 |---|---|---|
-| ADM2: reports on avatars and user-added books | Q11 | #54 "reports on covers and user content"; the promise in `endpoint-map.md:189` |
-| ADM2: decision notices | Q12; real delivery also needs Q4 | DSA Art. 16(5) and 17 duties before #55 |
-| ADM2: suspension | Q15 | Abuse handling before #55 |
-| ADM2: per-address login lockout | Q17 | Security review §3 |
+| ADM2: reports on avatars and user-added books (merged 2026-10-29, f6e28e8) | Q11 | #54 "reports on covers and user content"; the promise in `endpoint-map.md:189` |
+| ADM2: decision notices (merged 2026-10-29) | Q12; real delivery also needs Q4 | DSA Art. 16(5) and 17 duties before #55 |
+| ADM2: suspension (merged 2026-10-29) | Q15 | Abuse handling before #55 |
+| ADM2: per-address login lockout (Q17 A: nothing to build) | Q17 | Security review §3 |
 | LEG2: retention jobs | Q14 | The retention statements in the VVT and privacy policy |
 | DEP2: auto-deploy | Q8 | #51 "tags build the image and deploy it" |
 | DEP2: first release and registry tags | Q5 | Any release from `main`; the staging deploy |
@@ -789,7 +793,7 @@ Ordered by how much work each answer unblocks. "Take the recommendations" is a v
 
 **Legal (#53)**
 
-17. Give `docs/legal/privacy-facts.md` and `docs/legal/vvt.md` to eRecht24 or a lawyer. Generate the Impressum (§ 5 DDG) and the Datenschutzerklärung; it names the mail provider, the backup host, the monitor, and the 7-day Caddy log with IPs. Also generate Nutzungsbedingungen with moderation and notice-and-action clauses, in DE and EN. Have them confirm the DSA hosting duties (Art. 11/12, 14, 16, 17) and the Q12 targets.
+17. Give `docs/legal/privacy-facts.md` and `docs/legal/vvt.md` to eRecht24 or a lawyer. Generate the Impressum (§ 5 DDG) and the Datenschutzerklärung; it names the mail provider, the backup host, the monitor, and the 7-day Caddy log with IPs. Also generate Nutzungsbedingungen with moderation and notice-and-action clauses, in DE and EN. Have them confirm the DSA hosting duties (Art. 11/12, 14, 16, 17), the Q12 targets, the wording of the app's decision mails (`report_decision`, `statement_of_reasons`), the statement of reasons the operator writes by hand on a suspension, and the manual export and deletion of a suspended account (`docs/legal/takedown.md` §5 and §7, `privacy-facts.md` §8).
 18. Sign the VVT as the controller, and file every DPA (mail, backup).
 19. Put the six files and `manifest.json` into `/srv/bookclub/legal` on the VM, and check `/imprint`, `/privacy` and `/terms` logged out.
 
@@ -809,7 +813,7 @@ Ordered by how much work each answer unblocks. "Take the recommendations" is a v
 
 23. Run `bookclub-server send-test-mail` to Gmail, Outlook and GMX, and check mail-tester: SPF, DKIM and DMARC must pass.
 24. Run `deploy/hosted/verify-limits.sh https://<host>` from home, plus one sign-up attempt from a second network (a phone on mobile data). If that attempt also gets 429, `TRUSTED_PROXIES` is wrong. The run blocks your home IP from sign-up and reset for an hour.
-25. Run a takedown end to end on the live instance: report a cover, remove it, confirm `/media` answers 410 and the mails arrive, and check the time against the target.
+25. Run a takedown end to end on the live instance: report a cover, remove it, confirm `/media` answers 410 and the mails arrive (the decision to the reporter, the statement of reasons to the uploader, each ending with the imprint and privacy links), and check the time against the target.
 26. Set `SIGNUP_MODE=open` in the env and run `docker compose up -d app`. Outside `DEV_MODE`, startup refuses this until the legal texts are present.
 
 **Afterwards**
