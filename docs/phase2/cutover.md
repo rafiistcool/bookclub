@@ -1,5 +1,8 @@
 # Cutover runbook (#52)
 
+> **The private move comes first** (Phase 3, `docs/phase3/work-plan.md` §5): the same host and hostname, mail off, no legal texts.
+> Its runbook is `docs/phase3/private-move.md`, which builds on this file; this one stays for the public launch.
+
 This runbook moves the club from the Python app (v0.10.0, SQLite) on the old host to the hosted
 Rust server (Postgres) on the new host. It builds on the rehearsal procedure in
 `docs/phase1/notes/imp.md` ("Manual step") and on the operator runbook in
