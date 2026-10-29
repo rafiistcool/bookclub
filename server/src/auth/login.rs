@@ -46,7 +46,8 @@ pub(crate) struct Authenticated {
 
 /// Signs in with a cookie session. Ten failures per account and identifier kind (or per unknown
 /// name) in ten minutes, and thirty attempts per IP address, answer 429 before any password is
-/// checked.
+/// checked. A suspended account gets 403 `This account is suspended`, only once its password
+/// matched.
 #[utoipa::path(
     post,
     path = "/api/auth/login",
@@ -57,6 +58,7 @@ pub(crate) struct Authenticated {
         (status = 204, description = "Signed in; `Set-Cookie` carries the session"),
         (status = 400, body = ErrorBody, description = "Malformed body"),
         (status = 401, body = ErrorBody, description = "`Wrong username or password`"),
+        (status = 403, body = ErrorBody, description = "`This account is suspended` (the password matched)"),
         (status = 429, body = ErrorBody, description = "`Too many attempts. Wait a few minutes.`"),
         (status = 503, body = ErrorBody, description = "`The server is busy. Try again in a moment.`")
     )
@@ -167,8 +169,10 @@ pub(crate) async fn authenticate(
 }
 
 /// The first step of the transaction that creates the session of an [`authenticate`]d login:
-/// locks the user row and checks that the verified hash is still the stored one, then stores
-/// the rehash.
+/// locks the user row and checks that the verified hash is still the stored one and that the
+/// account is not suspended (403 `This account is suspended`, #55), then stores the rehash.
+/// Login and bearer token creation share it. A suspension that commits first is seen here; one
+/// that commits later waits for this transaction and deletes the new session.
 ///
 /// The password was verified outside any transaction. A password change or reset that
 /// committed since then answers 401 `Wrong username or password` here; one that commits later
@@ -176,17 +180,21 @@ pub(crate) async fn authenticate(
 /// session made with the old password outlives the change. The lock is `FOR NO KEY UPDATE`,
 /// not `FOR SHARE`, so two logins of one account that both rehash cannot deadlock.
 pub(crate) async fn confirm(conn: &mut PgConnection, account: &Authenticated) -> ApiResult<()> {
-    let current = sqlx::query_scalar!(
-        "SELECT password_hash FROM users WHERE id = $1 FOR NO KEY UPDATE",
+    let current = sqlx::query!(
+        r#"SELECT password_hash, suspended_at IS NOT NULL AS "suspended!"
+           FROM users WHERE id = $1 FOR NO KEY UPDATE"#,
         account.user_id
     )
     .fetch_optional(&mut *conn)
     .await?;
-    if current.as_deref() != Some(account.stored.as_str()) {
+    let Some(current) = current.filter(|row| row.password_hash == account.stored) else {
         return Err(AppError::new(
             StatusCode::UNAUTHORIZED,
             msg::WRONG_CREDENTIALS,
         ));
+    };
+    if current.suspended {
+        return Err(AppError::forbidden(msg::ACCOUNT_SUSPENDED));
     }
     if let Some(new) = &account.rehash {
         sqlx::query!(

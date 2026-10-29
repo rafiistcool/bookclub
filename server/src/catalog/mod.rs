@@ -13,6 +13,7 @@
 //! - [`custom`] and [`editions`]: user-added works and editions.
 //! - [`requests`]: edit and merge requests; [`admin`]: the admin queue, the direct merge and the
 //!   direct admin edit.
+//! - [`reports`]: reports on works and editions readers added, and what "remove" does to them.
 //! - [`merge`]: `merge_works`, two works becoming one (conventions §7.6).
 
 pub mod admin;
@@ -25,6 +26,7 @@ pub mod hits;
 pub mod isbn_lookup;
 pub mod merge;
 pub mod openlibrary;
+pub mod reports;
 pub mod requests;
 pub mod search;
 pub mod service;
@@ -84,6 +86,8 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(requests::request_work_edit))
         .routes(routes!(requests::request_edition_edit))
         .routes(routes!(requests::request_merge))
+        .routes(routes!(reports::report_work))
+        .routes(routes!(reports::report_edition))
 }
 
 /// Instance-admin routes; every path starts with `/api/admin/`.

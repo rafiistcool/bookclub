@@ -1,27 +1,27 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT media_id, status FROM reports WHERE id = $1",
+  "query": "SELECT work_id, source AS \"source: CatalogSource\" FROM editions WHERE id = $1",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "media_id",
+        "name": "work_id",
         "type_info": "Int8",
         "origin": {
           "Table": {
-            "table": "reports",
-            "name": "media_id"
+            "table": "editions",
+            "name": "work_id"
           }
         }
       },
       {
         "ordinal": 1,
-        "name": "status",
+        "name": "source: CatalogSource",
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "reports",
-            "name": "status"
+            "table": "editions",
+            "name": "source"
           }
         }
       }
@@ -32,9 +32,9 @@
       ]
     },
     "nullable": [
-      true,
+      false,
       false
     ]
   },
-  "hash": "e6edc864e6a375fa58f6abc300c089bfb6d3ae16a230a5311caa84286b283293"
+  "hash": "9d1527cb8b5a5eb008fbb5593aef3f3bef1724208b0dc427281f2b5c6021bc80"
 }

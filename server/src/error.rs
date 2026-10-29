@@ -69,6 +69,11 @@ pub mod msg {
     /// 400 when a sign-up or `POST /api/auth/terms` sends no terms version, or another one than
     /// the operator's current terms (`LEGAL_DIR/manifest.json`).
     pub const TERMS_CHANGED: &str = "The terms of use have changed. Reload the page and try again.";
+
+    // ADM2 (#55).
+    /// 403 when a suspended account signs in or creates a bearer token, after its password
+    /// matched (`auth::login::confirm`).
+    pub const ACCOUNT_SUSPENDED: &str = "This account is suspended";
 }
 
 /// An error response. Every non-2xx answer of the API is one of these.

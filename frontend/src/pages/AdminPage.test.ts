@@ -68,13 +68,17 @@ function editRequest(overrides: Partial<EditRequestOut> = {}): EditRequestOut {
 function report(overrides: Partial<ReportOut> = {}): ReportOut {
   return {
     id: 7,
+    target_kind: "cover",
     reason: "wrong_book",
     details: "That is a cookbook.",
     status: "open",
+    via: "app",
     media_public_id: "abc",
     removed: false,
     cover_url: "/media/abc/l",
     cover_thumb_url: "/media/abc/s",
+    avatar_url: null,
+    target_user: null,
     book: bookOut({ id: 9, title: "Circe" }),
     created_by: ADA,
     created_at: "2026-10-27T10:00:00Z",

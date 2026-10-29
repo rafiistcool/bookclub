@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id FROM reports\n         WHERE created_by = $1 AND target_kind = $2 AND status = 'open'\n           AND CASE $2 WHEN 'work' THEN work_id = $3 ELSE edition_id = $4 END\n         ORDER BY id DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "reports",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ac495e2bb7fabeaf2c474a5986d38781075b00c8466e507efa3b157743e9b7ad"
+}

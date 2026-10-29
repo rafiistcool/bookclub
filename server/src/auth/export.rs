@@ -464,7 +464,8 @@ async fn club_sections(
     Ok(())
 }
 
-/// Catalog contributions, edit requests and reports, each as filed and as decided.
+/// Catalog contributions, edit requests and reports, each as filed and as decided, and the
+/// reports about the user's content.
 async fn catalog_sections(
     conn: &mut PgConnection,
     user_id: i64,
@@ -506,9 +507,13 @@ async fn catalog_sections(
     .await?;
     data.insert("edit_requests".into(), requests);
 
+    // `about_me`: reports of the user's profile picture (`target_user_id`), of pictures they
+    // uploaded and of works and editions they added, without who filed them or what they
+    // wrote: the reporter is never named to the other side (ADM2, Q12).
     let reports = sqlx::query_scalar!(
         r#"SELECT jsonb_build_object(
                'filed', (SELECT coalesce(jsonb_agg(to_jsonb(r) - 'created_by' - 'resolved_by'
+                                                   - 'target_user_id'
                              ORDER BY r.id), '[]')
                          FROM reports r WHERE r.created_by = $1),
                'resolved', (SELECT coalesce(jsonb_agg(jsonb_build_object(
@@ -516,7 +521,21 @@ async fn catalog_sections(
                                 'media_id', r.media_id, 'reason', r.reason, 'status', r.status,
                                 'resolved_at', r.resolved_at)
                             ORDER BY r.id), '[]')
-                            FROM reports r WHERE r.resolved_by = $1)) AS "rows!""#,
+                            FROM reports r WHERE r.resolved_by = $1),
+               'about_me', (SELECT coalesce(jsonb_agg(jsonb_build_object(
+                                'id', r.id, 'target_kind', r.target_kind,
+                                'media_id', r.media_id, 'work_id', r.work_id,
+                                'edition_id', r.edition_id, 'reason', r.reason,
+                                'status', r.status, 'via', r.via, 'created_at', r.created_at,
+                                'resolved_at', r.resolved_at)
+                            ORDER BY r.id), '[]')
+                            FROM reports r
+                            LEFT JOIN media m ON m.id = r.media_id
+                            LEFT JOIN works w ON w.id = r.work_id AND r.target_kind = 'work'
+                            LEFT JOIN editions e
+                                   ON e.id = r.edition_id AND r.target_kind = 'edition'
+                            WHERE r.target_user_id = $1 OR m.uploaded_by = $1
+                               OR w.created_by = $1 OR e.created_by = $1)) AS "rows!""#,
         user_id
     )
     .fetch_one(&mut *conn)

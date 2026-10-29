@@ -620,42 +620,69 @@ async fn a_takedown_notice_is_checked(db: PgPool) {
     assert_eq!(notice_rows(&app).await.len(), 1, "and nothing recorded");
 }
 
-/// Until ADM2 widens `reports.target_kind`, a notice about an avatar cannot be recorded: the
-/// takedown is refused before anything changes, so the admin is never told a notice is on
-/// record when it is not. Without a notice (no body, or `null`) the avatar comes down.
+/// ADM2: a notice about a profile picture is recorded like one about a cover: a `removed`
+/// report of kind `avatar` (via `notice`, naming whose picture it was), and the picture comes
+/// down. Without a notice (no body, or `null`) the avatar comes down without a record.
 #[sqlx::test]
-async fn a_notice_about_an_avatar_is_refused(db: PgPool) {
+async fn a_notice_about_an_avatar_is_recorded(db: PgPool) {
     let app = TestApp::new(db).await;
     let ada = app.user("ada").await;
     let root = app.admin("root").await;
     let avatar = "avataravataravataravatar22";
     app.exec(&format!(
         "INSERT INTO media (public_id, kind, source, uploaded_by)
-         VALUES ('{avatar}', 'avatar', 'upload', {})",
+         VALUES ('{avatar}', 'avatar', 'upload', {0});
+         UPDATE users SET avatar_media_id = (SELECT id FROM media WHERE public_id = '{avatar}')
+         WHERE id = {0}",
         ada.id()
     ))
     .await;
     let removed = format!(
         "SELECT count(*) FROM media WHERE public_id = '{avatar}' AND removed_at IS NOT NULL"
     );
-    let path = format!("/api/admin/media/{avatar}");
-    for body in [
-        json!({}),
-        json!({"details": "Mail: an offensive profile picture."}),
-    ] {
-        root.delete_json(&path, body)
-            .await
-            .assert_detail(400, "Only notices about covers can be recorded");
-    }
-    assert_eq!(app.scalar_i64(&removed).await, 0, "nothing was taken down");
-    assert!(notice_rows(&app).await.is_empty());
+    root.delete_json(
+        &format!("/api/admin/media/{avatar}"),
+        json!({"details": "Mail: an offensive profile picture.", "reason": "offensive"}),
+    )
+    .await
+    .assert_status(204);
+    assert_eq!(app.scalar_i64(&removed).await, 1);
+    let rows = notice_rows(&app).await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        (rows[0].0.as_str(), rows[0].4.as_str(), rows[0].2, rows[0].5),
+        ("offensive", "removed", None, Some(root.id()))
+    );
+    let item = &root.get("/api/admin/reports?status=resolved").await.json()["items"][0];
+    assert_eq!(item["target_kind"], "avatar");
+    assert_eq!(item["via"], "notice");
+    assert_eq!(item["target_user"]["username"], "ada");
+    assert_eq!(item["target_user"]["avatar_url"], Value::Null);
+    assert_eq!(item["avatar_url"], Value::Null, "taken down");
+    assert_eq!(item["cover_url"], Value::Null);
+    assert_eq!(item["book"], Value::Null);
+    assert_eq!(item["closed_on_arrival"], false);
+    assert_eq!(
+        ada.get("/api/auth/me").await.json()["avatar_url"],
+        Value::Null
+    );
 
-    root.delete_json(&path, Value::Null)
+    // Without a notice: down, and no record.
+    let other = "avataravataravataravatar33";
+    app.exec(&format!(
+        "INSERT INTO media (public_id, kind, source, uploaded_by)
+         VALUES ('{other}', 'avatar', 'upload', {})",
+        ada.id()
+    ))
+    .await;
+    root.delete_json(&format!("/api/admin/media/{other}"), Value::Null)
         .await
         .assert_status(204);
-    assert_eq!(app.scalar_i64(&removed).await, 1);
-    root.delete(&path).await.assert_status(204);
-    assert!(notice_rows(&app).await.is_empty());
+    assert_eq!(
+        notice_rows(&app).await.len(),
+        1,
+        "no record without a notice"
+    );
 }
 
 /// Acceptance (#54): a repeat report of a picture by the same reader answers with the open
@@ -932,12 +959,14 @@ async fn a_takedown_rejects_the_cover_requests_for_the_picture(db: PgPool) {
     .assert_detail(409, "This request was already decided");
 }
 
-/// Reports name a cover by its public id: unknown ids and avatars are 404; the reason is one
-/// of four; details are trimmed and cut at 2000 characters; 20 new reports per user and day.
+/// Reports name a picture by its public id: unknown ids, and the profile picture of someone the
+/// reader shares no club with, are 404; the reason is one of four; details are trimmed and cut
+/// at 2000 characters; 20 new reports per user and day.
 #[sqlx::test]
 async fn reports_are_checked_and_limited(db: PgPool) {
     let app = TestApp::new(db).await;
     let ada = app.user("ada").await;
+    let stranger = app.user("stranger").await;
     let (_, public_id, _) = shown_ol_cover(&app).await;
     report(
         &ada,
@@ -949,7 +978,7 @@ async fn reports_are_checked_and_limited(db: PgPool) {
     app.exec(&format!(
         "INSERT INTO media (public_id, kind, source, uploaded_by)
          VALUES ('avataravataravataravatar22', 'avatar', 'upload', {})",
-        ada.id()
+        stranger.id()
     ))
     .await;
     report(
@@ -1414,4 +1443,355 @@ async fn a_takedown_waits_for_an_ingest_attaching_the_cover(db: PgPool) {
         .await,
         1
     );
+}
+
+/// Uploads a profile picture for `who` and returns its public id.
+async fn upload_avatar(who: &TestClient, color: [u8; 3]) -> String {
+    let res = who
+        .put_multipart(
+            "/api/auth/me/avatar",
+            vec![Part::file("me.jpg", "image/jpeg", jpeg(color))],
+        )
+        .await;
+    res.assert_status(200);
+    let url = res.json()["avatar_url"].as_str().unwrap().to_owned();
+    url.strip_prefix("/media/")
+        .and_then(|rest| rest.strip_suffix("/a"))
+        .unwrap()
+        .to_owned()
+}
+
+/// The mails to `<username>@example.test` so far.
+fn mails_to(app: &TestApp, username: &str) -> Vec<bookclub_server::email::Email> {
+    app.email.sent_to(&format!("{username}@example.test"))
+}
+
+/// Acceptance (#54, Q11 option B): a reader reports the profile picture of someone they share a
+/// club with; a stranger cannot (404, as for an unknown picture). "Remove" takes it down:
+/// `avatar_url` is null everywhere, `/media` answers 410, and the same file cannot be uploaded
+/// again. The reporter is mailed the decision, the owner a statement of reasons that does not
+/// name the reporter.
+#[sqlx::test]
+async fn an_avatar_report_then_remove_hides_it_everywhere(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let cleo = app.user("cleo").await;
+    let root = app.admin("root").await;
+    let club = app.club(&ada, "Readers").await;
+    app.join(&club, &bob, "member").await;
+    let avatar = upload_avatar(&ada, [10, 120, 200]).await;
+
+    report(&cleo, &avatar, json!({"reason": "offensive"}))
+        .await
+        .assert_detail(404, "Not found");
+    let res = report(
+        &bob,
+        &avatar,
+        json!({"reason": "offensive", "details": "Bob says: this is rude."}),
+    )
+    .await;
+    res.assert_status(201);
+    assert_eq!(res.json()["status"], "open");
+    let report_id = res.json()["id"].as_i64().unwrap();
+    // A repeat answers with the same report.
+    assert_eq!(
+        report(&bob, &avatar, json!({"reason": "other"}))
+            .await
+            .json()["id"],
+        report_id
+    );
+
+    let items = root.get("/api/admin/reports").await.json()["items"].clone();
+    assert_eq!(items.as_array().unwrap().len(), 1);
+    let item = &items[0];
+    assert_eq!(item["target_kind"], "avatar");
+    assert_eq!(item["via"], "app");
+    assert_eq!(item["media_public_id"], avatar);
+    assert_eq!(item["avatar_url"], format!("/media/{avatar}/a"));
+    assert_eq!(item["cover_url"], Value::Null);
+    assert_eq!(item["book"], Value::Null);
+    assert_eq!(item["target_user"]["username"], "ada");
+    assert_eq!(item["created_by"]["username"], "bob");
+
+    root.post(
+        &format!("/api/admin/reports/{report_id}/resolve"),
+        json!({"action": "remove"}),
+    )
+    .await
+    .assert_status(200);
+
+    assert_eq!(
+        ada.get("/api/auth/me").await.json()["avatar_url"],
+        Value::Null
+    );
+    let members = bob
+        .get(&format!("/api/clubs/{}/members", club.slug))
+        .await
+        .json();
+    let adas_row = members["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["username"] == "ada")
+        .unwrap()
+        .clone();
+    assert_eq!(adas_row["avatar_url"], Value::Null);
+    let resolved = &root.get("/api/admin/reports?status=resolved").await.json()["items"][0];
+    assert_eq!(resolved["avatar_url"], Value::Null);
+    assert_eq!(resolved["target_user"]["avatar_url"], Value::Null);
+    assert_eq!(resolved["removed"], true);
+    app.anon()
+        .get(&format!("/media/{avatar}/a"))
+        .await
+        .assert_status(410);
+    ada.put_multipart(
+        "/api/auth/me/avatar",
+        vec![Part::file("me.jpg", "image/jpeg", jpeg([10, 120, 200]))],
+    )
+    .await
+    .assert_detail(400, "This picture was removed");
+
+    let to_bob = mails_to(&app, "bob");
+    assert_eq!(to_bob.len(), 1);
+    assert_eq!(to_bob[0].subject, "Your report on Bookclub: removed");
+    assert!(
+        to_bob[0]
+            .text
+            .contains("reviewed the profile picture you reported and removed it")
+    );
+    assert!(!to_bob[0].text.contains("ada"), "{}", to_bob[0].text);
+    let to_ada = mails_to(&app, "ada");
+    assert_eq!(to_ada.len(), 1);
+    assert_eq!(
+        to_ada[0].subject,
+        "Your profile picture on Bookclub was removed"
+    );
+    assert!(to_ada[0].text.contains("because it is offensive"));
+    for secret in ["bob", "rude"] {
+        assert!(!to_ada[0].text.contains(secret), "{}", to_ada[0].text);
+    }
+    assert!(mails_to(&app, "cleo").is_empty());
+    assert!(mails_to(&app, "root").is_empty());
+}
+
+/// A new work "My Zine" with a cover `uploader` uploaded in `color`; returns the work and the
+/// picture's public id.
+async fn uploaded_cover(app: &TestApp, uploader: &TestClient, color: [u8; 3]) -> (i64, String) {
+    let work = app.work("My Zine").await;
+    uploader
+        .post_multipart(
+            &format!("/api/books/works/{}/cover", work.id),
+            vec![Part::file("c.jpg", "image/jpeg", jpeg(color))],
+        )
+        .await
+        .assert_status(200);
+    let public_id: String = sqlx::query_scalar(
+        "SELECT m.public_id FROM works w JOIN media m ON m.id = w.cover_media_id WHERE w.id = $1",
+    )
+    .bind(work.id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    (work.id, public_id)
+}
+
+/// Acceptance (#54, Q12 option A): "remove" mails every reporter of the picture the decision, in
+/// their language, and the uploader a statement of reasons; nobody is named to the other side.
+/// "dismiss" mails only the reporters. Unverified addresses get nothing.
+#[sqlx::test]
+async fn decisions_mail_the_reporters_and_the_uploader(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let carl = app.user("carl").await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let dora = app.user_unverified("dora").await;
+    let root = app.admin("root").await;
+    app.exec(&format!(
+        "UPDATE users SET locale = 'de' WHERE id = {}",
+        bob.id()
+    ))
+    .await;
+    let (_, public_id) = uploaded_cover(&app, &carl, [40, 30, 30]).await;
+    let first = report(
+        &ada,
+        &public_id,
+        json!({"reason": "copyright", "details": "Ada: my photo."}),
+    )
+    .await
+    .json()["id"]
+        .as_i64()
+        .unwrap();
+    for who in [&bob, &dora] {
+        report(who, &public_id, json!({"reason": "other"}))
+            .await
+            .assert_status(201);
+    }
+    root.post(
+        &format!("/api/admin/reports/{first}/resolve"),
+        json!({"action": "remove"}),
+    )
+    .await
+    .assert_status(200);
+    let sent = app.sent_emails();
+    assert_eq!(sent.len(), 3, "{sent:#?}");
+    let to_ada = mails_to(&app, "ada");
+    assert_eq!(to_ada[0].subject, "Your report on Bookclub: removed");
+    assert!(
+        to_ada[0]
+            .text
+            .contains("the cover picture of \"My Zine\" you reported and removed it")
+    );
+    let to_bob = mails_to(&app, "bob");
+    assert_eq!(to_bob[0].subject, "Deine Meldung bei Bookclub: entfernt");
+    let to_carl = mails_to(&app, "carl");
+    assert_eq!(
+        to_carl[0].subject,
+        "Your cover photo on Bookclub was removed"
+    );
+    assert!(
+        to_carl[0]
+            .text
+            .contains("removed the cover photo you uploaded for \"My Zine\".")
+    );
+    // The ground is the decided report's; the reporters and their words stay hidden.
+    assert!(
+        to_carl[0]
+            .text
+            .contains("infringes someone else's copyright")
+    );
+    for secret in ["ada", "bob", "dora", "my photo"] {
+        assert!(!to_carl[0].text.contains(secret), "{secret}");
+    }
+    for mail in [&to_ada[0], &to_bob[0]] {
+        assert!(!mail.text.contains("carl"), "{}", mail.text);
+    }
+    assert!(mails_to(&app, "dora").is_empty(), "not verified");
+
+    // "dismiss" mails only the reporter.
+    let (_, kept) = uploaded_cover(&app, &carl, [80, 30, 30]).await;
+    let id = report(&ada, &kept, json!({"reason": "wrong_book"}))
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+    root.post(
+        &format!("/api/admin/reports/{id}/resolve"),
+        json!({"action": "dismiss"}),
+    )
+    .await
+    .assert_status(200);
+    assert_eq!(app.sent_emails().len(), 4);
+    let to_ada = mails_to(&app, "ada");
+    assert_eq!(to_ada[1].subject, "Your report on Bookclub: not removed");
+    assert!(to_ada[1].text.contains("did not remove it"));
+    assert_eq!(
+        mails_to(&app, "carl").len(),
+        1,
+        "no statement for a kept cover"
+    );
+}
+
+/// A direct takedown mails the reporters of the open reports it resolves and the uploader; an
+/// Open Library cover has no uploader, and a picture that was down already changes nothing and
+/// mails nobody.
+#[sqlx::test]
+async fn a_direct_takedown_mails_too(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let carl = app.user("carl").await;
+    let ada = app.user("ada").await;
+    let root = app.admin("root").await;
+    let (_, public_id) = uploaded_cover(&app, &carl, [120, 30, 30]).await;
+    report(&ada, &public_id, json!({"reason": "offensive"}))
+        .await
+        .assert_status(201);
+    root.delete(&format!("/api/admin/media/{public_id}"))
+        .await
+        .assert_status(204);
+    assert_eq!(
+        mails_to(&app, "ada")[0].subject,
+        "Your report on Bookclub: removed"
+    );
+    let to_carl = mails_to(&app, "carl");
+    assert_eq!(to_carl.len(), 1);
+    assert!(to_carl[0].text.contains("because it is offensive"));
+
+    // Again: nothing changes, nobody is mailed.
+    root.delete(&format!("/api/admin/media/{public_id}"))
+        .await
+        .assert_status(204);
+    assert_eq!(app.sent_emails().len(), 2);
+
+    // Without a report or notice: the admin's own finding.
+    let (_, quiet) = uploaded_cover(&app, &carl, [160, 30, 30]).await;
+    root.delete(&format!("/api/admin/media/{quiet}"))
+        .await
+        .assert_status(204);
+    let to_carl = mails_to(&app, "carl");
+    assert_eq!(to_carl.len(), 2);
+    assert!(
+        to_carl[1]
+            .text
+            .contains("Why: an admin found that it breaks the law or the terms of use.")
+    );
+
+    // An Open Library cover: the reporter only.
+    let (_, ol, _) = shown_ol_cover(&app).await;
+    report(&ada, &ol, json!({"reason": "wrong_book"}))
+        .await
+        .assert_status(201);
+    root.delete_json(
+        &format!("/api/admin/media/{ol}"),
+        json!({"reason": "wrong_book"}),
+    )
+    .await
+    .assert_status(204);
+    assert_eq!(app.sent_emails().len(), 4);
+    assert_eq!(mails_to(&app, "ada").len(), 2);
+}
+
+/// Acceptance (#54, Q12): a decision that rolls back sends nothing. Another admin's decision
+/// commits while this one waits for the report row; this one then finds the report resolved,
+/// answers 409, rolls its takedown back, and nobody is mailed.
+#[sqlx::test]
+async fn a_rolled_back_decision_mails_nobody(db: PgPool) {
+    let app = TestApp::new(db.clone()).await;
+    let carl = app.user("carl").await;
+    let ada = app.user("ada").await;
+    let root = app.admin("root").await;
+    let other = app.admin("other").await;
+    let (work, public_id) = uploaded_cover(&app, &carl, [200, 30, 30]).await;
+    let id = report(&ada, &public_id, json!({"reason": "copyright"}))
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+
+    // The other admin's dismissal, not yet committed, holds the report row.
+    let mut holder = db.begin().await.unwrap();
+    sqlx::query(
+        "UPDATE reports SET status = 'dismissed', resolved_by = $2, resolved_at = now()
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(other.id())
+    .execute(&mut *holder)
+    .await
+    .unwrap();
+    let path = format!("/api/admin/reports/{id}/resolve");
+    let decision = tokio::spawn(async move { root.post(&path, json!({"action": "remove"})).await });
+    until_a_lock_wait(&db).await;
+    holder.commit().await.unwrap();
+    let res = decision.await.unwrap();
+    res.assert_detail(409, "This report was already resolved");
+
+    assert!(
+        cover_of(&app, work).await.is_some(),
+        "the takedown rolled back"
+    );
+    app.anon()
+        .get(&format!("/media/{public_id}/l"))
+        .await
+        .assert_status(200);
+    assert!(app.sent_emails().is_empty(), "{:#?}", app.sent_emails());
 }

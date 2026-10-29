@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT username, email AS \"email!\", locale FROM users\n           WHERE is_admin AND email_verified_at IS NOT NULL\n           ORDER BY id",
+  "query": "SELECT username, email AS \"email!\", locale FROM users\n           WHERE is_admin AND email_verified_at IS NOT NULL AND suspended_at IS NULL\n           ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -46,5 +46,5 @@
       false
     ]
   },
-  "hash": "2a24912aa9e7b31b87ddef8f6fa4527a0858d8b2b54f9ce5834dc58a2390ef2c"
+  "hash": "71882600c49d69cc89e1ec4ff5a524cea8b932113eb626e7b34c1bdb6f5fe0fe"
 }

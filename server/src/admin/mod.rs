@@ -5,14 +5,18 @@
 //! - [`summary`]: `GET /api/admin/summary`, both queues at a glance.
 //! - [`queue`]: the `?status=&page=` query and the overdue threshold both queues share.
 //! - [`notify`]: the job that mails instance admins about new reports and catalog requests.
+//! - [`notices`]: the decision notices to reporters and uploaders after a report is decided.
+//! - [`users`]: suspending and unsuspending accounts.
 //!
 //! The queues themselves live with their data: `catalog::admin` (catalog requests) and
 //! `media::reports` (reports and takedowns).
 
 pub mod invites;
+pub mod notices;
 pub mod notify;
 pub mod queue;
 pub mod summary;
+pub mod users;
 
 use sqlx::PgConnection;
 use utoipa_axum::router::OpenApiRouter;
@@ -24,6 +28,7 @@ use crate::AppState;
 pub fn admin_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .merge(invites::admin_routes())
+        .merge(users::admin_routes())
         .routes(routes!(summary::summary))
 }
 

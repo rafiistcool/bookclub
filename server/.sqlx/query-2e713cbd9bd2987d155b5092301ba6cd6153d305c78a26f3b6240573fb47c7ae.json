@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE reports SET status = $3, resolved_by = $2, resolved_at = now()\n         WHERE status = 'open'\n           AND (id = $1 OR media_id = $4\n                OR (target_kind = 'work' AND $5 = 'work' AND work_id = $6)\n                OR (target_kind = 'edition' AND $5 = 'edition' AND edition_id = $7))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Int8",
+        "Text",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2e713cbd9bd2987d155b5092301ba6cd6153d305c78a26f3b6240573fb47c7ae"
+}

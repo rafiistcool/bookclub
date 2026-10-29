@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT kind, removed_at FROM media WHERE id = $1 FOR UPDATE",
+  "query": "SELECT kind, removed_at, uploaded_by FROM media WHERE id = $1 FOR UPDATE",
   "describe": {
     "columns": [
       {
@@ -24,6 +24,17 @@
             "name": "removed_at"
           }
         }
+      },
+      {
+        "ordinal": 2,
+        "name": "uploaded_by",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "uploaded_by"
+          }
+        }
       }
     ],
     "parameters": {
@@ -33,8 +44,9 @@
     },
     "nullable": [
       false,
+      true,
       true
     ]
   },
-  "hash": "ea71e310c47e2578bdd87c57d0bb6fc22d86a3522a6a070d0b73868036ff14c0"
+  "hash": "f3b38f1bfdf4b7ed2b0bcd112d38e3667cee9208bcef05c96ccea757eff7ac3d"
 }
