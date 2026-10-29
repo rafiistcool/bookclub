@@ -24,6 +24,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/cover-suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A page of cover suggestions: `?status=open` (the default) lists the open ones oldest first,
+         *     hiding those nobody needs to decide any more (the book has a cover now, was merged away, or
+         *     the picture is gone); `?status=resolved` the approved, rejected and closed ones, the newest
+         *     decision first. 50 a page.
+         */
+        get: operations["catalog_admin_list_cover_suggestions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/cover-suggestions/{suggestion_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Uses the suggested picture: it becomes the cover of the book (merges followed) with
+         *     provenance `admin`, while the book still has none. That Open Library work is never
+         *     suggested again for the book.
+         */
+        post: operations["catalog_admin_approve_cover_suggestion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/cover-suggestions/{suggestion_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * "Not this book": that Open Library work is never suggested again for the book (or a book
+         *     merged into it), and the book is searched again at once for the next candidate.
+         */
+        post: operations["catalog_admin_reject_cover_suggestion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/edit-requests": {
         parameters: {
             query?: never;
@@ -163,6 +226,29 @@ export interface paths {
          *     owner a statement of reasons.
          */
         delete: operations["media_admin_take_down"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/missing-covers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The catalog and imported books without a usable cover (readers' own books are left out):
+         *     books the search looks for, books a reader's photo waits for, and books readers use whose
+         *     Open Library picture (or that of an edition readers use) failed to load. `?scope=in_use`
+         *     (the default) lists the books readers use, `?scope=all` every one; books readers use first,
+         *     then by title. 50 a page.
+         */
+        get: operations["catalog_admin_list_missing_covers"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -314,6 +400,50 @@ export interface paths {
          *     approved edit request. Answers with the book as it is now.
          */
         patch: operations["catalog_admin_edit_work"];
+        trace?: never;
+    };
+    "/api/admin/works/{work_id}/cover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * An instance admin sets a book's or an edition's cover directly (#74): the picture becomes
+         *     the cover at once, replacing any cover, with provenance `admin` (no source overwrites it
+         *     afterwards). The same pipeline and limits as a reader's photo; also for a book a reader
+         *     added.
+         */
+        put: operations["media_admin_set_cover"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/works/{work_id}/cover-search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Searches this book now: ignores the schedule, the misses and the stop for books nobody
+         *     uses, respects rejections, approvals and takedowns. A failing Open Library picture of the
+         *     book is fetched again first; an open suggestion is returned as it is. For catalog and
+         *     imported books only: a reader's own book is never sent to Open Library.
+         */
+        post: operations["catalog_admin_search_cover"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/admin/works/{work_id}/merge": {
@@ -2163,6 +2293,19 @@ export interface components {
             /** @description The club's zone (club feed) or the caller's (home feed). */
             timezone: string;
         };
+        /** @description The cover search at a glance (#74). No response target: nothing is overdue. */
+        AdminCoverSummary: {
+            /**
+             * Format: int64
+             * @description Open cover suggestions an admin still needs to decide.
+             */
+            suggestions: number;
+            /**
+             * Format: int64
+             * @description Catalog and imported books readers use that have no cover.
+             */
+            missing: number;
+        };
         /** @description Fields an instance admin sets directly. */
         AdminEditIn: {
             /**
@@ -2244,6 +2387,8 @@ export interface components {
             edit_requests: components["schemas"]["AdminQueueSummary"];
             /** @description How reports were decided in the last 90 days. */
             report_stats: components["schemas"]["AdminReportStats"];
+            /** @description The cover search (#74): suggestions to decide, books without a cover. */
+            covers: components["schemas"]["AdminCoverSummary"];
         };
         /** @description The suspended accounts, the latest suspension first. */
         AdminUserList: {
@@ -2578,10 +2723,72 @@ export interface components {
             /** Format: int64 */
             request_id: number;
         };
+        /** @description What "Search now" came to. */
+        CoverSearchOut: {
+            /** @description `attached`, `inherited`, `isbn`, `suggested` or `no_match`. */
+            outcome: string;
+            /** @description The book as it is now. */
+            book: components["schemas"]["BookOut"];
+            suggestion: components["schemas"]["CoverSuggestionOut"] | null;
+        };
         /** @description The photo became the cover. */
         CoverSet: {
             /** @description The book with its new cover (in the edition's context when one was named). */
             book: components["schemas"]["BookOut"];
+        };
+        /**
+         * @description A page of cover suggestions: the open ones oldest first, or the decided ones newest
+         *     decision first.
+         */
+        CoverSuggestionList: {
+            items: components["schemas"]["CoverSuggestionOut"][];
+            /**
+             * Format: int64
+             * @description The page these items are (1-based).
+             */
+            page: number;
+            /** @description Another page follows. */
+            has_more: boolean;
+        };
+        /** @description A cover the search found for a book but did not attach on its own. */
+        CoverSuggestionOut: {
+            /** Format: int64 */
+            id: number;
+            /**
+             * @description `open`, `approved`, `rejected` or `closed` (the server closed it: the book got a cover,
+             *     was merged away, or the picture or the Open Library work is out).
+             */
+            status: string;
+            /**
+             * Format: int64
+             * @description The book the suggestion was made for (it may have been merged since).
+             */
+            work_id: number;
+            book: components["schemas"]["BookOut"] | null;
+            /** @description The candidate picture, from our `/media`; null once it was taken down or is gone. */
+            cover_url: string | null;
+            cover_thumb_url: string | null;
+            cover_public_id: string | null;
+            /** @description The Open Library work (`OL…W`) and edition (`OL…M`) the picture belongs to. */
+            ol_work_id: string;
+            ol_edition_id: string | null;
+            /** @description Open Library's title (and subtitle) of the candidate. */
+            title: string;
+            /** @description Open Library's authors, `", "`-joined. */
+            authors: string;
+            /** Format: int32 */
+            year: number | null;
+            /** @description The edition's language (MARC code), when the picture is an edition's. */
+            language: string | null;
+            /**
+             * @description Why it was not attached on its own: `title_differs`, `number_differs`, `several_works`,
+             *     `generic_title`, `no_author` or `after_takedown`.
+             */
+            reason: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            decided_at: string | null;
         };
         /** @description The multipart form of a cover photo (OpenAPI only). */
         CoverUpload: {
@@ -3129,6 +3336,64 @@ export interface components {
          * @enum {string}
          */
         MilestoneUnit: "percent" | "chapter";
+        /** @description A page of books without a cover: books readers use first, then by title. */
+        MissingCoverList: {
+            items: components["schemas"]["MissingCoverOut"][];
+            /** Format: int64 */
+            page: number;
+            has_more: boolean;
+        };
+        /** @description A catalog or imported book without a usable cover. */
+        MissingCoverOut: {
+            book: components["schemas"]["BookOut"];
+            /** @description Readers use it (a shelf entry, favourite, quote, pick, nomination, post or legacy key). */
+            in_use: boolean;
+            /** @description It came from the legacy import. */
+            imported: boolean;
+            /**
+             * @description `none` (no cover), `failing` (Open Library's picture of the book, or of an edition
+             *     readers use, failed to load) or `photo_waiting` (a reader's photo waits in the requests
+             *     tab).
+             */
+            state: string;
+            /**
+             * Format: int64
+             * @description `failing`: the edition whose picture failed, when it is not the book's own.
+             */
+            failing_edition_id: number | null;
+            /**
+             * Format: date-time
+             * @description `failing`: when the picture last failed to load.
+             */
+            failed_at: string | null;
+            /**
+             * Format: date-time
+             * @description When the search last had an answer for it; null = never searched.
+             */
+            searched_at: string | null;
+            /**
+             * @description The last outcome: `attached`, `inherited`, `isbn`, `suggested`, `uncertain`, `no_match`
+             *     or `blocked`.
+             */
+            outcome: string | null;
+            /**
+             * Format: date-time
+             * @description Not searched again before this; null = due.
+             */
+            next_search_at: string | null;
+            /**
+             * Format: int32
+             * @description Attempts in a row Open Library did not answer.
+             */
+            failures: number;
+            /** @description A takedown cleared its cover: the search only suggests from now on. */
+            after_takedown: boolean;
+            /**
+             * Format: int64
+             * @description The open suggestion for it, if any.
+             */
+            suggestion_id: number | null;
+        };
         /** @description Books finished in one month. */
         MonthCount: {
             /** @description `YYYY-MM` (UTC). */
@@ -4176,6 +4441,7 @@ export interface components {
 export type AccountDeleteIn = components['schemas']['AccountDeleteIn'];
 export type ActivityItem = components['schemas']['ActivityItem'];
 export type ActivityOut = components['schemas']['ActivityOut'];
+export type AdminCoverSummary = components['schemas']['AdminCoverSummary'];
 export type AdminEditIn = components['schemas']['AdminEditIn'];
 export type AdminOldestItem = components['schemas']['AdminOldestItem'];
 export type AdminQueueSummary = components['schemas']['AdminQueueSummary'];
@@ -4204,7 +4470,10 @@ export type ClubStatsOut = components['schemas']['ClubStatsOut'];
 export type ClubSummary = components['schemas']['ClubSummary'];
 export type ContributorOut = components['schemas']['ContributorOut'];
 export type CoverRequested = components['schemas']['CoverRequested'];
+export type CoverSearchOut = components['schemas']['CoverSearchOut'];
 export type CoverSet = components['schemas']['CoverSet'];
+export type CoverSuggestionList = components['schemas']['CoverSuggestionList'];
+export type CoverSuggestionOut = components['schemas']['CoverSuggestionOut'];
 export type CoverUpload = components['schemas']['CoverUpload'];
 export type CustomBookIn = components['schemas']['CustomBookIn'];
 export type DecorationKind = components['schemas']['DecorationKind'];
@@ -4249,6 +4518,8 @@ export type MilestoneListOut = components['schemas']['MilestoneListOut'];
 export type MilestoneOut = components['schemas']['MilestoneOut'];
 export type MilestonePatchIn = components['schemas']['MilestonePatchIn'];
 export type MilestoneUnit = components['schemas']['MilestoneUnit'];
+export type MissingCoverList = components['schemas']['MissingCoverList'];
+export type MissingCoverOut = components['schemas']['MissingCoverOut'];
 export type MonthCount = components['schemas']['MonthCount'];
 export type NewEditionIn = components['schemas']['NewEditionIn'];
 export type NotificationsIn = components['schemas']['NotificationsIn'];
@@ -4364,6 +4635,170 @@ export interface operations {
             };
             /** @description `Not signed in` */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    catalog_admin_list_cover_suggestions: {
+        parameters: {
+            query?: {
+                /**
+                 * @description `open` (the default): waiting for a decision, oldest first. `resolved`: decided, the
+                 *     newest decision first.
+                 */
+                status?: string;
+                /** @description 1-based, 50 items a page; default 1. */
+                page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of the open or the decided suggestions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverSuggestionList"];
+                };
+            };
+            /** @description `Input should be 'open' or 'resolved'`, `Input should be greater than or equal to 1`, `Input should be less than or equal to 1000`, `Input should be a valid integer, unable to parse string as an integer` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not found` (not an instance admin) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    catalog_admin_approve_cover_suggestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The suggestion id */
+                suggestion_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The approved suggestion, with the book's new cover */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverSuggestionOut"];
+                };
+            };
+            /** @description `This picture was removed` (taken down, or Open Library no longer has it) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not found` (no such suggestion, or not an instance admin), or `No such book.` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `This request was already decided` or `This book has a cover now` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    catalog_admin_reject_cover_suggestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The suggestion id */
+                suggestion_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The rejected suggestion */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverSuggestionOut"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not found` (no such suggestion, or not an instance admin) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `This request was already decided` */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4794,6 +5229,58 @@ export interface operations {
             };
         };
     };
+    catalog_admin_list_missing_covers: {
+        parameters: {
+            query?: {
+                /** @description `in_use` (the default): books readers use. `all`: every catalog and imported book. */
+                scope?: string;
+                /** @description 1-based, 50 items a page; default 1. */
+                page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of books without a cover */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MissingCoverList"];
+                };
+            };
+            /** @description `Input should be 'in_use' or 'all'`, `Input should be greater than or equal to 1`, `Input should be less than or equal to 1000`, `Input should be a valid integer, unable to parse string as an integer` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not found` (not an instance admin) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     media_admin_list_reports: {
         parameters: {
             query?: {
@@ -5124,6 +5611,146 @@ export interface operations {
             };
             /** @description `No such book.`, or `Not found` (not an instance admin) */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    media_admin_set_cover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A work id, `OL…W`, or a legacy key */
+                work_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["CoverUpload"];
+            };
+        };
+        responses: {
+            /** @description The picture is the cover now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverSet"];
+                };
+            };
+            /** @description `Use a JPEG, PNG, WebP, or GIF`, `That file is not a picture`, `That picture has too many pixels`, `That picture is too large (50 MB max)`, `This picture was removed`, `That edition belongs to another book` or an `edition_id` that is not a number */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such book.`, or `Not found` (not an instance admin) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `That picture is too large (50 MB max)` (by `Content-Length`, before the body is read) */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Slow down a little. Try again later.` (30 uploads per day, or another upload of the account still running) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    catalog_admin_search_cover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A work id, `OL…W`, or a legacy key */
+                work_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description What the search came to */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverSearchOut"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such book.` (also for a book a reader added), or `Not found` (not an instance admin) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `This book has a cover now` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Open Library is busy, or `Slow down a little. Try again later.` (60 catalog requests per account a minute) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Could not search the library right now. Try again.` */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -110,6 +110,7 @@ function summary(overrides: Partial<AdminSummary> = {}): AdminSummary {
     reports: queueSummary(0),
     edit_requests: queueSummary(0),
     report_stats: { days: 90, resolved: 0, median_hours: null, max_hours: null, over_target: 0 },
+    covers: { suggestions: 0, missing: 0 },
     ...overrides,
   };
 }
