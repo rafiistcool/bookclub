@@ -11,6 +11,16 @@
 ALTER TABLE media ADD COLUMN ol_gone_at timestamptz NULL;
 ALTER TABLE media ADD CONSTRAINT media_ol_gone CHECK (ol_gone_at IS NULL OR ol_cover_id IS NOT NULL);
 
+-- MED's table, additive: the takedown that recorded the hash judged a cover's picture (any
+-- reason but "wrong book"). Only such bytes are refused as a cover beyond uploads: an Open
+-- Library fetch of them is settled as removed, and the cover search never attaches, inherits
+-- or approves a picture with them. A profile picture's takedown, or one that only said the
+-- cover shows another book, keeps refusing uploads of the same file and nothing more.
+ALTER TABLE media_removed_hashes ADD COLUMN blocks_covers boolean NOT NULL DEFAULT false;
+-- MED's table, additive: the live copies of a picture a cover's takedown takes down with it.
+CREATE INDEX media_live_sha256_idx ON media (sha256)
+    WHERE removed_at IS NULL AND sha256 IS NOT NULL;
+
 -- The one definition of "no cover" for one row: NULL, or a picture that was taken down or is
 -- gone. A picture whose last fetch failed still counts as a cover until the dead check confirms
 -- it gone. A takedown (ingest::clear_media) and the gone step (ingest::clear_gone_media) clear
@@ -98,7 +108,9 @@ CREATE FUNCTION bc_cover_suggestion_moot(suggestion_id bigint) RETURNS boolean
                OR NOT bc_cover_missing(w.cover_media_id)
                OR NOT EXISTS (SELECT 1 FROM media m
                               WHERE m.ol_cover_id = s.ol_cover_id
-                                AND m.removed_at IS NULL AND m.ol_gone_at IS NULL)
+                                AND m.removed_at IS NULL AND m.ol_gone_at IS NULL
+                                AND NOT EXISTS (SELECT 1 FROM media_removed_hashes h
+                                                WHERE h.sha256 = m.sha256 AND h.blocks_covers))
                OR EXISTS (SELECT 1 FROM cover_suggestions d JOIN works dw ON dw.id = d.work_id
                           WHERE d.ol_work_id = s.ol_work_id AND d.id <> s.id
                             AND d.status IN ('approved', 'rejected')
@@ -153,6 +165,10 @@ CREATE VIEW cover_gaps (work_id, title, in_use) AS
       AND NOT (w.cover_media_id IS NULL
                AND NOT COALESCE(w.field_sources ->> 'cover_media_id' = 'admin', false));
 
+COMMENT ON COLUMN media_removed_hashes.blocks_covers IS
+    'The takedown judged a cover''s picture (a reason other than wrong_book, or none): Open Library fetches with these bytes are settled as removed, and the cover search never attaches, inherits or approves them (#74). Every hash keeps refusing uploads.';
+COMMENT ON INDEX media_live_sha256_idx IS
+    'Live pictures by their bytes as received: the copies a cover''s takedown takes down with it.';
 COMMENT ON COLUMN media.ol_gone_at IS
     'Open Library has no picture for this cover id: 404 or 410 again at least a day after the first failure, while its cover server served another picture (COVER dead check). The row is never attached again (ingest::ol_cover_media), and every works and editions reference to it was cleared.';
 COMMENT ON FUNCTION bc_cover_missing(bigint) IS

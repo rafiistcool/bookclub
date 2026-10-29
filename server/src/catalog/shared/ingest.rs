@@ -990,8 +990,8 @@ pub async fn ol_cover_media(
         .remove(&ol_cover_id))
 }
 
-/// [`ol_cover_media`] for many cover ids at once: the usable (not removed, not gone) media id per
-/// cover id.
+/// [`ol_cover_media`] for many cover ids at once: the usable (not removed, not gone, and not
+/// stored with the bytes of a cover picture a takedown judged, #74) media id per cover id.
 /// The rows are locked `FOR SHARE` until the transaction ends, so a takedown's
 /// `UPDATE media SET removed_at` waits for this ingest to commit and its `clear_media` then sees
 /// the reference.
@@ -1032,8 +1032,10 @@ async fn ol_cover_medias(
         .await?;
     }
     let rows = sqlx::query!(
-        r#"SELECT id, ol_cover_id AS "ol_cover_id!" FROM media
+        r#"SELECT id, ol_cover_id AS "ol_cover_id!" FROM media m
            WHERE ol_cover_id = ANY($1) AND removed_at IS NULL AND ol_gone_at IS NULL
+             AND NOT EXISTS (SELECT 1 FROM media_removed_hashes h
+                             WHERE h.sha256 = m.sha256 AND h.blocks_covers)
            ORDER BY id
            FOR SHARE"#,
         &wanted

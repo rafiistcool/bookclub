@@ -49,7 +49,7 @@ use crate::AppState;
 use crate::catalog::shared::ingest;
 use crate::config::Config;
 use crate::media::shared::urls::{object_key, storage_prefix};
-use crate::media::shared::{MediaStore, is_removed_hash};
+use crate::media::shared::MediaStore;
 use crate::outbound::{Outbound, RetryPolicy, UpstreamError, get_bytes};
 
 /// Ids the prefetch queue holds at most; further ids are dropped until the worker catches up.
@@ -452,17 +452,18 @@ impl Inner {
         Ok(RecheckOutcome::Stored)
     }
 
-    /// Whether bytes with this SHA-256 are a taken-down picture: one a takedown recorded
-    /// (`media_removed_hashes`) or a removed row's bytes as received.
+    /// Whether bytes with this SHA-256 are a taken-down cover picture: a takedown that judged a
+    /// cover's picture recorded them (`media_removed_hashes.blocks_covers`). A profile
+    /// picture's takedown, or one that only said a cover shows another book, does not refuse
+    /// the same bytes as another book's Open Library cover (security review of the branch).
     async fn taken_down_bytes(&self, db: &PgPool, sha256: &[u8; 32]) -> sqlx::Result<bool> {
-        let mut conn = db.acquire().await?;
-        let recorded = sqlx::query_scalar!(
-            r#"SELECT EXISTS (SELECT 1 FROM media_removed_hashes WHERE sha256 = $1) AS "removed!""#,
+        sqlx::query_scalar!(
+            r#"SELECT EXISTS (SELECT 1 FROM media_removed_hashes
+                              WHERE sha256 = $1 AND blocks_covers) AS "removed!""#,
             &sha256[..]
         )
-        .fetch_one(&mut *conn)
-        .await?;
-        Ok(recorded || is_removed_hash(&mut conn, sha256).await?)
+        .fetch_one(db)
+        .await
     }
 }
 

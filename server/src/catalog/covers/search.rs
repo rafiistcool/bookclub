@@ -252,8 +252,9 @@ async fn candidate_state(
     }))
 }
 
-/// The lowest-id edition of the work whose cover is usable (not removed, gone or failing),
-/// with that cover's provenance.
+/// The lowest-id edition of the work whose cover is usable (not removed, gone or failing, and
+/// not the bytes of a cover picture a takedown judged: another reader's copy of it), with that
+/// cover's provenance.
 async fn edition_cover(
     conn: &mut PgConnection,
     work_id: i64,
@@ -264,6 +265,8 @@ async fn edition_cover(
            FROM editions e JOIN media m ON m.id = e.cover_media_id
            WHERE e.work_id = $1 AND m.removed_at IS NULL AND m.ol_gone_at IS NULL
              AND NOT (m.storage_key IS NULL AND m.fetch_failed_at IS NOT NULL)
+             AND NOT EXISTS (SELECT 1 FROM media_removed_hashes h
+                             WHERE h.sha256 = m.sha256 AND h.blocks_covers)
            ORDER BY e.id LIMIT 1"#,
         work_id
     )
@@ -481,7 +484,8 @@ pub async fn search_one(
     apply(conn, ctx, &facts, verdict, refused, started).await
 }
 
-/// The cover ids of the answer whose media row is removed or gone.
+/// The cover ids of the answer whose media row is removed or gone, or holds the bytes of a cover
+/// picture a takedown judged.
 async fn unusable_covers(
     conn: &mut PgConnection,
     answer: &CoverAnswer,
@@ -501,8 +505,11 @@ async fn unusable_covers(
         return Ok(HashSet::new());
     }
     Ok(sqlx::query_scalar!(
-        r#"SELECT ol_cover_id AS "ol_cover_id!" FROM media
-           WHERE ol_cover_id = ANY($1) AND (removed_at IS NOT NULL OR ol_gone_at IS NOT NULL)"#,
+        r#"SELECT ol_cover_id AS "ol_cover_id!" FROM media m
+           WHERE ol_cover_id = ANY($1)
+             AND (removed_at IS NOT NULL OR ol_gone_at IS NOT NULL
+                  OR EXISTS (SELECT 1 FROM media_removed_hashes h
+                             WHERE h.sha256 = m.sha256 AND h.blocks_covers))"#,
         &ids
     )
     .fetch_all(conn)

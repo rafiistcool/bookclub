@@ -470,6 +470,171 @@ async fn a_taken_down_picture_never_comes_back_under_another_cover_id(db: PgPool
     );
 }
 
+/// Uploads `bytes` as a reader's cover of `work` (for `edition`), and returns the media id.
+async fn upload_cover(
+    app: &TestApp,
+    reader: &TestClient,
+    work: i64,
+    edition: Option<i64>,
+    bytes: Vec<u8>,
+) -> i64 {
+    let mut parts = vec![Part::file("cover.jpg", "image/jpeg", bytes)];
+    if let Some(edition) = edition {
+        parts.push(Part::text("edition_id", &edition.to_string()));
+    }
+    reader
+        .post_multipart(&format!("/api/books/works/{work}/cover"), parts)
+        .await
+        .assert_status(200);
+    app.scalar_i64("SELECT max(id) FROM media WHERE source = 'upload'")
+        .await
+}
+
+/// Reports a cover for `reason` and has an admin remove it.
+async fn report_and_remove(app: &TestApp, media_id: i64, reason: &str) {
+    let reporter = app.user(&format!("reporter{media_id}")).await;
+    let public_id: String = sqlx::query_scalar("SELECT public_id FROM media WHERE id = $1")
+        .bind(media_id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    let res = reporter
+        .post(
+            &format!("/api/media/{public_id}/reports"),
+            json!({"reason": reason}),
+        )
+        .await;
+    res.assert_status(201);
+    let report = res.json()["id"].as_i64().unwrap();
+    app.admin(&format!("admin{media_id}"))
+        .await
+        .post(
+            &format!("/api/admin/reports/{report}/resolve"),
+            json!({"action": "remove"}),
+        )
+        .await
+        .assert_status(200);
+}
+
+async fn removed(app: &TestApp, media_id: i64) -> bool {
+    app.scalar_i64(&format!(
+        "SELECT count(*) FROM media WHERE id = {media_id} AND removed_at IS NOT NULL"
+    ))
+    .await
+        == 1
+}
+
+/// A reader uploads one file for two editions of a book; its cover is reported and taken down.
+/// The copy on the other edition goes with it, so the search cannot put it back on the book
+/// (security review: the inherit step brought a live copy of the taken-down picture back).
+#[sqlx::test]
+async fn a_takedown_takes_the_readers_copy_on_another_edition_with_it(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let work = app.ol_work("OL5W", "Circe", "Madeline Miller").await;
+    use_work(&app, work.id).await;
+    let first = app.edition(&work, "9783161484100").await;
+    let second = app.edition(&work, "9780306406157").await;
+    let reader = app.user("rita").await;
+    let bytes = jpeg([200, 0, 120]);
+    let shown = upload_cover(&app, &reader, work.id, Some(first.id), bytes.clone()).await;
+    let copy = upload_cover(&app, &reader, work.id, Some(second.id), bytes).await;
+    assert_ne!(shown, copy);
+    assert_eq!(cover_of(&app, work.id).await, Some((0, "user".into())));
+
+    report_and_remove(&app, shown, "offensive").await;
+    assert!(removed(&app, copy).await, "the copy went with it");
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM editions WHERE work_id = {} AND cover_media_id IS NOT NULL",
+            work.id
+        ))
+        .await,
+        0
+    );
+    let report = run_job(&app).await;
+    assert_eq!(report.inherited, 0, "{report:?}");
+    assert_eq!(cover_of(&app, work.id).await, None);
+}
+
+/// A takedown that only said the cover shows another book leaves the picture to its own book:
+/// the same bytes as another book's Open Library cover are still fetched and shown there. The
+/// reader's copy on the same book goes with it.
+#[sqlx::test]
+async fn a_wrong_book_takedown_leaves_the_picture_to_its_own_book(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let bytes = jpeg([30, 90, 160]);
+    serve_cover(&app, 611, 200, bytes.clone()).await;
+    let own = legacy_work(&app, "Momo", "Michael Ende").await;
+    let genuine = ol_media(&app, 611).await;
+    set_cover(&app, CoverTarget::Work(own), genuine, Source::OpenLibrary).await;
+
+    let wrong = app.ol_work("OL6W", "Circe", "Madeline Miller").await;
+    use_work(&app, wrong.id).await;
+    let first = app.edition(&wrong, "9783161484100").await;
+    let second = app.edition(&wrong, "9780306406157").await;
+    let reader = app.user("rita").await;
+    let shown = upload_cover(&app, &reader, wrong.id, Some(first.id), bytes.clone()).await;
+    let copy = upload_cover(&app, &reader, wrong.id, Some(second.id), bytes).await;
+    report_and_remove(&app, shown, "wrong_book").await;
+    assert!(removed(&app, copy).await, "the copy on the same book went with it");
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM media_removed_hashes WHERE blocks_covers")
+            .await,
+        0
+    );
+
+    assert_eq!(
+        app.state
+            .media_service
+            .ensure_cover(&app.db, genuine, RetryPolicy::MEDIA)
+            .await,
+        CoverOutcome::Stored
+    );
+    assert_eq!(cover_of(&app, own).await, Some((611, "openlibrary".into())));
+    assert!(search_row(&app, own).await.is_none_or(|row| !row.takedown));
+}
+
+/// A profile picture's takedown blocks the same file as a profile picture or an upload, but not
+/// as a book's Open Library cover.
+#[sqlx::test]
+async fn a_profile_pictures_takedown_leaves_book_covers_alone(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let bytes = jpeg([10, 160, 60]);
+    serve_cover(&app, 621, 200, bytes.clone()).await;
+    let work = legacy_work(&app, "Momo", "Michael Ende").await;
+    let genuine = ol_media(&app, 621).await;
+    set_cover(&app, CoverTarget::Work(work), genuine, Source::OpenLibrary).await;
+    let reader = app.user("rita").await;
+    let res = reader
+        .put_multipart(
+            "/api/auth/me/avatar",
+            vec![Part::file("me.jpg", "image/jpeg", bytes)],
+        )
+        .await;
+    res.assert_status(200);
+    let avatar = res.json()["avatar_url"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("/media/")
+        .and_then(|rest| rest.strip_suffix("/a"))
+        .unwrap()
+        .to_owned();
+    app.admin("root")
+        .await
+        .delete(&format!("/api/admin/media/{avatar}"))
+        .await
+        .assert_status(204);
+
+    assert_eq!(
+        app.state
+            .media_service
+            .ensure_cover(&app.db, genuine, RetryPolicy::MEDIA)
+            .await,
+        CoverOutcome::Stored
+    );
+    assert_eq!(cover_of(&app, work).await, Some((621, "openlibrary".into())));
+}
+
 /// The dead check: a failing picture a day old that answers 404 again is gone, while the
 /// cover server serves a picture we know. It is cleared from the work and from an edition,
 /// which then shows the work's new cover; a refresh of the Open Library record does not bring

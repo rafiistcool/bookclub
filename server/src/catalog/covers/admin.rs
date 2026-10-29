@@ -404,8 +404,11 @@ pub async fn approve_cover_suggestion(
     }
     let mut tx = conn.begin().await?;
     let media = sqlx::query!(
-        r#"SELECT id, removed_at IS NOT NULL OR ol_gone_at IS NOT NULL AS "unusable!"
-           FROM media WHERE ol_cover_id = $1 FOR SHARE"#,
+        r#"SELECT id,
+                  removed_at IS NOT NULL OR ol_gone_at IS NOT NULL
+                  OR EXISTS (SELECT 1 FROM media_removed_hashes h
+                             WHERE h.sha256 = m.sha256 AND h.blocks_covers) AS "unusable!"
+           FROM media m WHERE ol_cover_id = $1 FOR SHARE"#,
         row.ol_cover_id
     )
     .fetch_optional(&mut *tx)
