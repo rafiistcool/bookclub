@@ -354,6 +354,11 @@ pub enum Reported<'a> {
     Cover(Option<&'a str>),
     /// A profile picture.
     Avatar,
+    /// A profile picture its owner had replaced or deleted while it was reported (held for the
+    /// decision, `media/avatar.rs`): the owner's current picture is another one, or none.
+    /// Reporters read it as [`Reported::Avatar`]; the owner's statement says that it was an
+    /// earlier picture, so they do not take their current one for removed.
+    EarlierAvatar,
     /// A book a reader added, by its title.
     Work(&'a str),
     /// An edition a reader added, by its book's title.
@@ -395,7 +400,9 @@ pub fn report_decision(
                 format!("das Coverbild von „{title}“, das du gemeldet hast,")
             }
             Reported::Cover(None) => "das Coverbild, das du gemeldet hast,".to_owned(),
-            Reported::Avatar => "das Profilbild, das du gemeldet hast,".to_owned(),
+            Reported::Avatar | Reported::EarlierAvatar => {
+                "das Profilbild, das du gemeldet hast,".to_owned()
+            }
             Reported::Work(title) => format!("das Buch „{title}“, das du gemeldet hast,"),
             Reported::Edition(title) => {
                 format!("die Ausgabe von „{title}“, die du gemeldet hast,")
@@ -464,7 +471,9 @@ pub fn report_decision(
                 format!("the cover picture of \"{title}\" you reported")
             }
             Reported::Cover(None) => "the cover picture you reported".to_owned(),
-            Reported::Avatar => "the profile picture you reported".to_owned(),
+            Reported::Avatar | Reported::EarlierAvatar => {
+                "the profile picture you reported".to_owned()
+            }
             Reported::Work(title) => format!("the book \"{title}\" you reported"),
             Reported::Edition(title) => format!("the edition of \"{title}\" you reported"),
         };
@@ -558,6 +567,16 @@ pub fn statement_of_reasons(
                  noch einmal hochgeladen werden. In den Einstellungen kannst du ein anderes \
                  wählen.",
             ),
+            Reported::EarlierAvatar => (
+                format!(
+                    "Ein früheres Profilbild von dir bei {} wurde entfernt",
+                    site.service
+                ),
+                "ein früheres Profilbild von dir".to_owned(),
+                "Du hattest dieses Bild schon ersetzt oder gelöscht; dein Profil, wie es jetzt \
+                 ist, ändert sich nicht. Das entfernte Bild kann nicht noch einmal hochgeladen \
+                 werden.",
+            ),
             Reported::Work(title) => (
                 format!(
                     "Ein Buch, das du bei {} eingetragen hast, wurde entfernt",
@@ -625,6 +644,15 @@ pub fn statement_of_reasons(
                 "your profile picture".to_owned(),
                 "The picture no longer shows on your profile, and the same picture cannot be \
                  uploaded again. You can choose another one in Settings.",
+            ),
+            Reported::EarlierAvatar => (
+                format!(
+                    "An earlier profile picture of yours on {} was removed",
+                    site.service
+                ),
+                "an earlier profile picture of yours".to_owned(),
+                "You had already replaced or deleted this picture, so your profile as it is now \
+                 does not change. The removed picture cannot be uploaded again.",
             ),
             Reported::Work(title) => (
                 format!("A book you added on {} was removed", site.service),
@@ -1177,5 +1205,57 @@ mod tests {
                 .contains("Die Nutzungsbedingungen: https://books.example.com/terms")
         );
         assert!(de.text.contains("schreib an abuse@books.example.com;"));
+    }
+
+    /// A held profile picture (its owner had replaced or deleted it while it was reported) is
+    /// named as an earlier picture, so the owner does not read that their current one is gone.
+    /// Its reporters read it like any profile picture.
+    #[test]
+    fn the_statement_for_an_earlier_profile_picture_says_so() {
+        let en = statement_of_reasons(
+            SITE,
+            to("en"),
+            Reported::EarlierAvatar,
+            Some("offensive"),
+            None,
+        );
+        assert_eq!(
+            en.subject,
+            "An earlier profile picture of yours on Bookclub was removed"
+        );
+        assert!(
+            en.text
+                .contains("an admin of Bookclub removed an earlier profile picture of yours.")
+        );
+        assert!(en.text.contains(
+            "You had already replaced or deleted this picture, so your profile as it is now does \
+             not change."
+        ));
+        assert!(!en.text.contains("no longer shows on your profile"));
+        let de = statement_of_reasons(
+            SITE,
+            to("de"),
+            Reported::EarlierAvatar,
+            Some("offensive"),
+            None,
+        );
+        assert_eq!(
+            de.subject,
+            "Ein früheres Profilbild von dir bei Bookclub wurde entfernt"
+        );
+        assert!(
+            de.text
+                .contains("ein Admin von Bookclub hat ein früheres Profilbild von dir entfernt.")
+        );
+        assert!(!de.text.contains("erscheint nicht mehr in deinem Profil"));
+        let reporter = report_decision(
+            SITE,
+            to("en"),
+            Reported::EarlierAvatar,
+            Outcome::Removed,
+            None,
+        );
+        let plain = report_decision(SITE, to("en"), Reported::Avatar, Outcome::Removed, None);
+        assert_eq!(reporter.text, plain.text);
     }
 }

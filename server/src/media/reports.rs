@@ -597,6 +597,7 @@ pub async fn resolve_report(
                 removed: remove && decided.changed,
                 gone: decided.merged,
                 held: false,
+                earlier: false,
             })
         }
         _ => {
@@ -626,12 +627,14 @@ pub async fn resolve_report(
                 Some(media_id) if remove => {
                     prefixes =
                         take_down_locked(&mut tx, state.media.as_ref(), media_id, admin.id).await?;
+                    let owner = uploader(&mut tx, media_id).await?;
                     Decision {
                         title,
-                        owner: uploader(&mut tx, media_id).await?,
+                        owner,
                         removed: !prefixes.is_empty(),
                         gone,
                         held,
+                        earlier: avatar && !took_current_avatar(&mut tx, owner).await?,
                     }
                 }
                 _ => Decision {
@@ -640,6 +643,7 @@ pub async fn resolve_report(
                     removed: false,
                     gone,
                     held,
+                    earlier: false,
                 },
             })
         }
@@ -683,9 +687,14 @@ pub async fn resolve_report(
     if !ours {
         return Err(AppError::conflict(REPORT_RESOLVED));
     }
-    let what = decision
-        .as_ref()
-        .and_then(|decision| reported(&report.target_kind, decision.title.as_deref()));
+    let what = decision.as_ref().and_then(|decision| {
+        let kind = if decision.earlier {
+            "earlier_avatar"
+        } else {
+            report.target_kind.as_str()
+        };
+        reported(kind, decision.title.as_deref())
+    });
     let notices = match (&decision, what) {
         (Some(decision), Some(what)) => {
             let removal = decision.removed.then_some(Removal {
@@ -730,6 +739,25 @@ struct Decision {
     /// A profile picture its owner replaced or deleted while it was reported, kept for this
     /// decision (`media/avatar.rs`).
     held: bool,
+    /// A profile picture taken down that is not the owner's current one (a held picture, its
+    /// copy not taken down with it): the statement names it as an earlier picture.
+    earlier: bool,
+}
+
+/// Whether this transaction took down the profile picture `owner` shows now. False after the
+/// takedown of a held picture: the owner had replaced or deleted it, and their current picture,
+/// if any, stays (unless it was a copy of the same file, which the takedown takes down too).
+async fn took_current_avatar(conn: &mut PgConnection, owner: Option<i64>) -> sqlx::Result<bool> {
+    let Some(owner) = owner else {
+        return Ok(false);
+    };
+    sqlx::query_scalar!(
+        r#"SELECT EXISTS (SELECT 1 FROM users u JOIN media m ON m.id = u.avatar_media_id
+                          WHERE u.id = $1 AND m.removed_at = now()) AS "taken!""#,
+        owner
+    )
+    .fetch_one(conn)
+    .await
 }
 
 /// Locks the owner of a profile picture (`FOR KEY SHARE`) before the picture, as every path that
@@ -802,11 +830,13 @@ async fn lock_picture(conn: &mut PgConnection, media_id: i64, remove: bool) -> s
     Ok(row.is_some())
 }
 
-/// What a decision's notices name: a cover (with its book's title), a profile picture, or a
-/// work or edition by its title before the decision. `None` for a work or edition that is gone.
+/// What a decision's notices name: a cover (with its book's title), a profile picture (an
+/// earlier one: `earlier_avatar`), or a work or edition by its title before the decision. `None`
+/// for a work or edition that is gone.
 fn reported<'a>(kind: &str, title: Option<&'a str>) -> Option<Reported<'a>> {
     match kind {
         "avatar" => Some(Reported::Avatar),
+        "earlier_avatar" => Some(Reported::EarlierAvatar),
         "work" => title.map(Reported::Work),
         "edition" => title.map(Reported::Edition),
         _ => Some(Reported::Cover(title)),
@@ -918,10 +948,13 @@ pub async fn take_down(
         };
         record_notice(&mut tx, target, notice, picture.removed_at, admin.id).await?;
     }
-    let what = if avatar {
+    let what = if !avatar {
+        Reported::Cover(title.as_deref())
+    } else if took_current_avatar(&mut tx, picture.uploaded_by).await? {
         Reported::Avatar
     } else {
-        Reported::Cover(title.as_deref())
+        // A held picture (by the id the admin queue shows), or one taken down before.
+        Reported::EarlierAvatar
     };
     // Only a picture that was up gets a statement: a removed one lost nothing now.
     let removal = (!prefixes.is_empty()).then_some(Removal {

@@ -1899,10 +1899,59 @@ async fn a_reported_avatar_its_owner_replaces_is_held_for_the_decision(db: PgPoo
         assert_eq!(mails.len(), 1, "{reporter}");
         assert_eq!(mails[0].subject, "Your report on Bookclub: removed");
     }
+    // An earlier picture, not the one Ada shows now (E2E check of the ADM2 merge).
     let to_ada = mails_to(&app, "ada");
     assert_eq!(to_ada.len(), 1);
     assert_eq!(
         to_ada[0].subject,
+        "An earlier profile picture of yours on Bookclub was removed"
+    );
+    assert!(
+        to_ada[0]
+            .text
+            .contains("You had already replaced or deleted this picture"),
+        "{}",
+        to_ada[0].text
+    );
+}
+
+/// A held profile picture taken down directly, by the id the admin queue shows (`DELETE
+/// /api/admin/media/{public_id}`), is named as an earlier picture too.
+#[sqlx::test]
+async fn a_direct_takedown_of_a_held_avatar_names_an_earlier_picture(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let root = app.admin("root").await;
+    let club = app.club(&ada, "Readers").await;
+    app.join(&club, &bob, "member").await;
+    let old = upload_avatar(&ada, [10, 120, 200]).await;
+    report(&bob, &old, json!({"reason": "offensive"}))
+        .await
+        .assert_status(201);
+    let new = upload_avatar(&ada, [200, 30, 30]).await;
+    let held = avatar_id(&root.get("/api/admin/reports").await.json()["items"][0]);
+    root.delete(&format!("/api/admin/media/{held}"))
+        .await
+        .assert_status(204);
+    let to_ada = mails_to(&app, "ada");
+    assert_eq!(to_ada.len(), 1);
+    assert_eq!(
+        to_ada[0].subject,
+        "An earlier profile picture of yours on Bookclub was removed"
+    );
+    assert_eq!(
+        ada.get("/api/auth/me").await.json()["avatar_url"],
+        format!("/media/{new}/a")
+    );
+    // Ada's current picture taken down directly is hers as she shows it.
+    root.delete(&format!("/api/admin/media/{new}"))
+        .await
+        .assert_status(204);
+    let to_ada = mails_to(&app, "ada");
+    assert_eq!(to_ada.len(), 2);
+    assert_eq!(
+        to_ada[1].subject,
         "Your profile picture on Bookclub was removed"
     );
 }
@@ -1954,7 +2003,13 @@ async fn an_avatar_uploaded_again_while_reported_comes_down_with_it(db: PgPool) 
     )
     .await
     .assert_detail(400, "This picture was removed");
-    assert_eq!(mails_to(&app, "ada").len(), 1, "one statement of reasons");
+    let to_ada = mails_to(&app, "ada");
+    assert_eq!(to_ada.len(), 1, "one statement of reasons");
+    // The copy was the picture she showed, so the statement names her profile picture.
+    assert_eq!(
+        to_ada[0].subject,
+        "Your profile picture on Bookclub was removed"
+    );
 }
 
 /// "Dismiss" on a held profile picture deletes it with its files: it is no longer anyone's
