@@ -4,7 +4,7 @@ Owner: ADM2. These notes record what the second admin package built, where it de
 
 Built with Rafael's answers of 2026-10-29 (work plan §4): Q11 = B (reports on covers, profile pictures and the works and editions readers added), Q12 = A (the app mails the decision and the statement of reasons), Q15 = the suspend flag, Q17 = A (no per-address login lockout, nothing to build).
 
-Status: **done, except one test that needs a file outside ADM2's list.** Part 1 (fdb9674) built the server; part 2 (4af44ba) the SPA (`ReportSheet.vue`, the "Report" actions, `AdminReports` for every kind, the "Accounts" tab, the takedown form without its avatar fallback) and `docs/legal/takedown.md`; part 3 (0331a5a) the review fixes (see "Review round"); part 4 the ownership gate (see "Gate round (part 4)"): every file outside ADM2's list is back to `phase-2`'s version, and the shared catalogs and `apiErrors.ts` only add lines. That leaves `server/tests/parity_visibility.rs` red until the integrator adds three rows (**blocked_on_frozen**, below). See "Part 2: the SPA" and "Left undone".
+Status: **done, except one test that needs a file outside ADM2's list.** Part 1 (fdb9674) built the server; part 2 (4af44ba) the SPA (`ReportSheet.vue`, the "Report" actions, `AdminReports` for every kind, the "Accounts" tab, the takedown form without its avatar fallback) and `docs/legal/takedown.md`; part 3 (0331a5a) the review fixes (see "Review round"); part 4 the ownership gate (see "Gate round (part 4)"): every file outside ADM2's list is back to `phase-2`'s version, and the shared catalogs and `apiErrors.ts` only add lines. That leaves `server/tests/parity_visibility.rs` red until the integrator adds three rows (**blocked_on_frozen**, below); part 5 re-ran the gate on it and changed no code (see "Gate round (part 5)"). See "Part 2: the SPA" and "Left undone".
 
 ## Migrations
 
@@ -263,6 +263,17 @@ The gate refused six files outside ADM2's list or against the add-only rule. Eac
 Changed in ADM2's files for this: `ReportCoverSheet.vue` (new wrapper), `ReportSheet.vue` (the `cover.*` keys, a title per kind), `BookDetailPage.vue` (the cover sheet back as before ADM2, `reportingBook` for a book), `AdminPage.vue`, `AdminReports.vue`, `AdminTakeDown.vue` (the new keys), `media/reports.rs` (the retired constant), `docs/legal/takedown.md` (names the cover sheet). No query, DTO or route changed: `server/.sqlx/` and `generated.ts` are as part 3 left them.
 
 Checks after part 4: `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo sqlx prepare --check -- --all-targets` pass; `cargo test --locked --no-fail-fast` passes 1354 of 1355 tests in 90 binaries, the one failure is `parity_visibility::every_personal_column_route_and_rating_field_is_in_the_matrix` (the three rows above). `npm run check:api`, `npm run typecheck`, `npm test` (473 tests in 73 files) and `npm run build` pass. Not checked in a browser: the sheet and the admin page render what part 2 showed with the same texts; the component tests mount the real book page, sheets and admin page.
+
+## Gate round (part 5)
+
+The gate failed on that one test, `parity_visibility::every_personal_column_route_and_rating_field_is_in_the_matrix`, and nothing else. Part 5 changes no code: the fix is the three rows under "For the integrator" (blocked_on_frozen), in a file outside ADM2's list, and every way to pass the test from ADM2's own files dodges it or goes against the plan:
+
+- dropping the foreign key of `reports.target_user_id` (or making it composite) takes the column out of both completeness checks (`parity_visibility.rs` and `auth_export.rs`), and a deleted account's id would stay in `reports`;
+- renaming the path parameter of `POST /api/admin/users/{username}/suspend` and `/unsuspend` (or moving the name into the body, or leaving it out of the utoipa `params`) changes the plan's paths (§2.1 rule 5) only to hide a `username` route from the check that exists to classify it.
+
+Re-checked in part 5, against a freshly reset package database: with the three rows put into `parity_visibility.rs` for one run, `cargo fmt --check` and `cargo test --locked --test parity_visibility` pass (3 of 3); the file is back to `phase-2`'s version afterwards. Without them, `cargo test --locked --no-fail-fast` passes 1354 of 1355 tests in 90 binaries, the failure being exactly the three lines quoted under "For the integrator". `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo sqlx prepare -- --all-targets` (no change to `server/.sqlx/`) and `cargo sqlx prepare --check -- --all-targets` pass; `npm run gen:api` (no change to `generated.ts`), `npm run check:api`, `npm run typecheck`, `npm test` (473 tests in 73 files) and `npm run build` pass.
+
+The suggested amendment stands: a package that adds a foreign key to `users` or a route with a `username` parameter owns the add-only rows of `parity_visibility.rs`, as amendment 19 gives ADM2 `auth_export.rs` for the same reason. With it, ADM2 adds the three rows and the branch is green.
 
 ## Left undone
 
