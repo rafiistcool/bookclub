@@ -232,7 +232,7 @@ A security review of branch `phase-2` after Wave 1 (DEP #51, GATE #55, ADM #54, 
 |---|---|---|---|
 | 1 | medium | Repeat reports skipped the rate limit but still locked the picture row, so one account could block a takedown | Fixed in `f3556d6` |
 | 2 | low | The release job held the registry write token and the host's Docker daemon while it ran actions referenced by tags that can be moved | Fixed in `9754dec` (the actions are pinned); the token is Rafael's decision, see below |
-| 3 | low | Root on the app VM can delete every backup | Not fixed: needs Rafael's decision, see below |
+| 3 | low | Root on the app VM can delete every backup | Option A chosen (2026-10-29), set up with the VM; see below |
 
 ### 1. [medium] Repeat reports held off a takedown
 
@@ -279,7 +279,7 @@ The verifiers corrected two details:
 - **(B) rest-server `--append-only`.** Runs on a host the VM cannot log in to. `backup.sh` stops pruning, and that host prunes instead.
 - **(C) An S3 bucket with object lock.** Changes `RESTIC_REPOSITORY` and the provider.
 
-(A) is the smallest step. Until one is chosen, the off-site copy protects against losing the VM, not against someone who controls it.
+(A) is the smallest step. **Rafael chose (A) on 2026-10-29**; `deploy/hosted/README.md` ("Backups") describes the snapshot setup. Until the snapshots run, the off-site copy protects against losing the VM, not against someone who controls it.
 
 ### Rejected
 

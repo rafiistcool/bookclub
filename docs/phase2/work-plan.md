@@ -591,6 +591,14 @@ All five run in parallel. They need no answer from Rafael. Where an answer is st
 
 Ordered by how much work each answer unblocks. "Take the recommendations" is a valid answer to all of them.
 
+**Answers (2026-10-29).** Rafael took the recommendations for now; everything that matters only once the service goes live is decided then.
+- **Built in Wave 2:** Q8 A (pull deploys, DEP2), Q11 B, Q12 A and Q15 (the suspend flag) in ADM2, Q14 A in LEG2. Q12's targets stay "to confirm" by the legal source.
+- **Taken, nothing to build:** Q2 A, Q3 (all texts at #52), Q16 A, Q17 A, Q18 A. Q5 A, Q9 and Q13 A were built in Wave 1.
+- **Done on 2026-10-29:** Q6 A (branch `legacy-python` and annotated tag `legacy-python-final` at 1c5efe3 are on Forgejo; neither started a run), and D9 for #27 and #29 (closed).
+- **Option chosen, real values later:** Q4 Brevo (account, DNS and DPA once the domain exists), Q7 A (the Caddy IP goes into `TRUSTED_PROXIES` once the VM exists), Q10 A (the monitor account comes with the VM).
+- **Deferred:** Q1, the name. I prepare `docs/phase2/name-check.md` as a first pass; BRAND waits for the choice. The production facts of §5 item 2 wait too: CUT2's rehearsal assumes them, and its notes say how.
+- **Backups** (security review, Phase 2 Wave 1 finding 3): option A, Storage Box snapshots. DEP2 documents the setup.
+
 **Q1. Which public name (#50)?**
 - **Options:** Eselsohr, Shelfmates, Marginalia, Lesezirkel, or another name.
 - **Recommendation:** let me first prepare `docs/phase2/name-check.md`: domains (.de, .app, .com), App Store and Play Store, and a first DPMA and EUIPO search. Then you decide and confirm the trademark search. The name gates mail DNS, the Impressum, `PUBLIC_URL`, the cutover and #55.
