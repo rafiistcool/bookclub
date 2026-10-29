@@ -2,7 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
-import { bookDetail, edition, shelfItem, user } from "../test/fixtures";
+import { bookDetail, bookOut, edition, shelfItem, user } from "../test/fixtures";
 import type { BookDetail, ClubSummary } from "../types";
 
 const book = vi.fn();
@@ -15,6 +15,8 @@ const editions = vi.fn();
 const requestWorkEdit = vi.fn();
 const diary = vi.fn();
 const nominate = vi.fn();
+const uploadCover = vi.fn();
+const adminSetCover = vi.fn();
 
 vi.mock("../api/client", () => ({
   ApiError: class ApiError extends Error {
@@ -38,6 +40,8 @@ vi.mock("../api/client", () => ({
     requestWorkEdit: (...args: unknown[]) => requestWorkEdit(...args),
     diary: (...args: unknown[]) => diary(...args),
     nominate: (...args: unknown[]) => nominate(...args),
+    uploadCover: (...args: unknown[]) => uploadCover(...args),
+    adminSetCover: (...args: unknown[]) => adminSetCover(...args),
   },
 }));
 
@@ -61,7 +65,7 @@ function detail(overrides: Partial<BookDetail> = {}): BookDetail {
   });
 }
 
-async function mountBook(path = "/book/4", clubs: ClubSummary[] = []) {
+async function mountBook(path = "/book/4", clubs: ClubSummary[] = [], isAdmin = false) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: "/book/:id", component: BookDetailPage }],
@@ -70,7 +74,7 @@ async function mountBook(path = "/book/4", clubs: ClubSummary[] = []) {
   await router.isReady();
   const pinia = createPinia();
   setActivePinia(pinia);
-  useSession().user = user({ clubs });
+  useSession().user = user({ clubs, is_admin: isAdmin });
   const wrapper = mount(BookDetailPage, {
     global: { plugins: [pinia, router] },
   });
@@ -84,7 +88,7 @@ function button(wrapper: Awaited<ReturnType<typeof mountBook>>["wrapper"], label
 
 describe("BookDetailPage", () => {
   beforeEach(() => {
-    for (const mock of [book, addFavorite, removeFavorite, addToShelf, patchShelf, removeFromShelf, editions, requestWorkEdit, diary, nominate]) {
+    for (const mock of [book, addFavorite, removeFavorite, addToShelf, patchShelf, removeFromShelf, editions, requestWorkEdit, diary, nominate, uploadCover, adminSetCover]) {
       mock.mockReset();
     }
     book.mockResolvedValue(detail());
@@ -207,6 +211,77 @@ describe("BookDetailPage", () => {
     const covered = await mountBook();
     await button(covered.wrapper, "Report cover")!.trigger("click");
     expect(covered.wrapper.text()).toContain("Report this cover");
+  });
+
+  it("asks a reader with a catalog book on the shelf for a photo in place of the small link", async () => {
+    const shelved = { custom: false, source: "legacy" as const, shelf_id: 30, on_shelf: "want_to_read" as const, edition_id: 12 };
+    // Off the shelf: only the small link under the cloth.
+    book.mockResolvedValue(detail({ custom: false, source: "legacy" }));
+    const browsing = await mountBook();
+    expect(browsing.wrapper.find(".cover-prompt").exists()).toBe(false);
+    expect(browsing.wrapper.get(".hero-cover .cover-photo").text()).toBe("Add a photo of your copy");
+    browsing.wrapper.unmount();
+
+    book.mockResolvedValue(detail(shelved));
+    const { wrapper } = await mountBook();
+    expect(wrapper.find(".hero-cover .cover-photo").exists()).toBe(false);
+    const prompt = wrapper.get(".cover-prompt");
+    expect(prompt.text()).toContain("This book has no cover yet");
+    const covered = bookOut({ id: 4, cover_url: "/media/new/l", cover_thumb_url: "/media/new/s", cover_public_id: "new" });
+    uploadCover.mockResolvedValue({ book: covered });
+    const input = prompt.get("input[type=file]");
+    const photo = new File(["x"], "front.jpg", { type: "image/jpeg" });
+    Object.defineProperty(input.element, "files", { value: [photo], configurable: true });
+    await input.trigger("change");
+    await flushPromises();
+    expect(uploadCover).toHaveBeenCalledWith(4, photo, 12);
+    // The page shows the new cover: the prompt goes, and the cover can be reported.
+    expect(wrapper.find(".cover-prompt").exists()).toBe(false);
+    expect(button(wrapper, "Report cover")).toBeTruthy();
+    expect(wrapper.get(".hero-cover .cover-photo").text()).toBe("Suggest a photo of your copy");
+  });
+
+  it("leaves a book a reader added with the small link, on the shelf or not", async () => {
+    book.mockResolvedValue(detail({ shelf_id: 30, on_shelf: "finished" }));
+    const { wrapper } = await mountBook();
+    expect(wrapper.find(".cover-prompt").exists()).toBe(false);
+    expect(wrapper.get(".hero-cover .cover-photo").text()).toBe("Add a photo of your copy");
+  });
+
+  it("lets an instance admin set the book's or their edition's cover directly", async () => {
+    const reader = await mountBook();
+    expect(reader.wrapper.find(".admin-set-cover").exists()).toBe(false);
+    reader.wrapper.unmount();
+
+    book.mockResolvedValue(detail({ custom: false, source: "dnb", shelf_id: 30, on_shelf: "finished", edition_id: 12 }));
+    const { wrapper } = await mountBook("/book/4", [], true);
+    expect(wrapper.get(".admin-set-cover").text()).toBe("Set cover as admin");
+    expect(wrapper.get(".admin-set-edition-cover").text()).toBe("Set your edition's cover as admin");
+
+    const covered = bookOut({ id: 4, cover_url: "/media/adm/l", cover_thumb_url: "/media/adm/s", cover_public_id: "adm" });
+    adminSetCover.mockResolvedValue({ book: covered });
+    const input = wrapper.get(".admin-set-cover input[type=file]");
+    const picture = new File(["x"], "cover.png", { type: "image/png" });
+    Object.defineProperty(input.element, "files", { value: [picture], configurable: true });
+    await input.trigger("change");
+    await flushPromises();
+    expect(adminSetCover).toHaveBeenCalledWith(4, picture, null);
+    expect(useToast().items.at(-1)?.message).toBe("The cover is set for everyone");
+    expect(wrapper.find(".cover-prompt").exists()).toBe(false);
+
+    // The edition's cover: the page reads the book again for what it shows now.
+    book.mockClear();
+    const { cover_url, cover_thumb_url, cover_public_id } = covered;
+    book.mockResolvedValue(
+      detail({ custom: false, source: "dnb", shelf_id: 30, on_shelf: "finished", edition_id: 12, cover_url, cover_thumb_url, cover_public_id }),
+    );
+    adminSetCover.mockResolvedValue({ book: covered });
+    const editionInput = wrapper.get(".admin-set-edition-cover input[type=file]");
+    Object.defineProperty(editionInput.element, "files", { value: [picture], configurable: true });
+    await editionInput.trigger("change");
+    await flushPromises();
+    expect(adminSetCover).toHaveBeenLastCalledWith(4, picture, 12);
+    expect(book).toHaveBeenCalledWith(4);
   });
 
   it("suggests a correction of the book's details with only what changed", async () => {

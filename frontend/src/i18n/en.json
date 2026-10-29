@@ -25,7 +25,12 @@
     "photoUploading": "Uploading…",
     "photoSet": "Your photo is the cover now",
     "photoQueued": "Thanks. An admin will look at your photo.",
-    "photoFailed": "Could not upload the photo"
+    "photoFailed": "Could not upload the photo",
+    "prompt": {
+      "title": "This book has no cover yet",
+      "body": "It's on your shelf. If you have your copy at hand, a photo of its front gives the book a cover for everyone. Photograph only the cover.",
+      "action": "Add a photo of the cover"
+    }
   },
   "report": {
     "action": {
@@ -704,7 +709,8 @@
     "reportResolved": "Someone already closed this report",
     "invalidValueFor": "That value of “{field}” cannot be used",
     "reportedBookMerged": "This book was merged into another one since it was reported. Close the report, and correct the other book with “Edit as admin” if it took over the reported text.",
-    "pictureGone": "The reported picture is no longer online: its owner replaced or deleted it. Close the report."
+    "pictureGone": "The reported picture is no longer online: its owner replaced or deleted it. Close the report.",
+    "coverExists": "This book has a cover now."
   },
   "physicalShelf": {
     "title": "Your real bookshelf",
@@ -1216,11 +1222,12 @@
   },
   "admin": {
     "title": "Admin",
-    "lede": "What readers asked to change or reported, invites for the closed beta, and suspended accounts.",
+    "lede": "What readers asked to change or reported, covers the search could not settle, invites for the closed beta, and suspended accounts.",
     "sections": "Admin sections",
     "tabs": {
       "requests": "Requests",
       "reports": "Reports",
+      "covers": "Covers",
       "invites": "Invites",
       "users": "Accounts"
     },
@@ -1250,6 +1257,9 @@
     "noChange": "already so",
     "editAsAdmin": "Edit as admin",
     "editEditionAsAdmin": "Edit your edition as admin",
+    "setCover": "Set cover as admin",
+    "setEditionCover": "Set your edition's cover as admin",
+    "coverSet": "The cover is set for everyone",
     "mergeInto": "Merge into:",
     "bookN": "book {id}",
     "approve": "Approve",
@@ -1376,7 +1386,82 @@
       "work": "Merged into this book since it was reported, so the reported text no longer shows on its own. If this book took some of it over, correct it with “Edit as admin”."
     },
     "closeReport": "Close the report",
-    "closedBy": "Closed by {name} · {when}"
+    "closedBy": "Closed by {name} · {when}",
+    "covers": {
+      "title": "Covers",
+      "blurb": "Every catalog and imported book should have a real cover. The search attaches clear matches from Open Library on its own; the uncertain ones wait here for you. Books a reader added keep their cloth until someone uploads a photo.",
+      "views": "Suggestions or books without a cover",
+      "suggestions": "Suggestions",
+      "missing": "Without a cover",
+      "suggestionsBlurb": "Covers the search found but did not attach on its own. “Use this cover” makes the picture the book's cover for everyone; “Not this book” keeps that Open Library book out for good, and the search looks for the next one.",
+      "noSuggestions": "No suggestion waits for you.",
+      "found": "found {when}",
+      "ourBook": "Our book",
+      "candidate": "On Open Library",
+      "noCandidatePicture": "The picture is no longer online",
+      "viewOpenLibrary": "View on Open Library",
+      "reason": {
+        "title_differs": "The titles differ in a subtitle or a series or volume name.",
+        "number_differs": "A number in the title differs: maybe another volume.",
+        "several_works": "Open Library has more than one book of this title by this author.",
+        "generic_title": "A collection title the author has many books of.",
+        "no_author": "Our book names no author.",
+        "after_takedown": "This book's cover was taken down, so a person decides from now on."
+      },
+      "use": "Use this cover",
+      "useConfirm": "Use it for everyone",
+      "useBlurb": "The picture becomes this book's cover for everyone at once, and no catalog source replaces it later.",
+      "reject": "Not this book",
+      "rejectConfirm": "Not this book, for good",
+      "rejectBlurb": "This Open Library book is never suggested for this book again, and the search looks for the next one.",
+      "used": "The cover is set",
+      "rejected": "It won't be suggested again",
+      "status": {
+        "open": "Open",
+        "approved": "Used",
+        "rejected": "Not this book",
+        "closed": "Closed"
+      },
+      "decided": {
+        "approved": "Used as the cover · {when}",
+        "rejected": "Not this book · {when}",
+        "closed": "Closed by the search · {when}: the book got a cover, was merged, or the picture went offline"
+      },
+      "scope": "Books readers use, or all of them",
+      "scopeInUse": "Readers use them",
+      "scopeAll": "All",
+      "missingBlurb": "Catalog and imported books without a usable cover. The search tries them on its own; “Search now” asks Open Library at once, and an upload sets the cover directly.",
+      "noMissing": "Every book here has a cover.",
+      "inUse": "Readers use it",
+      "imported": "Imported",
+      "searchNow": "Search now",
+      "searching": "Searching…",
+      "upload": "Upload a picture",
+      "uploadEdition": "Upload for edition {id}",
+      "openBook": "Open the book",
+      "searchFailed": "Could not search right now",
+      "result": {
+        "attached": "Found it: Open Library's cover is the book's cover now.",
+        "inherited": "The book took the cover of one of its editions.",
+        "isbn": "Open Library had the cover of an edition's ISBN.",
+        "suggested": "Found a possible cover. It waits under Suggestions.",
+        "no_match": "No match on Open Library."
+      },
+      "state": {
+        "photoWaiting": "A reader's photo waits in the Requests tab.",
+        "failing": "Open Library's picture failed to load on {date}.",
+        "failingUndated": "Open Library's picture failed to load.",
+        "failingEdition": "Open Library's picture of edition {id} failed to load on {date}.",
+        "failingEditionUndated": "Open Library's picture of edition {id} failed to load.",
+        "suggestion": "A suggestion waits under Suggestions.",
+        "failures": "Open Library did not answer the last search. | Open Library did not answer the last {n} searches.",
+        "notSearched": "Not searched yet.",
+        "noMatch": "No match on Open Library on {date}.",
+        "searched": "Last searched on {date}.",
+        "nextTry": "Next try on {date}.",
+        "afterTakedown": "After a takedown, the search only suggests."
+      }
+    }
   },
   "notFound": {
     "title": "Page not found",

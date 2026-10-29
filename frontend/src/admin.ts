@@ -1,4 +1,4 @@
-import type { EditRequestOut } from "./api/generated";
+import type { CoverSuggestionOut, EditRequestOut, MissingCoverOut } from "./api/generated";
 import { parseBookParam } from "./constants";
 import { EDITION_FORMATS } from "./editions";
 import { t, tp } from "./i18n";
@@ -202,4 +202,118 @@ export function fromLocalInput(value: string): string | null {
   if (!value) return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+/**
+ * The cover search (#74). A clear match attaches on its own; an uncertain one
+ * waits for an admin as a suggestion with the reason it was not attached
+ * (`CoverSuggestionOut.reason`).
+ */
+export const COVER_REASONS = [
+  "title_differs",
+  "number_differs",
+  "several_works",
+  "generic_title",
+  "no_author",
+  "after_takedown",
+] as const;
+
+/** Why the search left a candidate for an admin, in words; an unknown reason as it is. */
+export function coverReasonLabel(reason: string): string {
+  return (COVER_REASONS as readonly string[]).includes(reason) ? t(`admin.covers.reason.${reason}`) : reason;
+}
+
+export const COVER_SUGGESTION_STATUSES = ["open", "approved", "rejected", "closed"] as const;
+
+/** A suggestion's status as a badge; an unknown status as it is. */
+export function coverStatusLabel(status: string): string {
+  return (COVER_SUGGESTION_STATUSES as readonly string[]).includes(status) ? t(`admin.covers.status.${status}`) : status;
+}
+
+const OL_RECORD_RE = /^OL[0-9]+[WM]$/;
+
+/**
+ * The candidate's page on Open Library, for the admin to compare: its edition
+ * when the picture is an edition's, else its work. Null for an id that is not
+ * one (the server checks them; this keeps the link to openlibrary.org).
+ */
+export function coverCandidateUrl(suggestion: Pick<CoverSuggestionOut, "ol_work_id" | "ol_edition_id">): string | null {
+  const edition = suggestion.ol_edition_id;
+  if (edition && OL_RECORD_RE.test(edition) && edition.endsWith("M")) return `https://openlibrary.org/books/${edition}`;
+  const work = suggestion.ol_work_id;
+  if (OL_RECORD_RE.test(work) && work.endsWith("W")) return `https://openlibrary.org/works/${work}`;
+  return null;
+}
+
+/** The outcomes of "Search now" (`CoverSearchOut.outcome`). */
+export const COVER_SEARCH_OUTCOMES = ["attached", "inherited", "isbn", "suggested", "no_match"] as const;
+
+/** What "Search now" came to, in words. */
+export function coverSearchMessage(outcome: string): string {
+  return (COVER_SEARCH_OUTCOMES as readonly string[]).includes(outcome)
+    ? t(`admin.covers.result.${outcome}`)
+    : t("admin.covers.result.no_match");
+}
+
+/** "Search now" put a cover on the book: it leaves the list of books without one. */
+export function coverFound(outcome: string): boolean {
+  return outcome === "attached" || outcome === "inherited" || outcome === "isbn";
+}
+
+/** Outcomes that recorded a search without a cover or a suggestion. */
+const MISSES = ["no_match", "uncertain", "blocked"];
+
+/**
+ * A book of the "Without a cover" list in words, one line each: what keeps
+ * its cover away (a reader's photo waiting, Open Library's picture failing to
+ * load), a suggestion waiting, how the search went and when it tries next,
+ * and whether a takedown left it to suggestions only. `day` formats a date.
+ */
+export function missingCoverNotes(
+  item: Pick<
+    MissingCoverOut,
+    | "state"
+    | "failing_edition_id"
+    | "failed_at"
+    | "searched_at"
+    | "outcome"
+    | "next_search_at"
+    | "failures"
+    | "after_takedown"
+    | "suggestion_id"
+  >,
+  day: (iso: string) => string,
+  now: number = Date.now(),
+): string[] {
+  const notes: string[] = [];
+  if (item.state === "photo_waiting") notes.push(t("admin.covers.state.photoWaiting"));
+  if (item.state === "failing") {
+    const date = item.failed_at ? day(item.failed_at) : "";
+    if (item.failing_edition_id != null) {
+      notes.push(
+        date
+          ? t("admin.covers.state.failingEdition", { id: item.failing_edition_id, date })
+          : t("admin.covers.state.failingEditionUndated", { id: item.failing_edition_id }),
+      );
+    } else {
+      notes.push(date ? t("admin.covers.state.failing", { date }) : t("admin.covers.state.failingUndated"));
+    }
+  }
+  if (item.suggestion_id != null) {
+    notes.push(t("admin.covers.state.suggestion"));
+  } else if (item.failures > 0) {
+    notes.push(tp("admin.covers.state.failures", item.failures));
+  } else if (!item.searched_at) {
+    notes.push(t("admin.covers.state.notSearched"));
+  } else if (item.outcome && MISSES.includes(item.outcome)) {
+    notes.push(t("admin.covers.state.noMatch", { date: day(item.searched_at) }));
+  } else {
+    notes.push(t("admin.covers.state.searched", { date: day(item.searched_at) }));
+  }
+  if (item.suggestion_id == null && item.next_search_at) {
+    const next = new Date(item.next_search_at).getTime();
+    if (!Number.isNaN(next) && next > now) notes.push(t("admin.covers.state.nextTry", { date: day(item.next_search_at) }));
+  }
+  if (item.after_takedown) notes.push(t("admin.covers.state.afterTakedown"));
+  return notes;
 }
