@@ -71,8 +71,9 @@ CREATE TABLE cover_suggestions (
     authors       text NOT NULL DEFAULT '' CHECK (char_length(authors) <= 2000),
     year          integer NULL CHECK (year BETWEEN -5000 AND 3000),
     language      text NULL CHECK (language ~ '^[a-z]{3}$'),
-    reason        text NOT NULL CHECK (reason IN ('title_differs', 'number_differs', 'several_works',
-                                                  'generic_title', 'no_author', 'after_takedown')),
+    reason        text NOT NULL CHECK (reason IN ('single_record', 'title_differs', 'number_differs',
+                                                  'several_works', 'generic_title', 'no_author',
+                                                  'after_takedown')),
     status        text NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'approved', 'rejected', 'closed')),
     created_at    timestamptz NOT NULL DEFAULT now(),
     decided_at    timestamptz NULL,
@@ -205,7 +206,7 @@ COMMENT ON COLUMN cover_suggestions.year IS
 COMMENT ON COLUMN cover_suggestions.language IS
     'The edition''s language (MARC code), when the picture is an edition''s.';
 COMMENT ON COLUMN cover_suggestions.reason IS
-    'Why it was not attached on its own: title_differs, number_differs, several_works, generic_title, no_author or after_takedown.';
+    'Why it was not attached on its own: single_record (the only title-equal Open Library work, but with one edition), title_differs, number_differs, several_works, generic_title, no_author or after_takedown.';
 COMMENT ON COLUMN cover_suggestions.status IS
     'open; approved (an admin attached it); rejected (an admin said "not this book"); closed (the server closed it: the book got a cover, was merged away, or the picture or the Open Library work is out).';
 COMMENT ON COLUMN cover_suggestions.created_at IS

@@ -1408,6 +1408,7 @@
       "noCandidatePicture": "Das Bild ist nicht mehr online",
       "viewOpenLibrary": "Bei Open Library ansehen",
       "reason": {
+        "single_record": "Das einzige Buch mit diesem Titel von dieser Person bei Open Library, aber ein Eintrag mit nur einer Ausgabe: Den kann jede Person anlegen.",
         "title_differs": "Die Titel unterscheiden sich im Untertitel oder im Namen einer Reihe oder eines Bands.",
         "number_differs": "Eine Zahl im Titel unterscheidet sich: vielleicht ein anderer Band.",
         "several_works": "Open Library hat mehr als ein Buch mit diesem Titel von dieser Person.",

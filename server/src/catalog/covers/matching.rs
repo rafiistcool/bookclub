@@ -116,6 +116,12 @@ const LANGUAGES: [(&str, &str); 19] = [
 /// Characters with a meaning in Open Library's (Lucene) query syntax.
 const LUCENE_SPECIAL: &str = "+-&|!(){}[]^\"~*?:\\/";
 
+/// The editions an Open Library work needs before the only title-equal one may attach on its
+/// own (security review of the branch): anyone can create an Open Library record, and a fresh
+/// one with the book's title, author and a picture is most often a stub with one edition. Such
+/// a record only becomes a suggestion ([`Reason::SingleRecord`]).
+pub const ESTABLISHED_EDITIONS: i32 = 2;
+
 fn is_apostrophe(c: char) -> bool {
     matches!(
         c,
@@ -555,13 +561,18 @@ impl Book {
 }
 
 /// Why a match is only a suggestion (`cover_suggestions.reason`), in the order a suggestion
-/// is chosen by.
+/// is chosen by. A candidate whose numbers agree (`TitleDiffers`) comes before one whose
+/// numbers differ: by the rule of §2.2 that is another volume more often than not (E2E check:
+/// "Die Tribute von Panem" got "Die Tribute von Panem X" first, and the right book third).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Reason {
+    /// The only title-equal Open Library work, by the same author, but with fewer than
+    /// [`ESTABLISHED_EDITIONS`] editions: it would be clear, but a person looks first.
+    SingleRecord,
     SeveralWorks,
     GenericTitle,
-    NumberDiffers,
     TitleDiffers,
+    NumberDiffers,
     NoAuthor,
     /// A clear match for a book whose cover was taken down (set by the search, not here).
     AfterTakedown,
@@ -570,6 +581,7 @@ pub enum Reason {
 impl Reason {
     pub fn as_str(self) -> &'static str {
         match self {
+            Reason::SingleRecord => "single_record",
             Reason::SeveralWorks => "several_works",
             Reason::GenericTitle => "generic_title",
             Reason::NumberDiffers => "number_differs",
@@ -797,9 +809,18 @@ pub fn verdict(
                 })
             };
             if let Some(chosen) = chosen {
-                return match choose_cover(chosen, book.language, unusable) {
-                    Some(pick) => Verdict::Clear(pick),
-                    None => Verdict::NoMatch,
+                let Some(pick) = choose_cover(chosen, book.language, unusable) else {
+                    return Verdict::NoMatch;
+                };
+                // A dominating doc has at least 5 editions; only the single one can be a stub.
+                let established = chosen
+                    .doc
+                    .edition_count
+                    .is_some_and(|n| n >= ESTABLISHED_EDITIONS);
+                return if established {
+                    Verdict::Clear(pick)
+                } else {
+                    Verdict::Uncertain(pick, Reason::SingleRecord)
                 };
             }
             candidates.extend(equal.iter().map(|r| (Reason::SeveralWorks, *r)));
@@ -1388,7 +1409,63 @@ mod tests {
         let mut similar = doc(1, "Dune Messiah", "", "Frank Herbert");
         similar.edition_count = Some(900);
         let numbered = doc(2, "Dune 2", "", "Frank Herbert");
-        let v = judge(&book("Dune", "Frank Herbert"), vec![similar, numbered]);
-        assert_eq!(reason(&v), Some(Reason::NumberDiffers));
+        let v = judge(&book("Dune", "Frank Herbert"), vec![numbered, similar]);
+        assert_eq!(reason(&v), Some(Reason::TitleDiffers));
+    }
+
+    /// A candidate whose numbers agree comes before one whose numbers differ, which is another
+    /// volume more often than not (the E2E check against Open Library: Panem X, then the
+    /// trilogy, then the right book).
+    #[test]
+    fn another_volume_comes_after_a_title_that_only_differs_in_its_rest() {
+        let ours = book("Die Tribute von Panem", "Suzanne Collins");
+        let mut tenth = doc(
+            1,
+            "Die Tribute von Panem X",
+            "Das Lied von Vogel und Schlange",
+            "Suzanne Collins",
+        );
+        tenth.edition_count = Some(40);
+        let mut trilogy = doc(2, "Die Tribute von Panem 1-3", "", "Suzanne Collins");
+        trilogy.edition_count = Some(30);
+        let first = doc(3, "Die Tribute von Panem", "Tödliche Spiele", "Suzanne Collins");
+        let v = judge(&ours, vec![tenth, trilogy, first]);
+        assert_eq!(reason(&v), Some(Reason::TitleDiffers));
+        assert_eq!(
+            match &v {
+                Verdict::Uncertain(pick, _) => pick.ol_work_id.as_str(),
+                _ => "",
+            },
+            "OL3W"
+        );
+    }
+
+    /// The only title-equal work attaches on its own only with at least two editions: a fresh
+    /// Open Library record with the book's title and author (anyone can create one) is a
+    /// suggestion. Identity and dominance are unchanged.
+    #[test]
+    fn a_single_record_with_one_edition_is_only_suggested() {
+        let ours = book("Momo", "Michael Ende");
+        for (count, clear) in [(Some(2), true), (Some(1), false), (None, false)] {
+            let mut only = doc(1, "Momo", "", "Michael Ende");
+            only.edition_count = count;
+            let v = judge(&ours, vec![only]);
+            if clear {
+                assert_eq!(clear_cover(&v), Some(100), "{count:?}");
+            } else {
+                assert_eq!(reason(&v), Some(Reason::SingleRecord), "{count:?}");
+            }
+        }
+        // Without a usable cover it stays no match.
+        let mut bare = doc(1, "Momo", "", "Michael Ende");
+        bare.edition_count = Some(1);
+        bare.cover_id = None;
+        assert_eq!(judge(&ours, vec![bare]), Verdict::NoMatch);
+        // Our own record is trusted whatever its count.
+        let mut own = book("Momo", "Michael Ende");
+        own.ol_work_id = Some("OL1W".into());
+        let mut stub = doc(1, "Momo", "", "Michael Ende");
+        stub.edition_count = Some(1);
+        assert_eq!(clear_cover(&judge(&own, vec![stub])), Some(100));
     }
 }

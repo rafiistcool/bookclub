@@ -210,6 +210,7 @@ export function fromLocalInput(value: string): string | null {
  * (`CoverSuggestionOut.reason`).
  */
 export const COVER_REASONS = [
+  "single_record",
   "title_differs",
   "number_differs",
   "several_works",

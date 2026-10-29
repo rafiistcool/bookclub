@@ -166,6 +166,9 @@ describe("the cover search for an admin", () => {
   it("says why a candidate waits for an admin, in both languages", () => {
     expect(coverReasonLabel("number_differs")).toBe("A number in the title differs: maybe another volume.");
     expect(coverReasonLabel("after_takedown")).toBe("This book's cover was taken down, so a person decides from now on.");
+    expect(coverReasonLabel("single_record")).toBe(
+      "The only book of this title by this author on Open Library, but a record with a single edition: anyone can create one.",
+    );
     expect(coverReasonLabel("something_new")).toBe("something_new");
     expect(coverStatusLabel("approved")).toBe("Used");
     expect(coverStatusLabel("rejected")).toBe("Not this book");

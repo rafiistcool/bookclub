@@ -61,7 +61,8 @@ pub struct CoverSuggestionOut {
     pub year: Option<i32>,
     /// The edition's language (MARC code), when the picture is an edition's.
     pub language: Option<String>,
-    /// Why it was not attached on its own: `title_differs`, `number_differs`, `several_works`,
+    /// Why it was not attached on its own: `single_record` (the only title-equal Open Library
+    /// work, but a record with one edition), `title_differs`, `number_differs`, `several_works`,
     /// `generic_title`, `no_author` or `after_takedown`.
     pub reason: String,
     #[serde(with = "time::serde::rfc3339")]
