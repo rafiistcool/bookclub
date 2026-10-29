@@ -777,23 +777,61 @@ async fn record(
     Ok(())
 }
 
+/// Failures in a row after which a book Open Library fails on while it answers others counts a
+/// miss (about 15 hours of retries, 1 + 2 + 4 + 8).
+pub const FAILURES_BEFORE_MISS: i32 = 5;
+
 /// Open Library gave no answer for this work: `failures + 1`, the error, and the next try after
 /// 1 hour × 2^(failures − 1), at most 24 hours. The outcome of the last answer stays.
+///
+/// From the [`FAILURES_BEFORE_MISS`]th failure in a row on, a failure while Open Library
+/// answered another book's search within the last 24 hours is a failure of this book, not an
+/// outage: it also counts a miss (outcome `no_match`, `misses + 1`, the miss backoff), so the
+/// tier-2 stop applies and the book is not asked every day for good (security review of the
+/// branch). `searched_at` stays the last answer's (no answer came), and `failures` stays, so
+/// the admin's list still says Open Library failed on the book.
 pub async fn record_failure(
     conn: &mut PgConnection,
     work_id: i64,
     error: &str,
 ) -> sqlx::Result<()> {
-    sqlx::query!(
+    let error = truncate_chars(error, 300);
+    let failures = sqlx::query_scalar!(
         "INSERT INTO cover_search AS cs (work_id, failures, next_search_at, last_error)
          VALUES ($1, 1, now() + interval '1 hour', $2)
          ON CONFLICT (work_id) DO UPDATE SET
              failures = cs.failures + 1,
              next_search_at = now() + LEAST(interval '1 hour' * power(2, LEAST(cs.failures, 8)),
                                             interval '24 hours'),
-             last_error = $2",
+             last_error = $2
+         RETURNING failures",
         work_id,
-        truncate_chars(error, 300)
+        error
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    if failures < FAILURES_BEFORE_MISS {
+        return Ok(());
+    }
+    let missed = format!("{error} ({failures} times, while it answered other books)");
+    let missed = truncate_chars(&missed, 300);
+    sqlx::query!(
+        "UPDATE cover_search cs SET
+             searched_key = w.match_key, outcome = 'no_match',
+             misses = (CASE WHEN cs.searched_key IS NOT DISTINCT FROM w.match_key THEN cs.misses
+                            ELSE 0 END) + 1,
+             next_search_at = now() + LEAST(
+                 interval '30 days'
+                     * power(2, LEAST(CASE WHEN cs.searched_key IS NOT DISTINCT FROM w.match_key
+                                           THEN cs.misses ELSE 0 END, 8)),
+                 interval '180 days'),
+             last_error = $2
+         FROM works w
+         WHERE cs.work_id = $1 AND w.id = cs.work_id
+           AND EXISTS (SELECT 1 FROM cover_search o
+                       WHERE o.work_id <> $1 AND o.searched_at > now() - interval '24 hours')",
+        work_id,
+        missed
     )
     .execute(conn)
     .await?;

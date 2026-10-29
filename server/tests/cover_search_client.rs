@@ -250,6 +250,38 @@ async fn a_400_is_an_empty_answer_that_is_not_cached(db: PgPool) {
     assert_eq!(searches(&app).await.len(), 2);
 }
 
+/// Only a status that refuses this one query (400, 414, 422) is an answer without docs. Any
+/// other 4xx refuses every search alike (a block, a wrong `OPENLIBRARY_URL`): unavailable, so
+/// the job's breaker opens instead of every book in the queue recording a miss.
+#[sqlx::test]
+async fn only_a_refused_query_is_an_answer(db: PgPool) {
+    for status in [414, 422] {
+        let app = TestApp::new(db.clone()).await;
+        mount_search(&app, status, json!({})).await;
+        let answer = app
+            .state
+            .catalog
+            .cover_candidates(&distelfink())
+            .await
+            .unwrap();
+        assert_eq!(answer.refused, Some(status), "{status}");
+    }
+    for status in [401, 403, 404, 410] {
+        let app = TestApp::new(db.clone()).await;
+        mount_search(&app, status, json!({})).await;
+        let error = app
+            .state
+            .catalog
+            .cover_candidates(&distelfink())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, LookupError::Unavailable),
+            "{status}: {error:?}"
+        );
+    }
+}
+
 /// A 200 without a `docs` array, or with an `error` key, is a hiccup of the search index:
 /// unavailable, not "no match". So is a 500 after the retry.
 #[sqlx::test]

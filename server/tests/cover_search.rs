@@ -605,6 +605,71 @@ async fn the_dead_check_marks_nothing_gone_on_a_broken_cover_server(db: PgPool) 
     );
 }
 
+/// A picture that fails for its own reason on every recheck (here a 403) goes to the back of
+/// the queue instead of stopping the check, so the pictures after it are still settled; three
+/// failures in a row stop the check (the cover server itself is down then).
+#[sqlx::test]
+async fn one_picture_that_keeps_failing_does_not_hold_up_the_dead_check(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let mut ids = Vec::new();
+    for (cover, status, body, hours) in [
+        (311, 403, Vec::new(), 50),
+        (312, 200, jpeg([4, 5, 6]), 25),
+    ] {
+        let work = legacy_work(&app, &format!("Buch {cover}"), "Anna Autorin").await;
+        let media = ol_media(&app, cover).await;
+        set_cover(&app, CoverTarget::Work(work), media, Source::OpenLibrary).await;
+        serve_cover(&app, cover, status, body).await;
+        app.exec(&format!(
+            "UPDATE media SET fetch_failed_at = now() - interval '{hours} hours' WHERE id = {media}"
+        ))
+        .await;
+        ids.push(media);
+    }
+    let report = run_job(&app).await;
+    assert_eq!(
+        (report.dead.failed, report.dead.stored, report.dead.stopped),
+        (1, 1, false),
+        "{report:?}"
+    );
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM media WHERE id = {}
+               AND fetch_failed_at > now() - interval '1 minute' AND storage_key IS NULL",
+            ids[0]
+        ))
+        .await,
+        1,
+        "the failing one waits another day, at the back"
+    );
+
+    // Three failures in a row stop the check.
+    let mut failing = Vec::new();
+    for cover in 321..=324 {
+        let work = legacy_work(&app, &format!("Buch {cover}"), "Anna Autorin").await;
+        let media = ol_media(&app, cover).await;
+        set_cover(&app, CoverTarget::Work(work), media, Source::OpenLibrary).await;
+        serve_cover(&app, cover, 500, Vec::new()).await;
+        failing.push(media);
+    }
+    app.exec(&format!(
+        "UPDATE media SET fetch_failed_at = now() - interval '30 hours'
+         WHERE id = ANY('{{{}}}')",
+        failing
+            .iter()
+            .map(i64::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    ))
+    .await;
+    let report = run_job(&app).await;
+    assert_eq!(
+        (report.dead.failed, report.dead.rechecked, report.dead.stopped),
+        (3, 3, true),
+        "{report:?}"
+    );
+}
+
 /// Never-fetched pictures of books readers use are queued for the prefetch; others are not.
 #[sqlx::test]
 async fn unfetched_pictures_of_books_in_use_are_prefetched(db: PgPool) {
@@ -751,6 +816,63 @@ async fn an_outage_backs_off_and_opens_the_breaker(db: PgPool) {
     run_job(&app).await;
     let row = search_row(&app, first).await.unwrap();
     assert_eq!((row.failures, row.next_hours), (2, Some(2)));
+}
+
+/// Makes the work due and runs the job with its search failing.
+async fn fail_again(app: &TestApp, work_id: i64) -> job::RunReport {
+    app.exec(&format!(
+        "UPDATE cover_search SET next_search_at = now() WHERE work_id = {work_id}"
+    ))
+    .await;
+    app.catalog.fail_covers(FakeError::Unavailable, 1);
+    run_job(app).await
+}
+
+/// A book Open Library fails on every time, while it answers the others, counts a miss from the
+/// 5th failure in a row on: it gets the miss backoff and the tier-2 stop instead of a request
+/// every day for good. Without another answer in the last day (an outage) the failures only add
+/// up.
+#[sqlx::test]
+async fn a_book_open_library_always_fails_on_counts_a_miss(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let answered = legacy_work(&app, "Momo", "Michael Ende").await;
+    assert!(run_job(&app).await.answered);
+    let (failing, _) = app
+        .dnb_work("Der Schwarm", "Frank Schätzing", "9783161484100")
+        .await;
+    for failures in 1..=4 {
+        let report = fail_again(&app, failing.id).await;
+        assert_eq!(report.works, [failing.id], "{report:?}");
+        let row = search_row(&app, failing.id).await.unwrap();
+        assert_eq!((row.failures, row.misses), (failures, 0));
+    }
+    fail_again(&app, failing.id).await;
+    let row = search_row(&app, failing.id).await.unwrap();
+    assert_eq!(row.outcome.as_deref(), Some("no_match"));
+    assert_eq!((row.failures, row.misses, row.searched), (5, 1, false));
+    assert_eq!(row.next_hours, Some(30 * 24));
+    assert!(row.last_error.unwrap().contains("5 times"));
+    // The next failure is the second miss, and a tier-2 book then stops.
+    fail_again(&app, failing.id).await;
+    assert_eq!(search_row(&app, failing.id).await.unwrap().misses, 2);
+    app.exec(&format!(
+        "UPDATE cover_search SET next_search_at = now() WHERE work_id = {}",
+        failing.id
+    ))
+    .await;
+    assert!(run_job(&app).await.works.is_empty());
+
+    // An outage: nothing else answered in the last day, so the failures only add up.
+    app.exec(&format!(
+        "UPDATE cover_search SET searched_at = now() - interval '2 days' WHERE work_id = {answered}"
+    ))
+    .await;
+    let other = legacy_work(&app, "Circe", "Madeline Miller").await;
+    for _ in 0..6 {
+        fail_again(&app, other).await;
+    }
+    let row = search_row(&app, other).await.unwrap();
+    assert_eq!((row.failures, row.misses, row.searched), (6, 0, false));
 }
 
 /// With the real client: a payload without `docs` is an outage that ends the run; a 400 is a

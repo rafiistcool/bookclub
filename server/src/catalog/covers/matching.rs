@@ -116,6 +116,10 @@ const LANGUAGES: [(&str, &str); 19] = [
 /// Characters with a meaning in Open Library's (Lucene) query syntax.
 const LUCENE_SPECIAL: &str = "+-&|!(){}[]^\"~*?:\\/";
 
+/// Lucene's operators, which count only in capitals: lowercased in a query value, so an
+/// all-caps title (`IN DER NOT`) stays a plain search.
+const LUCENE_OPERATORS: [&str; 3] = ["AND", "OR", "NOT"];
+
 /// The editions an Open Library work needs before the only title-equal one may attach on its
 /// own (security review of the branch): anyone can create an Open Library record, and a fresh
 /// one with the book's title, author and a picture is most often a stub with one edition. Such
@@ -426,14 +430,25 @@ impl Person {
     }
 }
 
-/// Lucene's special characters become spaces, whitespace collapses: a stray quote or slash in
-/// a title must not turn the query into an error answer.
+/// Lucene's special characters become spaces, whitespace collapses, and the operators `AND`,
+/// `OR` and `NOT` as whole words are lowercased: a stray quote or slash, or an all-caps title,
+/// must not turn the query into an error answer.
 pub fn escape(value: &str) -> String {
     let replaced: String = value
         .chars()
         .map(|c| if LUCENE_SPECIAL.contains(c) { ' ' } else { c })
         .collect();
     collapse_ws(&replaced)
+        .split(' ')
+        .map(|word| {
+            if LUCENE_OPERATORS.contains(&word) {
+                word.to_lowercase()
+            } else {
+                word.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// A language as the search uses it: the MARC code editions carry, and the ISO 639-1 code
@@ -976,6 +991,10 @@ mod tests {
         }
         assert_eq!(escape("Say \"Hello"), "Say Hello");
         assert_eq!(escape("?!*"), "");
+        // Operators count only in capitals and only as whole words.
+        assert_eq!(escape("IN DER NOT"), "IN DER not");
+        assert_eq!(escape("CATS AND DOGS OR NOTHING"), "CATS and DOGS or NOTHING");
+        assert_eq!(escape("Not And Or"), "Not And Or");
         let book = Book {
             title: "?!*".into(),
             ..Book::default()

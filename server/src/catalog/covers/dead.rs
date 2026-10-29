@@ -29,9 +29,17 @@ pub struct DeadReport {
     pub removed: u64,
     /// A 404 or 410 while the probe failed: left failing for another day.
     pub unconfirmed: u64,
-    /// Open Library was throttled or failing: the check stopped.
+    /// The fetch failed (a transport error, a timeout, an unexpected status): the row went to
+    /// the back of the queue.
+    pub failed: u64,
+    /// Open Library was throttled, or [`RECHECK_FAILED_STOP`] fetches in a row failed: the
+    /// check stopped.
     pub stopped: bool,
 }
+
+/// Failed fetches in a row after which the dead check stops: then the cover server itself is
+/// likely down, rather than one picture failing for its own reason.
+pub const RECHECK_FAILED_STOP: u32 = 3;
 
 /// The failing Open Library rows a work or an edition names whose failure is at least a day
 /// old: in-use books first, then the oldest failure.
@@ -73,8 +81,11 @@ pub async fn failing_rows_of(conn: &mut PgConnection, work_id: i64) -> sqlx::Res
 }
 
 /// Fetches each row again (paced) and settles it: stored, gone (once the run's probe passed),
-/// still unusable. Stops at the first throttled or failed fetch. `probe` carries the run's
-/// probe result, asked once before the first row is marked gone.
+/// still unusable. A failed fetch moves its row to the back of the queue (its failure is now),
+/// so a picture that fails for its own reason every time cannot hold up every other one (the
+/// rows are taken oldest failure first); the check stops at a throttled fetch or after
+/// [`RECHECK_FAILED_STOP`] failed ones in a row. `probe` carries the run's probe result, asked
+/// once before the first row is marked gone.
 pub async fn recheck(
     state: &AppState,
     rows: &[i64],
@@ -83,17 +94,36 @@ pub async fn recheck(
     policy: RetryPolicy,
 ) -> sqlx::Result<DeadReport> {
     let mut report = DeadReport::default();
+    let mut failed_in_row = 0;
     for &media_id in rows {
         if !pacer.wait().await {
             report.stopped = true;
             break;
         }
         report.rechecked += 1;
-        match state
+        let outcome = state
             .media_service
             .recheck_cover(&state.db, media_id, policy)
-            .await
-        {
+            .await;
+        if outcome == RecheckOutcome::Failed {
+            sqlx::query!(
+                "UPDATE media SET fetch_failed_at = now()
+                 WHERE id = $1 AND storage_key IS NULL AND fetch_failed_at IS NOT NULL
+                   AND removed_at IS NULL AND ol_gone_at IS NULL",
+                media_id
+            )
+            .execute(&state.db)
+            .await?;
+            report.failed += 1;
+            failed_in_row += 1;
+            if failed_in_row >= RECHECK_FAILED_STOP {
+                report.stopped = true;
+                break;
+            }
+            continue;
+        }
+        failed_in_row = 0;
+        match outcome {
             RecheckOutcome::Stored => report.stored += 1,
             RecheckOutcome::Removed => report.removed += 1,
             RecheckOutcome::Unusable => report.unusable += 1,

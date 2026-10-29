@@ -47,6 +47,12 @@ pub const COVER_SEARCH_FIELDS: &str = "key,title,subtitle,author_name,cover_i,ed
 pub const COVER_SEARCH_LIMIT: u32 = 10;
 /// The marker of a refused cover search inside the response cache (never cached itself).
 const REFUSED: &str = "__bookclub_refused";
+/// The statuses with which Open Library refuses one cover search's query (a bad or too long
+/// query): no match for that book, and the run goes on. Every other 4xx (401, 403, 404, 410: a
+/// block, a wrong `OPENLIBRARY_URL`) refuses every search alike, so it is an outage: the book
+/// backs off by the hour and the job's breaker opens, rather than every book in the queue
+/// recording a miss (security review of the branch).
+pub const COVER_SEARCH_REFUSED: [u16; 3] = [400, 414, 422];
 
 /// Search sort orders (`sort` query parameter); `relevance` is Open Library's default and is
 /// not sent.
@@ -598,8 +604,8 @@ impl CatalogService {
     /// The cover search (#74, notes §2.1): `search.json?q=title:(…) author:(…)&limit=10` with
     /// [`COVER_SEARCH_FIELDS`] and `lang` when the book's language is known. Both values are
     /// escaped ([`escape`]). A 200 without a `docs` array (or with an `error` key) is a failure;
-    /// any other 4xx than 429 is an answer without docs ([`CoverAnswer::refused`]). Empty and
-    /// refused answers are not cached.
+    /// a [`COVER_SEARCH_REFUSED`] status is an answer without docs ([`CoverAnswer::refused`]),
+    /// any other status an error. Empty and refused answers are not cached.
     pub async fn ol_cover_search(&self, query: &CoverQuery) -> Result<CoverAnswer, Fetch> {
         let title = escape(&query.title);
         let author = query
@@ -644,10 +650,10 @@ impl CatalogService {
                             }
                             object(value)
                         }
-                        // A query Open Library refuses: no match, not an outage (429 is
-                        // `Throttled` already).
+                        // A query Open Library refuses: no match, not an outage. Any other
+                        // status (429 is `Throttled` already) is an error.
                         Err(UpstreamError::Status(status))
-                            if (400..500).contains(&status) && status != 429 =>
+                            if COVER_SEARCH_REFUSED.contains(&status) =>
                         {
                             Ok(Arc::new(json!({ REFUSED: status })))
                         }
