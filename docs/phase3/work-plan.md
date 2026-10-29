@@ -716,7 +716,7 @@ Outside `DEV_MODE` (`server/src/config.rs`):
 | `DATABASE_URL`, `POSTGRES_PASSWORD` | as in `env.example`; `openssl rand -hex 32` for the password |
 | `PUBLIC_URL` | `https://<the existing hostname>` |
 | `TRUSTED_PROXIES` | the address the app sees for the proxy, read before the move (§5.4) |
-| `CONTACT_EMAIL` | the address of Rafael's Forgejo account, unless he names another (Q-M3). It is public in `/api/config` and on the sign-in page, and goes into the User-Agent that Open Library and the DNB see |
+| `CONTACT_EMAIL` | the address Rafael names (Q-M3). It is public in `/api/config` and on the sign-in page, and goes into the User-Agent that Open Library and the DNB see |
 | `EMAIL_TRANSPORT` | `none` (§5.2); no `SMTP_URL`, no `EMAIL_FROM` |
 | `SIGNUP_MODE` | `invite` |
 | `LEGAL_DIR` | `/app/legal`, mounted from an **empty** `/srv/bookclub/legal` (it must exist: `compose.yaml` sets `create_host_path: false`). No terms, no terms prompt; `/imprint` shows "missing"; the footer links stay hidden |
@@ -968,7 +968,7 @@ Only facts about his hosts, and one preference. "Take the recommendations" answe
 - **Recommendation:** if yes, give me three ping URLs (backup, restore test, update) and I set them. If not, nothing: a failed backup then shows only when someone looks, until the public launch brings a monitor.
 
 **Q-M3. Which email address may show on the sign-in page?** (`CONTACT_EMAIL`; it is public in `/api/config` and goes into the User-Agent that Open Library and the DNB see.)
-- **Recommendation:** the email address of your Forgejo account (I read it there). Name another if you prefer.
+- **Recommendation:** an address you pick for this; it becomes public, so an alias is better than your main mailbox. I never pick one of your addresses myself.
 
 ---
 
