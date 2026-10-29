@@ -979,7 +979,7 @@
     },
     "inviteSheet": {
       "title": "Invite {name} to a club",
-      "blurb": "{name} finds the invitation on their Friends page and joins with one tap. Only {name} can use it, for 30 days.",
+      "blurb": "{name} finds the invitation on their Friends page and joins from there. Only {name} can use it, for 30 days.",
       "none": "You do not run a club. Only a club's admins can invite people into it.",
       "invite": "Invite",
       "sent": "Invitation sent",

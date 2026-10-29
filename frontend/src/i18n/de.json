@@ -911,7 +911,7 @@
     "waiting": "{n} Anfrage oder Einladung wartet | {n} Anfragen oder Einladungen warten",
     "homeAdd": "Freunde hinzufügen",
     "add": {
-      "heading": "Freunde hinzufügen",
+      "heading": "Jemanden hinzufügen",
       "label": "Benutzername",
       "hint": "Gib den genauen Benutzernamen ein.",
       "send": "Anfrage senden",
@@ -979,7 +979,7 @@
     },
     "inviteSheet": {
       "title": "{name} in einen Club einladen",
-      "blurb": "{name} findet die Einladung auf der Freunde-Seite und tritt mit einem Tipp bei. Nur {name} kann sie benutzen, 30 Tage lang.",
+      "blurb": "{name} findet die Einladung auf der Freunde-Seite und tritt von dort bei. Nur {name} kann sie benutzen, 30 Tage lang.",
       "none": "Du leitest keinen Club. Nur die Admins eines Clubs können in ihn einladen.",
       "invite": "Einladen",
       "sent": "Einladung verschickt",
