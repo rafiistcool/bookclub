@@ -140,7 +140,8 @@ else
 
 	section "Compose projects (docker compose ls)"
 	docker compose ls -a 2>&1
-	if docker compose ls -a --format json 2>/dev/null | grep -q '"Name":"bookclub"'; then
+	# grep without -q reads to the end: with pipefail, an early exit could fail the writer.
+	if docker compose ls -a --format json 2>/dev/null | grep '"Name":"bookclub"' >/dev/null; then
 		notes+=("a compose project named bookclub exists: the new .env sets COMPOSE_PROJECT_NAME=bookclub-server")
 	fi
 
@@ -154,7 +155,7 @@ else
 			printf '%s  %s  (%s)%s\n' "$name" "$image" "$status" "$flag"
 		done
 	if docker ps -a --format '{{.Names}} {{.Image}}' 2>/dev/null |
-		grep -qiE 'watchtower|ouroboros|shepherd|whats-up-docker|wud'; then
+		grep -iE 'watchtower|ouroboros|shepherd|whats-up-docker|wud' >/dev/null; then
 		notes+=("an auto-updater runs: exclude the new stack from it (or stop it) before installing (§5.4)")
 	fi
 fi
@@ -327,7 +328,7 @@ if have sqlite3; then
 	echo "sqlite3: $(sqlite3 --version | awk '{ print $1 }')"
 else
 	echo "sqlite3: not installed"
-	notes+=("sqlite3 is missing: install it for compare.sh, or run compare.sh in CUT2's container")
+	notes+=("sqlite3 is missing: install it for compare.sh, or use the sqlite3 stand-in of docs/phase3/private-move.md 7.4")
 fi
 for path in /opt/bookclub /srv/bookclub; do
 	if [[ -e $path ]]; then
