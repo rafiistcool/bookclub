@@ -4,6 +4,15 @@ import { t } from "./i18n";
 /** `EditionOut.format`'s values. */
 export const EDITION_FORMATS = ["hardcover", "paperback", "ebook", "audiobook", "other"] as const;
 
+/**
+ * An edition as a report names it: its own title, when it has one, before
+ * its line ("Sonderausgabe · Paperback · Penguin · 2019"). The admin queue
+ * and the decision mails name it by that title too.
+ */
+export function editionName(edition: EditionOut): string {
+  return edition.title ? `${edition.title} · ${editionLine(edition)}` : editionLine(edition);
+}
+
 /** One line that tells editions apart: "Paperback · Penguin · 2019 · ISBN 9780…". */
 export function editionLine(edition: EditionOut): string {
   const parts: string[] = [];

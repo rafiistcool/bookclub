@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
 import type { EditionOut } from "../api/generated";
-import { editionLine } from "../editions";
+import { editionLine, editionName } from "../editions";
 import { useToast } from "../stores/toast";
 import AddEditionForm from "./AddEditionForm.vue";
 import BottomSheet from "./BottomSheet.vue";
@@ -58,7 +58,7 @@ function choose(editionId: number | null) {
 function report(edition: EditionOut) {
   open.value = false;
   adding.value = false;
-  reporting.value = { kind: "edition", editionId: edition.id, title: editionLine(edition) };
+  reporting.value = { kind: "edition", editionId: edition.id, title: editionName(edition) };
 }
 
 /** The ISBN named an edition of this work: choose it, and read the list again in case it was not in it. */
@@ -126,7 +126,7 @@ watch(
             v-if="edition.source === 'user'"
             class="text-btn fine edition-report"
             type="button"
-            :aria-label="t('report.editionOf', { edition: editionLine(edition) })"
+            :aria-label="t('report.editionOf', { edition: editionName(edition) })"
             @click="report(edition)"
           >
             {{ t("report.action.edition") }}

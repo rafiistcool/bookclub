@@ -4,7 +4,7 @@ import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
 import type { BookDetailOut, EditionOut } from "../api/generated";
-import { EDITION_FORMATS, editionLine } from "../editions";
+import { EDITION_FORMATS, editionName } from "../editions";
 import {
   changedFields,
   EDITION_FIELDS,
@@ -50,7 +50,8 @@ const error = ref("");
 const invalid = ref<string[]>([]);
 
 const languages = computed(() => languageOptions(locale.locale, before.language ? String(before.language) : null));
-const subject = computed(() => (props.edition ? editionLine(props.edition) : props.book?.title ?? ""));
+/** What the sheet is about: an edition by its title and line, a book by its title. */
+const subject = computed(() => (props.edition ? editionName(props.edition) : props.book?.title ?? ""));
 
 function label(def: FieldDef): string {
   return t(`editRequest.fields.${def.key}`);

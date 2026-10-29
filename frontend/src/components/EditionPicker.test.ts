@@ -205,4 +205,24 @@ describe("EditionPicker", () => {
     expect(useToast().items.at(-1)?.message).toBe("Thanks. An admin will look at it.");
     expect(wrapper.find("input[name=reason]").exists()).toBe(false);
   });
+
+  it("names an edition by its own title in the report, as the admin queue and the mails do", async () => {
+    const TITLED = edition({
+      id: 14,
+      title: "Probeheft: Sonderausgabe",
+      format: "paperback",
+      publisher: "Probeverlag Leuchtkäfer",
+      source: "user",
+    });
+    editions.mockResolvedValue({ items: [TITLED] });
+    const wrapper = mountPicker(null);
+    await openSheet(wrapper);
+    const button = wrapper.get(".edition-report");
+    expect(button.attributes("aria-label")).toBe(
+      "Report the edition Probeheft: Sonderausgabe · Paperback · Probeverlag Leuchtkäfer",
+    );
+    await button.trigger("click");
+    await flushPromises();
+    expect(wrapper.get(".report-subject").text()).toBe("Probeheft: Sonderausgabe · Paperback · Probeverlag Leuchtkäfer");
+  });
 });
