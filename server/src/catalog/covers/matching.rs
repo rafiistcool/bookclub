@@ -286,6 +286,11 @@ impl TitleKeys {
     fn bare_main(&self) -> String {
         without_numbers(&self.main)
     }
+
+    /// The main key is a collection title one author has many distinct books of (notes §2.3).
+    pub fn generic(&self) -> bool {
+        GENERIC_TITLES.iter().any(|title| fold(title) == self.main)
+    }
 }
 
 /// How two title variants relate, best first.
@@ -332,6 +337,29 @@ pub fn relate(ours: &TitleKeys, theirs: &TitleKeys) -> Relation {
     }
 }
 
+/// A name without its trailing life dates: each last comma part that holds a digit and at most
+/// three letters (`1749-1832`, `b. 1950`, `fl. 1200`, `ca. 1500-1560`) is cut.
+fn without_dates(name: &str) -> &str {
+    let mut name = name.trim_end();
+    while let Some((head, tail)) = name.rsplit_once(',') {
+        let letters = tail.chars().filter(|c| c.is_alphabetic()).count();
+        if tail.chars().any(|c| c.is_ascii_digit()) && letters <= 3 {
+            name = head.trim_end();
+        } else {
+            break;
+        }
+    }
+    name
+}
+
+/// The words of a name, without words made only of digits (a year is no surname).
+fn name_words(text: &str) -> Vec<String> {
+    words(text)
+        .into_iter()
+        .filter(|word| !word.chars().all(|c| c.is_ascii_digit()))
+        .collect()
+}
+
 /// An author as the matching rule compares names (notes §2.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Person {
@@ -343,8 +371,13 @@ pub struct Person {
 
 impl Person {
     /// `name` (natural order, or inverted with exactly one comma), or `sort_name` (`Surname,
-    /// Forenames`) when it has a comma. `None` when no word is left.
+    /// Forenames`) when it has a comma. Life dates are no part of a name: a trailing `, 1749-1832`
+    /// (catalog records imported from MARC write `Goethe, Johann Wolfgang von, 1749-1832`) is cut
+    /// before the commas are counted, and words made only of digits are dropped. `None` when no
+    /// word is left.
     pub fn new(name: &str, sort_name: Option<&str>) -> Option<Person> {
+        let name = without_dates(name);
+        let sort_name = sort_name.map(without_dates);
         let inverted = sort_name.and_then(|sort| sort.split_once(',')).or_else(|| {
             (name.matches(',').count() == 1)
                 .then(|| name.split_once(','))
@@ -352,13 +385,13 @@ impl Person {
         });
         let (surname_words, initial) = match inverted {
             Some((surname, forenames)) => (
-                words(surname),
-                words(forenames)
+                name_words(surname),
+                name_words(forenames)
                     .first()
                     .and_then(|word| word.chars().next()),
             ),
             None => {
-                let all = words(name);
+                let all = name_words(name);
                 let initial = (all.len() > 1)
                     .then(|| all.first().and_then(|word| word.chars().next()))
                     .flatten();
@@ -517,8 +550,7 @@ impl Book {
 
     /// Our main title is a collection title (`Gedichte`, `Selected Poems`).
     pub fn generic_title(&self) -> bool {
-        let main = TitleKeys::new(&self.title, &self.subtitle).main;
-        GENERIC_TITLES.iter().any(|title| fold(title) == main)
+        TitleKeys::new(&self.title, &self.subtitle).generic()
     }
 }
 
@@ -579,6 +611,9 @@ struct Related<'a> {
     /// The best relation came from the doc's best edition (a translation's title).
     edition_matched: bool,
     author_agrees: bool,
+    /// One of our title variants that is a collection title relates `Equal` to this doc (an
+    /// edition titled `Gedichte` of a work with another title).
+    generic: bool,
 }
 
 fn relate_doc<'a>(
@@ -594,17 +629,21 @@ fn relate_doc<'a>(
         .filter(|edition| !edition.title.is_empty())
         .map(|edition| TitleKeys::new(&edition.title, &edition.subtitle));
     let mut best = (Relation::None, false);
+    let mut generic = false;
     for our in ours {
         let by_doc = relate(our, &theirs_doc);
         if by_doc < best.0 {
             best = (by_doc, false);
         }
+        let mut equal = by_doc == Relation::Equal;
         if let Some(theirs) = &theirs_edition {
             let by_edition = relate(our, theirs);
             if by_edition < best.0 || (by_edition == best.0 && by_edition != Relation::None) {
                 best = (by_edition, true);
             }
+            equal |= by_edition == Relation::Equal;
         }
+        generic |= equal && our.generic();
     }
     let author_agrees = person.is_some_and(|person| {
         doc.authors
@@ -618,6 +657,7 @@ fn relate_doc<'a>(
         relation: best.0,
         edition_matched: best.1,
         author_agrees,
+        generic,
     }
 }
 
@@ -741,7 +781,7 @@ pub fn verdict(
             .iter()
             .filter(|r| r.relation == Relation::Equal && r.author_agrees)
             .collect();
-        if book.generic_title() {
+        if book.generic_title() || equal.iter().any(|r| r.generic) {
             candidates.extend(equal.iter().map(|r| (Reason::GenericTitle, *r)));
         } else if !equal.is_empty() {
             let chosen = if equal.len() == 1 && answer.num_found <= 10 {
@@ -884,6 +924,28 @@ mod tests {
         assert!(!p("Stephen King", None).agrees(&p("Tabitha King", None)));
         assert!(p("Martin Luther King Jr.", None).agrees(&p("Martin Luther King", None)));
         assert_eq!(Person::new("  ", None), None);
+        // Life dates, as records imported from MARC carry them, are no surname.
+        let goethe = p("Goethe, Johann Wolfgang von, 1749-1832", None);
+        assert_eq!(
+            (goethe.surname.as_str(), goethe.initial),
+            ("goethe", Some('j'))
+        );
+        assert!(goethe.agrees(&p("Johann Wolfgang von Goethe", None)));
+        assert_eq!(p("Tolkien, J. R. R. 1892-1973", None).surname, "tolkien");
+        assert_eq!(p("Ende, Michael, b. 1929", None).surname, "ende");
+        assert_eq!(
+            p(
+                "Brecht, Bertolt, 1898-1956",
+                Some("Brecht, Bertolt, 1898-1956")
+            )
+            .initial,
+            Some('b')
+        );
+        assert!(
+            !p("King, Stephen, 1947-", None).agrees(&p("King, Tabitha, 1949-", None)),
+            "two dated names agree only on their surname and initial"
+        );
+        assert_eq!(Person::new("1749-1832", None), None);
     }
 
     #[test]
@@ -1086,6 +1148,12 @@ mod tests {
             &book("Selected Poems", "Sylvia Plath"),
             vec![doc(1, "Selected poems", "", "Sylvia Plath")],
         );
+        assert_eq!(reason(&v), Some(Reason::GenericTitle));
+        // The equal title may come from one of our editions: a work with another title whose
+        // edition is called "Gedichte" still only gets a suggestion.
+        let mut ours = book("Die Sonette an Orpheus", "Rainer Maria Rilke");
+        ours.edition_titles = vec![("Gedichte".into(), String::new())];
+        let v = judge(&ours, vec![doc(1, "Gedichte", "", "Rainer Maria Rilke")]);
         assert_eq!(reason(&v), Some(Reason::GenericTitle));
         let v = judge(&book("Momo", ""), vec![doc(1, "Momo", "", "Michael Ende")]);
         assert_eq!(reason(&v), Some(Reason::NoAuthor));
