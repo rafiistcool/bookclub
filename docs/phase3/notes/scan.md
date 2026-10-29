@@ -67,10 +67,15 @@ All green in the worktree, against `bookclub-pg-scan` on 5461:
 
 **`deploy/hosted/README.md`, step 6 of the Caddy section** (`:273`, not in SCAN's hunks): it could also open `https://<host>/api/books/isbn/9780306406157` and grep the log for `9780306406157` (expecting 0), like the invite code check.
 
+**The request id in the proxy log** (review round, finding 3; for the operator to choose, then for #53's text): the app log writes an upstream ISBN lookup's or search's outbound URL on a line with the request id, and the proxy log keeps that id with the client's IP address (see "For #53 only" below). Either of these breaks the link:
+- `resp_headers>X-Request-Id delete` in the `format filter` of `deploy/hosted/Caddyfile.example` (SCAN's file), after `request>headers>Referer delete`. Checked with `caddy:2.10`: `caddy validate` passes, the client still gets `X-Request-Id`, and the access line no longer holds it. It covers search texts too. The cost: a proxy line can be matched to the app's lines only by time and path, no longer by id.
+- Or `server/src/outbound.rs` logs catalog URLs without their query string and ISBN at `info` (the full URL at `debug`). That file belongs to no Phase 3 package. The cost: less to go on when an upstream misbehaves.
+
 ### For #53 only: facts for the privacy text
 
-- ISBN lookups, so every scan, are logged without the ISBN: the app's request log writes `/api/books/isbn/{isbn}` (`server/src/lib.rs` (`loggable_path`)), the proxy's access log `/api/books/isbn/{redacted}` (`deploy/hosted/Caddyfile.example`). `docs/legal/privacy-facts.md` §4 (the app log and the reverse proxy bullets) names only invite codes today.
-- Unchanged and worth stating: when the ISBN is not in the catalog yet, the outbound request to the DNB or Open Library is logged with its URL, which holds the ISBN, but not who asked, exactly as for a search text (`server/src/outbound.rs`; privacy-facts.md §4 says so for search texts and ISBNs already).
+- The request line of an ISBN lookup, so of every scan, is logged without the ISBN: the app's request log writes `/api/books/isbn/{isbn}` (`server/src/lib.rs` (`loggable_path`)), the proxy's access log `/api/books/isbn/{redacted}` (`deploy/hosted/Caddyfile.example`). `docs/legal/privacy-facts.md` §4 (the app log and the reverse proxy bullets) names only invite codes today.
+- Not redacted, unchanged by SCAN and the same as for a search text: when the ISBN is not in the catalog yet, the lookup asks the DNB or Open Library within the request, and the app log writes that outbound URL, which holds the ISBN, at `info` (`server/src/outbound.rs`). The line carries the request's span, `request{method=GET path=/api/books/isbn/{isbn} request_id=<uuid>}`, so it names the route and the request id.
+- That request id also reaches the proxy's log: the app returns it as `X-Request-Id` (`PropagateRequestIdLayer`, `server/src/lib.rs`), and Caddy's access log keeps the response headers, beside the client's IP address, for up to 7 days (checked in the review round). So while both logs exist, an ISBN that went upstream, or a search text, can be tied to the address that asked. `privacy-facts.md` §4 (`:85`, "but not who asked") holds for the app log alone, not with the proxy log beside it. The remedies are under "For the integrator" above; the privacy text should say what the chosen one leaves.
 - The camera facts (frames decoded in the browser, never sent; only the ISBN reaches the server) come with Part 2.
 
 ### Bundle sizes (for Part 2's comparison)
@@ -85,15 +90,15 @@ Plan §3.1–§3.5, §3.7 and the SPA tests of §3.9, with answers 5–15. The p
 
 | Where | What |
 |---|---|
-| `frontend/package.json`, `package-lock.json` | `zxing-wasm` exactly `3.1.6` (`npm install --save-exact`). `npm view zxing-wasm@3.1.6 scripts` lists no `preinstall`, `install`, `postinstall` or `prepare`. It brings `type-fest` and `@types/emscripten` (types only). MIT; the wasm bundles zxing-cpp (Apache-2.0). |
+| `frontend/package.json`, `package-lock.json` | `zxing-wasm` exactly `3.1.6` (`npm install --save-exact`). `npm view zxing-wasm@3.1.6 scripts` lists no `preinstall`, `install`, `postinstall` or `prepare`. It brings `@types/emscripten` 1.41.6 (MIT), `type-fest` 5.10.0 (MIT or CC0-1.0, Node >= 20, nested under `zxing-wasm/node_modules`) and, through it, `tagged-tag` 1.0.0 (MIT, Node >= 20): types only, none with an install script. MIT; the wasm bundles zxing-cpp (Apache-2.0). |
 | `frontend/src/isbn.ts` | `normalizeIsbnInput` (NFKC, whitespace and `-` dropped, uppercased), `parseIsbn` (manual entry: ISBN-10 or ISBN-13, returned as ISBN-13, 978/979 only, check digits), `isbnFromScan` (exactly 13 digits, 978/979, check digit; no ISBN-10). `extractIsbn` in `constants.ts` is unchanged. |
-| `frontend/src/scan/camera.ts` | `cameraSupport()` (`insecure` when `isSecureContext` is false, `unsupported` without `getUserMedia`), `openCamera(video)` (rear camera, about 720p, no audio; stops the stream again if `play()` fails), `stopCamera(stream)`, `cameraError(err)` (the `DOMException` names of §3.4; a plain object's `name` too, since Chrome's `OverconstrainedError` is not a `DOMException`). |
+| `frontend/src/scan/camera.ts` | `cameraSupport()` (`insecure` when `isSecureContext` is false, `unsupported` without `getUserMedia`), `openCamera()` (rear camera, about 720p, no audio; only the request), `showCamera(video, stream)` (attaches and plays; if `play()` fails it stops the stream and clears `srcObject` only while it still holds that stream), `stopCamera(stream)`, `cameraError(err)` (the `DOMException` names of §3.4; a plain object's `name` too, since Chrome's `OverconstrainedError` is not a `DOMException`). |
 | `frontend/src/scan/decoder.ts` | `createDecoder()`: native `BarcodeDetector` only when `getSupportedFormats()` lists `ean_13` (a throwing or empty list falls through), else `await import("./zxing")`. The `BarcodeDetector` types are local. Also `scanBand(width, height)` and `drawScanBand(video, canvas)`: the centre band (full width, the middle 40 %, at most 1280 px wide) drawn into a canvas whose context is created with `willReadFrequently: true`. |
 | `frontend/src/scan/zxing.ts` | `prepareZXingModule({overrides: {locateFile}, fireImmediately: true})` once, before the first read, with one overrides object (zxing-wasm compares overrides shallowly; a new function per call would instantiate the module again). `locateFile` returns `wasmUrl` (`zxing-wasm/reader/zxing_reader.wasm?url`) for every `.wasm`. A failed start is purged (`purgeZXingModule`), so a later scan tries again. `readBarcodes(imageData, {formats: ["EAN13"], tryHarder: true, maxNumberOfSymbols: 1})`, keeping `text` where `isValid`. |
-| `frontend/src/components/BarcodeScanner.vue` | Emits `isbn: [isbn13]` and `cancel: []`. States `starting`, `live`, `insecure`, `unsupported`, `nocamera`, `denied`, `busy`, `failed`, `nodecoder`. One decode every 200 ms with `setTimeout`, the next scheduled only when the pass has ended. Manual entry (`autocomplete="off"`, `enterkeyhint="search"`, no `inputmode`) in every state, focused in `insecure`. The camera stops on a result, on cancel, on unmount and on `visibilitychange` to hidden, and starts again when the page is visible. A run counter drops a stream that opens after a stop (unmount while the permission prompt is open), so only one stream is ever open. |
+| `frontend/src/components/BarcodeScanner.vue` | Emits `isbn: [isbn13]` and `cancel: []`. States `starting`, `live`, `insecure`, `unsupported`, `nocamera`, `denied`, `busy`, `failed`, `nodecoder`. One decode every 200 ms with `setTimeout`, the next scheduled only when the pass has ended. Manual entry (`autocomplete="off"`, `enterkeyhint="search"`, no `inputmode`) in every state, focused in `insecure`. The camera stops on a result, on cancel, on unmount and on `visibilitychange` to hidden, and starts again when the page is visible. A run counter drops a stream that opens after a stop (unmount, or hidden and back, while the permission prompt is open) before it reaches the video, so only one stream is ever open and a stale request cannot interrupt the current one's `play()` (review round). |
 | `frontend/src/pages/ScanPage.vue` | `/scan`: the scanner, then one `GET /api/books/isbn/{isbn}` with an `AbortController`; the ISBN and, from 2 s on, the seconds; "Cancel" aborts and goes back to the camera. The hit card, the miss card and the error panel of §3.1–§3.5 (details below). |
-| `frontend/src/components/AddBookSheet.vue` | `initialIsbn` seeds the ISBN field; `stay` emits `added: [book]` and `close` instead of navigating. |
-| `frontend/src/components/AddEditionForm.vue` | `initialIsbn` seeds the ISBN field. Its 409 handling is unchanged. |
+| `frontend/src/components/AddBookSheet.vue` | `initialIsbn` seeds the ISBN field; `stay` emits `added: [book, isbn]` (the ISBN sent, as typed, or null) and `close` instead of navigating. |
+| `frontend/src/components/AddEditionForm.vue` | `initialIsbn` seeds the ISBN field. Its 409 handling is unchanged, except that `existing` now also carries the ISBN the 409 was for (`existing: [editionId, isbn]`; review round). |
 | `frontend/src/pages/DiscoverPage.vue` | A scan button (a link to `/scan`, "Scan a barcode") at the right end of the search field, always shown. After an ISBN search, "Add your own book" opens `AddBookSheet` with `:initial-isbn` and an empty title. |
 | `frontend/src/router.ts` | `{ path: "scan", component: () => import("./pages/ScanPage.vue") }` in the AppShell, after `discover`. |
 | `client.ts`, `types.ts`, `apiErrors.ts`, `fixtures.ts` | Add-only: `api.lookupIsbn(isbn, signal?)`, the `IsbnHitOut` re-export, `"No book found for that ISBN": "errors.isbnNotFound"`, and `isbnHit()`. |
@@ -101,7 +106,7 @@ Plan §3.1–§3.5, §3.7 and the SPA tests of §3.9, with answers 5–15. The p
 
 The hit card: the cover (or the cloth placeholder), title, authors, year, pages and ISBN. Not on the shelf: the four statuses as the book page's segmented control (short labels, the full one as `title`), each `POST /api/shelf {work_id, edition_id, status}`; a 409 with `err.item` becomes `PATCH /api/shelf/{id} {edition_id, status, position: 0}`. On the shelf: "On your shelf" and "Use this edition" (`PATCH /api/shelf/{shelf_id} {edition_id}`); after either write the card says "This edition is on your shelf." No cover: "Add a photo of the cover", `CoverPhotoButton` with `workId`, `editionId` and COVER's `label` prop; a 200 puts the new cover on the card, a 202 is the button's own toast. Always "Open book" and "Scan another".
 
-The miss card: "Find the book by title" (a search field, `GET /api/books/search?q=…&limit=10`, a list of works; a choice shows `AddEditionForm` with `workId` and `initialIsbn`), then "Add it as a new book" (`AddBookSheet` with `initialIsbn` and `stay`), then "Scan another". After a save (also after `AddEditionForm`'s `existing`) the page looks the ISBN up again and shows the hit card.
+The miss card: "Find the book by title" (a search field, `GET /api/books/search?q=…&limit=10`, a list of works; a choice shows `AddEditionForm` with `workId` and `initialIsbn`), then "Add it as a new book" (`AddBookSheet` with `initialIsbn` and `stay`), then "Scan another". After a save (also after `AddEditionForm`'s `existing`) the page looks up the ISBN that was saved, which the reader may have changed in the form, and shows the hit card; a save without an ISBN opens the book, and so does a saved ISBN that still misses (review round).
 
 Errors: 404 is the miss card. 429 (the busy strings and `Slow down a little. Try again later.`), 502 and anything else show the mapped message, the ISBN, "Try again" (the same ISBN) and "Scan another".
 
@@ -140,7 +145,7 @@ Results:
 4. **`isbnFromScan` takes the decoded text as it is** (no trimming); a barcode's text has no spaces or hyphens.
 5. **Full-width digits** pass `parseIsbn` after NFKC, as the plan says, although the server's `parse_isbn` refuses them (`isbn.rs` test vector `978031676948８`): the SPA sends the ASCII ISBN-13, so the server never sees them.
 6. **The hit card after a save** shows the photo button only when the hit has no cover. `IsbnHitOut` falls back to the work's cover, so a new edition of a work that already has one shows that cover and no button (seen in the Chromium run); a reader's own new book has none and gets the button.
-7. **After a save in the miss flow, `AddEditionForm`'s `existing`** (the ISBN turned out to be an edition of this work) also leads to the second lookup and the hit card.
+7. **After a save in the miss flow, `AddEditionForm`'s `existing`** (the ISBN turned out to be an edition of this work) also leads to the second lookup and the hit card, of the ISBN the 409 was for (review round).
 8. **`AddBookSheet` with `stay`** still navigates for "Open that book" after a 409: that is the reader's explicit choice.
 9. **The hint under a prefilled ISBN** ("The ISBN you looked up.") shows only while the field still holds it.
 10. **Discover's scan button is 40 px wide** and sits on the field's right padding, and the browser's own search cancel button (a second × next to "Clear") is hidden, so the field keeps as much room as it can at 360 px. The placeholder "Title, author, or ISBN" still loses its last characters at 360 px (it fits from about 375 px); see "Later ideas".
@@ -191,7 +196,7 @@ All green in the worktree, against `bookclub-pg-scan` on 5461:
 ### For #53 only: the camera
 
 - The camera is used only on `/scan`, after the reader opens it, and only while that page is visible; the stream stops on a result, on cancel, when leaving the page and when the page is hidden (`frontend/src/components/BarcodeScanner.vue`).
-- Frames are decoded in the browser, by the browser's own barcode detector or by zxing-wasm running from the service's own `/assets`; no frame and no picture leaves the device. Only the ISBN read from the barcode is sent, as `GET /api/books/isbn/{isbn}` (`frontend/src/pages/ScanPage.vue`). The app log and the proxy log write that path without the ISBN (Part 1).
+- Frames are decoded in the browser, by the browser's own barcode detector or by zxing-wasm running from the service's own `/assets`; no frame and no picture leaves the device. Only the ISBN read from the barcode is sent, as `GET /api/books/isbn/{isbn}` (`frontend/src/pages/ScanPage.vue`). The app log and the proxy log write that path without the ISBN; a lookup that goes upstream logs its outbound URL, with the ISBN, on a line with the request id (Part 1, "For #53 only").
 - Nothing about the camera is stored: no permission flag, no setting, no browser storage. The permission itself is the browser's.
 - The decoder's wasm is a first-party file like the scripts (`privacy-facts.md` §6 stays true: no CDN, no third-party request). The `Permissions-Policy` allows the camera on the own origin only (`camera=(self)`, Part 1).
 - A photo added from the hit card is the existing cover upload (`privacy-facts.md` as for COVER): metadata stripped, re-encoded.
@@ -208,3 +213,46 @@ All green in the worktree, against `bookclub-pg-scan` on 5461:
 - A worker for zxing, only if a phone shows jank (answer 6).
 - Discover's "Clear" as an icon, so the placeholder fits at 360 px too.
 - Continuous scanning of a whole shelf belongs to the native app (#60).
+
+## Review round (2026-10-30)
+
+Six findings, each checked against the code first. All six were real; none was rejected. The rows above that describe the changed code (`camera.ts`, `BarcodeScanner.vue`, the add forms, the miss card, decision 7, the dependencies and the #53 facts) now say what is built.
+
+| # | Finding | Verdict | Commit |
+|---|---|---|---|
+| 1 | The miss flow looked up the scanned ISBN again even when the reader saved another one or none | Real (`ScanPage.vue` `onSaved` ignored the payload) | e1381e6 |
+| 2 | Two overlapping `openCamera` calls on one `<video>` ended in a false "busy", with two streams open | Real (reproduced by a test, below) | 02c90c3 |
+| 3 | The #53 fact "logged without the ISBN … but not who asked" overstated the redaction | Real (checked in the code and with Caddy) | this section's commit |
+| 4 | German miss card: "diese" pointed at the wrong edition | Real | b83d552 |
+| 5 | Caddy's compression comment did not name the wasm under `/assets` | Real | f41675d |
+| 6 | The dependency list left out `tagged-tag` | Real (`package-lock.json`, through `type-fest` 5) | this section's commit |
+
+### 1. The miss flow follows what was saved
+
+- Both forms leave the prefilled ISBN editable: `AddEditionForm` saves with the ISBN cleared when another field is filled, `AddBookSheet` without any ISBN. `ScanPage` then looked up the scanned ISBN, got 404, and showed the miss card again, which invited a duplicate book.
+- Now the forms say what they sent: `AddBookSheet`'s `added: [book, isbn]` (`BookDetailOut` has no ISBN) and `AddEditionForm`'s `existing: [editionId, isbn]`, the ISBN the 409 was for (not what the field holds when the reader taps "Choose that edition"). `EditionPicker` ignores the new argument.
+- `ScanPage.showSaved(workId, isbn)`: an edition's `isbn13`, or the sent ISBN through `parseIsbn` (an ISBN-10 becomes its ISBN-13, as the server stores it), is looked up and shows the hit card; no ISBN opens the book (`/book/{id}`). If the saved ISBN still misses, the page opens the saved book instead of the miss card (`savedWork`, cleared by a new scan and "Scan another").
+- Tests (`ScanPage.test.ts`, "when the reader changes the scanned ISBN in the form"): an edition saved with another ISBN looks that one up; an edition saved without one opens the book; "Choose that edition" after a 409 looks up the ISBN the 409 was for; a new book saved with another ISBN, typed as an ISBN-10, looks up its ISBN-13; a new book saved without one opens it; and a saved ISBN that still misses opens the book. All six failed before the fix (the scanned ISBN looked up again, or the miss card). `AddBookSheet.test.ts` and `AddEditionForm.test.ts` check the new payloads.
+
+### 2. Only the current start touches the video
+
+- `openCamera(video)` attached the stream before the scanner could check its run counter, and its `catch` cleared `srcObject` whatever it held. Hidden and visible again while the prompt was open, both requests resolved on one `<video>`: each `srcObject` interrupted the other's `play()` with `AbortError`, the older call's cleanup cleared the newer stream, and the current start showed "The camera is in use by another app."
+- Now `openCamera()` only requests the stream and `showCamera(video, stream)` attaches and plays it. `BarcodeScanner.start()` checks `current === run` between the two: a stale stream is stopped without reaching the video. The stream is `stream` from before `play()`, so a stop during `play()` ends it. `showCamera` clears `srcObject` only while it still holds its own stream.
+- Tests: `BarcodeScanner.test.ts`, "keeps one stream when the page comes back while the permission prompt is open", runs the real camera module against a `getUserMedia` that waits for the prompt and a `<video>` that behaves like a browser's (a new `srcObject` interrupts a pending `play()`; jsdom has neither). Before the fix it ended in the busy state; now the first stream is stopped, the second shows and decodes. Also "says another app has the camera when the video cannot start, and tries again" (the new `showCamera` failure branch), and in `camera.test.ts` the split functions and "leaves a newer stream on the video when its own play() is interrupted".
+
+### 3. The privacy facts for #53
+
+- Checked: `lookup_isbn` awaits `resolve_isbn` in the handler (no `spawn`), so `outbound.rs`'s `info` line (`url=…`) is written inside the `TraceLayer` span with `request_id` (`tracing_subscriber::fmt()`'s default format prints the span and its fields). `PropagateRequestIdLayer` returns the id as `X-Request-Id`.
+- Checked with `caddy:2.10` (`Caddyfile.example` with `BOOKCLUB_HOST=:8080`, in front of a stub Caddy that answers with an `X-Request-Id`, throwaway containers): the access line held `/api/books/isbn/{redacted}` and `resp_headers.X-Request-Id`. With `resp_headers>X-Request-Id delete` added to the filter, `caddy validate` passed, the client still got the header, and the line no longer held it.
+- The Part 1 bullets for #53 are corrected, the camera bullet points at them, and Part 1's "For the integrator" names the two remedies. Neither is applied: the plan's §3.6.4 filter is built as written, and the choice (losing the id match in the proxy log, or less detail on upstream failures) is the operator's. `privacy-facts.md:85` makes the same claim for search texts; it is not SCAN's file (§2.1 rule 11).
+
+### 4–6
+
+- `de.json` `scan.missBody`: "Kennt der Katalog schon eine andere Ausgabe des Buchs, füg diese ISBN dort als Ausgabe hinzu. Sonst leg es als neues Buch an."
+- `Caddyfile.example`: "Only the hashed build output under /assets is compressed: the JS and CSS to about a third, the barcode decoder's wasm (#56) to under half." `README.md:280` ("zstd and gzip for /assets/* only") was right already.
+- The dependency row names `tagged-tag` 1.0.0 (MIT, Node >= 20, types only) and the versions and licences of the other two.
+
+### Deviations from the design
+
+1. **`camera.ts`'s interface:** §3.4 has `openCamera(video): Promise<MediaStream>`, which attaches the stream itself. It is now `openCamera(): Promise<MediaStream>` plus `showCamera(video, stream)`, so the scanner can drop a stale stream before it touches the video. The intent (rear camera, about 720p, stopped on a failed `play()`) is unchanged.
+2. **The add forms' events:** §3.5 has `added: [book: BookDetailOut]`; `AddBookSheet`'s is now `added: [book, isbn]`, and `AddEditionForm`'s `existing` gains the ISBN. §3.5's "the ISBN is looked up again" became "the ISBN that was saved is looked up", which keeps its intent (the hit card after a save) when the reader changed the ISBN.
