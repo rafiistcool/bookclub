@@ -1436,6 +1436,157 @@ exit "$status"
     assert!(log.contains(PUBLIC_ID), "{log}");
 }
 
+/// A fictional row as Postgres quotes it in an error: the data a ping must not carry.
+const ROW_ADDRESS: &str = "alice@example.org";
+
+/// `supervise` withholds the lines Postgres adds to an error (DETAIL, CONTEXT, …): they quote
+/// the data, here a duplicated address and a failing row with its password hash (security
+/// review, ADM2 merge). The error line itself, which names the index, reaches the ping; the log
+/// on the VM keeps everything.
+#[cfg(unix)]
+#[test]
+fn supervise_pings_withhold_postgres_detail() {
+    const SCRIPT: &str = r#"set -euo pipefail
+. "$1"
+BACKUP_DIR=$RIG/backup
+failed() {
+    printf 'pg_restore: error: could not execute query: ERROR:  could not create unique index "users_verified_email_key"\n'
+    printf 'DETAIL:  Key (lower(email))=(%s) is duplicated.\n' "$1"
+    printf 'CONTEXT:  COPY users, line 1: "1\talice\t%s\t$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHQ"\n' "$1"
+    printf 'HINT:  %s\n' "$1"
+    printf 'Command was: INSERT INTO users VALUES (1, %s);\n' "$1"
+    return 1
+}
+status=0
+supervise restore-test https://hc.test/ping/restore failed "$2" || status=$?
+exit "$status"
+"#;
+    let dir = tempfile::tempdir().unwrap();
+    let output = std::process::Command::new("bash")
+        .args(["-c", SCRIPT, "supervise"])
+        .arg(repo().join("deploy/hosted/backup-lib.sh"))
+        .arg(ROW_ADDRESS)
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("RIG", dir.path())
+        .env("BASH_FUNC_curl%%", FAKE_CURL)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{}", printed(&output));
+    let body = bodies(dir.path());
+    assert!(
+        body.contains(
+            "pg_restore: error: could not execute query: ERROR:  could not create unique index \
+             \"users_verified_email_key\""
+        ),
+        "{body}"
+    );
+    for line in ["DETAIL", "CONTEXT", "HINT", "Command was"] {
+        assert!(
+            body.contains(&format!("{line}: <withheld>")),
+            "{line}: {body}"
+        );
+    }
+    assert!(!body.contains(ROW_ADDRESS), "{body}");
+    assert!(!body.contains("argon2id"), "{body}");
+    let log = std::fs::read_to_string(dir.path().join("backup/restore-test.log")).unwrap();
+    assert!(log.contains(ROW_ADDRESS), "{log}");
+}
+
+/// `restore-test.sh` against stand-ins for `docker` and `curl`, with a restore that fails the way
+/// a corrupted unique index in production makes it fail. Its ping names the index and where the
+/// full messages are, and carries no address; the messages stay on the VM.
+#[cfg(unix)]
+#[test]
+fn a_failed_restore_test_pings_no_row() {
+    const FAKE_DOCKER: &str = r#"() {
+        printf 'docker %s\n' "$*" >>"$RIG/calls.log"
+        case "$*" in
+            "run --rm "*" restore latest "*)
+                local all="$*" target
+                target=${all##*--target }
+                target=${target%% *}
+                mkdir -p "$target$RIG/backup/db" "$target$RIG/media"
+                printf 'PGDMP' >"$target$RIG/backup/db/bookclub.dump"
+                printf 'users\t1\n' >"$target$RIG/backup/db/counts.tsv" ;;
+            "run -d --name bookclub-restore-test "*) ;;
+            "exec bookclub-restore-test pg_isready "*) ;;
+            "exec bookclub-restore-test pg_restore "*)
+                printf 'pg_restore: error: could not execute query: ERROR:  could not create unique index "users_verified_email_key"\n' >&2
+                printf 'DETAIL:  Key (lower(email))=(alice@example.org) is duplicated.\n' >&2
+                printf 'pg_restore: error: COPY failed for table "users": ERROR:  invalid input syntax for type uuid: "alice@example.org"\n' >&2
+                printf 'CONTEXT:  COPY users, line 1: "1\talice\talice@example.org"\n' >&2
+                return 1 ;;
+            "rm -fv bookclub-restore-test") ;;
+            *) echo "unexpected: docker $*" >&2; return 99 ;;
+        esac
+    }"#;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let opt = root.join("opt");
+    std::fs::create_dir_all(&opt).unwrap();
+    for script in ["restore-test.sh", "backup-lib.sh"] {
+        std::fs::copy(repo().join("deploy/hosted").join(script), opt.join(script)).unwrap();
+    }
+    std::fs::write(opt.join("restic-password"), "x\n").unwrap();
+    let root_str = root.display();
+    std::fs::write(
+        opt.join("backup.env"),
+        format!(
+            "COMPOSE_DIR={root_str}/opt\nMEDIA_DIR={root_str}/media\n\
+             BACKUP_DIR={root_str}/backup\nRESTIC_REPOSITORY={root_str}/repo\n\
+             RESTIC_PASSWORD_FILE={root_str}/opt/restic-password\n\
+             RESTORE_TEST_HEARTBEAT_URL=https://hc.test/ping/restore\n"
+        ),
+    )
+    .unwrap();
+    let output = std::process::Command::new("bash")
+        .arg(opt.join("restore-test.sh"))
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("RIG", root)
+        .env("BASH_FUNC_docker%%", FAKE_DOCKER)
+        .env("BASH_FUNC_curl%%", FAKE_CURL)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{}", printed(&output));
+    let calls = std::fs::read_to_string(root.join("calls.log")).unwrap_or_default();
+    assert!(
+        calls.contains("ping https://hc.test/ping/restore/1"),
+        "{calls}"
+    );
+    assert!(
+        calls.contains("docker rm -fv bookclub-restore-test"),
+        "{calls}"
+    );
+    let body = bodies(root);
+    assert!(
+        body.contains(
+            "pg_restore: error: could not execute query: ERROR:  could not create unique index \
+             \"users_verified_email_key\""
+        ),
+        "{body}"
+    );
+    assert!(
+        body.contains(
+            "pg_restore: error: COPY failed for table \"users\": ERROR:  invalid input syntax for \
+             type uuid: <withheld>"
+        ),
+        "{body}"
+    );
+    assert!(
+        body.contains(&format!(
+            "pg_restore failed; its full messages are in {root_str}/backup/pg_restore.err"
+        )),
+        "{body}"
+    );
+    assert!(!body.contains(ROW_ADDRESS), "{body}");
+    let log = std::fs::read_to_string(root.join("backup/restore-test.log")).unwrap();
+    assert!(!log.contains(ROW_ADDRESS), "{log}");
+    let messages = std::fs::read_to_string(root.join("backup/pg_restore.err")).unwrap();
+    assert!(messages.contains(ROW_ADDRESS), "{messages}");
+}
+
 /// `backup.sh` against a stand-in for `docker`, which logs every call to `calls.log` and answers
 /// as an empty stack would (no app container, a dump and its counts, restic that succeeds).
 /// Returns the output and the calls, in order.

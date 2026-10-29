@@ -109,11 +109,16 @@ heartbeat() {
 # The end of the log $1 for a heartbeat's body, into the file $2: its last 50 lines with every
 # public id blanked. A line can name a picture (avatars/<xx>/<public id>/a, deleted during a
 # backup or missed by a restore test), and the public id is the secret part of its URL: 26
-# characters of [a-z0-9] (media.public_id's check in server/migrations/0001_init.sql). The ping
-# then carries no personal data. The pattern also blanks restic's 64-character ids and image
-# digests; the full log stays on the VM.
+# characters of [a-z0-9] (media.public_id's check in server/migrations/0001_init.sql). The
+# pattern also blanks restic's 64-character ids and image digests. The lines Postgres adds to an
+# error (DETAIL, CONTEXT, HINT, LINE n, QUERY, STATEMENT, and pg_restore's "Command was") are
+# withheld whole: they quote the data itself, a duplicated address or a failing row with its
+# password hash (security review, ADM2 merge). The ping then carries no personal data, as
+# docs/legal/processors.md says of the monitoring service; the full log stays on the VM.
 log_tail() {
-    tail -n 50 "$1" | sed -E 's/[a-z0-9]{26,}/<id>/g' >"$2"
+    tail -n 50 "$1" | sed -E \
+        -e 's/^(DETAIL|CONTEXT|HINT|LINE [0-9]+|QUERY|STATEMENT|Command was):.*/\1: <withheld>/' \
+        -e 's/[a-z0-9]{26,}/<id>/g' >"$2"
 }
 
 # Runs the function "$3" with its arguments under the lock both scripts share, waiting up to 3 h

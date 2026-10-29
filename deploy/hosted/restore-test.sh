@@ -3,7 +3,9 @@
 # to the running stack:
 #   1. restic restore of the latest snapshot of BACKUP_HOST into BACKUP_DIR/restore-test,
 #      verifying every restored file against the repository;
-#   2. a throwaway postgres (RESTORE_POSTGRES_IMAGE, no network) and pg_restore --exit-on-error;
+#   2. a throwaway postgres (RESTORE_POSTGRES_IMAGE, no network) and pg_restore --exit-on-error,
+#      whose full messages stay in BACKUP_DIR/pg_restore.err when it fails (they quote rows; the
+#      log, and so the ping, gets only its own lines);
 #   3. the row count of every table and the newest migration must equal the backup's counts.tsv;
 #   4. every stored media file the restored database references (media.storage_key/<variant> of
 #      the rows not taken down) must be in the restored MEDIA_DIR and not empty. A missing one
@@ -33,6 +35,15 @@ ORDER BY 1;"
 # answer (the stack is down, as during a restore).
 live_media_keys() {
     (cd "$COMPOSE_DIR" && docker compose exec -T postgres "${psql_tsv[@]}" -c "$MEDIA_KEYS_SQL")
+}
+
+# pg_restore's own lines from its messages on stdin, the first 10: "pg_restore: error: …" and
+# "pg_restore: warning: …", which name the table, index or constraint. A value quoted after a
+# colon (`invalid input syntax for type uuid: "…"`) is withheld, and so are the lines Postgres
+# adds (DETAIL, CONTEXT, …), which quote the data (security review, ADM2 merge).
+pg_messages() {
+    { grep -E '^pg_restore: (error|warning):' || true; } |
+        head -n 10 | sed -E 's/: "[^"]*("|$)/: <withheld>/g'
 }
 
 # The scratch space: the throwaway container and WORK, the restored files and the comparisons.
@@ -70,8 +81,17 @@ restore_test() {
     done
 
     log "pg_restore --exit-on-error"
-    docker exec "$CONTAINER" pg_restore --exit-on-error --no-owner \
-        -U bookclub -d bookclub /restore/bookclub.dump
+    # Postgres's messages quote the rows they fail on (a duplicated address, a failing row with
+    # its password hash), and the end of this log goes into the heartbeat's ping. So its full
+    # messages go to a file on the VM, and the log gets pg_restore's own lines (pg_messages).
+    local messages=$BACKUP_DIR/pg_restore.err
+    if ! docker exec "$CONTAINER" pg_restore --exit-on-error --no-owner \
+        -U bookclub -d bookclub /restore/bookclub.dump 2>"$messages"; then
+        pg_messages <"$messages"
+        die "pg_restore failed; its full messages are in $messages on the VM"
+    fi
+    pg_messages <"$messages"
+    rm -f "$messages"
 
     log "comparing the row counts and the migration with the backup's counts.tsv"
     counts_sql | docker exec -i "$CONTAINER" "${psql_tsv[@]}" >"$WORK/counts.tsv"
