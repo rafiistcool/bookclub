@@ -1,8 +1,10 @@
 //! Friend requests and friendships (FRIENDS, #57; docs/phase3/work-plan.md §4.2, §4.5, §4.9):
-//! every transition of the request table, the mutual send and its race, the lookups of a name,
-//! and the daily limit.
+//! every transition of the request table, the mutual send and its race, the lookups of a name
+//! (also of an account deleted meanwhile), and the daily limit.
 
 mod common;
+
+use std::time::Duration;
 
 use common::*;
 use serde_json::{Value, json};
@@ -376,4 +378,66 @@ async fn a_suspended_account_stays_a_friend(db: PgPool) {
         json!({"id": bob.id(), "username": "bob", "avatar_url": null})
     );
     assert_eq!(names(&friends_of(&cy).await, "outgoing"), ["bob"]);
+}
+
+/// An account deleted while a request or a block names it: the write waits for the deletion's
+/// lock on the account (`friends::lock_pair` takes both accounts' rows `FOR KEY SHARE` before
+/// it writes) and then answers as for an unknown name. Without that lock the write would insert
+/// its row, wait in the foreign-key check instead, and fail with a 500.
+#[sqlx::test]
+async fn a_request_or_a_block_waits_for_a_deletion_in_flight(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    for route in ["request", "block"] {
+        let gone = app.user(&format!("gone_{route}")).await;
+        // What `auth::deletion::delete_user` holds before its cascade.
+        let mut deletion = app.db.begin().await.unwrap();
+        sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+            .bind(gone.id())
+            .execute(&mut *deletion)
+            .await
+            .unwrap();
+        let task = tokio::spawn({
+            let ada = ada.clone();
+            let name = gone.username().to_owned();
+            async move {
+                match route {
+                    "request" => send(&ada, &name).await,
+                    _ => {
+                        ada.put(&format!("/api/friends/blocks/{name}"), json!({}))
+                            .await
+                    }
+                }
+            }
+        });
+        wait_for_a_lock(&app).await;
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(gone.id())
+            .execute(&mut *deletion)
+            .await
+            .unwrap();
+        deletion.commit().await.unwrap();
+        task.await
+            .unwrap()
+            .assert_detail(404, "No account with that name");
+    }
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM friendships").await, 0);
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM user_blocks").await, 0);
+}
+
+/// Waits until a session of the test database waits for a lock.
+async fn wait_for_a_lock(app: &TestApp) {
+    for _ in 0..500 {
+        let waiting = app
+            .scalar_i64(
+                "SELECT count(*) FROM pg_stat_activity
+                 WHERE datname = current_database() AND wait_event_type = 'Lock'",
+            )
+            .await;
+        if waiting >= 1 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the write never waited for a lock");
 }

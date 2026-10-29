@@ -56,7 +56,13 @@ use out::{FriendsOut, friends_out};
 
 /// The first key of the two-key advisory lock space of a pair's turn ([`lock_pair`]); beside
 /// ingest's `0x6263_0100`, the reports' `0x6263_0200` and `jobs::lock_ids`.
-const PAIR_LOCK_SPACE: i32 = 0x6263_0300;
+pub const PAIR_LOCK_SPACE: i32 = 0x6263_0300;
+
+/// The text whose `hashtext` is the second key of the pair's turn: the lower id, a colon, the
+/// higher id, so both accounts of a pair take the same turn.
+pub fn pair_key(a: i64, b: i64) -> String {
+    format!("{}:{}", a.min(b), a.max(b))
+}
 
 /// The friend routes.
 pub fn routes() -> OpenApiRouter<AppState> {
@@ -112,11 +118,10 @@ pub(crate) async fn account_id(
 /// and 2): the pair's turn, then both accounts' rows `FOR KEY SHARE` in id order. False when one
 /// of the accounts no longer exists; the write then answers as for an unknown name.
 pub(crate) async fn lock_pair(conn: &mut PgConnection, me: i64, other: i64) -> sqlx::Result<bool> {
-    let key = format!("{}:{}", me.min(other), me.max(other));
     sqlx::query!(
         "SELECT pg_advisory_xact_lock($1, hashtext($2))",
         PAIR_LOCK_SPACE,
-        key
+        pair_key(me, other)
     )
     .execute(&mut *conn)
     .await?;

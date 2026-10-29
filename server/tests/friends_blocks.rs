@@ -1,13 +1,17 @@
 //! Blocking (FRIENDS, #57; docs/phase3/work-plan.md §4.3, §6 answer 21): silent, it ends the
 //! friendship and the pair's open friend invites, hides the blocked account's later requests,
-//! and leaves the clubs both are in alone. Unblocking drops what was hidden.
+//! and leaves the clubs both are in alone. Unblocking drops what was hidden. A pair's writes
+//! take turns, so a block or an unblock never interleaves with a request.
 
 mod common;
 
+use std::time::Duration;
+
+use bookclub_server::friends::{PAIR_LOCK_SPACE, pair_key};
 use bookclub_server::visibility::{Relation, relation};
 use common::*;
 use serde_json::{Value, json};
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 
 async fn send(from: &TestClient, to: &str) -> TestResponse {
     from.post("/api/friends/requests", json!({ "username": to }))
@@ -369,4 +373,119 @@ async fn a_blocked_account_can_block_back(db: PgPool) {
         Vec::<String>::new()
     );
     assert_eq!(names(&friends_of(&ada).await, "outgoing"), ["bob"]);
+}
+
+/// A request by the account whose own block of the other is in flight waits for the pair's turn
+/// (`friends::lock_pair`'s advisory lock) and then finds the block: 409. Without the turn the
+/// block's `DELETE` would miss the request's uncommitted row, and a pending request would stand
+/// next to its sender's own block.
+#[sqlx::test]
+async fn a_request_waits_for_its_senders_block_in_flight(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    // What `blocks::block` writes in its turn.
+    let mut blocking = pair_turn(&app, &ada, &bob).await;
+    sqlx::query("INSERT INTO user_blocks (user_id, blocked_user_id) VALUES ($1, $2)")
+        .bind(ada.id())
+        .bind(bob.id())
+        .execute(&mut *blocking)
+        .await
+        .unwrap();
+    sqlx::query(
+        "DELETE FROM friendships WHERE (requester_id, addressee_id) IN (($1, $2), ($2, $1))",
+    )
+    .bind(ada.id())
+    .bind(bob.id())
+    .execute(&mut *blocking)
+    .await
+    .unwrap();
+    let task = tokio::spawn({
+        let ada = ada.clone();
+        async move { send(&ada, "bob").await }
+    });
+    wait_for_a_lock(&app, &task).await;
+    blocking.commit().await.unwrap();
+
+    task.await
+        .unwrap()
+        .assert_detail(409, "You blocked this account");
+    assert_eq!(pair_rows(&app, &ada, &bob).await, 0);
+    assert_eq!(
+        names(&friends_of(&ada).await, "outgoing"),
+        Vec::<String>::new()
+    );
+}
+
+/// An unblock waits for a request the blocked account is sending in the same moment (the
+/// pair's turn) and drops it with the block. Without the turn the unblock's `DELETE` would miss
+/// the request's uncommitted row and surface the request once both committed.
+#[sqlx::test]
+async fn an_unblock_waits_for_a_hidden_request_in_flight(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    block(&ada, "bob").await.assert_status(200);
+    // What `requests::send` writes in its turn: Bob's request, hidden from Ada.
+    let mut sending = pair_turn(&app, &bob, &ada).await;
+    sqlx::query("INSERT INTO friendships (requester_id, addressee_id) VALUES ($1, $2)")
+        .bind(bob.id())
+        .bind(ada.id())
+        .execute(&mut *sending)
+        .await
+        .unwrap();
+    let task = tokio::spawn({
+        let ada = ada.clone();
+        async move { unblock(&ada, "bob").await }
+    });
+    wait_for_a_lock(&app, &task).await;
+    sending.commit().await.unwrap();
+
+    task.await.unwrap().assert_status(200);
+    assert_eq!(pair_rows(&app, &ada, &bob).await, 0);
+    assert_eq!(
+        names(&friends_of(&ada).await, "incoming"),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        names(&friends_of(&bob).await, "outgoing"),
+        Vec::<String>::new()
+    );
+}
+
+/// A transaction holding the pair's turn, as `friends::lock_pair` takes it.
+async fn pair_turn(
+    app: &TestApp,
+    a: &TestClient,
+    b: &TestClient,
+) -> Transaction<'static, Postgres> {
+    let mut tx = app.db.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock($1, hashtext($2))")
+        .bind(PAIR_LOCK_SPACE)
+        .bind(pair_key(a.id(), b.id()))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx
+}
+
+/// Waits until a session of the test database waits for a lock, or until `task` has ended: a
+/// write that took no turn ends at once, and the assertions after the commit show what it did.
+async fn wait_for_a_lock<T>(app: &TestApp, task: &tokio::task::JoinHandle<T>) {
+    for _ in 0..500 {
+        if task.is_finished() {
+            return;
+        }
+        let waiting = app
+            .scalar_i64(
+                "SELECT count(*) FROM pg_stat_activity
+                 WHERE datname = current_database() AND wait_event_type = 'Lock'",
+            )
+            .await;
+        if waiting >= 1 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the write neither waited for its turn nor ended");
 }
