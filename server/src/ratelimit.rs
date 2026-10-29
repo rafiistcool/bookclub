@@ -283,6 +283,10 @@ pub struct RateLimits {
     /// account seen from one address shares it, so accounts made for the purpose (5 sign-ups per
     /// address an hour, each with its own `friend_request_user`) cannot multiply the probing.
     pub friend_request_ip: SlidingWindow,
+    /// Every `kind: "friend"` invite per account (`u:<id>`), unknown names and repeats included:
+    /// a declined invite can be made again, as a declined request can be sent again, and both are
+    /// bounded the same way. It also bounds what the route's timing could tell about names.
+    pub friend_invite_user: SlidingWindow,
 }
 
 impl RateLimits {
@@ -317,6 +321,7 @@ impl RateLimits {
             export_gate: KeyedGate::new(1),
             friend_request_user: SlidingWindow::new(20, DAY),
             friend_request_ip: SlidingWindow::new(60, DAY),
+            friend_invite_user: SlidingWindow::new(20, DAY),
         }
     }
 }
@@ -504,6 +509,7 @@ mod tests {
             (&limits.catalog_user, 60, 60),
             (&limits.friend_request_user, 20, 86_400),
             (&limits.friend_request_ip, 60, 86_400),
+            (&limits.friend_invite_user, 20, 86_400),
         ];
         for (limit, count, seconds) in cases {
             assert_eq!(limit.limit, count);

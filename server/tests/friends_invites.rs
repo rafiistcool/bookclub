@@ -464,6 +464,49 @@ async fn decline_unfriend_block_and_removal_revoke(db: PgPool) {
     assert!(!is_active(&app, &code).await);
 }
 
+/// A friend's decline is not lasting: the admin may invite again, as a declined request may be
+/// sent again (§6 answer 19). 20 friend invites per account a day bound both (FRIENDS security
+/// review), unknown names and repeats of an open invite included; the other kinds stay free.
+#[sqlx::test]
+async fn twenty_friend_invites_a_day(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let club = app.club(&ada, "Readers").await;
+    befriend(&ada, &bob).await;
+    for _ in 0..10 {
+        let invite = invited(&ada, &club, "bob").await;
+        bob.delete(&format!("/api/friends/club-invites/{}", invite["id"]))
+            .await
+            .assert_status(200);
+    }
+    let open = invited(&ada, &club, "bob").await;
+    for _ in 0..4 {
+        assert_eq!(invited(&ada, &club, "bob").await["id"], open["id"]);
+    }
+    for _ in 0..5 {
+        invite_friend(&ada, &club, "nobody_here")
+            .await
+            .assert_detail(404, NO_FRIEND);
+    }
+    let res = invite_friend(&ada, &club, "bob").await;
+    res.assert_detail(429, "Slow down a little. Try again later.");
+    let wait: u64 = res.header("retry-after").unwrap().parse().unwrap();
+    assert!((86_000..=86_400).contains(&wait), "{wait}");
+    ada.post(
+        &format!("/api/clubs/{}/invites", club.slug),
+        json!({"kind": "single_use"}),
+    )
+    .await
+    .assert_status(201);
+    assert_eq!(club_invites(&bob).await.as_array().unwrap().len(), 1);
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM club_invites WHERE invitee_id IS NOT NULL")
+            .await,
+        11
+    );
+}
+
 /// 30 days: a 21-day-old invite still works, a 31-day-old one does not and is no longer listed.
 #[sqlx::test]
 async fn a_friend_invite_lasts_thirty_days(db: PgPool) {

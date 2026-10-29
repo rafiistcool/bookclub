@@ -32,7 +32,8 @@
 //! **Names.** Only a request and a block tell an unknown name from an existing one, and both are
 //! counted (`count_request`, §4.9). The uncounted writes (accept, decline or cancel, remove,
 //! unblock) take the turn and run their statements for an unknown name too, with
-//! [`NO_ACCOUNT`], so their timing tells nothing either.
+//! [`NO_ACCOUNT`], so their timing tells nothing either; friend invites are counted per account
+//! (`clubs::invites`).
 //!
 //! No pair write locks a club. A friend invite (`clubs::invites::create_invite`) holds the club
 //! and then takes the friend's account row `FOR KEY SHARE` and the pair's `friendships` row `FOR

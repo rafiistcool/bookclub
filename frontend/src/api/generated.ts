@@ -1262,7 +1262,8 @@ export interface paths {
          * Creates an invite to the club (admins): a single-use code, a shareable link, or a personal
          *     invite for one friend of the caller (`kind: "friend"`, `username`), which only that friend can
          *     redeem through `/join/{code}`. A second friend invite for the same friend, while the caller's
-         *     first one is still open, answers with the first one.
+         *     first one is still open, answers with the first one. 20 friend invites per account a day,
+         *     unknown names and repeats included.
          */
         post: operations["clubs_create_invite"];
         delete?: never;
@@ -8207,6 +8208,15 @@ export interface operations {
             };
             /** @description `That friend is already in this club` */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Slow down a little. Try again later.` (friend invites only) */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

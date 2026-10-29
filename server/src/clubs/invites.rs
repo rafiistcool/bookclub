@@ -21,7 +21,10 @@
 //! account can redeem it ([`consume`]), so a forwarded code is useless and sign-up never takes
 //! one. Under the club lock, the friend's account row and the pair's friendship are locked next
 //! (`friends::locked_friend`), so an unfriend or a block, which revoke the pair's open invites,
-//! cannot pass the new invite.
+//! cannot pass the new invite. Every friend invite counts against the caller's
+//! `friend_invite_user` (20 a day, unknown names and repeats included): a friend's decline does
+//! not stop a new invite, as a declined request does not stop a new request, and the limit
+//! bounds both alike.
 
 use axum::Json;
 use axum::extract::State;
@@ -37,6 +40,7 @@ use super::out::{InviteList, InviteOut, club_invite_out, club_invite_outs};
 use super::{lock_club, locked_role};
 use crate::AppState;
 use crate::activity::{self, EventKind, NewEvent};
+use crate::auth::account::account_key;
 use crate::auth::random;
 use crate::auth::rules::normalize_username;
 use crate::error::{ApiResult, AppError, ErrorBody, is_unique_violation, msg};
@@ -344,7 +348,8 @@ pub async fn list_invites(
 /// Creates an invite to the club (admins): a single-use code, a shareable link, or a personal
 /// invite for one friend of the caller (`kind: "friend"`, `username`), which only that friend can
 /// redeem through `/join/{code}`. A second friend invite for the same friend, while the caller's
-/// first one is still open, answers with the first one.
+/// first one is still open, answers with the first one. 20 friend invites per account a day,
+/// unknown names and repeats included.
 #[utoipa::path(
     post,
     path = "/api/clubs/{slug}/invites",
@@ -359,7 +364,8 @@ pub async fn list_invites(
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
         (status = 403, body = ErrorBody, description = "`Only club admins can do that`"),
         (status = 404, body = ErrorBody, description = "`No such club`, `No friend with that name`"),
-        (status = 409, body = ErrorBody, description = "`That friend is already in this club`")
+        (status = 409, body = ErrorBody, description = "`That friend is already in this club`"),
+        (status = 429, body = ErrorBody, description = "`Slow down a little. Try again later.` (friend invites only)")
     )
 )]
 pub async fn create_invite(
@@ -373,6 +379,13 @@ pub async fn create_invite(
     };
     // Validated to 1..=30 above.
     let days = body.expires_in_days.unwrap_or(default_days) as i32;
+    if body.kind == InviteKind::Friend {
+        state
+            .limits
+            .friend_invite_user
+            .check_and_hit(&account_key(member.user.id))
+            .map_err(|wait| wait.into_error(msg::SLOW_DOWN))?;
+    }
     let club_id = member.club.id;
     let mut tx = state.db.begin().await?;
     lock_as_admin(&mut tx, &member).await?;
