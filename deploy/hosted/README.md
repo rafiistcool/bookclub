@@ -26,7 +26,7 @@ The private move (#52) runs this stack on the Python app's existing host, with m
 - Debian 13 with Docker Engine 25 or newer and the compose plugin 2.24 or newer, and `curl` for the heartbeats.
 - `docker login git.tillhome.de` with a read-only package token, as root: the update timer pulls with it.
 - **An SMTP account, for staging too.** Without `DEV_MODE` the server does not start without `SMTP_URL` and `EMAIL_FROM`, and `EMAIL_TRANSPORT=log` needs `DEV_MODE`, which this setup never sets. Until the mail provider is chosen, staging uses an interim account. `SMTP_URL` must use TLS: `smtps://…:465`, or `smtp://…:587?tls=required`.
-- **Or mail off,** while sign-up is invite-only and the members know the operator (the private move): `EMAIL_TRANSPORT=none` needs no SMTP settings. No mail leaves, reset and verification links are voided, password resets go through `set-password` (see "The first account"), and `SIGNUP_MODE=open` is refused.
+- **Or mail off,** while sign-up is invite-only and the members know the operator (the private move): `EMAIL_TRANSPORT=none` needs no SMTP settings. No mail leaves, reset links are voided (a verification link stays open, unreceived, until it expires), password resets go through `set-password` (see "The first account"), and `SIGNUP_MODE=open` is refused.
 - The reverse proxy (Caddy) terminates TLS and forwards to `BOOKCLUB_LISTEN:BOOKCLUB_PORT`. Only the proxy may reach that port (see "The VM's network").
 
 ## First boot
