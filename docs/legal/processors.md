@@ -11,7 +11,7 @@ Who outside the operator receives data from the hosted Bookclub service, and whe
 | Mail provider | Brevo (Q4); the SMTP host and account follow with the domain | processor | needed: to sign |
 | Backup target | Hetzner Storage Box (Hetzner Online GmbH), with the box's own snapshots (Q9) | processor (stores only ciphertext) | needed: to sign |
 | Uptime check | Better Stack or UptimeRobot (Q10 A; which one is to confirm) | not a processor of users' data: it receives `{"status":"ok"}` | none for users' data |
-| Heartbeats | healthchecks.io (Q10 A) | to confirm: the end of a backup or restore-test log can name a picture's storage key | to confirm (below) |
+| Heartbeats | healthchecks.io (Q10 A) | not a processor of users' data once picture ids are blanked out of the pings (chosen; to do in DEP2's scripts); to confirm with the lawyer | none for users' data (below) |
 | Open Library | `openlibrary.org`, `covers.openlibrary.org`, redirects to `archive.org` | not a processor: an independent public catalog that receives no personal data | none |
 | Deutsche Nationalbibliothek | `services.dnb.de` | not a processor: an independent public catalog that receives no personal data | none |
 | Hosting, reverse proxy, registry | the operator's own hardware | not a recipient: the operator runs them | none |
@@ -38,7 +38,8 @@ Who outside the operator receives data from the hosted Bookclub service, and whe
 - **Provider:** Hetzner Online GmbH, Germany.
 - **Third countries:** none, as long as the box is ordered in an EU location (to confirm when ordering).
 - **To sign:** Hetzner's DPA, when the box is ordered.
-- **To fill in then:** the DPA date, the box's location, how many Storage Box snapshots are kept (DEP2's setup).
+- **Snapshots kept:** one a day, in as many slots as the box's plan has (BX11: 10, so about 10 days back; `deploy/hosted/README.md`, "Storage Box snapshots", DEP2).
+- **To fill in then:** the DPA date, the box's plan and location.
 
 ## Monitoring (Q10 A)
 
@@ -54,9 +55,9 @@ The operator gets alerts when the service or one of its timers stops. Both servi
 ### Heartbeats: healthchecks.io
 
 - **What it does:** receives pings from the backup, update and restore-test timers on the VM, from the VM's address: one when a run starts, one with the exit status when it ends, and alerts the operator when a ping is missing or reports a failure.
-- **Data:** the end ping of the backup and the restore test carries the last 50 lines of the run's log (`deploy/hosted/backup-lib.sh` (`heartbeat`, `supervise`)): row counts per table, restic's summary, durations. No username, address or content. Rarely, a line names the storage key of a picture the run could not read, for example `avatars/ab/<public id>/a`: a picture deleted while the backup ran, or one a restore test missed. A public id is the secret part of the picture's URL (`privacy-facts.md` §2), so with the service's host it loads that picture. What the update timer's ping carries (DEP2) is to confirm.
-- **Verdict (to confirm with the lawyer):** either healthchecks.io is a processor, because it can receive such a key, and its DPA is to sign (to confirm that it offers one), or the end ping leaves the log out and carries only the exit status, which is no personal data. The second needs a change to `deploy/hosted/backup-lib.sh` (DEP2's file) and keeps the provider out of this list.
-- **To fill in:** the verdict, the location, the DPA if needed.
+- **Data:** the end ping of the backup, the restore test and an update carries the last 50 lines of the run's log (`deploy/hosted/backup-lib.sh` (`heartbeat`, `supervise`), `deploy/hosted/update.sh`): row counts per table, restic's summary, durations, and for an update the image and the backup before it. No username, address or content. Rarely, a line names the storage key of a picture the run could not read, for example `avatars/ab/<public id>/a`: a picture deleted while the backup ran, or one a restore test missed. A public id is the secret part of the picture's URL (`privacy-facts.md` §2), so with the service's host it loads that picture.
+- **Chosen for now (2026-10-29, as Rafael asked: take the recommended option, decide what matters at go-live):** the pings keep the log, which tells the operator why a run failed, but every public id (26 characters of `a-z` and `0-9`) is blanked out of it before it is sent. They then carry no personal data, so healthchecks.io is not a processor of users' data and needs no DPA for them. The change is in DEP2's scripts and still to do (`docs/phase2/notes/leg2.md`); until it is made, a ping can carry such a key. The other option, signing healthchecks.io's DPA, stays open if the lawyer prefers it.
+- **To fill in:** the location, and the lawyer's confirmation of the verdict.
 
 ## Not processors
 

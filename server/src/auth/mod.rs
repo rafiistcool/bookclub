@@ -30,7 +30,9 @@ use crate::clubs::extract::Role;
 use crate::dto::{ClubSummary, UserOut};
 use crate::error::{ApiResult, AppError};
 use crate::legal::{self, LegalDoc};
-use crate::media::shared::urls::avatar_url;
+use crate::media::delete_prefixes;
+use crate::media::shared::MediaStore;
+use crate::media::shared::urls::{avatar_url, storage_prefix};
 
 /// Name of the session cookie when it is not `Secure` (`COOKIE_SECURE=false`, the DEV_MODE
 /// default). `session::cookie_name` picks the name for a configuration.
@@ -176,7 +178,8 @@ pub async fn user_out(conn: &mut PgConnection, user_id: i64) -> ApiResult<UserOu
     })
 }
 
-/// Empty sign-ups deleted per run at most ([`purge_empty_sign_ups`]); the rest wait for the next
+/// Empty sign-ups, and photos of rejected cover requests, deleted per run at most
+/// ([`purge_empty_sign_ups`], [`delete_rejected_cover_photos`]); the rest wait for the next
 /// hour.
 pub const PURGE_BATCH: i64 = 500;
 
@@ -185,7 +188,9 @@ pub const PURGE_BATCH: i64 = 500;
 ///
 /// - expired sessions, and used or expired email tokens;
 /// - reports and catalog edit requests 3 years after their decision (`resolved_at`,
-///   `decided_at`); open ones stay however old they are;
+///   `decided_at`); open ones stay however old they are. A rejected cover request whose photo is
+///   still stored is left to [`delete_rejected_cover_photos`], which deletes the photo with it:
+///   deleted here, the request would leave its photo behind with nothing referencing it;
 /// - empty sign-ups, 30 days after their last sign-in ([`purge_empty_sign_ups`]).
 pub async fn cleanup(conn: &mut PgConnection) -> sqlx::Result<()> {
     let sessions = sqlx::query!("DELETE FROM sessions WHERE expires_at < now()")
@@ -204,8 +209,11 @@ pub async fn cleanup(conn: &mut PgConnection) -> sqlx::Result<()> {
     .await?
     .rows_affected();
     let edit_requests = sqlx::query!(
-        "DELETE FROM catalog_edit_requests
-         WHERE status <> 'open' AND decided_at < now() - interval '3 years'"
+        "DELETE FROM catalog_edit_requests r
+         WHERE r.status <> 'open' AND r.decided_at < now() - interval '3 years'
+           AND NOT (r.kind = 'cover_replace' AND r.status = 'rejected'
+                    AND EXISTS (SELECT 1 FROM media m
+                                WHERE m.id = r.media_id AND m.removed_at IS NULL))"
     )
     .execute(&mut *conn)
     .await?
@@ -222,17 +230,100 @@ pub async fn cleanup(conn: &mut PgConnection) -> sqlx::Result<()> {
     Ok(())
 }
 
-/// Deletes up to [`PURGE_BATCH`] empty sign-ups ([`empty_sign_ups`]), lowest id first, each in a
-/// transaction of its own through [`deletion::delete_user`], the path of `DELETE /api/auth/me`.
-/// Returns how many it deleted. An account whose deletion fails is logged and kept, and the
-/// others go on; a failure of the connection itself ends the run.
+/// Deletes the photo of a rejected cover request (`cover_replace`) together with the request,
+/// 3 years after the decision (Q14), and then the photo's files. Returns how many photos it
+/// deleted, at most [`PURGE_BATCH`] a run.
 ///
-/// Each account is locked first and then looked at again in a new statement. A write that would
-/// give it data or a sign-in references the account, so it holds the row `FOR KEY SHARE` until
-/// it commits: once the lock is granted, such a write has either committed, and the second look
-/// sees it, or it waits for this transaction and fails when the account is gone. Taking the
-/// account's lock before any club's breaks no lock order (conventions §5.6): an empty account
-/// has no row in a club, so `delete_user` locks no club.
+/// Such a photo was never a cover, so nothing shows it, but its row names the uploader and its
+/// URL still serves it: [`cleanup`] leaves these requests here so that the photo goes with its
+/// request. It belongs in the hourly cleanup job, right after [`cleanup`], and unlike it needs
+/// the media store (`jobs::auth_cleanup_loop` has `state.media`). A photo that anything else
+/// references (a work, an edition, an account, a report, a request that is not due) stays, with
+/// its request, until nothing does. A taken-down photo has no files left; its row stays like
+/// every taken-down picture's, and [`cleanup`] deletes its request.
+///
+/// Each photo is locked first, media rows before requests as a takedown and an approval take
+/// them (conventions §7.2), and then looked at again in a new statement: a write that would
+/// reference it (a cover, a report) holds the row `FOR SHARE` or `FOR KEY SHARE`, so it has
+/// either committed and is seen, or it waits and finds the photo gone.
+pub async fn delete_rejected_cover_photos(
+    conn: &mut PgConnection,
+    store: &dyn MediaStore,
+) -> sqlx::Result<u64> {
+    let due = sqlx::query_scalar!(
+        r#"SELECT DISTINCT r.media_id AS "media_id!"
+           FROM catalog_edit_requests r
+           JOIN media m ON m.id = r.media_id
+           WHERE r.kind = 'cover_replace' AND r.status = 'rejected'
+             AND r.decided_at < now() - interval '3 years' AND m.removed_at IS NULL
+           ORDER BY 1
+           LIMIT $1"#,
+        PURGE_BATCH
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut deleted = 0;
+    for media_id in due {
+        let mut tx = conn.begin().await?;
+        let photo = sqlx::query!(
+            "SELECT kind, public_id, storage_key FROM media
+             WHERE id = $1 AND removed_at IS NULL
+             FOR UPDATE",
+            media_id
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(photo) = photo else {
+            tx.rollback().await?;
+            continue;
+        };
+        let in_use = sqlx::query_scalar!(
+            r#"SELECT EXISTS (SELECT 1 FROM works WHERE cover_media_id = $1)
+                   OR EXISTS (SELECT 1 FROM editions WHERE cover_media_id = $1)
+                   OR EXISTS (SELECT 1 FROM users WHERE avatar_media_id = $1)
+                   OR EXISTS (SELECT 1 FROM reports WHERE media_id = $1)
+                   OR EXISTS (SELECT 1 FROM media_removed_hashes WHERE media_id = $1)
+                   OR EXISTS (SELECT 1 FROM catalog_edit_requests
+                              WHERE media_id = $1
+                                AND NOT (kind = 'cover_replace' AND status = 'rejected'
+                                         AND decided_at < now() - interval '3 years'))
+               AS "in_use!""#,
+            media_id
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        if in_use {
+            tx.rollback().await?;
+            continue;
+        }
+        // The request goes with it (ON DELETE CASCADE).
+        sqlx::query!("DELETE FROM media WHERE id = $1", media_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        let mut prefixes = vec![storage_prefix(&photo.kind, &photo.public_id)];
+        prefixes.extend(photo.storage_key);
+        delete_prefixes(store, &prefixes).await;
+        deleted += 1;
+    }
+    Ok(deleted)
+}
+
+/// Deletes up to [`PURGE_BATCH`] empty sign-ups ([`is_empty_sign_up`]), lowest id first, each in
+/// a transaction of its own through [`deletion::delete_user`], the path of `DELETE /api/auth/me`.
+/// Returns how many it deleted. An account whose deletion fails is logged without naming it and
+/// kept, and the others go on; a failure of the connection itself ends the run.
+///
+/// Each account is locked first, then its sessions, and then it is looked at again in a new
+/// statement. A write that gives the account data or a new session references it, so it holds
+/// the users row `FOR KEY SHARE` until it commits; using an existing session updates only that
+/// session's row, which the second lock waits for. Once both locks are granted, such a write
+/// has either committed, and the second look sees it, or it waits for this transaction and
+/// fails or changes nothing when the account is gone. The users row comes before the sessions
+/// as in a password change and an account deletion, and a logout's trace
+/// (`users.last_seen_at`, migration 2201) never waits for the users row, so no lock order is
+/// reversed. Taking the account's lock before any club's breaks no lock order either
+/// (conventions §5.6): an empty account has no row in a club, so `delete_user` locks no club.
 pub async fn purge_empty_sign_ups(conn: &mut PgConnection) -> sqlx::Result<u64> {
     let candidates = empty_sign_ups(conn, None, PURGE_BATCH).await?;
     let mut deleted = 0;
@@ -248,7 +339,13 @@ pub async fn purge_empty_sign_ups(conn: &mut PgConnection) -> sqlx::Result<u64> 
             tx.rollback().await?;
             continue;
         };
-        if empty_sign_ups(&mut tx, Some(user_id), 1).await?.is_empty() {
+        sqlx::query!(
+            "SELECT id FROM sessions WHERE user_id = $1 FOR UPDATE",
+            user_id
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        if !is_empty_sign_up(&mut tx, user_id).await? {
             tx.rollback().await?;
             continue;
         }
@@ -256,8 +353,9 @@ pub async fn purge_empty_sign_ups(conn: &mut PgConnection) -> sqlx::Result<u64> 
             Ok(prefixes) => prefixes,
             Err(error) => {
                 // A database error (logged by `AppError::internal`); the account's own checks
-                // cannot fail for an empty account under its lock.
-                tracing::error!(user_id, %error, "deleting an empty sign-up failed; kept");
+                // cannot fail for an empty account under its lock. The log names no account:
+                // the operator finds the ones left with the query of `empty_sign_ups`.
+                tracing::error!(%error, "deleting an empty sign-up failed; kept");
                 tx.rollback().await?;
                 continue;
             }
@@ -265,7 +363,10 @@ pub async fn purge_empty_sign_ups(conn: &mut PgConnection) -> sqlx::Result<u64> 
         if !prefixes.is_empty() {
             // Unreachable while `empty_sign_ups` requires no picture. The job has no media store
             // to delete the files with, so it never deletes rows whose files would stay behind.
-            tracing::error!(user_id, ?prefixes, "an empty sign-up has pictures; kept");
+            tracing::error!(
+                pictures = prefixes.len(),
+                "an empty sign-up has pictures; kept"
+            );
             tx.rollback().await?;
             continue;
         }
@@ -275,6 +376,12 @@ pub async fn purge_empty_sign_ups(conn: &mut PgConnection) -> sqlx::Result<u64> 
     Ok(deleted)
 }
 
+/// Whether the account `user_id` is an empty sign-up of Q14 now ([`empty_sign_ups`]): the
+/// purge's second look under its locks.
+pub async fn is_empty_sign_up(conn: &mut PgConnection, user_id: i64) -> sqlx::Result<bool> {
+    Ok(!empty_sign_ups(conn, Some(user_id), 1).await?.is_empty())
+}
+
 /// The empty sign-ups of Q14, lowest id first, at most `limit`; with `only`, that account if it
 /// is one. An empty sign-up is an account that:
 ///
@@ -282,9 +389,9 @@ pub async fn purge_empty_sign_ups(conn: &mut PgConnection) -> sqlx::Result<u64> 
 ///   account without any is an imported one that never added an address, and it stays. An
 ///   imported account that typed an address without verifying it stays while it holds data.
 /// - **is not an instance admin.**
-/// - **shows no sign-in for 30 days:** it was created, changed its password and accepted the
-///   terms more than 30 days ago, and no session of it was used and no mail link was sent to it
-///   since then. A sign-in ended by logging out leaves no trace once its session row is gone.
+/// - **shows no sign-in for 30 days:** it was created, changed its password, accepted the terms
+///   and last used a session that has ended (`last_seen_at`) more than 30 days ago, and no
+///   session of it was used and no mail link was sent to it since then.
 /// - **holds no data:** no profile picture, and no row behind any foreign key to `users` other
 ///   than the traces of signing up and signing in: its sessions, its mail links and the use of
 ///   a sign-up invite (`club_invites.club_id` NULL). The use of a club invite is data.
@@ -292,7 +399,8 @@ pub async fn purge_empty_sign_ups(conn: &mut PgConnection) -> sqlx::Result<u64> 
 /// One `NOT EXISTS` per foreign-key column. `tests/jobs.rs`
 /// (`every_reference_to_an_account_is_data_or_a_trace_of_signing_in`) reads every foreign key
 /// to `users` from `pg_constraint` and gives an account a row behind each: a new one fails there
-/// until it has a line here, or is named a trace in that test.
+/// until it has a line here, or is named a trace in that test. A new column of `users` fails
+/// `every_column_of_users_is_considered_by_the_purge` the same way.
 async fn empty_sign_ups(
     conn: &mut PgConnection,
     only: Option<i64>,
@@ -305,7 +413,8 @@ async fn empty_sign_ups(
            AND u.email_verified_at IS NULL
            AND NOT u.is_admin
            -- no sign-in for 30 days
-           AND greatest(u.created_at, u.password_changed_at, u.terms_accepted_at)
+           AND greatest(u.created_at, u.password_changed_at, u.terms_accepted_at,
+                        u.last_seen_at)
                < now() - interval '30 days'
            AND NOT EXISTS (SELECT 1 FROM sessions x
                            WHERE x.user_id = u.id AND x.last_used_at >= now() - interval '30 days')

@@ -26,7 +26,7 @@ Shared by every activity below. Sources are in `privacy-facts.md` and `docs/phas
 - **Isolation:** the app VM sits in its own VLAN, accepts connections only from the reverse proxy, and cannot reach the LAN (work plan §5 step 10; to confirm at #51 acceptance).
 - **Availability and recovery:** nightly backups of the database and the media to a Hetzner Storage Box, encrypted by restic on the VM before they leave it (the key stays with the operator), with a weekly restore test; the Storage Box's own snapshots, which the VM cannot delete (DEP2 sets them up), keep the backups safe from someone who takes over the VM (Q9; Phase 2 security review, finding 3, option A). An uptime check on `/api/health` and heartbeats from the backup, update and restore-test timers alert the operator (Q10 A).
 - **Data subject rights:** in-app export and deletion (conventions §5.6, §5.7); by mail to `CONTACT_EMAIL` for an account that cannot sign in, such as a suspended one (activity 11).
-- **Storage limitation:** the hourly cleanup deletes expired sessions and mail links, reports and catalog requests 3 years after their decision, and sign-ups that stayed empty for 30 days (Q14; `server/src/auth/mod.rs` (`cleanup`), `privacy-facts.md` §7).
+- **Storage limitation:** the hourly cleanup deletes expired sessions and mail links, reports and catalog requests 3 years after their decision (a rejected cover request with its photo), and sign-ups that stayed empty for 30 days (Q14; `server/src/auth/mod.rs` (`cleanup`, `delete_rejected_cover_photos`), `privacy-facts.md` §7).
 
 ## Processing activities
 
@@ -39,7 +39,7 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 | Purpose | Provide personal accounts: sign-up (by invite, later open), sign-in, sessions in the browser and the apps, password change and reset |
 | Legal basis | Art. 6 (1) (b): performance of the contract (the terms of use) |
 | Data subjects | users |
-| Data | username, email address, verification time, password hash, preferences (theme, colour mode, language, time zone, notification switches), admin flag, sign-up and password change times; per session: the secret's hash, the kind, the device label (User-Agent or app name), created, last used, expiry; per mail link: the token's hash, the address, created, expiry, used |
+| Data | username, email address, verification time, password hash, preferences (theme, colour mode, language, time zone, notification switches), admin flag, sign-up and password change times, the last use of a session that ended before it expired (`last_seen_at`); per session: the secret's hash, the kind, the device label (User-Agent or app name), created, last used, expiry; per mail link: the token's hash, the address, created, expiry, used |
 | Tables | `users`, `sessions`, `email_tokens` |
 | Recipients | none; mails go through the mail provider (activity 2) |
 | Third countries | none |
@@ -141,7 +141,7 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 | Tables | `works`, `editions`, `media` (`kind = 'cover'`, `uploaded_by`), `catalog_edit_requests` |
 | Recipients | the books and covers: every signed-in user, without the contributor's name; the cover files also whoever has their URL, without sign-in (`privacy-facts.md` §2); the requests: instance admins |
 | Third countries | none |
-| Retention | the contributions stay as catalog content; the contributor's id becomes empty when the account is deleted; requests 3 years after their decision, open ones until decided (Q14) |
+| Retention | the contributions stay as catalog content; the contributor's id becomes empty when the account is deleted; requests 3 years after their decision, open ones until decided (Q14); the photo of a rejected cover request, which never became a cover, with its request |
 | Source | `server/src/catalog/`, `server/src/media/cover.rs` |
 
 ### 9. Notices about content and moderation
@@ -197,7 +197,7 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 | Tables | all |
 | Recipients | Hetzner Online GmbH (Storage Box) as processor (Q9; DPA to sign; `processors.md`) |
 | Third countries | none, as long as the box is ordered in an EU location (to confirm when ordering) |
-| Retention | restic: 7 daily, 4 weekly, 12 monthly snapshots; the Storage Box's own snapshots on top (how many: DEP2's setup, to confirm), so a deleted item can stay up to about 12 months plus the age of the oldest Storage Box snapshot (`privacy-facts.md` §7) |
+| Retention | restic: 7 daily, 4 weekly, 12 monthly snapshots; the Storage Box's own snapshots on top, one a day in as many slots as the box's plan has (BX11: 10; the plan is to confirm), so a deleted item can stay up to about 12 months plus the age of the oldest Storage Box snapshot (`privacy-facts.md` §7) |
 | Source | `deploy/hosted/backup.sh`, `deploy/hosted/restore-test.sh`, `deploy/hosted/README.md` ("Backups") |
 
 ### 13. Availability monitoring
@@ -206,13 +206,13 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 |---|---|
 | Purpose | Alert the operator when the service or a timer stops |
 | Legal basis | Art. 6 (1) (f) |
-| Data subjects | none for the uptime check; for the heartbeats, users only through a picture's storage key in rare log lines |
-| Data | the health answer (`{"status":"ok"}`); per heartbeat the job's exit status and the last 50 lines of its log (row counts, restic's summary; rarely the storage key of a picture the run could not read, `privacy-facts.md` §5) |
+| Data subjects | none: the heartbeats name no user once picture ids are blanked out of them (chosen; to do in DEP2's scripts, `privacy-facts.md` §0). Until then, users through a picture's storage key in rare log lines |
+| Data | the health answer (`{"status":"ok"}`); per heartbeat the job's exit status and the last 50 lines of its log (row counts, restic's summary), with every picture's public id blanked out (`privacy-facts.md` §5) |
 | Tables | none |
 | Recipients | the uptime check (Better Stack or UptimeRobot, to confirm) and healthchecks.io (Q10 A; `processors.md`) |
 | Third countries | to confirm with the chosen services |
 | Retention | the services' check and ping history (to confirm) |
-| Source | `server/src/health.rs`; `deploy/hosted/backup-lib.sh` (`heartbeat`) |
+| Source | `server/src/health.rs`; `deploy/hosted/backup-lib.sh` (`heartbeat`), `deploy/hosted/update.sh` |
 
 ### 14. Migration of the old app's data (one-off, at the cutover)
 

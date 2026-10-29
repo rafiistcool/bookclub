@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM catalog_edit_requests r\n         WHERE r.status <> 'open' AND r.decided_at < now() - interval '3 years'\n           AND NOT (r.kind = 'cover_replace' AND r.status = 'rejected'\n                    AND EXISTS (SELECT 1 FROM media m\n                                WHERE m.id = r.media_id AND m.removed_at IS NULL))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "c8727fc67104bdd3e7abac2e92a0d029a3891f2a00bfc0259b5bc04c2561193f"
+}
