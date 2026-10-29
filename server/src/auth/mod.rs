@@ -438,8 +438,8 @@ pub async fn is_empty_sign_up(conn: &mut PgConnection, user_id: i64) -> sqlx::Re
 /// (`every_reference_to_an_account_is_data_or_a_trace_of_signing_in`) reads every foreign key
 /// to `users` from `pg_constraint` and gives an account a row behind each: a new one fails there
 /// until it has a line here, or is named a trace (of signing in or of another account's act) in
-/// that test. `friendships.addressee_id` is both: data once accepted, a trace while pending. A new column of `users` fails
-/// `every_column_of_users_is_considered_by_the_purge` the same way.
+/// that test. `friendships.addressee_id` is both: data once accepted, a trace while pending. A
+/// new column of `users` fails `every_column_of_users_is_considered_by_the_purge` the same way.
 async fn empty_sign_ups(
     conn: &mut PgConnection,
     only: Option<i64>,

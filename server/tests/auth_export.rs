@@ -1034,11 +1034,11 @@ async fn the_export_holds_the_accepted_terms(db: PgPool) {
     assert_utc_timestamps(&data, "data");
 }
 
-/// Security review, Phase 2 Wave 2: only club mates can report a profile picture, so in a club
-/// of 2 to 5 a report's existence, number or time names the reporter. The owner's export
-/// (`reports.about_me`) shows neither an open nor a dismissed report, nor one closed on arrival,
-/// and a removal (which the statement of reasons told the owner about anyway) as one entry per
-/// decision, with the decision's date and no id, time of filing or channel.
+/// Security review, Phase 2 Wave 2: only club mates and friends can report a profile picture, so in
+/// a club of 2 to 5, or between friends, a report's existence, number or time names the reporter.
+/// The owner's export (`reports.about_me`) shows neither an open nor a dismissed report, nor one
+/// closed on arrival, and a removal (which the statement of reasons told the owner about anyway) as
+/// one entry per decision, with the decision's date and no id, time of filing or channel.
 #[sqlx::test]
 async fn about_me_holds_only_removals_never_who_reported_or_when(db: PgPool) {
     let app = TestApp::new(db).await;

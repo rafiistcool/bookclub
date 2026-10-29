@@ -581,21 +581,21 @@ async fn catalog_sections(
     .await?;
     data.insert("edit_requests".into(), requests);
 
-    // `about_me`: the removals of the user's content after a report, one entry per decision,
-    // which the user was told about anyway by the statement of reasons: their profile picture
-    // (`target_user_id`), pictures they uploaded, works and editions they added (a work report
-    // by the work as reported, `target_work_id`, which a merge leaves on the reader's record).
-    // The reporter is never named to the other side (ADM2, Q12), and in a club of 2 to 5 a
-    // report's existence, number or time names them: only club mates can report a profile
-    // picture. So open and dismissed reports, reports closed on arrival, how many reports a
-    // decision closed, how they came in and when are withheld to protect the reporters
+    // `about_me`: the removals of the user's content after a report, one entry per decision, which
+    // the user was told about anyway by the statement of reasons: their profile picture
+    // (`target_user_id`), pictures they uploaded, works and editions they added (a work report by
+    // the work as reported, `target_work_id`, which a merge leaves on the reader's record). The
+    // reporter is never named to the other side (ADM2, Q12), and in a club of 2 to 5, or between
+    // friends, a report's existence, number or time names them: only club mates and friends can
+    // report a profile picture. So open and dismissed reports, reports closed on arrival, how many
+    // reports a decision closed, how they came in and when are withheld to protect the reporters
     // (Art. 15 (4) GDPR, § 29 (1) BDSG; security review, Phase 2 Wave 2). A decision is what one
     // admin resolved in one transaction (`resolved_by`, `resolved_at`), whatever pictures it took
-    // down (a held profile picture with the owner's copy of it) and whichever book showed a
-    // cover when each report came in. Its reason is the one the statement of reasons gave
-    // (`admin::notices::decision_reason`: the recorded notice's, else the oldest report's), so
-    // the two never disagree and tell the owner that several reports came in (security review,
-    // ADM2 merge); its date is the decision's.
+    // down (a held profile picture with the owner's copy of it) and whichever book showed a cover
+    // when each report came in. Its reason is the one the statement of reasons gave
+    // (`admin::notices::decision_reason`: the recorded notice's, else the oldest report's), so the
+    // two never disagree and tell the owner that several reports came in (security review, ADM2
+    // merge); its date is the decision's.
     let reports = sqlx::query_scalar!(
         r#"SELECT jsonb_build_object(
                'filed', (SELECT coalesce(jsonb_agg(to_jsonb(r) - 'created_by' - 'resolved_by'
