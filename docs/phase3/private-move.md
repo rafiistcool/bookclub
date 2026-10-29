@@ -67,16 +67,9 @@ summary() {
 
 ## 1. Before: the release (M2)
 
-Wave 1 (SCAN, FRIENDS, M1) is merged into `phase-3`, and M1's boot test (`work-plan.md` §2.3) passed once more on it. **[Rafael]** approved the merge of the PR `phase-3` → `main`; the tag `v0.11.0` on `main` follows without a second approval. On the agents VM, once the release workflow has run, the three tags name one digest:
+Wave 1 (SCAN, FRIENDS, M1) is merged into `phase-3`, and M1's boot test (`work-plan.md` §2.3) passed once more on it. **[Rafael]** approved the merge of the PR `phase-3` → `main`; the tag `v0.11.0` on `main` follows without a second approval. Once the release workflow has run, the three tags must name one digest. The package is private and the agents VM has no registry login (a token would pass through my terminal), so I read Forgejo's package API with the `forgejo` MCP tools instead of `docker buildx imagetools inspect` (`docs/phase2/notes/dep2.md`, "Not verified"): `list_package_files` with owner `rafiistcool`, type `container`, name `bookclub-server`, for the versions `0.11.0`, `0.11` and `stable`. Each lists a `manifest.json` whose `sha256` is that tag's manifest digest.
 
-```bash
-for tag in 0.11.0 0.11 stable; do
-    docker buildx imagetools inspect --format '{{.Manifest.Digest}}' \
-        "git.tillhome.de/rafiistcool/bookclub-server:$tag"
-done
-```
-
-Three equal lines are the go. Nothing follows `stable` on the host until the update timer is on (section 9).
+Three equal `sha256` values are the go. Nothing follows `stable` on the host until the update timer is on (section 9).
 
 ## 2. Access and facts (M3)
 
@@ -143,7 +136,7 @@ The facts go into the notes without secrets or usernames: OS, Docker and compose
   ```
 
 - **Backups.** `RESTIC_REPOSITORY` is an absolute path: a mounted NAS share if the facts list one; otherwise a directory on another physical disk; otherwise `/srv/bookclub-backup` on the same disk. In the last case I tell Rafael that the backups then guard against mistakes, not against losing the disk, until the Storage Box comes with the public launch. Never under `/tmp` (the units use `PrivateTmp`). restic runs as root: on an NFS share with root squashing, root cannot write, so the directory must take a `touch` as root first.
-- **Auto-updaters.** If one runs, the new stack is excluded before section 3 (watchtower: the label in `compose.override.yaml`, section 3.1), and it must not revive stopped containers (watchtower: no `--include-stopped`, `--revive-stopped`, `WATCHTOWER_INCLUDE_STOPPED` or `WATCHTOWER_REVIVE_STOPPED`), or the stopped Python app would come back during the move. Otherwise I stop it. Its flags, without the rest of its environment: `docker inspect -f '{{json .Config.Cmd}}' <name>` and `docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' <name> | grep -E '^WATCHTOWER_(LABEL_ENABLE|INCLUDE_STOPPED|REVIVE_STOPPED)='`. `update.sh`, which backs up first, is the new stack's only updater.
+- **Auto-updaters.** If one runs, the new stack is excluded before section 3 (watchtower: the label in `compose.override.yaml`, section 3.1), and it must not revive stopped containers (watchtower: no `--include-stopped`, `--revive-stopped`, `WATCHTOWER_INCLUDE_STOPPED` or `WATCHTOWER_REVIVE_STOPPED`), or the stopped Python app would come back during the move. Otherwise I stop it. Its flags, by name only, since its command line and environment can hold tokens (`--http-api-token`, notification URLs): `docker inspect -f '{{range .Config.Cmd}}{{println .}}{{end}}' <name> | grep -E '^(--label-enable|--include-stopped|-S|--revive-stopped)(=.*)?$'` and `docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' <name> | grep -E '^WATCHTOWER_(LABEL_ENABLE|INCLUDE_STOPPED|REVIVE_STOPPED)='`. `update.sh`, which backs up first, is the new stack's only updater.
 - **Registry.** The package is private. If root's Docker config does not name `git.tillhome.de`, **[Rafael]** creates a Forgejo token with only `read:package` (Settings → Applications) and runs `docker login git.tillhome.de` with it as root on the host.
 - **The scanner.** If the proxy sends `Permissions-Policy` with `camera=()`, I send Rafael the exact line with `camera=(self)`, or the scanner waits. Not a stop.
 - **`sqlite3`.** Missing: install it for `compare.sh` (`apt-get install -y sqlite3`), or use the stand-in of section 7.4.
@@ -239,6 +232,7 @@ If it does not come up: `docker compose logs --no-log-prefix app | grep '^error:
 **When the old peer is a Docker gateway** (section 2.3): the app's network exists now, and its gateway is the address the app will see for the proxy:
 
 ```bash
+cd "$NEW"
 network=$(docker inspect -f '{{range $name, $net := .NetworkSettings.Networks}}{{$name}} {{end}}' \
     "$(docker compose ps -aq app)" | tr ' ' '\n' | grep -v -e '_db$' -e '^$' | head -n 1)
 gateway=$(docker network inspect -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}' "$network")
@@ -286,7 +280,7 @@ Checked the day before, from my SSH session:
 
 - [ ] The facts' stops are cleared; layout, project name, binding (or alias), `TRUSTED_PROXIES`, slug and time zone are in `vars.sh` and `.env`.
 - [ ] `docker compose ps -a` in `$NEW`: `postgres` healthy, `app` exited; `BOOKCLUB_TAG=stable` names v0.11.0; `SIGNUP_MODE=invite`, `DNB_HARVEST=false`, `EMAIL_TRANSPORT=none`.
-- [ ] The target is empty: `docker compose exec -T postgres psql -U bookclub -d bookclub -Atc 'SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM club_invites)'` prints `0|0`.
+- [ ] The target is empty, in `$NEW`: `docker compose exec -T postgres psql -U bookclub -d bookclub -Atc 'SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM club_invites)'` prints `0|0`.
 - [ ] `backup.sh` and `restore-test.sh` passed once; both timers are listed; Rafael has the restic password.
 - [ ] No auto-updater touches either stack (section 2.3).
 - [ ] `$IMPORT` exists, mode 700, owner 1000.
@@ -388,7 +382,7 @@ grep -E 'MISMATCH|^accounts:|^result:' compare.txt
 
 Exit 0 is the go. It counts both databases with its own queries, checks every count against the report, and compares `id|username|password_hash` of every account without printing a hash. The account comparison is valid only now: a login re-hashes a legacy hash. Its per-user table names people and stays in `compare.txt`.
 
-**Without `sqlite3` on the host**, a stand-in that runs it in a container (built once, before move day; `compare.sh` copies the legacy file into `/tmp` and reads that copy):
+**Without `sqlite3` on the host**, a stand-in that runs it in a container (built once, before move day; `compare.sh` copies the legacy file into `/tmp` and reads that copy). Its path goes into `vars.sh`, so the move day session has it:
 
 ```bash
 docker build -t bookclub-sqlite3 - <<'EOF'
@@ -398,7 +392,7 @@ ENTRYPOINT ["sqlite3"]
 EOF
 printf '#!/bin/sh\nexec docker run --rm -i --network none -v /tmp:/tmp bookclub-sqlite3 "$@"\n' > "$R/sqlite3"
 chmod 700 "$R/sqlite3"
-export SQLITE3=$R/sqlite3               # compare.sh runs this instead of sqlite3
+echo "export SQLITE3=$R/sqlite3" >> "$R/vars.sh"   # compare.sh runs it instead of sqlite3
 ```
 
 Section 9 removes the image (`docker image rm bookclub-sqlite3`).
@@ -443,6 +437,7 @@ curl -sI "https://$HOST/sw.js" | grep -iE '^(HTTP|content-type)'    # 200, conte
 
 ```bash
 # The app listens on 8080 in its container (8000 with the alias override's BIND_ADDR).
+cd "$NEW"
 nsenter -n -t "$(docker inspect -f '{{.State.Pid}}' "$(docker compose ps -q app)")" \
     ss -Htn state established '( sport = :8080 )' |
     awk '{ peer = $NF; sub(/:[0-9]+$/, "", peer); print peer }' | sort | uniq -c
