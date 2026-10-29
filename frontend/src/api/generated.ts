@@ -3349,6 +3349,10 @@ export interface components {
             id: number;
             /** @description The author's username; null only for a tombstone left by a deleted account. */
             author: string | null;
+            /**
+             * @description `/media/{public_id}/a`; null without a picture, once it was taken down, or when the viewer
+             *     shares no club with the author any more.
+             */
             author_avatar_url: string | null;
             /** @description Whether the viewer wrote it. */
             mine: boolean;

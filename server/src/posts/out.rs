@@ -28,6 +28,8 @@ pub struct PostOut {
     pub id: i64,
     /// The author's username; null only for a tombstone left by a deleted account.
     pub author: Option<String>,
+    /// `/media/{public_id}/a`; null without a picture, once it was taken down, or when the viewer
+    /// shares no club with the author any more.
     pub author_avatar_url: Option<String>,
     /// Whether the viewer wrote it.
     pub mine: bool,
@@ -141,7 +143,11 @@ struct PostRow {
     author_rating: Option<i32>,
 }
 
-/// The rows of the posts among `ids` the viewer may see.
+/// The rows of the posts among `ids` the viewer may see. The author's profile picture only when
+/// the viewer can see the author (`bc_can_see_user`: they share a club), as the report route
+/// accepts it: a member removed from the club, or who left it, keeps their name on their old
+/// posts, but a picture they set since would show to people who could not report it (security
+/// review, ADM2 merge). Reactions hide the names of such people the same way.
 async fn load_rows(
     conn: &mut PgConnection,
     viewer: i64,
@@ -149,7 +155,9 @@ async fn load_rows(
 ) -> sqlx::Result<HashMap<i64, PostRow>> {
     let rows = sqlx::query_as!(
         PostRow,
-        r#"SELECT p.id, p.author_id, u.username AS "author?", m.public_id AS "author_avatar?",
+        r#"SELECT p.id, p.author_id, u.username AS "author?",
+                  CASE WHEN bc_can_see_user($1, p.author_id) THEN m.public_id END
+                      AS "author_avatar?",
                   p.parent_id, p.club_id, c.slug AS "club_slug?", c.name AS "club_name?",
                   c.timezone AS "club_timezone?", p.pick_id, p.milestone_id,
                   p.visibility AS "visibility: Visibility", p.body, p.spoiler_upto,

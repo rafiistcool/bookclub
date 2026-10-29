@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT p.id, p.author_id, u.username AS \"author?\", m.public_id AS \"author_avatar?\",\n                  p.parent_id, p.club_id, c.slug AS \"club_slug?\", c.name AS \"club_name?\",\n                  c.timezone AS \"club_timezone?\", p.pick_id, p.milestone_id,\n                  p.visibility AS \"visibility: Visibility\", p.body, p.spoiler_upto,\n                  p.progress_at, p.status_at AS \"status_at: ShelfStatus\",\n                  p.deleted_at IS NOT NULL AS \"deleted!\", p.created_at, p.updated_at,\n                  (SELECT s.rating\n                   FROM bc_visible_shelf($1) AS s\n                   WHERE s.user_id = p.author_id AND s.work_id = p.work_id\n                     AND s.status = 'finished') AS author_rating\n           FROM posts p\n           JOIN bc_visible_posts($1) AS v ON v.id = p.id\n           LEFT JOIN users u ON u.id = p.author_id\n           LEFT JOIN media m ON m.id = u.avatar_media_id AND m.removed_at IS NULL\n           LEFT JOIN clubs c ON c.id = p.club_id\n           WHERE p.id = ANY($2)",
+  "query": "SELECT p.id, p.author_id, u.username AS \"author?\",\n                  CASE WHEN bc_can_see_user($1, p.author_id) THEN m.public_id END\n                      AS \"author_avatar?\",\n                  p.parent_id, p.club_id, c.slug AS \"club_slug?\", c.name AS \"club_name?\",\n                  c.timezone AS \"club_timezone?\", p.pick_id, p.milestone_id,\n                  p.visibility AS \"visibility: Visibility\", p.body, p.spoiler_upto,\n                  p.progress_at, p.status_at AS \"status_at: ShelfStatus\",\n                  p.deleted_at IS NOT NULL AS \"deleted!\", p.created_at, p.updated_at,\n                  (SELECT s.rating\n                   FROM bc_visible_shelf($1) AS s\n                   WHERE s.user_id = p.author_id AND s.work_id = p.work_id\n                     AND s.status = 'finished') AS author_rating\n           FROM posts p\n           JOIN bc_visible_posts($1) AS v ON v.id = p.id\n           LEFT JOIN users u ON u.id = p.author_id\n           LEFT JOIN media m ON m.id = u.avatar_media_id AND m.removed_at IS NULL\n           LEFT JOIN clubs c ON c.id = p.club_id\n           WHERE p.id = ANY($2)",
   "describe": {
     "columns": [
       {
@@ -40,12 +40,7 @@
         "ordinal": 3,
         "name": "author_avatar?",
         "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "media",
-            "name": "public_id"
-          }
-        }
+        "origin": "Expression"
       },
       {
         "ordinal": 4,
@@ -224,7 +219,7 @@
       false,
       true,
       true,
-      true,
+      null,
       true,
       true,
       true,
@@ -243,5 +238,5 @@
       null
     ]
   },
-  "hash": "05c1feda302e98e23bb26186cf2a58408978a225a4f10ba128a02cbaea1cceec"
+  "hash": "b445b9ee80a61046d5390e78e554ede4d1148c497f0e8a83e7c0126806d97fc9"
 }

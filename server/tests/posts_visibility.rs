@@ -508,3 +508,57 @@ async fn a_deleted_accounts_tombstone_keeps_its_replies_visible(db: PgPool) {
         .await
         .assert_detail(400, "That entry was deleted");
 }
+
+/// Security review, ADM2 merge: a member removed from a club keeps their name on their old club
+/// posts (club posts are club data), but not their profile picture: a picture they set after
+/// the removal would show to members who cannot report it (`POST /api/media/{public_id}/reports`
+/// takes the profile picture of someone the reader shares a club with). The post's avatar now
+/// follows the same rule.
+#[sqlx::test]
+async fn a_former_club_mates_picture_leaves_their_old_posts(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let v = Viewers::new(&app).await;
+    let circe = app.work("Circe").await;
+    set_pick(&app, &v.shared, &circe).await;
+    let mallory = app.user("mallory").await;
+    app.join(&v.shared, &mallory, "member").await;
+    club_post(&mallory, &v.shared, "Before I go").await;
+    let picture = "m4110rym4110rym4110rym4110";
+    app.exec(&format!(
+        "INSERT INTO media (public_id, kind, source, content_type, variants, width, height,
+                            byte_size, sha256, uploaded_by, storage_key)
+         VALUES ('{picture}', 'avatar', 'upload', 'image/webp', ARRAY['a'], 1, 1, 1,
+                 sha256('mallory'), {mallory}, 'avatars/m4/{picture}');
+         UPDATE users SET avatar_media_id = (SELECT id FROM media WHERE public_id = '{picture}')
+         WHERE id = {mallory}",
+        mallory = mallory.id()
+    ))
+    .await;
+    let avatar_of_post = |viewer: &TestClient| {
+        let viewer = viewer.clone();
+        let path = format!("/api/clubs/{}/pick/posts", v.shared.slug);
+        async move {
+            let thread = viewer.get(&path).await.json();
+            let post = &thread["items"][0];
+            assert_eq!(post["author"], "mallory");
+            post["author_avatar_url"].clone()
+        }
+    };
+    let url = format!("/media/{picture}/a");
+    assert_eq!(avatar_of_post(&v.co_member).await, url.as_str());
+
+    v.owner
+        .delete(&format!("/api/clubs/{}/members/mallory", v.shared.slug))
+        .await
+        .assert_status(204);
+    assert_eq!(avatar_of_post(&v.co_member).await, Value::Null);
+    assert_eq!(avatar_of_post(&v.owner).await, Value::Null);
+    // The same rule as the report route, which refuses the picture.
+    v.co_member
+        .post(
+            &format!("/api/media/{picture}/reports"),
+            json!({"reason": "offensive"}),
+        )
+        .await
+        .assert_detail(404, "Not found");
+}
