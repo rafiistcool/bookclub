@@ -43,8 +43,8 @@ impl EmailSender for LogEmail {
 pub const MAIL_OFF: &str = "mail is off (EMAIL_TRANSPORT=none)";
 
 /// The transport while no mail provider exists (`EMAIL_TRANSPORT=none`, the private move #52):
-/// every send fails with [`MAIL_OFF`], so callers treat the mail as not sent (a reset or
-/// verification link is voided, an admin notice stamps nothing). It logs nothing itself: no
+/// every send fails with [`MAIL_OFF`], so callers treat the mail as not sent (a reset link is
+/// voided, a verification link stays unreceived until it expires). It logs nothing itself: no
 /// recipient, subject, body or link, so a reset link never reaches the log outside DEV_MODE
 /// (docs/phase1/conventions.md §11, §19). `auth::mail::deliver` logs that a mail was not sent.
 pub struct NoEmail;
@@ -56,7 +56,8 @@ impl EmailSender for NoEmail {
     }
 }
 
-/// Whether `error` is [`NoEmail`]'s refusal rather than a failed send.
+/// Whether `error` is [`NoEmail`]'s refusal rather than a failed send: the `&'static str`
+/// [`MAIL_OFF`] itself, never an SMTP error that quotes it.
 pub fn is_mail_off(error: &anyhow::Error) -> bool {
     error.downcast_ref::<&str>() == Some(&MAIL_OFF)
 }
