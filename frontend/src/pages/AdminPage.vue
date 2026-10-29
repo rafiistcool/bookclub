@@ -94,6 +94,18 @@ onMounted(loadSummary);
   margin-bottom: var(--space-5);
 }
 
+/*
+ * Four tabs with a count do not fit one line of a phone (at 360 px the
+ * fourth one was cut off inside the scrolling bar): two rows of two there.
+ */
+@media (max-width: 479px) {
+  .admin-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-radius: var(--radius-xl);
+  }
+}
+
 .seg-count.overdue {
   color: var(--danger);
 }
