@@ -22,6 +22,8 @@ const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 /// text promises:
 /// - scripts only from our files: `index.html` has no inline script (the theme boot script is
 ///   `/theme-init.js`), Vite emits none, and vue-i18n 11 interprets messages without `eval`.
+/// - WebAssembly compiles from our own `/assets` file only, for the barcode decoder (#56):
+///   `'wasm-unsafe-eval'`; `'unsafe-eval'` stays out.
 /// - inline styles stay allowed: bound `style` attributes and the drag-and-drop library set
 ///   them, and a style cannot run code.
 /// - pictures from `/media`, plus `data:` and `blob:` URLs, so a local preview of a picture
@@ -29,7 +31,7 @@ const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 /// - the manifest from our file or the `blob:` URL `brand.ts` builds from `/api/config`.
 /// - no plugins, no `<base>` elsewhere, forms only to us, and no framing at all (the API's
 ///   `frame-ancestors 'none'` from `lib.rs`, which keeps this header when it is present).
-pub const SHELL_CSP: &str = "default-src 'self'; script-src 'self'; \
+pub const SHELL_CSP: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; \
     style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; \
     connect-src 'self'; manifest-src 'self' blob:; object-src 'none'; base-uri 'self'; \
     form-action 'self'; frame-ancestors 'none'";
