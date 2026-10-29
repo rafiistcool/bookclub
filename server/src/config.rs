@@ -52,6 +52,9 @@ pub enum EmailTransport {
     Log,
     /// Send through `SMTP_URL`.
     Smtp,
+    /// Send nothing (`email::NoEmail`): until a mail provider exists (the private move, #52).
+    /// Reset links are voided, and `bookclub-server set-password` resets a password instead.
+    None,
 }
 
 /// Settings read from environment variables at startup.
@@ -80,7 +83,7 @@ pub struct Config {
     pub static_dir: Option<PathBuf>,
     /// Root of the filesystem media store (`MEDIA_DIR`, default `./data/media`).
     pub media_dir: PathBuf,
-    /// `EMAIL_TRANSPORT`: `log` (DEV_MODE only, and its default) or `smtp`.
+    /// `EMAIL_TRANSPORT`: `log` (DEV_MODE only, and its default), `smtp` or `none`.
     pub email_transport: EmailTransport,
     /// `SMTP_URL`, required for the smtp transport.
     pub smtp_url: Option<String>,
@@ -178,8 +181,14 @@ impl Config {
             Some("log") => bail!(
                 "EMAIL_TRANSPORT=log needs DEV_MODE=true: it writes every mail, password reset links included, to the log"
             ),
-            Some(other) => bail!("EMAIL_TRANSPORT must be log or smtp, not {other:?}"),
+            Some("none") => EmailTransport::None,
+            Some(other) => bail!("EMAIL_TRANSPORT must be log, smtp or none, not {other:?}"),
         };
+        // Strangers need a verification link and a password reset by mail. Checked before the
+        // legal texts, so a stack without either names mail first.
+        if email_transport == EmailTransport::None && signup_mode == SignupMode::Open {
+            bail!("SIGNUP_MODE=open needs mail: set EMAIL_TRANSPORT=smtp");
+        }
         let smtp_url = get("SMTP_URL");
         let email_from = get("EMAIL_FROM");
         if email_transport == EmailTransport::Smtp {
@@ -564,6 +573,66 @@ mod tests {
         ]))
         .unwrap();
         assert_eq!(config.email_transport, EmailTransport::Log);
+    }
+
+    /// The private move (#52): mail off without DEV_MODE, and without an SMTP account.
+    #[test]
+    fn none_needs_no_smtp() {
+        let pairs: Vec<(&str, &str)> = PROD
+            .iter()
+            .filter(|(key, _)| !matches!(*key, "SMTP_URL" | "EMAIL_FROM"))
+            .copied()
+            .chain([("EMAIL_TRANSPORT", "none")])
+            .collect();
+        let config = Config::from_lookup(lookup_from(&pairs)).unwrap();
+        assert_eq!(config.email_transport, EmailTransport::None);
+        assert!(!config.dev_mode);
+        assert_eq!(config.smtp_url, None);
+        assert_eq!(config.email_from, None);
+
+        // Unset still means smtp outside DEV_MODE.
+        let pairs: Vec<(&str, &str)> = PROD
+            .iter()
+            .filter(|(key, _)| *key != "SMTP_URL")
+            .copied()
+            .collect();
+        let error = Config::from_lookup(lookup_from(&pairs)).unwrap_err();
+        assert!(error.to_string().contains("SMTP_URL"), "{error}");
+    }
+
+    /// Strangers need verification and password reset, so open sign-up refuses `none`, and
+    /// says so before it names the missing legal texts.
+    #[test]
+    fn open_signup_needs_mail() {
+        for extra in [
+            &[("EMAIL_TRANSPORT", "none"), ("SIGNUP_MODE", "open")][..],
+            &[
+                ("EMAIL_TRANSPORT", "none"),
+                ("SIGNUP_MODE", "open"),
+                ("DEV_MODE", "true"),
+            ][..],
+        ] {
+            let error = with(PROD, extra).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "SIGNUP_MODE=open needs mail: set EMAIL_TRANSPORT=smtp"
+            );
+        }
+        let config = with(
+            PROD,
+            &[("EMAIL_TRANSPORT", "none"), ("SIGNUP_MODE", "invite")],
+        )
+        .unwrap();
+        assert_eq!(config.signup_mode, SignupMode::Invite);
+    }
+
+    #[test]
+    fn unknown_transport_names_all_three() {
+        let error = with(PROD, &[("EMAIL_TRANSPORT", "sendmail")]).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            r#"EMAIL_TRANSPORT must be log, smtp or none, not "sendmail""#
+        );
     }
 
     #[test]

@@ -20,8 +20,8 @@ pub struct Email {
     pub text: String,
 }
 
-/// Sends mail. Production uses [`SmtpEmail`], development [`LogEmail`], tests `CapturingEmail`
-/// (tests/common).
+/// Sends mail. Production uses [`SmtpEmail`], or [`NoEmail`] while no mail provider exists;
+/// development [`LogEmail`], tests `CapturingEmail` (tests/common).
 #[async_trait::async_trait]
 pub trait EmailSender: Send + Sync {
     async fn send(&self, msg: Email) -> anyhow::Result<()>;
@@ -37,6 +37,28 @@ impl EmailSender for LogEmail {
         tracing::info!(to = %msg.to, subject = %msg.subject, body = %msg.text, "email (log transport)");
         Ok(())
     }
+}
+
+/// What [`NoEmail`] fails with, and what `send-test-mail` prints under `EMAIL_TRANSPORT=none`.
+pub const MAIL_OFF: &str = "mail is off (EMAIL_TRANSPORT=none)";
+
+/// The transport while no mail provider exists (`EMAIL_TRANSPORT=none`, the private move #52):
+/// every send fails with [`MAIL_OFF`], so callers treat the mail as not sent (a reset or
+/// verification link is voided, an admin notice stamps nothing). It logs nothing itself: no
+/// recipient, subject, body or link, so a reset link never reaches the log outside DEV_MODE
+/// (docs/phase1/conventions.md §11, §19). `auth::mail::deliver` logs that a mail was not sent.
+pub struct NoEmail;
+
+#[async_trait::async_trait]
+impl EmailSender for NoEmail {
+    async fn send(&self, _msg: Email) -> anyhow::Result<()> {
+        Err(anyhow::Error::msg(MAIL_OFF))
+    }
+}
+
+/// Whether `error` is [`NoEmail`]'s refusal rather than a failed send.
+pub fn is_mail_off(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<&str>() == Some(&MAIL_OFF)
 }
 
 /// SMTP through lettre with rustls and a connection pool, configured by `SMTP_URL` and
@@ -152,6 +174,21 @@ mod tests {
             text: "Body".into(),
         };
         LogEmail.send(email).await.unwrap();
+    }
+
+    /// `EMAIL_TRANSPORT=none`: every send fails with `MAIL_OFF`, which `is_mail_off` tells
+    /// apart from a failed send.
+    #[tokio::test]
+    async fn the_none_transport_sends_nothing() {
+        let email = Email {
+            to: "ada@example.test".into(),
+            subject: "Hi".into(),
+            text: "Body".into(),
+        };
+        let error = NoEmail.send(email).await.unwrap_err();
+        assert_eq!(error.to_string(), "mail is off (EMAIL_TRANSPORT=none)");
+        assert!(is_mail_off(&error));
+        assert!(!is_mail_off(&anyhow::anyhow!("SMTP send failed")));
     }
 
     #[tokio::test]

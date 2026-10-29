@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use bookclub_server::auth::rules::valid_email;
 use bookclub_server::clubs::out::invite_out;
 use bookclub_server::config::{Config, EmailTransport};
-use bookclub_server::email::{self, EmailSender, LogEmail, SmtpEmail};
+use bookclub_server::email::{self, EmailSender, LogEmail, NoEmail, SmtpEmail};
 use bookclub_server::importer::{self, ImportError};
 use bookclub_server::media::shared::FsMediaStore;
 use bookclub_server::{AppState, admin, app, jobs, serve};
@@ -71,7 +71,7 @@ enum Command {
     /// HEALTHCHECK). Exits 0 only on 200. Reads no other setting and needs no database.
     Healthcheck,
     /// Send one test mail through the configured transport (SMTP_URL, EMAIL_FROM). Exits
-    /// non-zero when sending fails. Needs no database.
+    /// non-zero when sending fails, and with EMAIL_TRANSPORT=none. Needs no database.
     SendTestMail {
         /// The recipient address.
         address: String,
@@ -331,6 +331,8 @@ async fn send_test_mail(address: &str) -> Result<()> {
     let sender: Box<dyn EmailSender> = match config.email_transport {
         EmailTransport::Log => Box::new(LogEmail),
         EmailTransport::Smtp => Box::new(SmtpEmail::new(&config)?),
+        // Fails with `email::MAIL_OFF`, which `main` prints as `error: mail is off (…)`.
+        EmailTransport::None => Box::new(NoEmail),
     };
     sender.send(email::test_mail(&config, address)).await?;
     println!("sent a test mail to {address}");
