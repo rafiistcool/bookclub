@@ -14,7 +14,11 @@ import { useLocale } from "../stores/locale";
  * it already knows is 409, either of this book (choose it) or of another one
  * (open that book).
  */
-const props = defineProps<{ workId: number }>();
+const props = defineProps<{
+  workId: number;
+  /** The ISBN the scanner looked up and missed (#56). */
+  initialIsbn?: string;
+}>();
 const emit = defineEmits<{
   added: [edition: EditionOut];
   /** The ISBN names an edition of this work that is already listed. */
@@ -25,7 +29,9 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const locale = useLocale();
 
-const isbn = ref("");
+const isbn = ref(props.initialIsbn?.trim() || "");
+/** The field still holds the ISBN it came with. */
+const isbnFilled = computed(() => Boolean(props.initialIsbn?.trim()) && isbn.value.trim() === props.initialIsbn?.trim());
 const format = ref("");
 const publisher = ref("");
 const year = ref<number | "">("");
@@ -90,7 +96,7 @@ async function submit() {
     <label class="field">
       <span>{{ t("addBook.isbn") }}</span>
       <input v-model="isbn" name="isbn" type="text" maxlength="20" inputmode="numeric" autocomplete="off" spellcheck="false" :disabled="busy" />
-      <span class="field-hint">{{ t("editions.isbnHint") }}</span>
+      <span class="field-hint">{{ isbnFilled ? t("editions.isbnFilled") : t("editions.isbnHint") }}</span>
     </label>
     <div class="field-pair">
       <label class="field">

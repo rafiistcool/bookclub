@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { vAutosize } from "../autosize";
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { api, ApiError } from "../api/client";
+import type { BookDetailOut } from "../api/generated";
 import { bookPath } from "../constants";
 import { useToast } from "../stores/toast";
 import BottomSheet from "./BottomSheet.vue";
@@ -12,16 +13,22 @@ const { t } = useI18n();
 
 const props = defineProps<{
   initialTitle?: string;
+  /** The ISBN of a search or a scan that found nothing; it fills the ISBN field, not the title. */
+  initialIsbn?: string;
+  /** Emit `added` and close instead of opening the new book (the scanner shows it itself). */
+  stay?: boolean;
 }>();
 
-const emit = defineEmits<{ close: [] }>();
+const emit = defineEmits<{ close: []; added: [book: BookDetailOut] }>();
 
 const router = useRouter();
 const toast = useToast();
 const title = ref(props.initialTitle?.trim() || "");
 const authors = ref("");
 const year = ref("");
-const isbn = ref("");
+const isbn = ref(props.initialIsbn?.trim() || "");
+/** The field still holds the ISBN it came with. */
+const isbnFilled = computed(() => Boolean(props.initialIsbn?.trim()) && isbn.value.trim() === props.initialIsbn?.trim());
 const description = ref("");
 const busy = ref(false);
 const error = ref("");
@@ -54,7 +61,12 @@ async function submit() {
       ...(isbn.value.trim() ? { isbn: isbn.value.trim() } : {}),
     });
     toast.show(t("addBook.added"));
-    await open(bookPath(book));
+    if (props.stay) {
+      emit("added", book);
+      emit("close");
+    } else {
+      await open(bookPath(book));
+    }
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : t("addBook.failed");
     if (err instanceof ApiError && err.status === 409) {
@@ -88,7 +100,7 @@ async function submit() {
       <label class="field">
         <span>{{ t("addBook.isbn") }}</span>
         <input v-model="isbn" type="text" maxlength="20" inputmode="numeric" autocomplete="off" spellcheck="false" />
-        <span class="field-hint">{{ t("addBook.isbnHint") }}</span>
+        <span class="field-hint">{{ isbnFilled ? t("addBook.isbnFilled") : t("addBook.isbnHint") }}</span>
       </label>
       <label class="field">
         <span>{{ t("addBook.notes") }}</span>

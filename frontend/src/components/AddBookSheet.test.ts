@@ -78,4 +78,60 @@ describe("AddBookSheet", () => {
     await flushPromises();
     expect(push).toHaveBeenCalledWith("/book/12");
   });
+
+  it("puts an initial ISBN into the ISBN field, not the title", async () => {
+    const wrapper = mount(AddBookSheet, {
+      props: { initialIsbn: "9780316769488" },
+      global: { plugins: [createPinia(), i18n] },
+    });
+    const fields = wrapper.findAll<HTMLInputElement>('input[type="text"]');
+    expect(fields[0].element.value).toBe("");
+    expect(fields[2].element.value).toBe("9780316769488");
+    expect(wrapper.text()).toContain("The ISBN you looked up. The catalog checks it first.");
+    await fields[0].setValue("Kitchen Zine 2");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(createCustomBook.mock.calls[0][0]).toMatchObject({ title: "Kitchen Zine 2", isbn: "9780316769488" });
+    expect(push).toHaveBeenCalledWith("/book/31");
+  });
+
+  it("shows the usual hint once the initial ISBN is changed", async () => {
+    const wrapper = mount(AddBookSheet, {
+      props: { initialIsbn: "9780316769488" },
+      global: { plugins: [createPinia(), i18n] },
+    });
+    await wrapper.findAll('input[type="text"]')[2].setValue("3518368818");
+    expect(wrapper.text()).toContain("Optional. The catalog checks it first.");
+    expect(wrapper.text()).not.toContain("The ISBN you looked up.");
+  });
+
+  it("with stay, emits the new book and closes instead of opening it", async () => {
+    const wrapper = mount(AddBookSheet, {
+      props: { initialIsbn: "9780316769488", stay: true },
+      global: { plugins: [createPinia(), i18n] },
+    });
+    await wrapper.get('input[type="text"]').setValue("Kitchen Zine 2");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(wrapper.emitted("added")).toEqual([[{ id: 31, title: "Kitchen Zine 2" }]]);
+    expect(wrapper.emitted("close")).toHaveLength(1);
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("with stay, keeps the form and its values when the save fails", async () => {
+    createCustomBook.mockRejectedValue(
+      new ApiError("Could not look that ISBN up right now. Try again.", 502, "Could not look that ISBN up right now. Try again."),
+    );
+    const wrapper = mount(AddBookSheet, {
+      props: { initialIsbn: "9780316769488", stay: true },
+      global: { plugins: [createPinia(), i18n] },
+    });
+    await wrapper.get('input[type="text"]').setValue("Kitchen Zine 2");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(wrapper.text()).toContain("Could not look that ISBN up right now. Try again.");
+    expect(wrapper.emitted("added")).toBeUndefined();
+    expect(wrapper.emitted("close")).toBeUndefined();
+    expect(wrapper.findAll<HTMLInputElement>('input[type="text"]')[2].element.value).toBe("9780316769488");
+  });
 });

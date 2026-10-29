@@ -35,6 +35,7 @@ vi.mock("../api/client", () => ({
 
 import { ApiError } from "../api/client";
 import { i18n } from "../i18n";
+import AddBookSheet from "../components/AddBookSheet.vue";
 import DiscoverPage from "./DiscoverPage.vue";
 import { resetDiscoverBrowseCache } from "./discoverCache";
 
@@ -587,5 +588,36 @@ describe("DiscoverPage new releases", () => {
       german.wrapper.unmount();
       i18n.global.locale.value = previousLocale;
     }
+  });
+});
+
+describe("DiscoverPage and ISBNs", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    resetDiscoverBrowseCache();
+    search.mockReset().mockResolvedValue(page([]));
+    searchHistory.mockReset().mockResolvedValue([]);
+    rememberSearch.mockReset().mockResolvedValue([]);
+    trending.mockReset().mockResolvedValue(page([]));
+    subject.mockReset().mockResolvedValue(page([]));
+    newReleases.mockReset().mockResolvedValue(page([]));
+  });
+
+  it("puts a searched ISBN into the new book's ISBN field, not its title", async () => {
+    const { wrapper } = await mountDiscover("/discover?q=978-0-316-76948-8");
+    await wrapper.findAll("button").find((button) => button.text() === "Add your own book")!.trigger("click");
+    const sheet = wrapper.findComponent(AddBookSheet);
+    expect(sheet.props("initialIsbn")).toBe("9780316769488");
+    expect(sheet.props("initialTitle")).toBe("");
+    wrapper.unmount();
+  });
+
+  it("still puts any other search into the title", async () => {
+    const { wrapper } = await mountDiscover("/discover?q=kitchen%20zine");
+    await wrapper.findAll("button").find((button) => button.text() === "Add your own book")!.trigger("click");
+    const sheet = wrapper.findComponent(AddBookSheet);
+    expect(sheet.props("initialTitle")).toBe("kitchen zine");
+    expect(sheet.props("initialIsbn")).toBeUndefined();
+    wrapper.unmount();
   });
 });

@@ -588,6 +588,7 @@
     "add": "Add book",
     "isbn": "ISBN",
     "isbnHint": "Optional. The catalog checks it first.",
+    "isbnFilled": "The ISBN you looked up. The catalog checks it first.",
     "openExisting": "Open that book"
   },
   "card": {
@@ -1073,6 +1074,7 @@
     "notListed": "My edition is not listed",
     "addBlurb": "Add the edition you have. What you leave empty stays empty. An ISBN is looked up in the catalog first.",
     "isbnHint": "On the back cover or the copyright page. Optional.",
+    "isbnFilled": "The ISBN you looked up.",
     "noFormat": "Not given",
     "noLanguage": "Not given",
     "ownTitle": "Title of this edition",

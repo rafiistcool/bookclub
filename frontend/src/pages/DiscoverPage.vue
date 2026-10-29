@@ -161,6 +161,8 @@ function escapeHistory(event: KeyboardEvent) {
 }
 
 const submittedQuery = ref("");
+/** "Add your own book" after a search for an ISBN puts it into the ISBN field, not the title. */
+const addIsbn = computed(() => extractIsbn(submittedQuery.value));
 const subject = ref("");
 const sortPick = ref<"" | Exclude<SearchSort, "relevance">>("");
 const hideOnShelf = ref(false);
@@ -1012,7 +1014,8 @@ defineExpose({ loadPage });
 
     <AddBookSheet
       v-if="addingBook"
-      :initial-title="submittedQuery"
+      :initial-title="addIsbn ? '' : submittedQuery"
+      :initial-isbn="addIsbn ?? undefined"
       @close="addingBook = false"
     />
   </section>

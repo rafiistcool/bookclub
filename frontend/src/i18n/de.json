@@ -588,6 +588,7 @@
     "add": "Buch hinzufügen",
     "isbn": "ISBN",
     "isbnHint": "Optional. Der Katalog prüft sie zuerst.",
+    "isbnFilled": "Die ISBN, die du nachgeschlagen hast. Der Katalog prüft sie zuerst.",
     "openExisting": "Dieses Buch öffnen"
   },
   "card": {
@@ -1073,6 +1074,7 @@
     "notListed": "Meine Ausgabe fehlt",
     "addBlurb": "Trag die Ausgabe ein, die du hast. Was du leer lässt, bleibt leer. Eine ISBN wird zuerst im Katalog nachgeschlagen.",
     "isbnHint": "Auf der Rückseite oder im Impressum. Optional.",
+    "isbnFilled": "Die ISBN, die du nachgeschlagen hast.",
     "noFormat": "Keine Angabe",
     "noLanguage": "Keine Angabe",
     "ownTitle": "Titel dieser Ausgabe",
