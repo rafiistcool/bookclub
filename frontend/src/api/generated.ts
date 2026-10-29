@@ -183,10 +183,11 @@ export interface paths {
          *     good) or withdraws the text of a reported work or edition a reader added; `dismiss` keeps
          *     it. Either way every open report of the same picture, work or edition is resolved with it.
          *     After the commit each reporter is mailed the decision, and on a removal the uploader, the
-         *     avatar's owner or the reader who added the record gets a statement of reasons. A report of
-         *     something gone (`ReportOut.gone`: a profile picture its owner replaced or deleted, a work
-         *     merged away) is only dismissed, with the other open reports of it; its reporters learn that
-         *     it is no longer online.
+         *     avatar's owner or the reader who added the record gets a statement of reasons. A profile
+         *     picture its owner replaced or deleted while it was reported is held for the decision:
+         *     "remove" takes it down, "dismiss" deletes it. A report of something gone (`ReportOut.gone`:
+         *     the profile picture of an account deleted since, a work merged away) is only dismissed, with
+         *     the other open reports of it; its reporters learn that it is no longer online.
          */
         post: operations["media_admin_resolve_report"];
         delete?: never;
@@ -3595,9 +3596,11 @@ export interface components {
              */
             closed_on_arrival: boolean;
             /**
-             * @description What was reported no longer shows as reported, as it is now: a profile picture its owner
-             *     replaced or deleted, or a book merged into another one (`book` is that one). Only
-             *     `dismiss` decides such a report; `remove` answers 409.
+             * @description What was reported no longer shows as reported, as it is now: a profile picture without
+             *     its row (the account was deleted, or the picture was held for a report and dismissed),
+             *     or a book merged into another one (`book` is that one). Only `dismiss` decides such a
+             *     report; `remove` answers 409. A picture its owner replaced or deleted while it was
+             *     reported is held for the decision, and not gone.
              */
             gone: boolean;
         };
@@ -4824,7 +4827,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description `This report was already resolved`; on `remove`, `The reported picture is no longer online` (a profile picture its owner replaced or deleted) or `The reported book was merged into another one` */
+            /** @description `This report was already resolved`; on `remove`, `The reported picture is no longer online` (the profile picture of an account deleted since) or `The reported book was merged into another one` */
             409: {
                 headers: {
                     [name: string]: unknown;

@@ -11,6 +11,7 @@ use bookclub_server::catalog::shared::ingest::{
 };
 use bookclub_server::media::reports::take_down_locked;
 use bookclub_server::media::service::{CoverOutcome, PREFETCH_POLICY};
+use bookclub_server::media::shared::MediaStore;
 use common::*;
 use image::codecs::jpeg::JpegEncoder;
 use image::{ExtendedColorType, ImageEncoder, Rgb, RgbImage};
@@ -1796,13 +1797,24 @@ async fn a_rolled_back_decision_mails_nobody(db: PgPool) {
     assert!(app.sent_emails().is_empty(), "{:#?}", app.sent_emails());
 }
 
-/// A profile picture its owner replaces (or deletes) while it is reported loses its row
-/// (`media/avatar.rs`), and its reports their `media_id`. The queue says so (`gone`), "remove"
-/// is refused, as nothing is left to take down, and "dismiss" closes every open report of the
-/// owner's gone pictures in one decision: the reporters learn that it is no longer online, and
-/// the owner gets no statement of reasons. A report of the new picture stays open.
+/// The public id in a queue item's `avatar_url` (`/media/{public_id}/a`).
+fn avatar_id(item: &Value) -> String {
+    item["avatar_url"]
+        .as_str()
+        .and_then(|url| url.strip_prefix("/media/"))
+        .and_then(|rest| rest.strip_suffix("/a"))
+        .unwrap_or_else(|| panic!("no avatar_url: {item:#}"))
+        .to_owned()
+}
+
+/// Security review, Phase 2 Wave 2: a profile picture its owner replaces while it is reported
+/// is held for the decision instead of deleted. It leaves the profile at once, and its old URL
+/// answers 404 like a deleted picture's, so nothing tells the owner of the report; the admin
+/// queue shows it under a new id, not as gone. "Remove" then takes it down as usual: `/media`
+/// answers 410, the same file cannot be uploaded again, the reporters get the decision and the
+/// owner a statement of reasons, and the new picture stays.
 #[sqlx::test]
-async fn reports_of_an_avatar_replaced_meanwhile_are_closed_as_gone(db: PgPool) {
+async fn a_reported_avatar_its_owner_replaces_is_held_for_the_decision(db: PgPool) {
     let app = TestApp::new(db).await;
     let ada = app.user("ada").await;
     let bob = app.user("bob").await;
@@ -1823,42 +1835,222 @@ async fn reports_of_an_avatar_replaced_meanwhile_are_closed_as_gone(db: PgPool) 
 
     let new = upload_avatar(&ada, [200, 30, 30]).await;
     assert_eq!(
+        ada.get("/api/auth/me").await.json()["avatar_url"],
+        format!("/media/{new}/a")
+    );
+    app.anon()
+        .get(&format!("/media/{old}/a"))
+        .await
+        .assert_detail(404, "Not found");
+    assert_eq!(
         app.scalar_i64("SELECT count(*) FROM reports WHERE media_id IS NULL")
             .await,
-        2,
-        "the old picture's row is gone"
+        0,
+        "the reports keep their picture"
     );
-    let fresh = report(&bob, &new, json!({"reason": "offensive"}))
+    let items = root.get("/api/admin/reports").await.json()["items"].clone();
+    let items = items.as_array().unwrap();
+    assert_eq!(items.len(), 2, "{items:#?}");
+    let held = avatar_id(&items[0]);
+    assert_ne!(held, old);
+    for item in items {
+        assert_eq!(item["gone"], false);
+        assert_eq!(item["removed"], false);
+        assert_eq!(item["target_user"]["username"], "ada");
+        assert_eq!(avatar_id(item), held);
+        assert_eq!(item["media_public_id"], held.as_str());
+    }
+    app.anon()
+        .get(&format!("/media/{held}/a"))
+        .await
+        .assert_status(200);
+
+    let res = root
+        .post(
+            &format!("/api/admin/reports/{first}/resolve"),
+            json!({"action": "remove"}),
+        )
+        .await;
+    res.assert_status(200);
+    assert_eq!(res.json()["status"], "removed");
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM reports WHERE status = 'open'")
+            .await,
+        0,
+        "carl's report closed with bob's"
+    );
+    app.anon()
+        .get(&format!("/media/{held}/a"))
+        .await
+        .assert_status(410);
+    ada.put_multipart(
+        "/api/auth/me/avatar",
+        vec![Part::file("me.jpg", "image/jpeg", jpeg([10, 120, 200]))],
+    )
+    .await
+    .assert_detail(400, "This picture was removed");
+    assert_eq!(
+        ada.get("/api/auth/me").await.json()["avatar_url"],
+        format!("/media/{new}/a"),
+        "the new picture stays"
+    );
+    for reporter in ["bob", "carl"] {
+        let mails = mails_to(&app, reporter);
+        assert_eq!(mails.len(), 1, "{reporter}");
+        assert_eq!(mails[0].subject, "Your report on Bookclub: removed");
+    }
+    let to_ada = mails_to(&app, "ada");
+    assert_eq!(to_ada.len(), 1);
+    assert_eq!(
+        to_ada[0].subject,
+        "Your profile picture on Bookclub was removed"
+    );
+}
+
+/// A profile picture its owner deleted while it was reported, and then uploaded again (the same
+/// file, under a new id), comes down with the held one: the hash block only stops new uploads.
+#[sqlx::test]
+async fn an_avatar_uploaded_again_while_reported_comes_down_with_it(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let root = app.admin("root").await;
+    let club = app.club(&ada, "Readers").await;
+    app.join(&club, &bob, "member").await;
+    let first = upload_avatar(&ada, [10, 120, 200]).await;
+    let report_id = report(&bob, &first, json!({"reason": "offensive"}))
         .await
         .json()["id"]
         .as_i64()
         .unwrap();
+    let res = ada.delete("/api/auth/me/avatar").await;
+    res.assert_status(200);
+    assert_eq!(res.json()["avatar_url"], Value::Null);
+    let again = upload_avatar(&ada, [10, 120, 200]).await;
+    assert_ne!(again, first);
 
-    let items = root.get("/api/admin/reports").await.json()["items"].clone();
-    let gone: Vec<&Value> = items
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|item| item["gone"] == true)
-        .collect();
-    assert_eq!(gone.len(), 2, "{items:#?}");
-    for item in &gone {
-        assert_eq!(item["target_kind"], "avatar");
-        assert_eq!(item["target_user"]["username"], "ada");
-        assert_eq!(item["avatar_url"], Value::Null);
-        assert_eq!(item["media_public_id"], Value::Null);
-        assert_eq!(item["removed"], false);
-    }
-    let current = items
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|item| item["id"] == fresh)
+    root.post(
+        &format!("/api/admin/reports/{report_id}/resolve"),
+        json!({"action": "remove"}),
+    )
+    .await
+    .assert_status(200);
+    assert_eq!(
+        ada.get("/api/auth/me").await.json()["avatar_url"],
+        Value::Null
+    );
+    app.anon()
+        .get(&format!("/media/{again}/a"))
+        .await
+        .assert_status(410);
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM media WHERE kind = 'avatar' AND removed_at IS NULL")
+            .await,
+        0
+    );
+    ada.put_multipart(
+        "/api/auth/me/avatar",
+        vec![Part::file("me.jpg", "image/jpeg", jpeg([10, 120, 200]))],
+    )
+    .await
+    .assert_detail(400, "This picture was removed");
+    assert_eq!(mails_to(&app, "ada").len(), 1, "one statement of reasons");
+}
+
+/// "Dismiss" on a held profile picture deletes it with its files: it is no longer anyone's
+/// picture. The reporter learns that it is no longer online, the owner gets nothing, and the
+/// file is not blocked.
+#[sqlx::test]
+async fn a_dismissed_report_of_a_replaced_avatar_deletes_it(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let root = app.admin("root").await;
+    let club = app.club(&ada, "Readers").await;
+    app.join(&club, &bob, "member").await;
+    let old = upload_avatar(&ada, [10, 120, 200]).await;
+    let report_id = report(&bob, &old, json!({"reason": "offensive"}))
+        .await
+        .json()["id"]
+        .as_i64()
         .unwrap();
-    assert_eq!(current["gone"], false);
-    assert_eq!(current["avatar_url"], format!("/media/{new}/a"));
+    let new = upload_avatar(&ada, [200, 30, 30]).await;
+    let held = avatar_id(&root.get("/api/admin/reports").await.json()["items"][0]);
+    let prefix: String = sqlx::query_scalar("SELECT storage_key FROM media WHERE public_id = $1")
+        .bind(&held)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
 
-    let path = format!("/api/admin/reports/{first}/resolve");
+    let res = root
+        .post(
+            &format!("/api/admin/reports/{report_id}/resolve"),
+            json!({"action": "dismiss"}),
+        )
+        .await;
+    res.assert_status(200);
+    assert_eq!(res.json()["status"], "dismissed");
+    assert_eq!(res.json()["gone"], true);
+    app.anon()
+        .get(&format!("/media/{held}/a"))
+        .await
+        .assert_detail(404, "Not found");
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM media WHERE kind = 'avatar'")
+            .await,
+        1,
+        "only the new picture"
+    );
+    assert!(
+        app.media
+            .get(&format!("{prefix}/a"))
+            .await
+            .unwrap()
+            .is_none(),
+        "the held picture's files are deleted"
+    );
+    let to_bob = mails_to(&app, "bob");
+    assert_eq!(to_bob.len(), 1);
+    assert_eq!(
+        to_bob[0].subject,
+        "Your report on Bookclub: no longer online"
+    );
+    assert!(mails_to(&app, "ada").is_empty(), "no statement of reasons");
+    assert_eq!(
+        ada.get("/api/auth/me").await.json()["avatar_url"],
+        format!("/media/{new}/a")
+    );
+    upload_avatar(&ada, [10, 120, 200]).await;
+}
+
+/// The profile picture of an account deleted while it was reported loses its row with the
+/// account (`auth::deletion`), and its reports their `media_id`. The queue says so (`gone`),
+/// "remove" is refused, as nothing is left to take down, and "dismiss" closes the report: the
+/// reporter learns that it is no longer online.
+#[sqlx::test]
+async fn reports_of_the_avatar_of_a_deleted_account_are_closed_as_gone(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let root = app.admin("root").await;
+    let club = app.club(&bob, "Readers").await;
+    app.join(&club, &ada, "member").await;
+    let avatar = upload_avatar(&ada, [10, 120, 200]).await;
+    let report_id = report(&bob, &avatar, json!({"reason": "offensive"}))
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+    ada.delete_json("/api/auth/me", json!({"password": PASSWORD}))
+        .await
+        .assert_status(204);
+
+    let item = root.get("/api/admin/reports").await.json()["items"][0].clone();
+    assert_eq!(item["id"], report_id);
+    assert_eq!(item["gone"], true);
+    assert_eq!(item["avatar_url"], Value::Null);
+    assert_eq!(item["media_public_id"], Value::Null);
+    let path = format!("/api/admin/reports/{report_id}/resolve");
     root.post(&path, json!({"action": "remove"}))
         .await
         .assert_detail(409, "The reported picture is no longer online");
@@ -1867,37 +2059,19 @@ async fn reports_of_an_avatar_replaced_meanwhile_are_closed_as_gone(db: PgPool) 
     res.assert_status(200);
     assert_eq!(res.json()["status"], "dismissed");
     assert_eq!(res.json()["gone"], true);
-    let open: Vec<i64> = sqlx::query_scalar("SELECT id FROM reports WHERE status = 'open'")
-        .fetch_all(&app.db)
-        .await
-        .unwrap();
+    let mails = mails_to(&app, "bob");
+    assert_eq!(mails.len(), 1);
     assert_eq!(
-        open,
-        [fresh],
-        "carl's report closed with bob's; the new one stays"
+        mails[0].subject,
+        "Your report on Bookclub: no longer online"
     );
-
-    for reporter in ["bob", "carl"] {
-        let mails = mails_to(&app, reporter);
-        assert_eq!(mails.len(), 1, "{reporter}");
-        assert_eq!(
-            mails[0].subject,
-            "Your report on Bookclub: no longer online"
-        );
-        assert!(
-            mails[0].text.contains(
-                "reviewed the profile picture you reported: it is no longer online, because \
-                 it was replaced or deleted."
-            ),
-            "{}",
-            mails[0].text
-        );
-    }
-    assert!(mails_to(&app, "ada").is_empty(), "no statement of reasons");
-    assert_eq!(
-        ada.get("/api/auth/me").await.json()["avatar_url"],
-        format!("/media/{new}/a"),
-        "the new picture stays"
+    assert!(
+        mails[0].text.contains(
+            "reviewed the profile picture you reported: it is no longer online, because it was \
+             replaced or deleted."
+        ),
+        "{}",
+        mails[0].text
     );
 }
 

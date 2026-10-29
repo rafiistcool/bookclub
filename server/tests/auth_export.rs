@@ -337,6 +337,8 @@ async fn every_section_holds_the_users_rows(db: PgPool) {
     app.exec(&format!(
         "UPDATE users SET avatar_media_id = (SELECT id FROM media WHERE public_id = '{avatar}')
              WHERE id = {a};
+         UPDATE users SET avatar_media_id = (SELECT id FROM media WHERE public_id = '{bobs_avatar}')
+             WHERE id = {b};
          UPDATE clubs SET created_by = {b} WHERE id = {o};
          UPDATE club_memberships SET invited_by = {a} WHERE club_id = {c} AND user_id = {b};
          UPDATE club_memberships SET invited_by = {b} WHERE club_id = {c} AND user_id = {dan};
@@ -1039,4 +1041,62 @@ async fn about_me_holds_only_removals_never_who_reported_or_when(db: PgPool) {
         1
     );
     assert_eq!(about_me(&bob).await, entries, "a report closed on arrival");
+}
+
+/// Security review, Phase 2 Wave 2: a profile picture its owner deletes while it is reported is
+/// held for the admin's decision (`media/avatar.rs`). Meanwhile the owner's export lists neither
+/// the picture nor its files, which would tell them of the report; taken down, it is listed
+/// again, as removed and without files, like any picture taken down.
+#[sqlx::test]
+async fn a_held_avatar_is_left_out_of_the_export_until_it_is_decided(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let root = app.admin("root").await;
+    let club = app.club(&ada, "Readers").await;
+    app.join(&club, &bob, "member").await;
+    let avatar = upload(&app, ada.id(), "avatar", 9).await;
+    app.exec(&format!(
+        "UPDATE users SET avatar_media_id = (SELECT id FROM media WHERE public_id = '{avatar}')
+         WHERE id = {}",
+        ada.id()
+    ))
+    .await;
+    let res = bob
+        .post(
+            &format!("/api/media/{avatar}/reports"),
+            json!({"reason": "offensive"}),
+        )
+        .await;
+    res.assert_status(201);
+    let report_id = res.json()["id"].as_i64().unwrap();
+    ada.delete("/api/auth/me/avatar").await.assert_status(200);
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM media WHERE kind = 'avatar'")
+            .await,
+        1,
+        "held"
+    );
+
+    let res = export(&ada).await;
+    res.assert_status(200);
+    let data = data_json(&res);
+    assert_eq!(data["uploaded_media"], json!([]));
+    assert_eq!(data["reports"]["about_me"], json!([]));
+    let names: Vec<String> = unzip(&res).into_iter().map(|(name, _)| name).collect();
+    assert_eq!(names, ["data.json"]);
+
+    root.post(
+        &format!("/api/admin/reports/{report_id}/resolve"),
+        json!({"action": "remove"}),
+    )
+    .await
+    .assert_status(200);
+    let data = data_json(&export(&ada).await);
+    let media = data["uploaded_media"].as_array().unwrap();
+    assert_eq!(media.len(), 1, "{media:#?}");
+    assert_eq!(media[0]["kind"], "avatar");
+    assert_ne!(media[0]["removed_at"], Value::Null);
+    assert_eq!(media[0]["files"], json!([]));
+    assert_eq!(data["reports"]["about_me"].as_array().unwrap().len(), 1);
 }

@@ -39,11 +39,20 @@
 //! reporter is mailed the decision, and on a removal the uploader, the avatar's owner or the
 //! reader who added the record gets a statement of reasons. A rollback sends nothing.
 //!
-//! **Gone** (`ReportOut.gone`): a profile picture its owner replaced or deleted while it was
-//! reported (`media/avatar.rs` deletes the row; the report keeps `target_user_id`), or a work
-//! merged into another one since it was reported (`catalog::reports`). Nothing is left to take
-//! down, so "remove" is refused (409 [`PICTURE_GONE`], `catalog::reports::REPORTED_BOOK_MERGED`)
-//! and "dismiss" closes the report, with every other open report of the same gone picture (the
+//! **Held** (security review, Phase 2 Wave 2): a profile picture its owner replaces or deletes
+//! while it is reported keeps its row and files until an admin decides (`media/avatar.rs`),
+//! under a new public id that only the admin queue shows; its old URL answers 404 as for a
+//! deleted picture, and the owner's export leaves it out, so neither tells the owner of the
+//! report. "Remove" takes it down like any picture and blocks its hashes, so the same file cannot
+//! come back; a takedown of a profile picture also takes down the owner's other live profile
+//! pictures with the same bytes as received (the same file uploaded again meanwhile). "Dismiss"
+//! deletes the held picture with its files, and its reporters learn that it is no longer online.
+//!
+//! **Gone** (`ReportOut.gone`): a profile picture whose row is gone, because its owner deleted
+//! the account (`auth::deletion`; the report keeps `target_user_id` until then), or a work merged
+//! into another one since it was reported (`catalog::reports`). Nothing is left to take down, so
+//! "remove" is refused (409 [`PICTURE_GONE`], `catalog::reports::REPORTED_BOOK_MERGED`) and
+//! "dismiss" closes the report, with every other open report of the same gone picture (the
 //! owner's profile pictures without a row) or work; the reporters learn that it is no longer
 //! online, and nobody gets a statement of reasons.
 //!
@@ -92,8 +101,8 @@ pub const REASON_CHOICES: &str =
 pub const ACTION_CHOICES: &str = "Input should be 'remove' or 'dismiss'";
 /// 409 for a report an admin already resolved (admin only).
 pub const REPORT_RESOLVED: &str = "This report was already resolved";
-/// 409 for "remove" on a report of a profile picture its owner replaced or deleted since
-/// (admin only): there is nothing left to take down.
+/// 409 for "remove" on a report of a profile picture whose row is gone since (its owner deleted
+/// the account; admin only): there is nothing left to take down.
 pub const PICTURE_GONE: &str = "The reported picture is no longer online";
 /// The decision note of a `cover_replace` request whose picture a takedown removed.
 pub const TAKEN_DOWN_NOTE: &str = "The picture was taken down";
@@ -183,9 +192,11 @@ pub struct ReportOut {
     /// admin decided it (`reports.closed_on_arrival`). A decided report whose admin deleted the
     /// account has no `resolved_by` either, but is not closed on arrival.
     pub closed_on_arrival: bool,
-    /// What was reported no longer shows as reported, as it is now: a profile picture its owner
-    /// replaced or deleted, or a book merged into another one (`book` is that one). Only
-    /// `dismiss` decides such a report; `remove` answers 409.
+    /// What was reported no longer shows as reported, as it is now: a profile picture without
+    /// its row (the account was deleted, or the picture was held for a report and dismissed),
+    /// or a book merged into another one (`book` is that one). Only `dismiss` decides such a
+    /// report; `remove` answers 409. A picture its owner replaced or deleted while it was
+    /// reported is held for the decision, and not gone.
     pub gone: bool,
 }
 
@@ -362,7 +373,8 @@ pub async fn report(
     .await?;
     // Then the picture (conventions §7.2), FOR SHARE: a takedown or a dismissal that is under
     // way finishes first and this report sees it; a later one waits and then resolves it.
-    // A profile picture its owner replaced or deleted since the plain read has no row any more.
+    // A profile picture its owner replaced or deleted since the plain read, while no report of
+    // it was open, has no row any more.
     let removed = sqlx::query_scalar!(
         r#"SELECT removed_at IS NOT NULL AS "removed!" FROM media WHERE id = $1 FOR SHARE"#,
         media_id
@@ -516,10 +528,11 @@ pub async fn list_reports(
 /// good) or withdraws the text of a reported work or edition a reader added; `dismiss` keeps
 /// it. Either way every open report of the same picture, work or edition is resolved with it.
 /// After the commit each reporter is mailed the decision, and on a removal the uploader, the
-/// avatar's owner or the reader who added the record gets a statement of reasons. A report of
-/// something gone (`ReportOut.gone`: a profile picture its owner replaced or deleted, a work
-/// merged away) is only dismissed, with the other open reports of it; its reporters learn that
-/// it is no longer online.
+/// avatar's owner or the reader who added the record gets a statement of reasons. A profile
+/// picture its owner replaced or deleted while it was reported is held for the decision:
+/// "remove" takes it down, "dismiss" deletes it. A report of something gone (`ReportOut.gone`:
+/// the profile picture of an account deleted since, a work merged away) is only dismissed, with
+/// the other open reports of it; its reporters learn that it is no longer online.
 #[utoipa::path(
     post,
     path = "/api/admin/reports/{report_id}/resolve",
@@ -533,7 +546,7 @@ pub async fn list_reports(
         (status = 400, body = ErrorBody, description = "`Input should be 'remove' or 'dismiss'`; on `remove`, `Only books readers added can be reported` (a work or edition from another source)"),
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
         (status = 404, body = ErrorBody, description = "`Not found`"),
-        (status = 409, body = ErrorBody, description = "`This report was already resolved`; on `remove`, `The reported picture is no longer online` (a profile picture its owner replaced or deleted) or `The reported book was merged into another one`")
+        (status = 409, body = ErrorBody, description = "`This report was already resolved`; on `remove`, `The reported picture is no longer online` (the profile picture of an account deleted since) or `The reported book was merged into another one`")
     )
 )]
 pub async fn resolve_report(
@@ -583,13 +596,14 @@ pub async fn resolve_report(
                 owner: decided.owner,
                 removed: remove && decided.changed,
                 gone: decided.merged,
+                held: false,
             })
         }
         _ => {
             let title = book_title(&mut tx, report.work_id, report.edition_id).await?;
             // The picture first, as a takedown and a report lock it: dismissals and takedowns
-            // of one picture take turns, and a report filed meanwhile is resolved too. A
-            // profile picture its owner replaced or deleted has no row any more.
+            // of one picture take turns, and a report filed meanwhile is resolved too. The
+            // profile picture of an account deleted since has no row any more.
             let present = match report.media_id {
                 Some(media_id) => lock_picture(&mut tx, media_id, remove).await?,
                 None => false,
@@ -598,6 +612,12 @@ pub async fn resolve_report(
             if gone && remove {
                 return Err(AppError::conflict(PICTURE_GONE));
             }
+            // A profile picture its owner replaced or deleted while it was reported, held for
+            // this decision (`media/avatar.rs`): no account shows it any more.
+            let held = match report.media_id.filter(|_| avatar && present) {
+                Some(media_id) => held_avatar(&mut tx, media_id).await?,
+                None => false,
+            };
             Some(match report.media_id.filter(|_| present) {
                 // Resolves the picture's open reports, this one included.
                 Some(media_id) if remove => {
@@ -608,6 +628,7 @@ pub async fn resolve_report(
                         owner: uploader(&mut tx, media_id).await?,
                         removed: !prefixes.is_empty(),
                         gone,
+                        held,
                     }
                 }
                 _ => Decision {
@@ -615,6 +636,7 @@ pub async fn resolve_report(
                     owner: None,
                     removed: false,
                     gone,
+                    held,
                 },
             })
         }
@@ -640,6 +662,12 @@ pub async fn resolve_report(
     )
     .execute(&mut *tx)
     .await?;
+    // A held profile picture that stays dismissed goes now, with its files after the commit; its
+    // reports keep `target_user_id` and become `gone`.
+    let held = decision.as_ref().is_some_and(|decision| decision.held);
+    if let Some(media_id) = report.media_id.filter(|_| held && !remove) {
+        prefixes = delete_held_avatar(&mut tx, media_id).await?;
+    }
     // Another admin may have resolved it since it was read; then this answer changes nothing
     // (the rollback undoes a takedown too, and sends no notice).
     let ours = sqlx::query_scalar!(
@@ -663,13 +691,14 @@ pub async fn resolve_report(
                 owner: decision.owner,
                 reason: Some(&report.reason),
             });
+            // A held picture that stays dismissed is no longer online either.
             notices::decided(
                 &mut tx,
                 &state.config,
                 admin.id,
                 what,
                 removal,
-                decision.gone,
+                decision.gone || (decision.held && !remove),
             )
             .await?
         }
@@ -698,11 +727,48 @@ struct Decision {
     removed: bool,
     /// What was reported no longer shows as reported (`ReportOut.gone`).
     gone: bool,
+    /// A profile picture its owner replaced or deleted while it was reported, kept for this
+    /// decision (`media/avatar.rs`).
+    held: bool,
+}
+
+/// True when the profile picture `media_id` is no account's profile picture any more: its owner
+/// replaced or deleted it while it was reported, and `media/avatar.rs` kept it for the decision.
+async fn held_avatar(conn: &mut PgConnection, media_id: i64) -> sqlx::Result<bool> {
+    sqlx::query_scalar!(
+        r#"SELECT NOT EXISTS (SELECT 1 FROM users WHERE avatar_media_id = $1) AS "held!""#,
+        media_id
+    )
+    .fetch_one(conn)
+    .await
+}
+
+/// Deletes a held profile picture (locked by the caller) whose reports were dismissed, unless a
+/// report of it is still open or it was taken down meanwhile. Returns its storage prefixes, to
+/// delete after the commit.
+async fn delete_held_avatar(conn: &mut PgConnection, media_id: i64) -> sqlx::Result<Vec<String>> {
+    let row = sqlx::query!(
+        "DELETE FROM media m
+         WHERE m.id = $1 AND m.kind = 'avatar' AND m.removed_at IS NULL
+           AND NOT EXISTS (SELECT 1 FROM users u WHERE u.avatar_media_id = m.id)
+           AND NOT EXISTS (SELECT 1 FROM reports r WHERE r.media_id = m.id AND r.status = 'open')
+         RETURNING m.kind, m.public_id, m.storage_key",
+        media_id
+    )
+    .fetch_optional(conn)
+    .await?;
+    Ok(row
+        .map(|row| {
+            let mut prefixes = vec![storage_prefix(&row.kind, &row.public_id)];
+            prefixes.extend(row.storage_key);
+            prefixes
+        })
+        .unwrap_or_default())
 }
 
 /// Locks a reported picture's row for a decision, as a takedown (`FOR UPDATE`, on `remove`) or
-/// a dismissal (`FOR NO KEY UPDATE`) locks it. False when the row is gone: a profile picture its
-/// owner replaced or deleted.
+/// a dismissal (`FOR NO KEY UPDATE`) locks it. False when the row is gone: the profile picture
+/// of an account deleted since.
 async fn lock_picture(conn: &mut PgConnection, media_id: i64, remove: bool) -> sqlx::Result<bool> {
     let row = if remove {
         sqlx::query_scalar!("SELECT id FROM media WHERE id = $1 FOR UPDATE", media_id)
@@ -906,16 +972,49 @@ async fn record_notice(
 /// The takedown inside the caller's transaction (see the module docs): locks the media row,
 /// records the hashes it must not come back under, sets `removed_at` and clears `storage_key`,
 /// clears every cover that shows it, resolves the picture's open reports as `removed` by
-/// `admin_id`, and rejects its open `cover_replace` requests with [`TAKEN_DOWN_NOTE`]. Returns the storage prefixes to delete after the commit (empty when the picture
-/// was removed already).
+/// `admin_id`, and rejects its open `cover_replace` requests with [`TAKEN_DOWN_NOTE`]. A
+/// profile picture takes the owner's other live profile pictures with the same bytes as received
+/// down with it: the same file uploaded again while this one was reported and held (security
+/// review, Phase 2 Wave 2), which the hash block, a check on new uploads only, would leave up.
+/// Returns the storage prefixes to delete after the commit (empty when the picture was removed
+/// already).
 pub async fn take_down_locked(
     conn: &mut PgConnection,
     store: &dyn MediaStore,
     media_id: i64,
     admin_id: i64,
 ) -> ApiResult<Vec<String>> {
+    let (mut prefixes, copies_of) = take_down_one(conn, store, media_id, admin_id).await?;
+    if let Some((owner, sha256)) = copies_of {
+        let copies = sqlx::query_scalar!(
+            "SELECT id FROM media
+             WHERE kind = 'avatar' AND removed_at IS NULL AND uploaded_by = $1 AND sha256 = $2
+               AND id <> $3
+             ORDER BY id
+             FOR UPDATE",
+            owner,
+            sha256,
+            media_id
+        )
+        .fetch_all(&mut *conn)
+        .await?;
+        for copy in copies {
+            prefixes.extend(take_down_one(conn, store, copy, admin_id).await?.0);
+        }
+    }
+    Ok(prefixes)
+}
+
+/// [`take_down_locked`] of one picture. Also returns, for a profile picture this call took down,
+/// its owner and its hash as received, to find the copies.
+async fn take_down_one(
+    conn: &mut PgConnection,
+    store: &dyn MediaStore,
+    media_id: i64,
+    admin_id: i64,
+) -> ApiResult<(Vec<String>, Option<(i64, Vec<u8>)>)> {
     let Some(row) = sqlx::query!(
-        r#"SELECT kind, public_id, storage_key, variants, sha256,
+        r#"SELECT kind, public_id, storage_key, variants, sha256, uploaded_by,
                   removed_at IS NOT NULL AS "removed!"
            FROM media WHERE id = $1 FOR UPDATE"#,
         media_id
@@ -923,7 +1022,13 @@ pub async fn take_down_locked(
     .fetch_optional(&mut *conn)
     .await?
     else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), None));
+    };
+    let copies_of = match (&row.uploaded_by, &row.sha256) {
+        (Some(owner), Some(sha256)) if row.kind == "avatar" && !row.removed => {
+            Some((*owner, sha256.clone()))
+        }
+        _ => None,
     };
     let mut prefixes = Vec::new();
     if !row.removed {
@@ -961,7 +1066,7 @@ pub async fn take_down_locked(
     )
     .execute(&mut *conn)
     .await?;
-    Ok(prefixes)
+    Ok((prefixes, copies_of))
 }
 
 /// The bytes of every stored variant, as `/media/{public_id}/{variant}` served them. A variant

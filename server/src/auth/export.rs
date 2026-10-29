@@ -593,13 +593,19 @@ impl MediaRow {
     }
 }
 
+/// Every picture the user uploaded, and their current avatar. A profile picture they replaced
+/// or deleted while it was reported is held until an admin decides it (`media/avatar.rs`) and
+/// left out meanwhile: listing it would tell them of the report (see `about_me`). Taken down, it
+/// is listed again, as removed.
 async fn uploaded_media(conn: &mut PgConnection, user_id: i64) -> sqlx::Result<Vec<MediaRow>> {
     sqlx::query_as!(
         MediaRow,
         "SELECT public_id, kind, source, content_type, variants, width, height, byte_size,
                 storage_key, created_at, removed_at
          FROM media
-         WHERE uploaded_by = $1 OR id = (SELECT avatar_media_id FROM users WHERE id = $1)
+         WHERE (uploaded_by = $1 OR id = (SELECT avatar_media_id FROM users WHERE id = $1))
+           AND NOT (kind = 'avatar' AND removed_at IS NULL
+                    AND id IS DISTINCT FROM (SELECT avatar_media_id FROM users WHERE id = $1))
          ORDER BY id",
         user_id
     )
