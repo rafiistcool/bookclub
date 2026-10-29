@@ -2,6 +2,8 @@
 
 This directory runs the hosted service on one VM: `compose.yaml` starts the app and its Postgres, and `env.example` lists every setting. `backup.sh` and `restore-test.sh` back it up with restic, and `update.sh` follows the release tag, all from the systemd timers in `systemd/`. The commands below run as root on the VM, in `/opt/bookclub`, unless a step says otherwise.
 
+The private move (#52) runs this stack on the Python app's existing host, with mail off and without legal texts: `docs/phase3/private-move.md` is its runbook and says which steps here it takes.
+
 ## What runs where
 
 - **`app`:** the image `git.tillhome.de/rafiistcool/bookclub-server:<BOOKCLUB_TAG>`, built from the repo's root `Dockerfile`. It holds the server binary and the web app (`/app/static`), runs as uid 1000 on a read-only root file system, and listens on 8080 inside the container. It applies the database migrations at startup.
@@ -24,6 +26,7 @@ This directory runs the hosted service on one VM: `compose.yaml` starts the app 
 - Debian 13 with Docker Engine 25 or newer and the compose plugin 2.24 or newer, and `curl` for the heartbeats.
 - `docker login git.tillhome.de` with a read-only package token, as root: the update timer pulls with it.
 - **An SMTP account, for staging too.** Without `DEV_MODE` the server does not start without `SMTP_URL` and `EMAIL_FROM`, and `EMAIL_TRANSPORT=log` needs `DEV_MODE`, which this setup never sets. Until the mail provider is chosen, staging uses an interim account. `SMTP_URL` must use TLS: `smtps://…:465`, or `smtp://…:587?tls=required`.
+- **Or mail off,** while sign-up is invite-only and the members know the operator (the private move): `EMAIL_TRANSPORT=none` needs no SMTP settings. No mail leaves, reset and verification links are voided, password resets go through `set-password` (see "The first account"), and `SIGNUP_MODE=open` is refused.
 - The reverse proxy (Caddy) terminates TLS and forwards to `BOOKCLUB_LISTEN:BOOKCLUB_PORT`. Only the proxy may reach that port (see "The VM's network").
 
 ## First boot
@@ -65,7 +68,7 @@ This directory runs the hosted service on one VM: `compose.yaml` starts the app 
    docker compose exec app bookclub-server send-test-mail you@example.com
    ```
 
-   It sends one mail through `SMTP_URL` and exits non-zero with the SMTP server's answer if that fails. The mail carries a `Message-ID` on the domain of `EMAIL_FROM`.
+   It sends one mail through `SMTP_URL` and exits non-zero with the SMTP server's answer if that fails. The mail carries a `Message-ID` on the domain of `EMAIL_FROM`. With `EMAIL_TRANSPORT=none` it exits 1 with `mail is off (EMAIL_TRANSPORT=none)`: skip this step.
 
 6. Set up the backups (see "Backups") before the first real data arrives.
 
@@ -90,6 +93,14 @@ In production, only after the legacy import, which needs an empty database (see 
    ```
 
    The admin mints further invites on the Invites tab of `/admin`, and withdraws one there. `bookclub-server revoke-admin <username>` ends an admin's rights, and `bookclub-server unsuspend <username>` lifts a suspension, both from the host, for when no admin can use the admin page (an only admin suspended by another, for one).
+
+**A forgotten password while mail is off** (`EMAIL_TRANSPORT=none`): "Forgot password" says a link is on its way, but none leaves. The member asks the operator, who runs
+
+```sh
+(umask 077 && docker compose exec -T app bookclub-server set-password <username> > /root/new-password)
+```
+
+It writes a new random password of 20 characters (capital letters and digits, no I, L, O or U) and nothing else to the file, ends every session and app token of the account, and voids its open reset and verification links; an unknown name exits 1 with `No account with that name`. Pass the password on, delete the file, and have the member change it in Settings the same day. A suspended account gets the password and stays suspended. The app keeps failed sign-ins in memory, so a member it locked out still waits up to 10 minutes.
 
 The admin page `/admin` holds the catalog requests and the reports, each with its age, an "Overdue" mark after 72 hours, and a "Decided" view with the history and the 90-day figures. Readers report covers, the profile pictures of people they share a club with, and books and editions readers added: "Take down" removes a picture for good, "Remove the text" withdraws what a reader typed and keeps the book on everyone's shelves (`docs/legal/takedown.md` §4). "Edit as admin", on a book page and in the queue, changes a book's facts at once. "Take down a picture by URL", above the open reports, records an emailed notice with its arrival time. Each decision mails the reporters the outcome and, when something was removed, whoever uploaded or added it a statement of reasons. The "Covers" tab lists the cover suggestions ("Use this cover" or "Not this book", which keeps that Open Library book out for good) and the catalog and imported books without a cover, each with "Search now" and "Upload a picture"; an admin also sets any book's or edition's cover on its book page. The server looks for covers by itself: every 10 minutes it searches Open Library by title and author for a few books without one (books readers use first, one request every 2 seconds, pausing while Open Library is down) and fetches again Open Library pictures that failed to load; a clear match becomes the cover, the rest waits on the Covers tab. No setting turns it on or off, and it never replaces a cover a reader or an admin set. The "Accounts" tab suspends an account (no sign-in, every session ended, admin rights ended for good, the invites it knows revoked, content kept) and lifts a suspension. A suspended account cannot export or delete its data in the app: its owner writes to `CONTACT_EMAIL`, and the operator follows `docs/legal/takedown.md` §7. Instance admins with a verified address get a mail when new reports arrive (at most one an hour) and a digest of new catalog requests (at most one a day), through `SMTP_URL`.
 
@@ -657,6 +668,7 @@ The answer holds `"signup":"open"` (the address is `BOOKCLUB_LISTEN` and `BOOKCL
 - `bind source path does not exist: …` (from `docker compose up`): create the directory as in "First boot".
 - `TRUSTED_PROXIES entry "CHANGE_ME" is not a CIDR or an IP address`: a value in `.env` is still the placeholder.
 - `SMTP_URL must use TLS without DEV_MODE: …`: use `smtps://` or `?tls=required`.
+- `SIGNUP_MODE=open needs mail: set EMAIL_TRANSPORT=smtp`: open sign-up needs a mail provider (see "Requirements").
 - `SIGNUP_MODE=open needs the legal texts outside DEV_MODE: …` or `LEGAL_DIR/…`: see "Legal texts".
 - `cannot reach the database (gave up after 60 s)`: check `docker compose ps postgres` and `POSTGRES_PASSWORD`.
 - `cannot apply the database migrations: migration <N> was previously applied but is missing in the resolved migrations`: a version older than the database; see "Rollback".
