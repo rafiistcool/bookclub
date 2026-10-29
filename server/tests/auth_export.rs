@@ -383,12 +383,23 @@ async fn every_section_holds_the_users_rows(db: PgPool) {
               resolved_by, resolved_at)
              SELECT 'avatar', id, {a}, 'other', 'bobs report', 'removed', {b}, {a}, now()
              FROM media WHERE public_id = '{avatar}';
+         INSERT INTO reports (target_kind, media_id, reason, created_by, status, resolved_by,
+                              resolved_at)
+             SELECT 'cover', id, 'copyright', {cleo}, 'removed', {cleo}, now()
+             FROM media WHERE public_id = '{cover}';
+         INSERT INTO reports (target_kind, work_id, target_work_id, reason, created_by, status,
+                              resolved_by, resolved_at)
+             VALUES ('work', {w2}, {w}, 'offensive', {cleo}, 'removed', {cleo}, now());
+         INSERT INTO reports (target_kind, work_id, edition_id, reason, created_by, status,
+                              resolved_by, resolved_at)
+             VALUES ('edition', {w}, {e}, 'other', {cleo}, 'removed', {cleo}, now());
+         INSERT INTO reports
+             (target_kind, media_id, target_user_id, reason, status, created_by, resolved_by,
+              resolved_at)
+             SELECT 'avatar', id, {a}, 'offensive', 'removed', {dan}, {cleo}, now()
+             FROM media WHERE public_id = '{avatar}';
          INSERT INTO reports (target_kind, media_id, reason, created_by)
-             SELECT 'cover', id, 'copyright', {cleo} FROM media WHERE public_id = '{cover}';
-         INSERT INTO reports (target_kind, work_id, target_work_id, reason, created_by)
-             VALUES ('work', {w2}, {w}, 'offensive', {cleo});
-         INSERT INTO reports (target_kind, work_id, edition_id, reason, created_by)
-             VALUES ('edition', {w}, {e}, 'other', {cleo});
+             SELECT 'cover', id, 'other', {dan} FROM media WHERE public_id = '{cover}';
          INSERT INTO shelf_entries (user_id, work_id, status, rating, take)
              VALUES ({a}, {w}, 'finished', 5, 'loved it'), ({b}, {w}, 'finished', 1, 'bobs take');
          INSERT INTO physical_shelf_layouts (user_id, layout)
@@ -421,7 +432,7 @@ async fn every_section_holds_the_users_rows(db: PgPool) {
         &data,
         &[("posts", 2), ("uploaded_media", 2), ("reports.about_me", 4)],
     );
-    assert_section_sizes(&bobs, &[]);
+    assert_section_sizes(&bobs, &[("reports.about_me", 0)]);
 
     // One value per section that tells the two users apart: Ada's, then Bob's.
     let sessions = (session_id(&app, a).await, session_id(&app, b).await);
@@ -523,13 +534,6 @@ async fn every_section_holds_the_users_rows(db: PgPool) {
             json!("removed"),
             json!("dismissed"),
         ),
-        // Reports of the user's own content: Bob's of Ada's avatar, Ada's of Bob's.
-        (
-            "reports.about_me",
-            "reason",
-            json!("other"),
-            json!("wrong_book"),
-        ),
         (
             "uploaded_media",
             "public_id",
@@ -543,9 +547,11 @@ async fn every_section_holds_the_users_rows(db: PgPool) {
     assert_eq!(data["profile"]["pending_email"], "next@example.test");
     // ADM2: the reporter is never named to the other side, and a report filed names no other
     // account; the profile carries the suspension column.
-    // About Ada's content: her profile picture, a cover she uploaded, a book and an edition she
-    // added. The book report names her work as reported (`target_work_id`), though `work_id`
-    // now points at Bob's work, as after a merge: it is Ada's, not Bob's.
+    // About Ada's content, the removals: her profile picture (Bob's and Dan's reports, one
+    // decision, one entry), a cover she uploaded, a book and an edition she added. The book
+    // report names her work as reported (`target_work_id`), though `work_id` now points at
+    // Bob's work, as after a merge: it is Ada's, not Bob's. Dan's open report of her cover and
+    // Ada's dismissed report of Bob's picture are withheld (security review, Phase 2 Wave 2).
     let kinds = |data: &Value| -> Vec<String> {
         data["reports"]["about_me"]
             .as_array()
@@ -555,16 +561,25 @@ async fn every_section_holds_the_users_rows(db: PgPool) {
             .collect()
     };
     assert_eq!(kinds(&data), ["avatar", "cover", "work", "edition"]);
-    assert_eq!(kinds(&bobs), ["avatar"]);
+    assert_eq!(kinds(&bobs), Vec::<String>::new());
     for about in data["reports"]["about_me"].as_array().unwrap() {
         let about = about.as_object().unwrap();
-        for hidden in ["created_by", "details", "resolved_by", "target_user_id"] {
+        for hidden in [
+            "id",
+            "created_by",
+            "created_at",
+            "details",
+            "via",
+            "resolved_by",
+            "target_user_id",
+        ] {
             assert!(!about.contains_key(hidden), "about_me.{hidden}");
         }
+        assert_eq!(about["status"], "removed");
     }
     let about = data["reports"]["about_me"][0].as_object().unwrap();
     assert_eq!(about["target_kind"], "avatar");
-    assert_eq!(about["status"], "removed");
+    assert_eq!(about["reason"], "other", "the decision's oldest report");
     let filed = data["reports"]["filed"][0].as_object().unwrap();
     assert!(!filed.contains_key("target_user_id"));
     assert_eq!(filed["via"], "app");
@@ -926,4 +941,102 @@ async fn the_export_holds_the_accepted_terms(db: PgPool) {
     let accepted = data["profile"]["terms_accepted_at"].as_str().unwrap();
     assert!(accepted.ends_with('Z'), "{accepted}");
     assert_utc_timestamps(&data, "data");
+}
+
+/// Security review, Phase 2 Wave 2: only club mates can report a profile picture, so in a club
+/// of 2 to 5 a report's existence, number or time names the reporter. The owner's export
+/// (`reports.about_me`) shows neither an open nor a dismissed report, nor one closed on arrival,
+/// and a removal (which the statement of reasons told the owner about anyway) as one entry per
+/// decision, with the decision's date and no id, time of filing or channel.
+#[sqlx::test]
+async fn about_me_holds_only_removals_never_who_reported_or_when(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let bob = app.user("bob").await;
+    let ada = app.user("ada").await;
+    let cleo = app.user("cleo").await;
+    let dan = app.user("dan").await;
+    let root = app.admin("root").await;
+    let club = app.club(&bob, "Readers").await;
+    for member in [&ada, &cleo, &dan] {
+        app.join(&club, member, "member").await;
+    }
+    let avatar = upload(&app, bob.id(), "avatar", 7).await;
+    app.exec(&format!(
+        "UPDATE users SET avatar_media_id = (SELECT id FROM media WHERE public_id = '{avatar}')
+         WHERE id = {}",
+        bob.id()
+    ))
+    .await;
+    let report = |who: &TestClient, reason: &str| {
+        let who = who.clone();
+        let path = format!("/api/media/{avatar}/reports");
+        let body = json!({"reason": reason, "details": "who wrote this"});
+        async move {
+            let res = who.post(&path, body).await;
+            res.assert_status(201);
+            res.json()["id"].as_i64().unwrap()
+        }
+    };
+    let resolve = |id: i64, action: &str| {
+        let root = root.clone();
+        let body = json!({"action": action});
+        async move {
+            root.post(&format!("/api/admin/reports/{id}/resolve"), body)
+                .await
+                .assert_status(200);
+        }
+    };
+    let about_me = |bob: &TestClient| {
+        let bob = bob.clone();
+        async move { data_json(&export(&bob).await)["reports"]["about_me"].clone() }
+    };
+
+    let first = report(&ada, "offensive").await;
+    assert_eq!(about_me(&bob).await, json!([]), "an open report");
+    resolve(first, "dismiss").await;
+    assert_eq!(about_me(&bob).await, json!([]), "a dismissed report");
+
+    let second = report(&ada, "offensive").await;
+    report(&cleo, "other").await;
+    resolve(second, "remove").await;
+    let entries = about_me(&bob).await;
+    let decided = app
+        .scalar_i64(&format!(
+            "SELECT extract(epoch FROM date_trunc('second', resolved_at))::bigint
+             FROM reports WHERE id = {second}"
+        ))
+        .await;
+    let rows = entries.as_array().unwrap();
+    assert_eq!(rows.len(), 1, "one decision, two reports: {entries:#}");
+    let entry = rows[0].as_object().unwrap();
+    let keys: BTreeSet<&str> = entry.keys().map(String::as_str).collect();
+    assert_eq!(
+        keys,
+        BTreeSet::from([
+            "target_kind",
+            "media_id",
+            "work_id",
+            "edition_id",
+            "reason",
+            "status",
+            "resolved_at"
+        ])
+    );
+    assert_eq!(entry["target_kind"], "avatar");
+    assert_eq!(entry["status"], "removed");
+    assert_eq!(entry["reason"], "offensive");
+    let resolved_at = time::OffsetDateTime::parse(
+        entry["resolved_at"].as_str().unwrap(),
+        &time::format_description::well_known::Rfc3339,
+    )
+    .unwrap();
+    assert_eq!(resolved_at.unix_timestamp(), decided);
+
+    report(&dan, "other").await;
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM reports WHERE closed_on_arrival")
+            .await,
+        1
+    );
+    assert_eq!(about_me(&bob).await, entries, "a report closed on arrival");
 }

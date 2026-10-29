@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT jsonb_build_object(\n               'filed', (SELECT coalesce(jsonb_agg(to_jsonb(r) - 'created_by' - 'resolved_by'\n                                                   - 'target_user_id'\n                             ORDER BY r.id), '[]')\n                         FROM reports r WHERE r.created_by = $1),\n               'resolved', (SELECT coalesce(jsonb_agg(jsonb_build_object(\n                                'id', r.id, 'target_kind', r.target_kind,\n                                'media_id', r.media_id, 'reason', r.reason, 'status', r.status,\n                                'resolved_at', r.resolved_at)\n                            ORDER BY r.id), '[]')\n                            FROM reports r WHERE r.resolved_by = $1),\n               'about_me', (SELECT coalesce(jsonb_agg(jsonb_build_object(\n                                'target_kind', d.target_kind, 'media_id', d.media_id,\n                                'work_id', d.work_id, 'edition_id', d.edition_id,\n                                'reason', d.reason, 'status', d.status,\n                                'resolved_at', d.resolved_at)\n                            ORDER BY d.resolved_at, d.first), '[]')\n                            FROM (SELECT DISTINCT ON (r.target_kind, r.media_id,\n                                                      r.target_work_id, r.edition_id,\n                                                      r.resolved_at)\n                                         r.target_kind, r.media_id, r.work_id, r.edition_id,\n                                         r.reason, r.status, r.resolved_at, r.id AS first\n                                  FROM reports r\n                                  LEFT JOIN media m ON m.id = r.media_id\n                                  LEFT JOIN works w\n                                         ON w.id = r.target_work_id AND r.target_kind = 'work'\n                                  LEFT JOIN editions e\n                                         ON e.id = r.edition_id AND r.target_kind = 'edition'\n                                  WHERE r.status = 'removed' AND NOT r.closed_on_arrival\n                                    AND (r.target_user_id = $1 OR m.uploaded_by = $1\n                                         OR w.created_by = $1 OR e.created_by = $1)\n                                  ORDER BY r.target_kind, r.media_id, r.target_work_id,\n                                           r.edition_id, r.resolved_at, r.created_at, r.id) d))\n               AS \"rows!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "rows!",
+        "type_info": "Jsonb",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "70bd92915aa257ecfe9d967a4a6d626de04a7fc44bc4e24a88e42ff289bfd93a"
+}
