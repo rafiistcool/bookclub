@@ -162,8 +162,10 @@ COMMENT ON FUNCTION bc_cover_suggestion_moot(bigint) IS
     'True for a suggestion nobody needs to decide any more (its book has a cover or was merged away, its picture is removed or gone, or its Open Library work was decided for the book or a book merged into it).';
 COMMENT ON TABLE cover_search IS
     'The cover search per work (#74): when it last asked Open Library, what came of it, and when it may ask again. No row means never searched.';
+COMMENT ON COLUMN cover_search.work_id IS
+    'The work searched (a row per work the search has seen; it goes with the work).';
 COMMENT ON COLUMN cover_search.searched_at IS
-    'The start of the last attempt Open Library answered. A later result only applies when it started after this one, so two searches of one book at once record one result.';
+    'When the last answered attempt recorded its result. A result applies only when no other attempt recorded one since it started, so two searches of one book at once record one result and count one miss.';
 COMMENT ON COLUMN cover_search.searched_key IS
     'works.match_key at that search. When an admin correction or a rematch changes the title or first author, the book is due again at once, with misses reset.';
 COMMENT ON COLUMN cover_search.outcome IS
@@ -184,11 +186,55 @@ COMMENT ON COLUMN cover_search.attached_ol_cover_id IS
     'The Open Library cover id it attached.';
 COMMENT ON TABLE cover_suggestions IS
     'Covers the search found but did not attach on its own, for an instance admin to approve or reject (#74). A rejected or approved Open Library work is never suggested again for the book or a book merged into it; the rows are kept for that.';
+COMMENT ON COLUMN cover_suggestions.id IS
+    'The suggestion (the admin routes name it).';
+COMMENT ON COLUMN cover_suggestions.work_id IS
+    'The book the suggestion was made for; it may have been merged into another since (the routes follow merges).';
+COMMENT ON COLUMN cover_suggestions.ol_work_id IS
+    'The Open Library work whose picture is suggested. Rejected or approved, it is never suggested again for the book or a book merged into it.';
+COMMENT ON COLUMN cover_suggestions.ol_edition_id IS
+    'The Open Library edition, when the picture is an edition''s rather than the work''s.';
 COMMENT ON COLUMN cover_suggestions.ol_cover_id IS
     'The candidate picture; its media row is the one with this media.ol_cover_id.';
 COMMENT ON COLUMN cover_suggestions.title IS
     'Open Library''s title (and subtitle) of the candidate, as the admin sees it.';
+COMMENT ON COLUMN cover_suggestions.authors IS
+    'Open Library''s authors of the candidate, comma-joined.';
+COMMENT ON COLUMN cover_suggestions.year IS
+    'Open Library''s first publication year of the candidate.';
+COMMENT ON COLUMN cover_suggestions.language IS
+    'The edition''s language (MARC code), when the picture is an edition''s.';
 COMMENT ON COLUMN cover_suggestions.reason IS
     'Why it was not attached on its own: title_differs, number_differs, several_works, generic_title, no_author or after_takedown.';
 COMMENT ON COLUMN cover_suggestions.status IS
     'open; approved (an admin attached it); rejected (an admin said "not this book"); closed (the server closed it: the book got a cover, was merged away, or the picture or the Open Library work is out).';
+COMMENT ON COLUMN cover_suggestions.created_at IS
+    'When the search made (or reopened) the suggestion; the open list is oldest first.';
+COMMENT ON COLUMN cover_suggestions.decided_at IS
+    'When an admin approved or rejected it, or the server closed it; NULL while open.';
+COMMENT ON INDEX cover_search_next_idx IS
+    'The job''s due works by next_search_at.';
+COMMENT ON INDEX cover_suggestions_one_open_key IS
+    'At most one open suggestion per book.';
+COMMENT ON INDEX cover_suggestions_open_idx IS
+    'The open suggestions, oldest first (the admin list).';
+COMMENT ON INDEX cover_suggestions_decided_idx IS
+    'The decided suggestions, newest decision first (the admin list).';
+COMMENT ON INDEX cover_suggestions_ol_work_idx IS
+    'The Open Library works rejected or approved (the moot check and the search''s filter).';
+COMMENT ON INDEX works_cover_missing_idx IS
+    'Works without a cover the search may look at (cover_missing).';
+COMMENT ON INDEX media_failing_idx IS
+    'Failing Open Library pictures, oldest failure first (the dead check, cover_failing).';
+COMMENT ON INDEX editions_cover_media_id_idx IS
+    'The editions that show a picture (cover_failing_editions; clearing a taken-down or gone picture).';
+COMMENT ON VIEW cover_in_use IS
+    'The works readers use, one row per row that names one (tier 1 of the cover search). Use it as a semi-join.';
+COMMENT ON VIEW cover_missing IS
+    'Works without a cover the cover search may look at or a reader''s photo waits for: current, not a reader''s own book, not left empty by an admin; in_use = tier 1.';
+COMMENT ON VIEW cover_failing IS
+    'Open Library pictures whose last fetch ended without a picture, not removed or gone.';
+COMMENT ON VIEW cover_failing_editions IS
+    'Editions readers use (a shelf entry, quote or legacy key names them) whose picture is failing.';
+COMMENT ON VIEW cover_gaps IS
+    'The admin''s list of books without a cover and its count: cover_missing, plus works readers use whose own picture or an in-use edition''s picture is failing.';
