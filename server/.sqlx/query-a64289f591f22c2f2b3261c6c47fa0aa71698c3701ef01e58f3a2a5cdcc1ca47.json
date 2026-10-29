@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE club_invites SET revoked_at = coalesce(revoked_at, now())\n         WHERE club_id IS NULL AND id = $1\n         RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "club_invites",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a64289f591f22c2f2b3261c6c47fa0aa71698c3701ef01e58f3a2a5cdcc1ca47"
+}

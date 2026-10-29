@@ -121,6 +121,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/invites/{invite_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revokes a sign-up invite: it no longer unlocks sign-up. Revoking twice is harmless. Club
+         *     invites are their club admins' to revoke (`DELETE /api/clubs/{slug}/invites/{invite_id}`).
+         */
+        delete: operations["admin_revoke_invite"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/media/{public_id}": {
         parameters: {
             query?: never;
@@ -244,8 +264,9 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Suspends an account: it can no longer sign in, and every session and bearer token it has is
-         *     deleted. Its content stays. Suspending a suspended account keeps the first time.
+         * Suspends an account: it can no longer sign in, every session and bearer token it has is
+         *     deleted, its instance admin rights end, and the invites it knows are revoked. Its content
+         *     stays. Suspending a suspended account keeps the first time.
          */
         post: operations["admin_suspend_user"];
         delete?: never;
@@ -264,8 +285,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Lifts a suspension: the account signs in again. An account that is not suspended stays as
-         *     it is.
+         * Lifts a suspension: the account signs in again (without the admin rights the suspension
+         *     ended). An account that is not suspended stays as it is.
          */
         post: operations["admin_unsuspend_user"];
         delete?: never;
@@ -4658,6 +4679,54 @@ export interface operations {
                 };
             };
             /** @description `Not found` (not an instance admin) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_revoke_invite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The sign-up invite's id */
+                invite_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The id is not an integer */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such invite` (also a club's invite); `Not found` for everyone but instance admins */
             404: {
                 headers: {
                     [name: string]: unknown;

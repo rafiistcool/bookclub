@@ -19,6 +19,7 @@ const api: Record<string, ReturnType<typeof vi.fn>> = {
   adminTakeDown: vi.fn(),
   adminInvites: vi.fn(),
   createSignupInvite: vi.fn(),
+  revokeSignupInvite: vi.fn(),
   adminSuspendedUsers: vi.fn(),
   adminSuspendUser: vi.fn(),
   adminUnsuspendUser: vi.fn(),
@@ -873,5 +874,23 @@ describe("AdminPage", () => {
     await wrapper.get("form.invite-form").trigger("submit");
     await flushPromises();
     expect(api.createSignupInvite).toHaveBeenLastCalledWith({});
+  });
+
+  it("withdraws an active sign-up invite", async () => {
+    api.adminInvites.mockResolvedValue({
+      items: [invite({ id: 1, code: "KEEP111111" }), invite({ id: 7, code: "GONE777777", max_uses: 100, expires_at: null })],
+    });
+    api.revokeSignupInvite.mockResolvedValue(undefined);
+    const { wrapper } = await mountAdmin("/admin?tab=invites");
+    expect(wrapper.findAll(".invite-row")).toHaveLength(2);
+    const row = wrapper.findAll(".invite-row").find((node) => node.text().includes("GONE777777"))!;
+    await row.findAll("button").find((node) => node.text() === "Withdraw")!.trigger("click");
+    await flushPromises();
+    expect(api.revokeSignupInvite).toHaveBeenCalledWith(7);
+    expect(wrapper.findAll(".invite-row:not(.past)").map((node) => node.text())).toEqual([
+      expect.stringContaining("KEEP111111"),
+    ]);
+    expect(wrapper.get(".past-invites").text()).toContain("GONE777777");
+    expect(wrapper.get(".past-invites").text()).toContain("Withdrawn");
   });
 });

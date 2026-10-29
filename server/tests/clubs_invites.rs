@@ -970,6 +970,52 @@ async fn instance_admins_mint_sign_up_invites(db: PgPool) {
     assert_eq!(listed["items"][2]["active"], false);
 }
 
+/// An instance admin revokes a sign-up invite (`DELETE /api/admin/invites/{invite_id}`): it no
+/// longer unlocks sign-up, and revoking it again is harmless. A club's invite is not theirs to
+/// revoke here (404 `No such invite`, unchanged), and an unknown id is 404 too.
+#[sqlx::test]
+async fn instance_admins_revoke_sign_up_invites(db: PgPool) {
+    let app = TestApp::with_env(db, &[("SIGNUP_MODE", "invite")]).await;
+    let root = app.admin("root").await;
+    let owner = app.user("owner").await;
+    let club = app.club(&owner, "Readers").await;
+    let clubs = invite(&owner, &club, json!({"kind": "link"})).await;
+    let forever = root
+        .post("/api/admin/invites", json!({"max_uses": 100}))
+        .await
+        .json();
+    let id = forever["id"].as_i64().unwrap();
+    root.delete(&format!("/api/admin/invites/{id}"))
+        .await
+        .assert_status(204);
+    root.delete(&format!("/api/admin/invites/{id}"))
+        .await
+        .assert_status(204);
+    let listed = root.get("/api/admin/invites").await.json();
+    assert_eq!(listed["items"][0]["active"], false);
+    assert_eq!(listed["items"][0]["revoked"], true);
+    let res = app
+        .anon()
+        .post(
+            "/api/auth/register",
+            json!({"username": "ada", "email": "ada@example.test", "password": PASSWORD,
+                   "invite_code": code_of(&forever)}),
+        )
+        .await;
+    res.assert_detail(400, INVALID);
+
+    let club_invite = clubs["id"].as_i64().unwrap();
+    root.delete(&format!("/api/admin/invites/{club_invite}"))
+        .await
+        .assert_detail(404, "No such invite");
+    root.delete("/api/admin/invites/999999")
+        .await
+        .assert_detail(404, "No such invite");
+    accept(&app.user("bob").await, &code_of(&clubs))
+        .await
+        .assert_status(200);
+}
+
 /// `bookclub-server beta-invite` mints a sign-up invite and prints its code and link.
 #[sqlx::test]
 async fn the_beta_invite_command_prints_a_link(db: PgPool) {

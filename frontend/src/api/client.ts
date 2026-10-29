@@ -480,6 +480,8 @@ export const api = {
   adminInvites: () => request<InviteList>("/api/admin/invites"),
   createSignupInvite: (body: SignupInviteIn) =>
     request<InviteOut>("/api/admin/invites", json("POST", body)),
+  /** Revokes a sign-up invite: it no longer unlocks sign-up. */
+  revokeSignupInvite: (id: number) => request<void>(`/api/admin/invites/${id}`, { method: "DELETE" }),
   /** Suspends an account: it cannot sign in, and every session it had ends; its content stays. */
   adminSuspendUser: (username: string) =>
     request<AdminUserOut>(`/api/admin/users/${enc(username)}/suspend`, { method: "POST" }),
