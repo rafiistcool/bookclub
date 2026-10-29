@@ -7,6 +7,7 @@ import { edition } from "../test/fixtures";
 const editions = vi.fn();
 const addEdition = vi.fn();
 const requestEditionEdit = vi.fn();
+const reportEdition = vi.fn();
 
 vi.mock("../api/client", () => ({
   ApiError: class ApiError extends Error {
@@ -22,6 +23,7 @@ vi.mock("../api/client", () => ({
     editions: (...args: unknown[]) => editions(...args),
     addEdition: (...args: unknown[]) => addEdition(...args),
     requestEditionEdit: (...args: unknown[]) => requestEditionEdit(...args),
+    reportEdition: (...args: unknown[]) => reportEdition(...args),
   },
 }));
 
@@ -51,6 +53,7 @@ describe("EditionPicker", () => {
     setActivePinia(createPinia());
     addEdition.mockReset();
     requestEditionEdit.mockReset();
+    reportEdition.mockReset();
     editions.mockReset();
     editions.mockResolvedValue({ items: [PAPERBACK, HARDCOVER] });
   });
@@ -173,5 +176,53 @@ describe("EditionPicker", () => {
     expect(requestEditionEdit).toHaveBeenCalledWith(3, { language: "eng", pages: 401 }, "Counted them.");
     expect(useToast().items.at(-1)?.message).toBe("Thanks. An admin will look at it.");
     expect(wrapper.find("form.edit-request").exists()).toBe(false);
+  });
+
+  it("offers a report on each edition a reader added, like the correction sheet", async () => {
+    const READERS = edition({ id: 12, format: "paperback", publisher: "Selbstverlag", source: "user" });
+    editions.mockResolvedValue({ items: [PAPERBACK, READERS, HARDCOVER] });
+    const wrapper = mountPicker(null);
+    await openSheet(wrapper);
+    const rows = wrapper.findAll(".edition-row");
+    expect(rows.map((row) => row.find(".edition-report").exists())).toEqual([false, true, false]);
+    const button = rows[1].get(".edition-report");
+    expect(button.text()).toBe("Report");
+    expect(button.attributes("aria-label")).toBe("Report the edition Paperback · Selbstverlag");
+
+    await button.trigger("click");
+    await flushPromises();
+    expect(wrapper.find(".edition-list").exists()).toBe(false);
+    expect(wrapper.emitted("choose")).toBeUndefined();
+    expect(wrapper.text()).toContain("Report this edition");
+    expect(wrapper.text()).toContain("Paperback · Selbstverlag");
+    const reasons = wrapper.findAll("input[name=reason]").map((input) => input.attributes("value"));
+    expect(reasons).toEqual(["offensive", "copyright", "other"]);
+    await wrapper.get("input[value=copyright]").setValue(true);
+    reportEdition.mockResolvedValue({ id: 8, status: "open" });
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(reportEdition).toHaveBeenCalledWith(12, { reason: "copyright", details: null });
+    expect(useToast().items.at(-1)?.message).toBe("Thanks. An admin will look at it.");
+    expect(wrapper.find("input[name=reason]").exists()).toBe(false);
+  });
+
+  it("names an edition by its own title in the report, as the admin queue and the mails do", async () => {
+    const TITLED = edition({
+      id: 14,
+      title: "Probeheft: Sonderausgabe",
+      format: "paperback",
+      publisher: "Probeverlag Leuchtkäfer",
+      source: "user",
+    });
+    editions.mockResolvedValue({ items: [TITLED] });
+    const wrapper = mountPicker(null);
+    await openSheet(wrapper);
+    const button = wrapper.get(".edition-report");
+    expect(button.attributes("aria-label")).toBe(
+      "Report the edition Probeheft: Sonderausgabe · Paperback · Probeverlag Leuchtkäfer",
+    );
+    await button.trigger("click");
+    await flushPromises();
+    expect(wrapper.get(".report-subject").text()).toBe("Probeheft: Sonderausgabe · Paperback · Probeverlag Leuchtkäfer");
   });
 });

@@ -81,8 +81,12 @@ impl ReportBuilder {
         self.normalised_by(column, 1);
     }
 
-    /// Counts `n` repaired values of `table.column`.
+    /// Counts `n` repaired values of `table.column`. Nothing repaired adds no entry, so the
+    /// line does not list the column with 0.
     pub fn normalised_by(&mut self, column: &str, n: u64) {
+        if n == 0 {
+            return;
+        }
         *self.normalised.entry(column.to_owned()).or_default() += n;
     }
 
@@ -184,6 +188,28 @@ mod tests {
                 "isbn keys:",
                 "  /works/ISBN9780000000019 (book 10, isbn 9780000000019): unmatched (bare facts)",
             ]
+        );
+    }
+
+    /// A step that repaired nothing (CUT2's rehearsal printed `events.payload.rating_take 0`)
+    /// leaves the line as it is.
+    #[test]
+    fn a_count_of_zero_is_not_listed() {
+        let mut r = ReportBuilder::default();
+        r.normalised_by("events.payload.rating_take", 0);
+        assert!(
+            r.lines()
+                .contains(&format!("{:<NAME_WIDTH$} none", "normalised"))
+        );
+        r.normalised_by("book_posts.pick_id", 1);
+        r.normalised_by("events.payload.rating_take", 0);
+        assert!(
+            r.lines().contains(&format!(
+                "{:<NAME_WIDTH$} book_posts.pick_id 1",
+                "normalised"
+            )),
+            "{:?}",
+            r.lines()
         );
     }
 }

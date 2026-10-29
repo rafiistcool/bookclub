@@ -54,7 +54,7 @@ Building this app from source works only from a release tag up to `v0.10.x` (con
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
 
-On this branch the root `Dockerfile` builds the image of the new Rust server instead (`docker build -t bookclub:local .`), which this Compose setup cannot run, so the overlay above no longer works here. That image runs with Postgres from [`deploy/hosted/`](deploy/hosted/README.md), and the next `v*` release publishes it as `git.tillhome.de/rafiistcool/bookclub-server`; `rafiistcool/bookclub` gets no new versions.
+On this branch the root `Dockerfile` builds the image of the new Rust server instead (`docker build -t bookclub:local .`), which this Compose setup cannot run, so the overlay above no longer works here. That image runs with Postgres from [`deploy/hosted/`](deploy/hosted/README.md), and `v*` tags publish it as `git.tillhome.de/rafiistcool/bookclub-server` (so far only the pre-release `0.11.0-rc.1`); `rafiistcool/bookclub` gets no new versions.
 
 ---
 

@@ -1,6 +1,6 @@
 # shellcheck shell=bash
-# Shared by backup.sh and restore-test.sh (README.md, "Backups"); sourced, never run. The caller
-# sets `here` to its own directory first.
+# Shared by backup.sh, restore-test.sh and update.sh (README.md, "Backups" and "Updates and
+# rollback"); sourced, never run. The caller sets `here` to its own directory first.
 
 # The scripts' settings: backup.env next to them, or the file BACKUP_ENV names.
 load_config() {
@@ -20,6 +20,9 @@ load_config() {
     BACKUP_HEARTBEAT_URL=${BACKUP_HEARTBEAT_URL-}
     RESTORE_TEST_HEARTBEAT_URL=${RESTORE_TEST_HEARTBEAT_URL-}
     RESTORE_POSTGRES_IMAGE=${RESTORE_POSTGRES_IMAGE:-postgres:17}
+    UPDATE_HEARTBEAT_URL=${UPDATE_HEARTBEAT_URL-}
+    # Checked by update.sh alone: a bad value must not stop the backups.
+    UPDATE_WAIT_SECONDS=${UPDATE_WAIT_SECONDS:-300}
     [[ -n ${RESTIC_REPOSITORY-} ]] || die "$file sets no RESTIC_REPOSITORY"
     [[ -r ${RESTIC_PASSWORD_FILE-} ]] || die "cannot read RESTIC_PASSWORD_FILE ${RESTIC_PASSWORD_FILE-}"
     local dir
@@ -35,6 +38,19 @@ log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 die() {
     log "error: $*" >&2
     exit 1
+}
+
+# The ID of the app service's container in the compose project of the current directory, running
+# or not; nothing when there is none. The one-off containers of `docker compose run app …` (the
+# legacy import, for one) carry the service's name too, and are left out.
+app_container() {
+    local id
+    for id in $(docker compose ps -a -q app); do
+        if [[ $(docker inspect -f '{{index .Config.Labels "com.docker.compose.oneoff"}}' "$id") != True ]]; then
+            printf '%s\n' "$id"
+            return 0
+        fi
+    done
 }
 
 # restic, from RESTIC_IMAGE, with the caller's uid. The container sees BACKUP_DIR (read-write)
@@ -75,20 +91,41 @@ SQL
 psql_tsv=(psql -X -q -A -t -F $'\t' -v ON_ERROR_STOP=1 -U bookclub -d bookclub)
 
 # A heartbeat in the style of healthchecks.io: GET <url>/start, or POST <url>/<exit status> with
-# a body file (the end of the log). No URL, no ping; a failed ping is only logged.
+# a body file (the end of the log). No URL, no ping; a failed ping is only logged. The URL's path
+# is the check's only credential, so it reaches curl on stdin (`-K -`), never on its command line
+# (the process list), and the log names only the host.
 heartbeat() {
-    local url=$1 what=$2 body=${3-}
+    local url=$1 what=$2 body=${3-} host
     [[ -n $url ]] || return 0
     local -a data=()
     [[ -z $body ]] || data=(--data-binary "@$body")
-    curl -fsS -m 10 --retry 3 -o /dev/null "${data[@]}" "${url%/}/$what" ||
-        log "warning: the heartbeat ping ${url%/}/$what failed"
+    host=${url#*://}
+    host=${host%%/*}
+    printf 'url = "%s/%s"\n' "${url%/}" "$what" |
+        curl -fsS -m 10 --retry 3 -o /dev/null "${data[@]}" -K - ||
+        log "warning: the heartbeat ping $what to $host failed"
+}
+
+# The end of the log $1 for a heartbeat's body, into the file $2: its last 50 lines with every
+# public id blanked. A line can name a picture (avatars/<xx>/<public id>/a, deleted during a
+# backup or missed by a restore test), and the public id is the secret part of its URL: 26
+# characters of [a-z0-9] (media.public_id's check in server/migrations/0001_init.sql). The
+# pattern also blanks restic's 64-character ids and image digests. The lines Postgres adds to an
+# error (DETAIL, CONTEXT, HINT, LINE n, QUERY, STATEMENT, and pg_restore's "Command was") are
+# withheld whole: they quote the data itself, a duplicated address or a failing row with its
+# password hash (security review, ADM2 merge). The ping then carries no personal data, as
+# docs/legal/processors.md says of the monitoring service; the full log stays on the VM.
+log_tail() {
+    tail -n 50 "$1" | sed -E \
+        -e 's/^(DETAIL|CONTEXT|HINT|LINE [0-9]+|QUERY|STATEMENT|Command was):.*/\1: <withheld>/' \
+        -e 's/[a-z0-9]{26,}/<id>/g' >"$2"
 }
 
 # Runs the function "$3" with its arguments under the lock both scripts share, waiting up to 3 h
 # for it (Sunday's restore test may start while the backup still checks). Its output goes
 # to stdout (the journal) and to BACKUP_DIR/<$1>.log. The heartbeat $2 gets /start first, then
-# the exit status with the last 50 lines of that log. Returns the function's exit status.
+# the exit status with the last 50 lines of that log (log_tail). Returns the function's exit
+# status.
 supervise() {
     local name=$1 url=$2 status
     shift 2
@@ -106,7 +143,7 @@ supervise() {
     ) 2>&1 | tee "$BACKUP_DIR/$name.log"
     status=${PIPESTATUS[0]}
     set -e
-    tail -n 50 "$BACKUP_DIR/$name.log" >"$BACKUP_DIR/$name.log.tail"
+    log_tail "$BACKUP_DIR/$name.log" "$BACKUP_DIR/$name.log.tail"
     heartbeat "$url" "$status" "$BACKUP_DIR/$name.log.tail"
     rm -f "$BACKUP_DIR/$name.log.tail"
     return "$status"

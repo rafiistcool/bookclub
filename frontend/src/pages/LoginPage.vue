@@ -82,6 +82,13 @@ async function submit() {
       <LanguageSwitch compact />
     </div>
     <LegalLinks class="auth-legal" />
+    <p v-if="service.contact_email" class="fine muted auth-contact">
+      <i18n-t keypath="report.noAccount" tag="span" scope="global">
+        <template #email>
+          <a :href="`mailto:${service.contact_email}`">{{ service.contact_email }}</a>
+        </template>
+      </i18n-t>
+    </p>
   </main>
 </template>
 
@@ -104,5 +111,14 @@ async function submit() {
 
 .auth-legal {
   margin-top: var(--space-4);
+}
+
+/* Notice and takedown (#54) for people without an account: the public contact address. */
+.auth-contact {
+  margin-top: var(--space-3);
+}
+
+.auth-contact a {
+  overflow-wrap: anywhere;
 }
 </style>

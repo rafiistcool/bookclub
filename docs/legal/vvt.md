@@ -1,6 +1,6 @@
 # Record of processing activities (Verzeichnis von Verarbeitungstätigkeiten)
 
-The record of Art. 30 (1) DSGVO for the hosted Bookclub service, built from the code. Rafael signs it as the controller (work plan §5 step 18). The legal bases are proposals for the lawyer to confirm; every "to confirm" is an open decision (`privacy-facts.md` §0).
+The record of Art. 30 (1) DSGVO for the hosted Bookclub service, built from the code. Rafael signs it as the controller (work plan §5 step 18). The legal bases are proposals for the lawyer to confirm. The options are the ones Rafael decided on 2026-10-29 (`privacy-facts.md` §0); every "to confirm" is a value that follows once the service goes live, or a point for the legal source, and "to sign" a data processing agreement still to be signed.
 
 `server/tests/legal_docs.rs` checks that every table with a foreign key to `users` appears in this file, so a new table with personal data fails the build until it is recorded here.
 
@@ -12,7 +12,7 @@ The record of Art. 30 (1) DSGVO for the hosted Bookclub service, built from the 
 | Contact | `CONTACT_EMAIL` on the service's domain (to confirm, Q1) |
 | Data protection officer | none: fewer than 20 people process personal data (§ 38 BDSG; to confirm) |
 | Hosting | own hardware: a Proxmox VM behind the operator's Caddy reverse proxy, in Germany (to confirm) |
-| Version | 2026-10-28, from branch `phase-2` (draft) |
+| Version | 2026-10-29, from branch `phase-2` (draft) |
 
 ## Technical and organisational measures (Art. 32)
 
@@ -24,8 +24,9 @@ Shared by every activity below. Sources are in `privacy-facts.md` and `docs/phas
 - **Access control:** strangers see nothing of a user in the app (pictures are served to whoever has their unguessable URL, `privacy-facts.md` §2); the audience sees only what the user did not mark "only me"; club data only the club's members (conventions §6). Instance-admin routes sit behind one guard (`server/src/lib.rs`, `InstanceAdmin`).
 - **Data minimisation:** no IP addresses in the app log or database; no third-party requests from the browser; pictures re-encoded without metadata; the Goodreads rows are emptied after the import.
 - **Isolation:** the app VM sits in its own VLAN, accepts connections only from the reverse proxy, and cannot reach the LAN (work plan §5 step 10; to confirm at #51 acceptance).
-- **Availability and recovery:** nightly encrypted backups with a weekly restore test (Q9, to confirm); an uptime monitor (Q10, to confirm).
-- **Data subject rights:** in-app export and deletion (conventions §5.6, §5.7).
+- **Availability and recovery:** nightly backups of the database and the media to a Hetzner Storage Box, encrypted by restic on the VM before they leave it (the key stays with the operator), with a weekly restore test; the Storage Box's own snapshots, which the VM cannot delete (DEP2 sets them up), keep the backups safe from someone who takes over the VM (Q9; Phase 2 security review, finding 3, option A). An uptime check on `/api/health` and heartbeats from the backup, update and restore-test timers alert the operator (Q10 A).
+- **Data subject rights:** in-app export and deletion (conventions §5.6, §5.7); by mail to `CONTACT_EMAIL` for an account that cannot sign in, such as a suspended one (activity 11).
+- **Storage limitation:** the hourly cleanup deletes expired sessions and mail links, reports and catalog requests 3 years after their decision (a rejected cover request with its photo), and sign-ups that stayed empty for 30 days (Q14; `server/src/auth/mod.rs` (`cleanup`, `delete_rejected_cover_photos`), `privacy-facts.md` §7).
 
 ## Processing activities
 
@@ -38,26 +39,26 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 | Purpose | Provide personal accounts: sign-up (by invite, later open), sign-in, sessions in the browser and the apps, password change and reset |
 | Legal basis | Art. 6 (1) (b): performance of the contract (the terms of use) |
 | Data subjects | users |
-| Data | username, email address, verification time, password hash, preferences (theme, colour mode, language, time zone, notification switches), admin flag, sign-up and password change times; per session: the secret's hash, the kind, the device label (User-Agent or app name), created, last used, expiry; per mail link: the token's hash, the address, created, expiry, used |
+| Data | username, email address, verification time, password hash, preferences (theme, colour mode, language, time zone, notification switches), admin flag, sign-up and password change times, the last use of a session that ended before it expired (`last_seen_at`), the time of a suspension and of its lifting (`suspended_at`, `unsuspended_at`, activity 9); per session: the secret's hash, the kind, the device label (User-Agent or app name), created, last used, expiry; per mail link: the token's hash, the address, created, expiry, used |
 | Tables | `users`, `sessions`, `email_tokens` |
 | Recipients | none; mails go through the mail provider (activity 2) |
 | Third countries | none |
-| Retention | the account until the user deletes it; sessions 30 days idle (app tokens 90 days); mail links 48 h or 1 h, removed hourly once used or expired |
+| Retention | the account until the user deletes it; an empty sign-up (no verified address, no data, no sign-in for 30 days, not suspended) 30 days after its last sign-in or the lifting of a suspension (Q14); sessions 30 days idle (app tokens 90 days); mail links 48 h or 1 h, removed hourly once used or expired |
 | Source | `server/src/auth/` (`signup.rs`, `login.rs`, `session.rs`, `tokens.rs`, `reset.rs`, `address.rs`, `account.rs`) |
 
 ### 2. Transactional email
 
 | | |
 |---|---|
-| Purpose | Verify addresses, send password reset links, warn about an email change and about attempts to use a verified address; later: admin notifications (ADM) and takedown decisions (ADM2) |
+| Purpose | Verify addresses, send password reset links, warn about an email change and about attempts to use a verified address, tell instance admins about new reports and catalog requests; after a decision on reports (Q12 A, ADM2), tell each reporter the decision and, when something was removed, whoever uploaded or added it the statement of reasons (activity 9). Every mail to a user ends with links to the imprint and the privacy policy |
 | Legal basis | Art. 6 (1) (b); the security notices Art. 6 (1) (f) (protecting the account) |
 | Data subjects | users with an email address |
-| Data | email address, username, language, the link or notice |
-| Tables | `users`, `email_tokens` |
-| Recipients | the mail provider as processor (to confirm, Q4; `processors.md`) |
-| Third countries | none if an EU provider is chosen (to confirm) |
-| Retention | the provider's sending logs (to confirm with its DPA); nothing extra in the app |
-| Source | `server/src/email/`, `server/src/auth/mail.rs` |
+| Data | email address, username, language, the link or notice; for a decision, what was reported (a cover with its book's title, a profile picture, a book or edition by its title), the outcome or the ground, never the other side's name or the report's details |
+| Tables | `users`, `email_tokens`, `reports` |
+| Recipients | Brevo (FR) as processor (Q4; DPA to sign; `processors.md`) |
+| Third countries | none planned: Brevo is an EU provider (to confirm from its DPA and sub-processor list) |
+| Retention | the provider's sending logs (to confirm from its DPA); nothing extra in the app |
+| Source | `server/src/email/`, `server/src/auth/mail.rs`, `server/src/admin/notices.rs` (`decided`) |
 
 ### 3. Acceptance of the terms of use
 
@@ -126,7 +127,7 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 | Tables | `media` (`kind = 'avatar'`), `users.avatar_media_id` |
 | Recipients | in the app, the user's audience; the file is served without sign-in to whoever has its unguessable URL, and browsers may cache it for up to a year (`privacy-facts.md` §2) |
 | Third countries | none |
-| Retention | until replaced or removed, or with the account (copies in browser caches: up to a year) |
+| Retention | until replaced or removed, or with the account (copies in browser caches: up to a year); one replaced or deleted while it is reported is kept off the profile until an admin decides, then taken down or deleted (`privacy-facts.md` §7) |
 | Source | `server/src/media/avatar.rs`, `server/src/media/pipeline.rs` |
 
 ### 8. Shared catalog contributions
@@ -140,22 +141,22 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 | Tables | `works`, `editions`, `media` (`kind = 'cover'`, `uploaded_by`), `catalog_edit_requests` |
 | Recipients | the books and covers: every signed-in user, without the contributor's name; the cover files also whoever has their URL, without sign-in (`privacy-facts.md` §2); the requests: instance admins |
 | Third countries | none |
-| Retention | the contributions stay as catalog content; the contributor's id becomes empty when the account is deleted; decided requests 3 years (to confirm, Q14) |
+| Retention | the contributions stay as catalog content; the contributor's id becomes empty when the account is deleted; requests 3 years after their decision, open ones until decided (Q14); the photo of a rejected cover request, which never became a cover, with its request |
 | Source | `server/src/catalog/`, `server/src/media/cover.rs` |
 
 ### 9. Notices about content and moderation
 
 | | |
 |---|---|
-| Purpose | Receive and decide notices about content (in the app and by mail), remove illegal or infringing content, keep the record, and (planned) tell the reporter and the uploader the decision (`takedown.md`) |
+| Purpose | Receive and decide notices about content (in the app and by mail), remove illegal or infringing content, keep the record, tell the reporter and the uploader the decision (Q12 A, ADM2), and suspend accounts (Q15, ADM2) (`takedown.md`) |
 | Legal basis | Art. 6 (1) (c) with Art. 16, 17 DSA (notice and action, statement of reasons; to confirm that they apply); otherwise Art. 6 (1) (f) (keeping the service lawful) |
-| Data subjects | reporters, uploaders, people a notice names |
-| Data | the report (target, reason, details, reporter, time), the decision (admin, time, outcome); hashes of removed pictures; notices received by mail |
-| Tables | `reports`, `media_removed_hashes`, `media` (`removed_at`) |
-| Recipients | instance admins; the reporter and the uploader for the decision (planned, ADM2) |
+| Data subjects | reporters; uploaders of reported covers, owners of reported profile pictures, readers who added reported books and editions; people a notice names; suspended users |
+| Data | the report: its target (a cover, a profile picture with whose it is (`target_user_id`), or a work or edition a reader added (`target_work_id`)), reason, details, reporter, how it came in (`via`: the app or a notice by mail), time; the decision (admin, time, outcome, closed on arrival); hashes of removed pictures; a reported profile picture its owner replaced, held until the decision; notices received by mail; a suspension (its time, and the time it was lifted; the account's sessions are deleted), and in the app log a line per suspension and lifting with the admin's and the account's numeric ids (`privacy-facts.md` §4) |
+| Tables | `reports`, `media_removed_hashes`, `media` (`removed_at`), `works` and `editions` (a removal rewrites what the reader typed and reads `created_by` for the statement of reasons), `sessions` (deleted by a suspension), `users` (`suspended_at`, `server/migrations/2102_users_suspended_at.sql`; `unsuspended_at`, `server/migrations/2900_users_unsuspended_at.sql`) |
+| Recipients | instance admins; by mail through Brevo (ADM2): each reporter the decision, and whoever uploaded or added removed content the statement of reasons, neither naming the other |
 | Third countries | none |
-| Retention | reports 3 years after the decision (to confirm, Q14); hashes as long as the block must hold |
-| Source | `server/src/media/reports.rs`, ADM and ADM2 (#54, #55) |
+| Retention | reports 3 years after the decision, open ones until decided (Q14); hashes as long as the block must hold; a suspension until it is lifted, or with the account; the time of its lifting with the account; the log line by size, like the rest of the app log (activity 10) |
+| Source | `server/src/media/reports.rs`, `server/src/catalog/reports.rs`, `server/src/admin/notices.rs`, `server/src/admin/users.rs`; ADM and ADM2 (#54, #55) |
 
 ### 10. Security and abuse prevention
 
@@ -164,18 +165,18 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 | Purpose | Keep the service available and accounts safe: rate limits, request logs, the reverse proxy log |
 | Legal basis | Art. 6 (1) (f) (security of the service, Recital 49) |
 | Data subjects | every visitor |
-| Data | in memory: IP addresses (IPv6 by /64), account ids, session ids, hashed unknown login names and recipient email addresses (case-folded, the keys of the per-address mail limits: 6 mails of each kind a day, also for addresses of people without an account) with their counters; in the app log: method, path, status, latency, request id (no IP); in the proxy log: IP address, time, request, status, User-Agent |
+| Data | in memory: IP addresses (IPv6 by /64), account ids, session ids, hashed unknown login names and recipient email addresses (case-folded, the keys of the per-address mail limits: 6 mails of each kind a day, also for addresses of people without an account) with their counters; in the app log: method, path, status, latency, request id (no IP, no user id; the one exception is the line of a suspension or its lifting, activity 9); in the proxy log: IP address, time, method, path (query and invite codes redacted), status, request headers with the User-Agent (no cookies, no Referer) |
 | Tables | none (memory and log files) |
 | Recipients | none |
 | Third countries | none |
-| Retention | counters at most 24 h and gone at restart; app log per the Docker log options (to confirm); proxy log 7 days (to confirm) |
-| Source | `server/src/ratelimit.rs`, `server/src/client_ip.rs`, `server/src/auth/mail.rs` (`target_key`, `deliver`), `server/src/lib.rs` (`TraceLayer`); DEP's Caddyfile |
+| Retention | counters at most 24 h and gone at restart; app log by size, at most 5 files of 10 MB (no time limit; to confirm with the lawyer); proxy log at most 7 days |
+| Source | `server/src/ratelimit.rs`, `server/src/client_ip.rs`, `server/src/auth/mail.rs` (`target_key`, `deliver`), `server/src/lib.rs` (`TraceLayer`); `deploy/hosted/compose.yaml` (`x-logging`), `deploy/hosted/Caddyfile.example` |
 
 ### 11. Requests of data subjects
 
 | | |
 |---|---|
-| Purpose | Answer access, portability and erasure requests: in the app (export, deletion) and by mail for accounts that cannot sign in |
+| Purpose | Answer access, portability and erasure requests: in the app (export, deletion), and by mail to `CONTACT_EMAIL` for accounts that cannot sign in. A suspended account (Q15, ADM2) cannot sign in, so the operator answers its owner's export and deletion requests by hand (`takedown.md` §7; `privacy-facts.md` §8) |
 | Legal basis | Art. 6 (1) (c) with Art. 12 to 22 DSGVO |
 | Data subjects | users |
 | Data | every table above; the request mail |
@@ -192,12 +193,12 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 | Purpose | Restore the service after a failure |
 | Legal basis | Art. 6 (1) (f) and Art. 32 (1) (c) |
 | Data subjects | all users |
-| Data | an encrypted copy of the database and the media files |
+| Data | a copy of the database (a dump) and the media files, encrypted by restic on the VM; the provider holds only ciphertext |
 | Tables | all |
-| Recipients | the backup target as processor (to confirm, Q9; `processors.md`) |
-| Third countries | none if Hetzner (DE) is chosen (to confirm) |
-| Retention | 7 daily, 4 weekly, 12 monthly snapshots (to confirm, Q9) |
-| Source | DEP (#51) |
+| Recipients | Hetzner Online GmbH (Storage Box) as processor (Q9; DPA to sign; `processors.md`) |
+| Third countries | none, as long as the box is ordered in an EU location (to confirm when ordering) |
+| Retention | restic: every snapshot of the last 14 days, then 7 daily, 4 weekly, 12 monthly snapshots; the Storage Box's own snapshots on top, one a day in as many slots as the box's plan has (BX11: 10; the plan is to confirm), so a deleted item can stay up to about 12 months plus the age of the oldest Storage Box snapshot (`privacy-facts.md` §7) |
+| Source | `deploy/hosted/backup.sh`, `deploy/hosted/restore-test.sh`, `deploy/hosted/README.md` ("Backups") |
 
 ### 13. Availability monitoring
 
@@ -205,13 +206,13 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 |---|---|
 | Purpose | Alert the operator when the service or a timer stops |
 | Legal basis | Art. 6 (1) (f) |
-| Data subjects | none: the health check and the heartbeats carry no personal data |
-| Data | `{"status":"ok"}`; heartbeat pings |
+| Data subjects | none: picture ids are blanked out of the heartbeats before they are sent, so they name no user (`privacy-facts.md` §0, §5) |
+| Data | the health answer (`{"status":"ok"}`); per heartbeat the job's exit status and the last 50 lines of its log (row counts, restic's summary), with every picture's public id blanked out (`privacy-facts.md` §5) |
 | Tables | none |
-| Recipients | the monitoring service (to confirm, Q10; `processors.md`) |
-| Third countries | depends on the service (to confirm) |
-| Retention | the service's check history |
-| Source | `server/src/health.rs` |
+| Recipients | the uptime check (Better Stack or UptimeRobot, to confirm) and healthchecks.io (Q10 A; `processors.md`) |
+| Third countries | to confirm with the chosen services |
+| Retention | the services' check and ping history (to confirm) |
+| Source | `server/src/health.rs`; `deploy/hosted/backup-lib.sh` (`heartbeat`, `log_tail`), `deploy/hosted/update.sh` |
 
 ### 14. Migration of the old app's data (one-off, at the cutover)
 
@@ -224,14 +225,14 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 | Tables | all of the above; the importer's mapping `legacy_work_keys` holds no personal data |
 | Recipients | none |
 | Third countries | none |
-| Retention | the dev-VM copy is deleted right after the rehearsal; the final snapshot (encrypted) and the stopped Python container 30 days after the cutover (to confirm, Q14) |
+| Retention | the copy of the production database on the development VM is deleted right after the rehearsal; the final snapshot taken at the cutover (kept encrypted) and the stopped Python container with its data are deleted 30 days after the cutover (Q14) |
 | Source | `server/src/importer/` |
 
 ### 15. Instance administration
 
 | | |
 |---|---|
-| Purpose | Let the operator mint sign-up invites and work the admin queue |
+| Purpose | Let the operator mint sign-up invites, work the admin queue and suspend accounts (activity 9) |
 | Legal basis | Art. 6 (1) (f) |
 | Data subjects | instance admins; users who use a sign-up invite |
 | Data | the admin flag; sign-up invites (code, creator, uses) |
@@ -247,8 +248,8 @@ Every table that references `users`, and the activities that use it.
 
 | Table | Activities |
 |---|---|
-| `users` | 1, 2, 3, 7, 15 |
-| `sessions` | 1 |
+| `users` | 1, 2, 3, 7, 9, 15 |
+| `sessions` | 1, 9 |
 | `email_tokens` | 1, 2 |
 | `shelf_entries` | 4 |
 | `user_favorites` | 4 |
@@ -269,8 +270,8 @@ Every table that references `users`, and the activities that use it.
 | `next_up_ballots` | 6 |
 | `events` | 6 |
 | `media` | 7, 8, 9 |
-| `works` | 8 |
-| `editions` | 8 |
+| `works` | 8, 9 |
+| `editions` | 8, 9 |
 | `catalog_edit_requests` | 8, 9 |
-| `reports` | 9 |
+| `reports` | 2, 9 |
 | `media_removed_hashes` | 9 (no reference to a user, but tied to a picture's uploader through `media`) |

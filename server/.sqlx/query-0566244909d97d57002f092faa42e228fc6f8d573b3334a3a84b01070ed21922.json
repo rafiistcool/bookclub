@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET suspended_at = coalesce(suspended_at, now()), is_admin = false\n         WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0566244909d97d57002f092faa42e228fc6f8d573b3334a3a84b01070ed21922"
+}

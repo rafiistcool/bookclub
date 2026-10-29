@@ -45,6 +45,17 @@ enum Command {
         /// The user's name.
         username: String,
     },
+    /// End an instance admin's rights (a suspension ends them too).
+    RevokeAdmin {
+        /// The user's name.
+        username: String,
+    },
+    /// Lift an account's suspension, as "Lift suspension" on the admin page does: it signs in
+    /// again, without the admin rights the suspension ended.
+    Unsuspend {
+        /// The user's name.
+        username: String,
+    },
     /// Mint a closed-beta sign-up invite and print its link.
     BetaInvite {
         /// How many sign-ups the invite allows (1 to 100).
@@ -86,6 +97,8 @@ async fn main() -> ExitCode {
         Command::ImportLegacy(args) => return import_legacy(args).await,
         Command::RematchLegacy(args) => return rematch_legacy(args).await,
         Command::MakeAdmin { username } => make_admin(&username).await,
+        Command::RevokeAdmin { username } => revoke_admin(&username).await,
+        Command::Unsuspend { username } => unsuspend(&username).await,
         Command::BetaInvite { uses, days } => beta_invite(uses, days).await,
         Command::Openapi => print_openapi(),
         Command::Healthcheck => healthcheck::run().await,
@@ -261,6 +274,37 @@ async fn make_admin(username: &str) -> Result<()> {
     }
 }
 
+async fn revoke_admin(username: &str) -> Result<()> {
+    let config = Config::from_env()?;
+    let db = connect(&config).await?;
+    let mut conn = db.acquire().await?;
+    if admin::revoke_admin(&mut conn, username).await? {
+        println!(
+            "{} is no longer an instance admin",
+            username.trim().to_lowercase()
+        );
+        Ok(())
+    } else {
+        anyhow::bail!("no user named {username:?}")
+    }
+}
+
+/// Lifts a suspension from the host, where the admin page cannot: when the only admin is
+/// suspended, for one.
+async fn unsuspend(username: &str) -> Result<()> {
+    let config = Config::from_env()?;
+    let db = connect(&config).await?;
+    let mut conn = db.acquire().await?;
+    match admin::users::lift_suspension(&mut conn, username).await? {
+        Some(id) => {
+            tracing::info!(user = id, "account unsuspended from the command line");
+            println!("{} can sign in again", username.trim().to_lowercase());
+            Ok(())
+        }
+        None => anyhow::bail!("no user named {username:?}"),
+    }
+}
+
 /// Mints a closed-beta sign-up invite (no club) and prints its code and join link. Without
 /// flags it is single-use and expires in 30 days.
 async fn beta_invite(uses: Option<i32>, days: Option<i32>) -> Result<()> {
@@ -380,5 +424,17 @@ mod tests {
             Some(Command::SendTestMail { address }) if address == "ada@example.com"
         ));
         assert!(Cli::try_parse_from(["bookclub-server", "send-test-mail"]).is_err());
+    }
+
+    #[test]
+    fn the_account_commands_parse() {
+        let cli = Cli::try_parse_from(["bookclub-server", "unsuspend", "ada"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::Unsuspend { username }) if username == "ada"));
+        let cli = Cli::try_parse_from(["bookclub-server", "revoke-admin", "eve"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::RevokeAdmin { username }) if username == "eve"
+        ));
+        assert!(Cli::try_parse_from(["bookclub-server", "unsuspend"]).is_err());
     }
 }

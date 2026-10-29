@@ -13,7 +13,8 @@ import { useToast } from "../../stores/toast";
 /**
  * Sign-up invites for the closed beta: they let someone create an account
  * without joining a club. Without a limit of uses or days an invite is for
- * one person and lasts 30 days (the server's default).
+ * one person and lasts 30 days (the server's default). An active one can be
+ * withdrawn.
  */
 const { t } = useI18n();
 const locale = useLocale();
@@ -68,6 +69,17 @@ async function create() {
     toast.show(failed(err, t("invites.createFailed")));
   } finally {
     busy.value = false;
+  }
+}
+
+async function revoke(invite: InviteOut) {
+  try {
+    await api.revokeSignupInvite(invite.id);
+    items.value = items.value.map((row) => (row.id === invite.id ? { ...row, revoked: true, active: false } : row));
+    if (fresh.value?.id === invite.id) fresh.value = null;
+    toast.show(t("invites.revoked"));
+  } catch (err) {
+    toast.show(failed(err, t("invites.revokeFailed")));
   }
 }
 
@@ -140,7 +152,10 @@ onMounted(load);
             <span class="finer subtle">{{ line(invite) }}</span>
             <span v-if="invite.used_by.length" class="finer subtle">{{ t("invites.usedBy", { names: invite.used_by.join(", ") }) }}</span>
           </span>
-          <button class="text-btn" type="button" @click="copy(invite)">{{ t("common.copy") }}</button>
+          <span class="invite-actions">
+            <button class="text-btn" type="button" @click="copy(invite)">{{ t("common.copy") }}</button>
+            <button class="text-btn danger" type="button" @click="revoke(invite)">{{ t("invites.revoke") }}</button>
+          </span>
         </li>
       </ul>
       <details v-if="past.length" class="past-invites">
@@ -220,6 +235,12 @@ onMounted(load);
 
 .invite-row.past {
   opacity: 0.8;
+}
+
+.invite-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: var(--space-3);
 }
 
 .invite-meta {

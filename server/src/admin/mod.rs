@@ -5,14 +5,18 @@
 //! - [`summary`]: `GET /api/admin/summary`, both queues at a glance.
 //! - [`queue`]: the `?status=&page=` query and the overdue threshold both queues share.
 //! - [`notify`]: the job that mails instance admins about new reports and catalog requests.
+//! - [`notices`]: the decision notices to reporters and uploaders after a report is decided.
+//! - [`users`]: suspending and unsuspending accounts.
 //!
 //! The queues themselves live with their data: `catalog::admin` (catalog requests) and
 //! `media::reports` (reports and takedowns).
 
 pub mod invites;
+pub mod notices;
 pub mod notify;
 pub mod queue;
 pub mod summary;
+pub mod users;
 
 use sqlx::PgConnection;
 use utoipa_axum::router::OpenApiRouter;
@@ -24,16 +28,29 @@ use crate::AppState;
 pub fn admin_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .merge(invites::admin_routes())
+        .merge(users::admin_routes())
         .routes(routes!(summary::summary))
 }
 
 /// Makes the user an instance admin (`bookclub-server make-admin`). The name is normalised like
 /// every username lookup. Returns false when no such user exists.
 pub async fn make_admin(conn: &mut PgConnection, username: &str) -> sqlx::Result<bool> {
+    set_admin(conn, username, true).await
+}
+
+/// Ends the user's instance admin rights (`bookclub-server revoke-admin`), without the
+/// suspension that ends them too (`users::suspend`). The name is normalised like every username
+/// lookup. Returns false when no such user exists.
+pub async fn revoke_admin(conn: &mut PgConnection, username: &str) -> sqlx::Result<bool> {
+    set_admin(conn, username, false).await
+}
+
+async fn set_admin(conn: &mut PgConnection, username: &str, admin: bool) -> sqlx::Result<bool> {
     let username = username.trim().to_lowercase();
     let updated = sqlx::query!(
-        "UPDATE users SET is_admin = true WHERE username = $1",
-        username
+        "UPDATE users SET is_admin = $2 WHERE username = $1",
+        username,
+        admin
     )
     .execute(conn)
     .await?

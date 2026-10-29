@@ -44,8 +44,8 @@ A completeness review checked this plan against the code at 84006bd. Where this 
 
 17. LEG needs no code in `server/src/auth/export.rs`: the profile section is `to_jsonb(u) - 'password_hash'` (`export.rs:151-160`), so new `users` columns are exported automatically. LEG adds only a test assertion, and `export.rs` leaves LEG's shared list.
 18. LEG's rule "refuse open sign-up without the legal texts" lives in `config.rs` or `legal.rs`, not in `main.rs` (DEP's).
-19. ADM2 also owns `server/tests/auth_export.rs`: any new foreign key to `users` changes its pinned table count (`in_schema.len() == 28`, `:204`).
-20. A suspended account cannot log in, so it loses in-app export and deletion (DSGVO Art. 15, 17 and 20). ADM2 documents a manual path through `CONTACT_EMAIL` in `docs/legal/takedown.md`, and the privacy facts state it.
+19. ADM2 also owns `server/tests/auth_export.rs`: any new foreign key to `users` changes its pinned table count (`in_schema.len() == 28`, `:204`). ADM2's `reports.target_user_id` made it 29.
+20. A suspended account cannot log in, so it loses in-app export and deletion (DSGVO Art. 15, 17 and 20). ADM2 documents a manual path through `CONTACT_EMAIL` in `docs/legal/takedown.md`, and the privacy facts state it. **Done** with ADM2's merge (f6e28e8): `takedown.md` §7, `privacy-facts.md` §8, `vvt.md` activity 11.
 21. LEG2 owns `server/src/auth/mod.rs` (`cleanup`), `server/tests/jobs.rs` and `docs/legal/**`, plus `server/src/auth/deletion.rs` if the purge of empty sign-ups reuses it.
 
 **New Wave 2 task: BRAND (after Q1).** The chosen name goes into:
@@ -60,11 +60,15 @@ A completeness review checked this plan against the code at 84006bd. Where this 
 22. The registry already holds `rafiistcool/bookclub:{0.10.0,0.10,latest}`, pushed on 2026-10-18 but not by a Forgejo run. The v0.10.0 compose pulls `ghcr.io/rafiistcool/bookclub:latest`. Q5's recommendation (a new image name) therefore stands.
 23. **Done (2026-10-29):** `REGISTRY_TOKEN` is an action secret of the user `rafiistcool` (a token with `write:package`, set on 2026-10-18), which `release.yml` gets like a repository secret. The repository's secret list does not show user secrets, so the repo only seemed to lack it.
 24. **Done (2026-10-29):** the runner labelled `docker-host` runs on VM 101, with its own registration and a capacity of 1, and is the only runner that hands job containers the Docker socket (`docs/phase2/notes/dep.md`, "The runner"). The existing runner (`ubuntu-latest`, `docker`) no longer has the socket; before, every job got it. The `image` job of main's run 10 (531c3fa) passed on the new runner. The label is not `docker` because PR #71's first run showed that the existing runner already has forgejo-runner's default label `docker`, without the daemon (`docker: command not found`).
-25. Q6 (the `legacy-python` branch and tag) waits for Rafael's answer. CUT puts the commands into the runbook and pushes nothing.
+25. **Done (2026-10-29):** Q6 A. Branch `legacy-python` and annotated tag `legacy-python-final` are on Forgejo at 1c5efe3 (`git ls-remote origin refs/heads/legacy-python refs/tags/legacy-python-final`), with the commands of `docs/phase2/cutover.md` §6; neither started a run.
 26. Corrections:
     - `server/src/ratelimit.rs:273-302` are the thresholds; the limit tests are in `server/tests/auth_*.rs`.
     - The `ci.yml` server job is lines 52-108.
     - The staging deploy in §3 depends on A7, A8 (or an interim SMTP account) and A10–A15, not on A6.
+
+**Added at ADM2's merge (2026-10-29)**
+
+27. A package that adds a foreign key to `users`, an operation with a `username` parameter, or a schema with a rating or take field owns the add-only rows for it in `server/tests/parity_visibility.rs`: `every_personal_column_route_and_rating_field_is_in_the_matrix` fails until each is classified, with the kinds that serve it or the reason it is not personal data (conventions.md §6.5). The same kind of rule as item 19. ADM2 needed three such rows (`reports.target_user_id`, the suspend and unsuspend routes) in a file outside its list, and the ownership gate reverted them once (9f404ae, undone in 9b9a42a).
 
 ---
 
@@ -144,6 +148,7 @@ Cutover CUT-R: branch cutover/remove-python, merged only on cutover day   (#52)
    - There is no squash (default D7).
    - A migration merged into `phase-2` is never edited afterwards.
    - A new foreign key to `users` needs a section in the export, or the `pg_constraint` completeness check in `server/tests/auth_export.rs` fails (conventions.md §5.7).
+   - Since LEG2 it also needs a `NOT EXISTS` in `auth::empty_sign_ups` and a `DATA` row in `server/tests/jobs.rs`, or a `TRACES` row with the reason. A new column of `users` needs a `USERS_COLUMNS` row there, and a new foreign key to `media` a check in `auth::delete_rejected_cover_photos` and a `MEDIA_REFERENCES` row (conventions.md §5.7).
 
 5. **New paths.** Each new path belongs to one package:
 
@@ -185,9 +190,9 @@ Cutover CUT-R: branch cutover/remove-python, merged only on cutover day   (#52)
 ### 2.2 Wave 1: packages I can build now
 
 **Status (2026-10-28):** all five are merged into `phase-2`, and their notes are applied to `conventions.md`, `endpoint-map.md`, `CLAUDE.md`, `README.md` and `deploy/hosted/README.md`. Open items are in each notes file.
-- **CUT:** merged (adcd9be). Open: Q6, the `legacy-python` branch and tag (Rafael); the rehearsal is CUT2.
+- **CUT:** merged (adcd9be). Q6 is done (item 25, 2026-10-29); the rehearsal is CUT2.
 - **LEG:** merged (4b88ec7). The integrator added `needs_terms: false` to the shared `user()` fixture, so `User` is plain `UserOut` again. Open: the optional file grants, and the final texts (LEG2, Rafael).
-- **ADM:** merged (bd4e454); the integrator's fix keeps a field an admin clears empty (59443d4). The integrator added `errors.receivedInFuture` and `errors.noticeCoversOnly` with their `apiErrors.ts` lines. Open: ADM2.
+- **ADM:** merged (bd4e454); the integrator's fix keeps a field an admin clears empty (59443d4). The integrator added `errors.receivedInFuture` and `errors.noticeCoversOnly` with their `apiErrors.ts` lines. Open: ADM2 (merged in f6e28e8, which removed `errors.noticeCoversOnly` again).
 - **DEP:** merged (b88622a); follow-ups dd5d1b4 (shellcheck without `-x`) and fe82997 (the Google scan reads the root `Dockerfile`). The integrator added `.github/actionlint.yaml`. The `image` job's first run on PR #71 landed on the existing runner, which has forgejo-runner's default label `docker`, so the label is now `docker-host`. Items 23 and 24 are done (2026-10-29): `REGISTRY_TOKEN` is a user secret of `rafiistcool`, and the `docker-host` runner on VM 101 passed main's `image` job.
 - **GATE:** merged (89b7da6); the integrator fixed the two FE observations (b42d99f, f604e59). The end-to-end run behind Caddy covered LEG's `/imprint`, `/privacy` and `/terms` and ADM's admin pages with no CSP violation. Open: Q17 (Rafael).
 
@@ -456,6 +461,12 @@ All five run in parallel. They need no answer from Rafael. Where an answer is st
 
 ### 2.3 Wave 2: after the Wave 1 merge and Rafael's answers
 
+**Status (2026-10-29):** LEG2, DEP2 and ADM2 are merged into `phase-2`, and their notes are applied to `conventions.md`, `endpoint-map.md`, `CLAUDE.md`, `README.md`, `deploy/hosted/README.md`, `cutover.md`, `security-review.md` and LEG2's legal documents. Open items are in each notes file.
+- **LEG2:** merged (236726e). The integrator runs `auth::delete_rejected_cover_photos` in the hourly job, with a test (9296688). "When merging ADM2" is done (139087e: suspended accounts and avatar reports keep an account out of the purge, the `takedown.md` retention line), and so is "When merging DEP2" (7d8e413: `log_tail` in `backup-lib.sh` blanks every public id before the heartbeat pings, with two tests in `deploy_env.rs`; the "to do" marks are gone from `processors.md`, `privacy-facts.md` and `vvt.md`). Open: the go-live values marked "to confirm" and "to sign" (`privacy-facts.md` §0).
+- **DEP2:** merged (bc37d39). `v0.11.0-rc.1` published `bookclub-server:0.11.0-rc.1` (run 13). The integrator added the update timer's stop and start to `cutover.md` 3.3 and 3.6, and DEP2's additions to §5 items 10, 12, 13 and 15.1. Open: after the first final release (`v0.11.0`), `bookclub-server` must hold `0.11.0`, `0.11` and `stable` with one digest; everything that needs the VM, the Storage Box or healthchecks.io (`notes/dep2.md`, "Not verified").
+- **ADM2:** merged (f6e28e8), with the integrator's two fixes from the Wave 2 security review (b074148, 44a281f; `notes/adm2.md`, "Security review fixes"). The integrator's follow-ups are done: the 403 on token creation in the OpenAPI document (e4f4de9), `PLANNED` emptied in `legal_docs.rs` (4ec27ea), the contact line on the sign-in page (bb89098), "Report" on each reader-added edition in the edition list (5de12cd), and `takedown.md` §4 on the held profile picture (f2c6269). The review of the merge brought the owner's lock before a profile picture's (8c9f45e), gone reports of a deleted account closed one by one (f05ceb5), migration 2900 so that lifting a suspension counts as a sign-in for the purge (05e8ac2), and doc fixes (084176f, 4ed7ce1; `notes/adm2.md`, "Review of the merge"). The checks after the merge (an end-to-end browser run and a security review, `security-review.md`, "ADM2 merge") brought a suspension that revokes the invites the account knows and ends its admin rights (d8345a4, 20cd936), one reason per decision in the statement and the export (c797c97), post avatars only for readers who can see the author (7ec0d90), no Postgres detail in the restore test's ping (8e3aa6a), suspensions in the compromise restore's review (0cdb767), and the six browser findings (`notes/adm2.md`, "Checks after the merge"). Open (`notes/adm2.md`, "Open points"): what "remove" does with a reader's book that holds another reader's text (security review finding 7, Rafael's decision), operator commands that export or delete a suspended account without unsuspending it, the statement of reasons on a suspension (by hand for now), the `[removed]` placeholder, and who suspended (not stored in the database); and ("Security review fixes", "Left as it is") the admin page's wording for a gone profile picture.
+- **CUT2:** rehearsed on 2026-10-29 at 8ecc528 (`notes/cut2.md`): both runs exited 0 in about 20 s with 0 s lookup wait, `compare.sh` matched every count and both accounts, and the slug is `bookclub-8rqp`. Waiting for Rafael's browser check at `http://agents.lan:8080` and the #38 post (counts, slug, run time and lookup wait only); then the copy, the rehearsal database and the worktree are deleted (Q14 A).
+
 #### ADM2: reports on user content, decision notices, suspension (#54, #55)
 
 - **Size:** L. **Dependencies:** ADM and LEG merged; Q11, Q12 and Q15, and Q17 only if per-address counting is chosen.
@@ -569,14 +580,14 @@ All five run in parallel. They need no answer from Rafael. Where an answer is st
 
 | Item | Waits on | Unblocks |
 |---|---|---|
-| ADM2: reports on avatars and user-added books | Q11 | #54 "reports on covers and user content"; the promise in `endpoint-map.md:189` |
-| ADM2: decision notices | Q12; real delivery also needs Q4 | DSA Art. 16(5) and 17 duties before #55 |
-| ADM2: suspension | Q15 | Abuse handling before #55 |
-| ADM2: per-address login lockout | Q17 | Security review §3 |
+| ADM2: reports on avatars and user-added books (merged 2026-10-29, f6e28e8) | Q11 | #54 "reports on covers and user content"; the promise in `endpoint-map.md:189` |
+| ADM2: decision notices (merged 2026-10-29) | Q12; real delivery also needs Q4 | DSA Art. 16(5) and 17 duties before #55 |
+| ADM2: suspension (merged 2026-10-29) | Q15 | Abuse handling before #55 |
+| ADM2: per-address login lockout (Q17 A: nothing to build) | Q17 | Security review §3 |
 | LEG2: retention jobs | Q14 | The retention statements in the VVT and privacy policy |
 | DEP2: auto-deploy | Q8 | #51 "tags build the image and deploy it" |
 | DEP2: first release and registry tags | Q5 | Any release from `main`; the staging deploy |
-| CUT: `legacy-python` branch and tag | Q6 | #52 step 8; a Python hotfix path |
+| CUT: `legacy-python` branch and tag (done 2026-10-29) | Q6 | #52 step 8; a Python hotfix path |
 | CUT2: rehearsal | A2, A4 (snapshot and facts) | Closing #38; the size of the downtime window |
 | Admin and decision mails in production | Q4, and A21 (a verified admin address) | #54 response time, #55 |
 | Staging deploy on the VM | A6–A13 | #51 acceptance (LAN isolation, restore, monitor) |
@@ -590,6 +601,14 @@ All five run in parallel. They need no answer from Rafael. Where an answer is st
 ## 4. Questions for Rafael
 
 Ordered by how much work each answer unblocks. "Take the recommendations" is a valid answer to all of them.
+
+**Answers (2026-10-29).** Rafael took the recommendations for now; everything that matters only once the service goes live is decided then.
+- **Built in Wave 2:** Q8 A (pull deploys, DEP2), Q11 B, Q12 A and Q15 (the suspend flag) in ADM2, Q14 A in LEG2. Q12's targets stay "to confirm" by the legal source.
+- **Taken, nothing to build:** Q2 A, Q3 (all texts at #52), Q16 A, Q17 A, Q18 A. Q5 A, Q9 and Q13 A were built in Wave 1.
+- **Done on 2026-10-29:** Q6 A (branch `legacy-python` and annotated tag `legacy-python-final` at 1c5efe3 are on Forgejo; neither started a run), and D9 for #27 and #29 (closed).
+- **Option chosen, real values later:** Q4 Brevo (account, DNS and DPA once the domain exists), Q7 A (the Caddy IP goes into `TRUSTED_PROXIES` once the VM exists), Q10 A (the monitor account comes with the VM).
+- **Deferred:** Q1, the name. I prepare `docs/phase2/name-check.md` as a first pass; BRAND waits for the choice. The production facts of §5 item 2 wait too: CUT2's rehearsal assumes them, and its notes say how.
+- **Backups** (security review, Phase 2 Wave 1 finding 3): option A, Storage Box snapshots. DEP2 documents the setup.
 
 **Q1. Which public name (#50)?**
 - **Options:** Eselsohr, Shelfmates, Marginalia, Lesezirkel, or another name.
@@ -760,20 +779,21 @@ Ordered by how much work each answer unblocks. "Take the recommendations" is a v
 10. Proxmox: create the app VM (Debian 13, about 2 vCPU, 4 GB RAM, 40 GB disk, Docker Engine and the compose plugin) in its own VLAN.
     - Inbound: only Caddy's IP to 8080, plus SSH from your admin host.
     - Outbound: DNS, NTP, 443 to the internet, git.tillhome.de per Q7, SMTP 465/587, and the backup port. Deny RFC1918 addresses.
+    - The inbound rule goes into the Proxmox firewall or the VLAN's router: Docker routes a published port before the VM's own `INPUT` rules. Outbound to RFC 1918 addresses only the pinhole to Caddy:443 and the VLAN's DNS and NTP (`deploy/hosted/README.md`, "The VM's network").
     - Check the #51 acceptance criterion: from the VM, `nc -vz -w3 <nas-ip> 445` and a curl to Forgejo's LAN address both fail.
 11. Forgejo: create a read-only package token (ideally a bot account with `read:package`), run `docker login git.tillhome.de` on the VM, and check that the `REGISTRY_TOKEN` user secret (item 23) is still valid.
-12. Backups: create the backup target and sign its DPA. Add the VM's SSH key, and keep the restic password in your password manager, not only on the VM.
-13. Monitoring: set up the uptime check on `/api/health` and heartbeat checks for the backup, update and restore-test timers, all alerting your phone.
+12. Backups: create the backup target and sign its DPA. Add the VM's SSH key, and keep the restic password in your password manager, not only on the VM. Enable the Storage Box's automatic snapshots (all slots of the plan, daily after the 03:30 backup, for example 06:00), SSH support and External Reachability (`deploy/hosted/README.md`, "Storage Box snapshots").
+13. Monitoring: set up the uptime check on `/api/health` and heartbeat checks for the backup, update and restore-test timers, all alerting your phone. The heartbeat "update" has a period of 5 minutes and a grace time of 1 hour. Choose a machine outside the VM that runs every day, and set up the daily repository check from there, with a read-only sub-account of the box and a heartbeat of its own (`deploy/hosted/README.md`, "A check from outside the VM"; security review, Phase 2 Wave 2).
 14. Caddy: add the site block from `deploy/hosted/Caddyfile.example` for the staging host and reload. Rebuild with `caddy-ratelimit` only if Q16 = B.
 15. On the VM:
-    1. Install `deploy/hosted/` (compose, the filled env, the systemd timers).
+    1. Install `deploy/hosted/` (compose, the filled env, the systemd timers). After the backups, `cp deploy/hosted/update.sh /opt/bookclub/`, set `UPDATE_HEARTBEAT_URL` in `backup.env`, run `/opt/bookclub/update.sh` once, then `systemctl enable --now bookclub-update.timer` (`deploy/hosted/README.md`, "Updates and rollback", "Setting up").
     2. Run `docker compose up -d --wait`, then `docker compose exec app bookclub-server beta-invite`, and sign up on staging.
     3. Wipe staging before the cutover (`docker compose down -v`, empty `/srv/bookclub/media`).
 16. #51 acceptance: run `restore-test.sh` and keep the output. Run `docker compose stop app`, confirm that the monitor alerts, then start the app again.
 
 **Legal (#53)**
 
-17. Give `docs/legal/privacy-facts.md` and `docs/legal/vvt.md` to eRecht24 or a lawyer. Generate the Impressum (§ 5 DDG) and the Datenschutzerklärung; it names the mail provider, the backup host, the monitor, and the 7-day Caddy log with IPs. Also generate Nutzungsbedingungen with moderation and notice-and-action clauses, in DE and EN. Have them confirm the DSA hosting duties (Art. 11/12, 14, 16, 17) and the Q12 targets.
+17. Give `docs/legal/privacy-facts.md` and `docs/legal/vvt.md` to eRecht24 or a lawyer. Generate the Impressum (§ 5 DDG) and the Datenschutzerklärung; it names the mail provider, the backup host, the monitor, and the 7-day Caddy log with IPs. Also generate Nutzungsbedingungen with moderation and notice-and-action clauses, in DE and EN. Have them confirm the DSA hosting duties (Art. 11/12, 14, 16, 17), the Q12 targets, the wording of the app's decision mails (`report_decision`, `statement_of_reasons`), the statement of reasons the operator writes by hand on a suspension, and the manual export and deletion of a suspended account (`docs/legal/takedown.md` §5 and §7, `privacy-facts.md` §8).
 18. Sign the VVT as the controller, and file every DPA (mail, backup).
 19. Put the six files and `manifest.json` into `/srv/bookclub/legal` on the VM, and check `/imprint`, `/privacy` and `/terms` logged out.
 
@@ -793,7 +813,7 @@ Ordered by how much work each answer unblocks. "Take the recommendations" is a v
 
 23. Run `bookclub-server send-test-mail` to Gmail, Outlook and GMX, and check mail-tester: SPF, DKIM and DMARC must pass.
 24. Run `deploy/hosted/verify-limits.sh https://<host>` from home, plus one sign-up attempt from a second network (a phone on mobile data). If that attempt also gets 429, `TRUSTED_PROXIES` is wrong. The run blocks your home IP from sign-up and reset for an hour.
-25. Run a takedown end to end on the live instance: report a cover, remove it, confirm `/media` answers 410 and the mails arrive, and check the time against the target.
+25. Run a takedown end to end on the live instance: report a cover, remove it, confirm `/media` answers 410 and the mails arrive (the decision to the reporter, the statement of reasons to the uploader, each ending with the imprint and privacy links), and check the time against the target.
 26. Set `SIGNUP_MODE=open` in the env and run `docker compose up -d app`. Outside `DEV_MODE`, startup refuses this until the legal texts are present.
 
 **Afterwards**

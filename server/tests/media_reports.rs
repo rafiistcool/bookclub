@@ -11,6 +11,7 @@ use bookclub_server::catalog::shared::ingest::{
 };
 use bookclub_server::media::reports::take_down_locked;
 use bookclub_server::media::service::{CoverOutcome, PREFETCH_POLICY};
+use bookclub_server::media::shared::MediaStore;
 use common::*;
 use image::codecs::jpeg::JpegEncoder;
 use image::{ExtendedColorType, ImageEncoder, Rgb, RgbImage};
@@ -620,42 +621,69 @@ async fn a_takedown_notice_is_checked(db: PgPool) {
     assert_eq!(notice_rows(&app).await.len(), 1, "and nothing recorded");
 }
 
-/// Until ADM2 widens `reports.target_kind`, a notice about an avatar cannot be recorded: the
-/// takedown is refused before anything changes, so the admin is never told a notice is on
-/// record when it is not. Without a notice (no body, or `null`) the avatar comes down.
+/// ADM2: a notice about a profile picture is recorded like one about a cover: a `removed`
+/// report of kind `avatar` (via `notice`, naming whose picture it was), and the picture comes
+/// down. Without a notice (no body, or `null`) the avatar comes down without a record.
 #[sqlx::test]
-async fn a_notice_about_an_avatar_is_refused(db: PgPool) {
+async fn a_notice_about_an_avatar_is_recorded(db: PgPool) {
     let app = TestApp::new(db).await;
     let ada = app.user("ada").await;
     let root = app.admin("root").await;
     let avatar = "avataravataravataravatar22";
     app.exec(&format!(
         "INSERT INTO media (public_id, kind, source, uploaded_by)
-         VALUES ('{avatar}', 'avatar', 'upload', {})",
+         VALUES ('{avatar}', 'avatar', 'upload', {0});
+         UPDATE users SET avatar_media_id = (SELECT id FROM media WHERE public_id = '{avatar}')
+         WHERE id = {0}",
         ada.id()
     ))
     .await;
     let removed = format!(
         "SELECT count(*) FROM media WHERE public_id = '{avatar}' AND removed_at IS NOT NULL"
     );
-    let path = format!("/api/admin/media/{avatar}");
-    for body in [
-        json!({}),
-        json!({"details": "Mail: an offensive profile picture."}),
-    ] {
-        root.delete_json(&path, body)
-            .await
-            .assert_detail(400, "Only notices about covers can be recorded");
-    }
-    assert_eq!(app.scalar_i64(&removed).await, 0, "nothing was taken down");
-    assert!(notice_rows(&app).await.is_empty());
+    root.delete_json(
+        &format!("/api/admin/media/{avatar}"),
+        json!({"details": "Mail: an offensive profile picture.", "reason": "offensive"}),
+    )
+    .await
+    .assert_status(204);
+    assert_eq!(app.scalar_i64(&removed).await, 1);
+    let rows = notice_rows(&app).await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        (rows[0].0.as_str(), rows[0].4.as_str(), rows[0].2, rows[0].5),
+        ("offensive", "removed", None, Some(root.id()))
+    );
+    let item = &root.get("/api/admin/reports?status=resolved").await.json()["items"][0];
+    assert_eq!(item["target_kind"], "avatar");
+    assert_eq!(item["via"], "notice");
+    assert_eq!(item["target_user"]["username"], "ada");
+    assert_eq!(item["target_user"]["avatar_url"], Value::Null);
+    assert_eq!(item["avatar_url"], Value::Null, "taken down");
+    assert_eq!(item["cover_url"], Value::Null);
+    assert_eq!(item["book"], Value::Null);
+    assert_eq!(item["closed_on_arrival"], false);
+    assert_eq!(
+        ada.get("/api/auth/me").await.json()["avatar_url"],
+        Value::Null
+    );
 
-    root.delete_json(&path, Value::Null)
+    // Without a notice: down, and no record.
+    let other = "avataravataravataravatar33";
+    app.exec(&format!(
+        "INSERT INTO media (public_id, kind, source, uploaded_by)
+         VALUES ('{other}', 'avatar', 'upload', {})",
+        ada.id()
+    ))
+    .await;
+    root.delete_json(&format!("/api/admin/media/{other}"), Value::Null)
         .await
         .assert_status(204);
-    assert_eq!(app.scalar_i64(&removed).await, 1);
-    root.delete(&path).await.assert_status(204);
-    assert!(notice_rows(&app).await.is_empty());
+    assert_eq!(
+        notice_rows(&app).await.len(),
+        1,
+        "no record without a notice"
+    );
 }
 
 /// Acceptance (#54): a repeat report of a picture by the same reader answers with the open
@@ -932,12 +960,14 @@ async fn a_takedown_rejects_the_cover_requests_for_the_picture(db: PgPool) {
     .assert_detail(409, "This request was already decided");
 }
 
-/// Reports name a cover by its public id: unknown ids and avatars are 404; the reason is one
-/// of four; details are trimmed and cut at 2000 characters; 20 new reports per user and day.
+/// Reports name a picture by its public id: unknown ids, and the profile picture of someone the
+/// reader shares no club with, are 404; the reason is one of four; details are trimmed and cut
+/// at 2000 characters; 20 new reports per user and day.
 #[sqlx::test]
 async fn reports_are_checked_and_limited(db: PgPool) {
     let app = TestApp::new(db).await;
     let ada = app.user("ada").await;
+    let stranger = app.user("stranger").await;
     let (_, public_id, _) = shown_ol_cover(&app).await;
     report(
         &ada,
@@ -949,7 +979,7 @@ async fn reports_are_checked_and_limited(db: PgPool) {
     app.exec(&format!(
         "INSERT INTO media (public_id, kind, source, uploaded_by)
          VALUES ('avataravataravataravatar22', 'avatar', 'upload', {})",
-        ada.id()
+        stranger.id()
     ))
     .await;
     report(
@@ -1413,5 +1443,987 @@ async fn a_takedown_waits_for_an_ingest_attaching_the_cover(db: PgPool) {
         ))
         .await,
         1
+    );
+}
+
+/// Uploads a profile picture for `who` and returns its public id.
+async fn upload_avatar(who: &TestClient, color: [u8; 3]) -> String {
+    let res = who
+        .put_multipart(
+            "/api/auth/me/avatar",
+            vec![Part::file("me.jpg", "image/jpeg", jpeg(color))],
+        )
+        .await;
+    res.assert_status(200);
+    let url = res.json()["avatar_url"].as_str().unwrap().to_owned();
+    url.strip_prefix("/media/")
+        .and_then(|rest| rest.strip_suffix("/a"))
+        .unwrap()
+        .to_owned()
+}
+
+/// The mails to `<username>@example.test` so far.
+fn mails_to(app: &TestApp, username: &str) -> Vec<bookclub_server::email::Email> {
+    app.email.sent_to(&format!("{username}@example.test"))
+}
+
+/// Acceptance (#54, Q11 option B): a reader reports the profile picture of someone they share a
+/// club with; a stranger cannot (404, as for an unknown picture). "Remove" takes it down:
+/// `avatar_url` is null everywhere, `/media` answers 410, and the same file cannot be uploaded
+/// again. The reporter is mailed the decision, the owner a statement of reasons that does not
+/// name the reporter.
+#[sqlx::test]
+async fn an_avatar_report_then_remove_hides_it_everywhere(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let cleo = app.user("cleo").await;
+    let root = app.admin("root").await;
+    let club = app.club(&ada, "Readers").await;
+    app.join(&club, &bob, "member").await;
+    let avatar = upload_avatar(&ada, [10, 120, 200]).await;
+
+    report(&cleo, &avatar, json!({"reason": "offensive"}))
+        .await
+        .assert_detail(404, "Not found");
+    let res = report(
+        &bob,
+        &avatar,
+        json!({"reason": "offensive", "details": "Bob says: this is rude."}),
+    )
+    .await;
+    res.assert_status(201);
+    assert_eq!(res.json()["status"], "open");
+    let report_id = res.json()["id"].as_i64().unwrap();
+    // A repeat answers with the same report.
+    assert_eq!(
+        report(&bob, &avatar, json!({"reason": "other"}))
+            .await
+            .json()["id"],
+        report_id
+    );
+
+    let items = root.get("/api/admin/reports").await.json()["items"].clone();
+    assert_eq!(items.as_array().unwrap().len(), 1);
+    let item = &items[0];
+    assert_eq!(item["target_kind"], "avatar");
+    assert_eq!(item["via"], "app");
+    assert_eq!(item["media_public_id"], avatar);
+    assert_eq!(item["avatar_url"], format!("/media/{avatar}/a"));
+    assert_eq!(item["cover_url"], Value::Null);
+    assert_eq!(item["book"], Value::Null);
+    assert_eq!(item["target_user"]["username"], "ada");
+    assert_eq!(item["created_by"]["username"], "bob");
+
+    root.post(
+        &format!("/api/admin/reports/{report_id}/resolve"),
+        json!({"action": "remove"}),
+    )
+    .await
+    .assert_status(200);
+
+    assert_eq!(
+        ada.get("/api/auth/me").await.json()["avatar_url"],
+        Value::Null
+    );
+    let members = bob
+        .get(&format!("/api/clubs/{}/members", club.slug))
+        .await
+        .json();
+    let adas_row = members["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["username"] == "ada")
+        .unwrap()
+        .clone();
+    assert_eq!(adas_row["avatar_url"], Value::Null);
+    let resolved = &root.get("/api/admin/reports?status=resolved").await.json()["items"][0];
+    assert_eq!(resolved["avatar_url"], Value::Null);
+    assert_eq!(resolved["target_user"]["avatar_url"], Value::Null);
+    assert_eq!(resolved["removed"], true);
+    app.anon()
+        .get(&format!("/media/{avatar}/a"))
+        .await
+        .assert_status(410);
+    ada.put_multipart(
+        "/api/auth/me/avatar",
+        vec![Part::file("me.jpg", "image/jpeg", jpeg([10, 120, 200]))],
+    )
+    .await
+    .assert_detail(400, "This picture was removed");
+
+    let to_bob = mails_to(&app, "bob");
+    assert_eq!(to_bob.len(), 1);
+    assert_eq!(to_bob[0].subject, "Your report on Bookclub: removed");
+    assert!(
+        to_bob[0]
+            .text
+            .contains("reviewed the profile picture you reported and removed it")
+    );
+    assert!(!to_bob[0].text.contains("ada"), "{}", to_bob[0].text);
+    let to_ada = mails_to(&app, "ada");
+    assert_eq!(to_ada.len(), 1);
+    assert_eq!(
+        to_ada[0].subject,
+        "Your profile picture on Bookclub was removed"
+    );
+    assert!(to_ada[0].text.contains("because it is offensive"));
+    for secret in ["bob", "rude"] {
+        assert!(!to_ada[0].text.contains(secret), "{}", to_ada[0].text);
+    }
+    assert!(mails_to(&app, "cleo").is_empty());
+    assert!(mails_to(&app, "root").is_empty());
+}
+
+/// A new work "My Zine" with a cover `uploader` uploaded in `color`; returns the work and the
+/// picture's public id.
+async fn uploaded_cover(app: &TestApp, uploader: &TestClient, color: [u8; 3]) -> (i64, String) {
+    let work = app.work("My Zine").await;
+    uploader
+        .post_multipart(
+            &format!("/api/books/works/{}/cover", work.id),
+            vec![Part::file("c.jpg", "image/jpeg", jpeg(color))],
+        )
+        .await
+        .assert_status(200);
+    let public_id: String = sqlx::query_scalar(
+        "SELECT m.public_id FROM works w JOIN media m ON m.id = w.cover_media_id WHERE w.id = $1",
+    )
+    .bind(work.id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    (work.id, public_id)
+}
+
+/// Acceptance (#54, Q12 option A): "remove" mails every reporter of the picture the decision, in
+/// their language, and the uploader a statement of reasons; nobody is named to the other side.
+/// "dismiss" mails only the reporters. Unverified addresses get nothing.
+#[sqlx::test]
+async fn decisions_mail_the_reporters_and_the_uploader(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let carl = app.user("carl").await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let dora = app.user_unverified("dora").await;
+    let root = app.admin("root").await;
+    app.exec(&format!(
+        "UPDATE users SET locale = 'de' WHERE id = {}",
+        bob.id()
+    ))
+    .await;
+    let (_, public_id) = uploaded_cover(&app, &carl, [40, 30, 30]).await;
+    let first = report(
+        &ada,
+        &public_id,
+        json!({"reason": "copyright", "details": "Ada: my photo."}),
+    )
+    .await
+    .json()["id"]
+        .as_i64()
+        .unwrap();
+    for who in [&bob, &dora] {
+        report(who, &public_id, json!({"reason": "other"}))
+            .await
+            .assert_status(201);
+    }
+    root.post(
+        &format!("/api/admin/reports/{first}/resolve"),
+        json!({"action": "remove"}),
+    )
+    .await
+    .assert_status(200);
+    let sent = app.sent_emails();
+    assert_eq!(sent.len(), 3, "{sent:#?}");
+    let to_ada = mails_to(&app, "ada");
+    assert_eq!(to_ada[0].subject, "Your report on Bookclub: removed");
+    assert!(
+        to_ada[0]
+            .text
+            .contains("the cover picture of \"My Zine\" you reported and removed it")
+    );
+    let to_bob = mails_to(&app, "bob");
+    assert_eq!(to_bob[0].subject, "Deine Meldung bei Bookclub: entfernt");
+    let to_carl = mails_to(&app, "carl");
+    assert_eq!(
+        to_carl[0].subject,
+        "Your cover photo on Bookclub was removed"
+    );
+    assert!(
+        to_carl[0]
+            .text
+            .contains("removed the cover photo you uploaded for \"My Zine\".")
+    );
+    // The ground is the decided report's; the reporters and their words stay hidden.
+    assert!(
+        to_carl[0]
+            .text
+            .contains("infringes someone else's copyright")
+    );
+    for secret in ["ada", "bob", "dora", "my photo"] {
+        assert!(!to_carl[0].text.contains(secret), "{secret}");
+    }
+    for mail in [&to_ada[0], &to_bob[0]] {
+        assert!(!mail.text.contains("carl"), "{}", mail.text);
+    }
+    assert!(mails_to(&app, "dora").is_empty(), "not verified");
+
+    // "dismiss" mails only the reporter.
+    let (_, kept) = uploaded_cover(&app, &carl, [80, 30, 30]).await;
+    let id = report(&ada, &kept, json!({"reason": "wrong_book"}))
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+    root.post(
+        &format!("/api/admin/reports/{id}/resolve"),
+        json!({"action": "dismiss"}),
+    )
+    .await
+    .assert_status(200);
+    assert_eq!(app.sent_emails().len(), 4);
+    let to_ada = mails_to(&app, "ada");
+    assert_eq!(to_ada[1].subject, "Your report on Bookclub: not removed");
+    assert!(to_ada[1].text.contains("did not remove it"));
+    assert_eq!(
+        mails_to(&app, "carl").len(),
+        1,
+        "no statement for a kept cover"
+    );
+}
+
+/// A direct takedown mails the reporters of the open reports it resolves and the uploader; an
+/// Open Library cover has no uploader, and a picture that was down already changes nothing and
+/// mails nobody.
+#[sqlx::test]
+async fn a_direct_takedown_mails_too(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let carl = app.user("carl").await;
+    let ada = app.user("ada").await;
+    let root = app.admin("root").await;
+    let (_, public_id) = uploaded_cover(&app, &carl, [120, 30, 30]).await;
+    report(&ada, &public_id, json!({"reason": "offensive"}))
+        .await
+        .assert_status(201);
+    root.delete(&format!("/api/admin/media/{public_id}"))
+        .await
+        .assert_status(204);
+    assert_eq!(
+        mails_to(&app, "ada")[0].subject,
+        "Your report on Bookclub: removed"
+    );
+    let to_carl = mails_to(&app, "carl");
+    assert_eq!(to_carl.len(), 1);
+    assert!(to_carl[0].text.contains("because it is offensive"));
+
+    // Again: nothing changes, nobody is mailed.
+    root.delete(&format!("/api/admin/media/{public_id}"))
+        .await
+        .assert_status(204);
+    assert_eq!(app.sent_emails().len(), 2);
+
+    // Without a report or notice: the admin's own finding.
+    let (_, quiet) = uploaded_cover(&app, &carl, [160, 30, 30]).await;
+    root.delete(&format!("/api/admin/media/{quiet}"))
+        .await
+        .assert_status(204);
+    let to_carl = mails_to(&app, "carl");
+    assert_eq!(to_carl.len(), 2);
+    assert!(
+        to_carl[1]
+            .text
+            .contains("Why: an admin found that it breaks the law or the terms of use.")
+    );
+
+    // An Open Library cover: the reporter only.
+    let (_, ol, _) = shown_ol_cover(&app).await;
+    report(&ada, &ol, json!({"reason": "wrong_book"}))
+        .await
+        .assert_status(201);
+    root.delete_json(
+        &format!("/api/admin/media/{ol}"),
+        json!({"reason": "wrong_book"}),
+    )
+    .await
+    .assert_status(204);
+    assert_eq!(app.sent_emails().len(), 4);
+    assert_eq!(mails_to(&app, "ada").len(), 2);
+}
+
+/// Acceptance (#54, Q12): a decision that rolls back sends nothing. Another admin's decision
+/// commits while this one waits for the report row; this one then finds the report resolved,
+/// answers 409, rolls its takedown back, and nobody is mailed.
+#[sqlx::test]
+async fn a_rolled_back_decision_mails_nobody(db: PgPool) {
+    let app = TestApp::new(db.clone()).await;
+    let carl = app.user("carl").await;
+    let ada = app.user("ada").await;
+    let root = app.admin("root").await;
+    let other = app.admin("other").await;
+    let (work, public_id) = uploaded_cover(&app, &carl, [200, 30, 30]).await;
+    let id = report(&ada, &public_id, json!({"reason": "copyright"}))
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+
+    // The other admin's dismissal, not yet committed, holds the report row.
+    let mut holder = db.begin().await.unwrap();
+    sqlx::query(
+        "UPDATE reports SET status = 'dismissed', resolved_by = $2, resolved_at = now()
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(other.id())
+    .execute(&mut *holder)
+    .await
+    .unwrap();
+    let path = format!("/api/admin/reports/{id}/resolve");
+    let decision = tokio::spawn(async move { root.post(&path, json!({"action": "remove"})).await });
+    until_a_lock_wait(&db).await;
+    holder.commit().await.unwrap();
+    let res = decision.await.unwrap();
+    res.assert_detail(409, "This report was already resolved");
+
+    assert!(
+        cover_of(&app, work).await.is_some(),
+        "the takedown rolled back"
+    );
+    app.anon()
+        .get(&format!("/media/{public_id}/l"))
+        .await
+        .assert_status(200);
+    assert!(app.sent_emails().is_empty(), "{:#?}", app.sent_emails());
+}
+
+/// The public id in a queue item's `avatar_url` (`/media/{public_id}/a`).
+fn avatar_id(item: &Value) -> String {
+    item["avatar_url"]
+        .as_str()
+        .and_then(|url| url.strip_prefix("/media/"))
+        .and_then(|rest| rest.strip_suffix("/a"))
+        .unwrap_or_else(|| panic!("no avatar_url: {item:#}"))
+        .to_owned()
+}
+
+/// Security review, Phase 2 Wave 2: a profile picture its owner replaces while it is reported
+/// is held for the decision instead of deleted. It leaves the profile at once, and its old URL
+/// answers 404 like a deleted picture's, so nothing tells the owner of the report; the admin
+/// queue shows it under a new id, not as gone. "Remove" then takes it down as usual: `/media`
+/// answers 410, the same file cannot be uploaded again, the reporters get the decision and the
+/// owner a statement of reasons, and the new picture stays.
+#[sqlx::test]
+async fn a_reported_avatar_its_owner_replaces_is_held_for_the_decision(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let carl = app.user("carl").await;
+    let root = app.admin("root").await;
+    let club = app.club(&ada, "Readers").await;
+    app.join(&club, &bob, "member").await;
+    app.join(&club, &carl, "member").await;
+    let old = upload_avatar(&ada, [10, 120, 200]).await;
+    let first = report(&bob, &old, json!({"reason": "offensive"}))
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+    report(&carl, &old, json!({"reason": "other"}))
+        .await
+        .assert_status(201);
+
+    let new = upload_avatar(&ada, [200, 30, 30]).await;
+    assert_eq!(
+        ada.get("/api/auth/me").await.json()["avatar_url"],
+        format!("/media/{new}/a")
+    );
+    app.anon()
+        .get(&format!("/media/{old}/a"))
+        .await
+        .assert_detail(404, "Not found");
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM reports WHERE media_id IS NULL")
+            .await,
+        0,
+        "the reports keep their picture"
+    );
+    let items = root.get("/api/admin/reports").await.json()["items"].clone();
+    let items = items.as_array().unwrap();
+    assert_eq!(items.len(), 2, "{items:#?}");
+    let held = avatar_id(&items[0]);
+    assert_ne!(held, old);
+    for item in items {
+        assert_eq!(item["gone"], false);
+        assert_eq!(item["removed"], false);
+        assert_eq!(item["target_user"]["username"], "ada");
+        assert_eq!(avatar_id(item), held);
+        assert_eq!(item["media_public_id"], held.as_str());
+    }
+    app.anon()
+        .get(&format!("/media/{held}/a"))
+        .await
+        .assert_status(200);
+
+    let res = root
+        .post(
+            &format!("/api/admin/reports/{first}/resolve"),
+            json!({"action": "remove"}),
+        )
+        .await;
+    res.assert_status(200);
+    assert_eq!(res.json()["status"], "removed");
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM reports WHERE status = 'open'")
+            .await,
+        0,
+        "carl's report closed with bob's"
+    );
+    app.anon()
+        .get(&format!("/media/{held}/a"))
+        .await
+        .assert_status(410);
+    ada.put_multipart(
+        "/api/auth/me/avatar",
+        vec![Part::file("me.jpg", "image/jpeg", jpeg([10, 120, 200]))],
+    )
+    .await
+    .assert_detail(400, "This picture was removed");
+    assert_eq!(
+        ada.get("/api/auth/me").await.json()["avatar_url"],
+        format!("/media/{new}/a"),
+        "the new picture stays"
+    );
+    for reporter in ["bob", "carl"] {
+        let mails = mails_to(&app, reporter);
+        assert_eq!(mails.len(), 1, "{reporter}");
+        assert_eq!(mails[0].subject, "Your report on Bookclub: removed");
+    }
+    // An earlier picture, not the one Ada shows now (E2E check of the ADM2 merge).
+    let to_ada = mails_to(&app, "ada");
+    assert_eq!(to_ada.len(), 1);
+    assert_eq!(
+        to_ada[0].subject,
+        "An earlier profile picture of yours on Bookclub was removed"
+    );
+    assert!(
+        to_ada[0]
+            .text
+            .contains("You had already replaced or deleted this picture"),
+        "{}",
+        to_ada[0].text
+    );
+}
+
+/// A held profile picture taken down directly, by the id the admin queue shows (`DELETE
+/// /api/admin/media/{public_id}`), is named as an earlier picture too.
+#[sqlx::test]
+async fn a_direct_takedown_of_a_held_avatar_names_an_earlier_picture(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let root = app.admin("root").await;
+    let club = app.club(&ada, "Readers").await;
+    app.join(&club, &bob, "member").await;
+    let old = upload_avatar(&ada, [10, 120, 200]).await;
+    report(&bob, &old, json!({"reason": "offensive"}))
+        .await
+        .assert_status(201);
+    let new = upload_avatar(&ada, [200, 30, 30]).await;
+    let held = avatar_id(&root.get("/api/admin/reports").await.json()["items"][0]);
+    root.delete(&format!("/api/admin/media/{held}"))
+        .await
+        .assert_status(204);
+    let to_ada = mails_to(&app, "ada");
+    assert_eq!(to_ada.len(), 1);
+    assert_eq!(
+        to_ada[0].subject,
+        "An earlier profile picture of yours on Bookclub was removed"
+    );
+    assert_eq!(
+        ada.get("/api/auth/me").await.json()["avatar_url"],
+        format!("/media/{new}/a")
+    );
+    // Ada's current picture taken down directly is hers as she shows it.
+    root.delete(&format!("/api/admin/media/{new}"))
+        .await
+        .assert_status(204);
+    let to_ada = mails_to(&app, "ada");
+    assert_eq!(to_ada.len(), 2);
+    assert_eq!(
+        to_ada[1].subject,
+        "Your profile picture on Bookclub was removed"
+    );
+}
+
+/// A profile picture its owner deleted while it was reported, and then uploaded again (the same
+/// file, under a new id), comes down with the held one: the hash block only stops new uploads.
+#[sqlx::test]
+async fn an_avatar_uploaded_again_while_reported_comes_down_with_it(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let root = app.admin("root").await;
+    let club = app.club(&ada, "Readers").await;
+    app.join(&club, &bob, "member").await;
+    let first = upload_avatar(&ada, [10, 120, 200]).await;
+    let report_id = report(&bob, &first, json!({"reason": "offensive"}))
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+    let res = ada.delete("/api/auth/me/avatar").await;
+    res.assert_status(200);
+    assert_eq!(res.json()["avatar_url"], Value::Null);
+    let again = upload_avatar(&ada, [10, 120, 200]).await;
+    assert_ne!(again, first);
+
+    root.post(
+        &format!("/api/admin/reports/{report_id}/resolve"),
+        json!({"action": "remove"}),
+    )
+    .await
+    .assert_status(200);
+    assert_eq!(
+        ada.get("/api/auth/me").await.json()["avatar_url"],
+        Value::Null
+    );
+    app.anon()
+        .get(&format!("/media/{again}/a"))
+        .await
+        .assert_status(410);
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM media WHERE kind = 'avatar' AND removed_at IS NULL")
+            .await,
+        0
+    );
+    ada.put_multipart(
+        "/api/auth/me/avatar",
+        vec![Part::file("me.jpg", "image/jpeg", jpeg([10, 120, 200]))],
+    )
+    .await
+    .assert_detail(400, "This picture was removed");
+    let to_ada = mails_to(&app, "ada");
+    assert_eq!(to_ada.len(), 1, "one statement of reasons");
+    // The copy was the picture she showed, so the statement names her profile picture.
+    assert_eq!(
+        to_ada[0].subject,
+        "Your profile picture on Bookclub was removed"
+    );
+}
+
+/// "Dismiss" on a held profile picture deletes it with its files: it is no longer anyone's
+/// picture. The reporter learns that it is no longer online, the owner gets nothing, and the
+/// file is not blocked.
+#[sqlx::test]
+async fn a_dismissed_report_of_a_replaced_avatar_deletes_it(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let root = app.admin("root").await;
+    let club = app.club(&ada, "Readers").await;
+    app.join(&club, &bob, "member").await;
+    let old = upload_avatar(&ada, [10, 120, 200]).await;
+    let report_id = report(&bob, &old, json!({"reason": "offensive"}))
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+    let new = upload_avatar(&ada, [200, 30, 30]).await;
+    let held = avatar_id(&root.get("/api/admin/reports").await.json()["items"][0]);
+    let prefix: String = sqlx::query_scalar("SELECT storage_key FROM media WHERE public_id = $1")
+        .bind(&held)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+
+    let res = root
+        .post(
+            &format!("/api/admin/reports/{report_id}/resolve"),
+            json!({"action": "dismiss"}),
+        )
+        .await;
+    res.assert_status(200);
+    assert_eq!(res.json()["status"], "dismissed");
+    assert_eq!(res.json()["gone"], true);
+    app.anon()
+        .get(&format!("/media/{held}/a"))
+        .await
+        .assert_detail(404, "Not found");
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM media WHERE kind = 'avatar'")
+            .await,
+        1,
+        "only the new picture"
+    );
+    assert!(
+        app.media
+            .get(&format!("{prefix}/a"))
+            .await
+            .unwrap()
+            .is_none(),
+        "the held picture's files are deleted"
+    );
+    let to_bob = mails_to(&app, "bob");
+    assert_eq!(to_bob.len(), 1);
+    assert_eq!(
+        to_bob[0].subject,
+        "Your report on Bookclub: no longer online"
+    );
+    assert!(mails_to(&app, "ada").is_empty(), "no statement of reasons");
+    assert_eq!(
+        ada.get("/api/auth/me").await.json()["avatar_url"],
+        format!("/media/{new}/a")
+    );
+    upload_avatar(&ada, [10, 120, 200]).await;
+}
+
+/// The profile picture of an account deleted while it was reported loses its row with the
+/// account (`auth::deletion`), and its reports their `media_id`. The queue says so (`gone`),
+/// "remove" is refused, as nothing is left to take down, and "dismiss" closes the report: the
+/// reporter learns that it is no longer online.
+#[sqlx::test]
+async fn reports_of_the_avatar_of_a_deleted_account_are_closed_as_gone(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let root = app.admin("root").await;
+    let club = app.club(&bob, "Readers").await;
+    app.join(&club, &ada, "member").await;
+    let avatar = upload_avatar(&ada, [10, 120, 200]).await;
+    let report_id = report(&bob, &avatar, json!({"reason": "offensive"}))
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+    ada.delete_json("/api/auth/me", json!({"password": PASSWORD}))
+        .await
+        .assert_status(204);
+
+    let item = root.get("/api/admin/reports").await.json()["items"][0].clone();
+    assert_eq!(item["id"], report_id);
+    assert_eq!(item["gone"], true);
+    assert_eq!(item["avatar_url"], Value::Null);
+    assert_eq!(item["media_public_id"], Value::Null);
+    let path = format!("/api/admin/reports/{report_id}/resolve");
+    root.post(&path, json!({"action": "remove"}))
+        .await
+        .assert_detail(409, "The reported picture is no longer online");
+    assert!(app.sent_emails().is_empty());
+    let res = root.post(&path, json!({"action": "dismiss"})).await;
+    res.assert_status(200);
+    assert_eq!(res.json()["status"], "dismissed");
+    assert_eq!(res.json()["gone"], true);
+    let mails = mails_to(&app, "bob");
+    assert_eq!(mails.len(), 1);
+    assert_eq!(
+        mails[0].subject,
+        "Your report on Bookclub: no longer online"
+    );
+    assert!(
+        mails[0].text.contains(
+            "reviewed the profile picture you reported: it is no longer online, because it was \
+             replaced or deleted."
+        ),
+        "{}",
+        mails[0].text
+    );
+}
+
+/// Each gone report is closed on its own. Deleting the account clears every report's
+/// `target_user_id` (`ON DELETE SET NULL`) as well as its `media_id`, so nothing ties two reports
+/// of the same deleted account's picture together: closing Bob's leaves Dan's open, and Dan
+/// hears of it when his is closed.
+#[sqlx::test]
+async fn each_report_of_a_deleted_accounts_avatar_is_closed_on_its_own(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let dan = app.user("dan").await;
+    let root = app.admin("root").await;
+    let club = app.club(&bob, "Readers").await;
+    app.join(&club, &ada, "member").await;
+    app.join(&club, &dan, "member").await;
+    let avatar = upload_avatar(&ada, [10, 120, 200]).await;
+    let mut ids = Vec::new();
+    for reporter in [&bob, &dan] {
+        ids.push(
+            report(reporter, &avatar, json!({"reason": "offensive"}))
+                .await
+                .json()["id"]
+                .as_i64()
+                .unwrap(),
+        );
+    }
+    ada.delete_json("/api/auth/me", json!({"password": PASSWORD}))
+        .await
+        .assert_status(204);
+    assert_eq!(
+        app.scalar_i64(
+            "SELECT count(*) FROM reports
+             WHERE status = 'open' AND media_id IS NULL AND target_user_id IS NULL"
+        )
+        .await,
+        2
+    );
+
+    let res = root
+        .post(
+            &format!("/api/admin/reports/{}/resolve", ids[0]),
+            json!({"action": "dismiss"}),
+        )
+        .await;
+    res.assert_status(200);
+    assert_eq!(res.json()["gone"], true);
+    let open = root.get("/api/admin/reports").await.json()["items"].clone();
+    assert_eq!(open.as_array().unwrap().len(), 1, "{open:#}");
+    assert_eq!(open[0]["id"], ids[1]);
+    assert_eq!(mails_to(&app, "bob").len(), 1);
+    assert!(mails_to(&app, "dan").is_empty());
+
+    root.post(
+        &format!("/api/admin/reports/{}/resolve", ids[1]),
+        json!({"action": "dismiss"}),
+    )
+    .await
+    .assert_status(200);
+    let to_dan = mails_to(&app, "dan");
+    assert_eq!(to_dan.len(), 1);
+    assert_eq!(
+        to_dan[0].subject,
+        "Your report on Bookclub: no longer online"
+    );
+}
+
+/// A profile picture its owner deletes after a report read it, but before the report locked it,
+/// is 404 like an unknown picture, not a 500: the report waits for the reader's turn (held here),
+/// the owner's deletion commits meanwhile, and the locked read finds no row.
+#[sqlx::test]
+async fn a_report_of_an_avatar_deleted_meanwhile_is_404(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let club = app.club(&ada, "Readers").await;
+    app.join(&club, &bob, "member").await;
+    let avatar = upload_avatar(&ada, [10, 120, 200]).await;
+    let media = media_id(&app, &avatar).await;
+
+    let mut holder = hold_reader_turn(&app, bob.id(), media).await;
+    let filing = tokio::spawn({
+        let bob = bob.clone();
+        let avatar = avatar.clone();
+        async move { report(&bob, &avatar, json!({"reason": "offensive"})).await }
+    });
+    until_a_lock_wait(&app.db).await;
+    ada.delete("/api/auth/me/avatar").await.assert_status(200);
+    sqlx::query("SELECT pg_advisory_unlock_all()")
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    filing.await.unwrap().assert_detail(404, "Not found");
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM reports").await, 0);
+}
+
+/// Holds the picture `media` `FOR SHARE` on a transaction of its own, as a report being filed
+/// holds it. Another share lock gets past it while a writer waits for it: that is how a report
+/// can lock a picture that an avatar upload or an account deletion is already waiting for.
+async fn share_picture(app: &TestApp, media: i64) -> sqlx::Transaction<'static, Postgres> {
+    let mut sharer = app.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM media WHERE id = $1 FOR SHARE")
+        .bind(media)
+        .execute(&mut *sharer)
+        .await
+        .unwrap();
+    sharer
+}
+
+/// The lock order (conventions §7.2): a report of a profile picture locks the owner's row
+/// (`FOR KEY SHARE`) before the picture, as the owner's avatar upload does (the user row
+/// `FOR UPDATE`, then the avatar rows). The report's row names the owner (`target_user_id`), so
+/// its foreign key takes that lock anyway; taken only there, after the picture, a report that
+/// held the picture waited for the upload's user row while the upload waited for the picture,
+/// and Postgres aborted one of them (40P01, a 500). Here the upload holds Ada's row and waits
+/// for the picture, which another transaction shares, when Bob's report starts. The report now
+/// waits for the upload, which deletes the unreported picture, and is 404 like the report of a
+/// picture deleted meanwhile.
+#[sqlx::test]
+async fn a_report_racing_the_owners_avatar_upload_does_not_deadlock(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let club = app.club(&ada, "Readers").await;
+    app.join(&club, &bob, "member").await;
+    let old = upload_avatar(&ada, [10, 120, 200]).await;
+    let media = media_id(&app, &old).await;
+
+    let sharer = share_picture(&app, media).await;
+    let uploading = ada.put_multipart(
+        "/api/auth/me/avatar",
+        vec![Part::file("me.jpg", "image/jpeg", jpeg([200, 30, 30]))],
+    );
+    let filing = async {
+        until_lock_waits(&app.db, 1).await;
+        report(&bob, &old, json!({"reason": "offensive"})).await
+    };
+    let release = async {
+        until_lock_waits(&app.db, 2).await;
+        sharer.commit().await.unwrap();
+    };
+    let (uploaded, filed, ()) = tokio::join!(uploading, filing, release);
+    uploaded.assert_status(200);
+    filed.assert_detail(404, "Not found");
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM reports").await, 0);
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM media WHERE kind = 'avatar'")
+            .await,
+        1,
+        "only the new picture"
+    );
+}
+
+/// The same lock order against the owner's account deletion, which locks the user row
+/// `FOR UPDATE` and then deletes the avatar rows (`auth::deletion::delete_user`): the report
+/// waits for the deletion and is 404, and the deletion goes through.
+#[sqlx::test]
+async fn a_report_racing_the_owners_account_deletion_does_not_deadlock(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let club = app.club(&bob, "Readers").await;
+    app.join(&club, &ada, "member").await;
+    let avatar = upload_avatar(&ada, [10, 120, 200]).await;
+    let media = media_id(&app, &avatar).await;
+
+    let sharer = share_picture(&app, media).await;
+    let deleting = ada.delete_json("/api/auth/me", json!({"password": PASSWORD}));
+    let filing = async {
+        until_lock_waits(&app.db, 1).await;
+        report(&bob, &avatar, json!({"reason": "offensive"})).await
+    };
+    let release = async {
+        until_lock_waits(&app.db, 2).await;
+        sharer.commit().await.unwrap();
+    };
+    let (deleted, filed, ()) = tokio::join!(deleting, filing, release);
+    deleted.assert_status(204);
+    filed.assert_detail(404, "Not found");
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM reports").await, 0);
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM users WHERE username = 'ada'")
+            .await,
+        0
+    );
+}
+
+/// The lock order (conventions §7.2): a direct takedown of a profile picture locks the owner's
+/// row before the picture too. The notice it records names the owner (`target_user_id`); taken
+/// only through that foreign key, after the picture, the takedown waited for an avatar upload
+/// that held the owner's row and waited for the picture. Here the upload is half done by hand:
+/// it holds Ada's row, and locks her picture once the takedown waits.
+#[sqlx::test]
+async fn a_takedown_with_a_notice_waits_for_the_owners_avatar_upload(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let root = app.admin("root").await;
+    let avatar = upload_avatar(&ada, [10, 120, 200]).await;
+    let media = media_id(&app, &avatar).await;
+
+    // `media::avatar::lock_user`, then (below) `delete_avatars`' lock of the avatar rows.
+    let mut upload = app.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+        .bind(ada.id())
+        .execute(&mut *upload)
+        .await
+        .unwrap();
+    let path = format!("/api/admin/media/{avatar}");
+    let taking_down = root.delete_json(&path, json!({"reason": "offensive"}));
+    let finish_upload = async {
+        until_a_lock_wait(&app.db).await;
+        let locked = sqlx::query("SELECT id FROM media WHERE id = $1 FOR UPDATE")
+            .bind(media)
+            .execute(&mut *upload)
+            .await
+            .map(|_| ());
+        upload.rollback().await.unwrap();
+        locked
+    };
+    let (res, locked) = tokio::join!(taking_down, finish_upload);
+    locked.expect("the upload's lock of the picture");
+    res.assert_status(204);
+    app.anon()
+        .get(&format!("/media/{avatar}/a"))
+        .await
+        .assert_status(410);
+    assert_eq!(
+        app.scalar_i64(
+            "SELECT count(*) FROM reports WHERE via = 'notice' AND target_kind = 'avatar'"
+        )
+        .await,
+        1
+    );
+}
+
+/// The lock order (conventions §7.2): "remove" on a profile picture locks the owner's row before
+/// the picture, so it never meets the owner's avatar upload halfway. The takedown also locks the
+/// owner's copies of the same file, after the reported picture; the upload locks the avatar rows
+/// in id order. With a copy whose id is lower than the reported picture's, the two locked those
+/// rows in opposite orders and Postgres aborted one of them. Here Ada's first picture is held for
+/// Bob's report, she uploads the same file again, Bob reports that one too, and "remove" on the
+/// second report meets an upload that holds Ada's row and the first picture.
+#[sqlx::test]
+async fn removing_an_avatar_with_an_older_copy_waits_for_the_owners_upload(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let root = app.admin("root").await;
+    let club = app.club(&ada, "Readers").await;
+    app.join(&club, &bob, "member").await;
+    let first = upload_avatar(&ada, [10, 120, 200]).await;
+    let held = media_id(&app, &first).await;
+    report(&bob, &first, json!({"reason": "offensive"}))
+        .await
+        .assert_status(201);
+    upload_avatar(&ada, [200, 30, 30]).await;
+    let again = upload_avatar(&ada, [10, 120, 200]).await;
+    let copy = media_id(&app, &again).await;
+    assert!(held < copy);
+    let report_id = report(&bob, &again, json!({"reason": "offensive"}))
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+
+    // An avatar upload of Ada's, half done: her row, then her avatar rows in id order.
+    let mut upload = app.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+        .bind(ada.id())
+        .execute(&mut *upload)
+        .await
+        .unwrap();
+    sqlx::query("SELECT id FROM media WHERE id = $1 FOR UPDATE")
+        .bind(held)
+        .execute(&mut *upload)
+        .await
+        .unwrap();
+    let path = format!("/api/admin/reports/{report_id}/resolve");
+    let removing = root.post(&path, json!({"action": "remove"}));
+    let finish_upload = async {
+        until_a_lock_wait(&app.db).await;
+        let locked = sqlx::query("SELECT id FROM media WHERE id = $1 FOR UPDATE")
+            .bind(copy)
+            .execute(&mut *upload)
+            .await
+            .map(|_| ());
+        upload.rollback().await.unwrap();
+        locked
+    };
+    let (res, locked) = tokio::join!(removing, finish_upload);
+    locked.expect("the upload's lock of the second picture");
+    res.assert_status(200);
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM media WHERE kind = 'avatar' AND removed_at IS NULL")
+            .await,
+        0,
+        "both copies are down"
     );
 }

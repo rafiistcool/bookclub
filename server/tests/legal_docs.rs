@@ -1,6 +1,6 @@
 //! The legal paperwork stays true to the code (#53): `docs/legal/vvt.md` records every table
 //! with personal data, `docs/legal/processors.md` gives every outbound host a verdict,
-//! `docs/legal/takedown.md` names only endpoints that exist (or that ADM and ADM2 are building),
+//! `docs/legal/takedown.md` names only endpoints that exist (or that a package is building),
 //! and every file the four documents cite exists, with its line numbers inside the file and the
 //! names cited in it still there. Files other packages edit are cited by name, not by line.
 
@@ -21,17 +21,10 @@ const LEGAL_DOCS: [&str; 4] = [
     "docs/legal/takedown.md",
 ];
 
-/// Endpoints `takedown.md` names that Wave 1 and 2 packages are building (work plan §2.1 rule
-/// 5). The integrator removes each one once its package has merged.
-const PLANNED: [&str; 7] = [
-    "PATCH /api/admin/works/{work_id}",              // ADM
-    "PATCH /api/admin/editions/{edition_id}",        // ADM
-    "GET /api/admin/summary",                        // ADM
-    "POST /api/books/works/{work_id}/reports",       // ADM2
-    "POST /api/books/editions/{edition_id}/reports", // ADM2
-    "POST /api/admin/users/{username}/suspend",      // ADM2
-    "POST /api/admin/users/{username}/unsuspend",    // ADM2
-];
+/// Endpoints `takedown.md` names that a package is still building (work plan §2.1 rule 5). The
+/// integrator removes each one once its package has merged. ADM's and ADM2's are merged, so
+/// every endpoint `takedown.md` names must exist.
+const PLANNED: [&str; 0] = [];
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..")

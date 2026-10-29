@@ -1,0 +1,100 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT target_kind, media_id, work_id, edition_id, target_work_id, target_user_id,\n                status\n         FROM reports WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "target_kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "reports",
+            "name": "target_kind"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "media_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "reports",
+            "name": "media_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "work_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "reports",
+            "name": "work_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "edition_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "reports",
+            "name": "edition_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "target_work_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "reports",
+            "name": "target_work_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "target_user_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "reports",
+            "name": "target_user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "reports",
+            "name": "status"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "d0b225f5a00dc9189752e4002e4d6bf53e0a3e202f87e006804530ed2ef7cf35"
+}

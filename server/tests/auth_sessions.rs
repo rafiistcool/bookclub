@@ -760,3 +760,76 @@ async fn extractor_order(db: PgPool) {
         .await;
     res.assert_detail(400, "JSON decode error");
 }
+
+/// `deploy/hosted/revoke-access.sql`, which the runbook runs on a database restored after a
+/// compromise of the VM (security review, Phase 2 Wave 2): every cookie session and app token,
+/// every open club and sign-up invite, and every unused email link stop working, while the
+/// password still signs in. Run against the current schema, so the file cannot go stale.
+#[sqlx::test]
+async fn the_revocation_after_a_compromise_ends_every_reusable_access(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let club = app.club(&ada, "Readers").await;
+    let phone = app
+        .anon()
+        .with_bearer(token(&app, "ada", "phone").await["token"].as_str().unwrap());
+    let res = ada
+        .post(
+            &format!("/api/clubs/{}/invites", club.slug),
+            json!({"kind": "link"}),
+        )
+        .await;
+    res.assert_status(201);
+    let link = res.json()["code"].as_str().unwrap().to_owned();
+    app.exec(
+        "INSERT INTO club_invites (club_id, code, max_uses, expires_at)
+         VALUES (NULL, 'SIGNUPCODE', 5, now() + interval '7 days')",
+    )
+    .await;
+    app.anon()
+        .post(
+            "/api/auth/password-reset",
+            json!({"email": "ada@example.test"}),
+        )
+        .await
+        .assert_status(204);
+    app.settle().await;
+    let reset = app.last_link_token("ada@example.test");
+    ada.get("/api/auth/me").await.assert_status(200);
+    phone.get("/api/auth/me").await.assert_status(200);
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../deploy/hosted/revoke-access.sql");
+    app.exec(&std::fs::read_to_string(&path).unwrap()).await;
+
+    ada.get("/api/auth/me").await.assert_status(401);
+    phone.get("/api/auth/me").await.assert_status(401);
+    let bob = app.user("bob").await;
+    bob.post(&format!("/api/invites/{link}/accept"), json!({}))
+        .await
+        .assert_detail(400, "That invite code is not valid");
+    app.anon()
+        .post(
+            "/api/auth/register",
+            json!({"username": "cleo", "email": "cleo@example.test",
+                   "password": PASSWORD, "invite_code": "SIGNUPCODE"}),
+        )
+        .await
+        .assert_detail(400, "That invite code is not valid");
+    app.anon()
+        .post(
+            "/api/auth/password-reset/confirm",
+            json!({"token": reset, "new_password": "a whole new passphrase"}),
+        )
+        .await
+        .assert_detail(400, "That link has expired or was already used");
+    let again = app.anon();
+    again
+        .post(
+            "/api/auth/login",
+            json!({"username": "ada", "password": PASSWORD}),
+        )
+        .await
+        .assert_status(204);
+    again.get("/api/auth/me").await.assert_status(200);
+}

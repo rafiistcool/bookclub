@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT reason FROM reports\n         WHERE resolved_by = $1 AND resolved_at = now() AND status = 'removed'\n         ORDER BY via = 'notice' DESC, created_at, id\n         LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "reason",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "reports",
+            "name": "reason"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "50d4f9b78b57d88ebdb98c1896bf1cc1a5204d01c90c0a832470321cac7c6906"
+}

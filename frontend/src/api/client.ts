@@ -1,6 +1,8 @@
 import type {
   ActivityOut,
   AdminSummary,
+  AdminUserList,
+  AdminUserOut,
   BookDetailOut,
   ClubIn,
   ClubList,
@@ -266,6 +268,17 @@ export const api = {
   /** Notice-and-takedown for a cover, by `cover_public_id`. */
   reportCover: (publicId: string, body: ReportIn) =>
     request<ReportCreated>(`/api/media/${enc(publicId)}/reports`, json("POST", body)),
+  /**
+   * Notice-and-takedown for a book a reader added (`custom`); any other is 400
+   * `Only books readers added can be reported`. A repeat answers with the
+   * reader's open report. Profile pictures go through `reportCover` with the
+   * picture's public id (the route takes every picture).
+   */
+  reportWork: (workId: number | string, body: ReportIn) =>
+    request<ReportCreated>(`${workPath(workId)}/reports`, json("POST", body)),
+  /** The same for an edition a reader added. */
+  reportEdition: (editionId: number, body: ReportIn) =>
+    request<ReportCreated>(`/api/books/editions/${editionId}/reports`, json("POST", body)),
 
   myShelf: () => request<ShelfListOut>("/api/shelf"),
   friendShelf: (username: string) => request<ShelfListOut>(`/api/shelf?username=${enc(username)}`),
@@ -467,6 +480,16 @@ export const api = {
   adminInvites: () => request<InviteList>("/api/admin/invites"),
   createSignupInvite: (body: SignupInviteIn) =>
     request<InviteOut>("/api/admin/invites", json("POST", body)),
+  /** Revokes a sign-up invite: it no longer unlocks sign-up. */
+  revokeSignupInvite: (id: number) => request<void>(`/api/admin/invites/${id}`, { method: "DELETE" }),
+  /** Suspends an account: it cannot sign in, and every session it had ends; its content stays. */
+  adminSuspendUser: (username: string) =>
+    request<AdminUserOut>(`/api/admin/users/${enc(username)}/suspend`, { method: "POST" }),
+  /** Lifts a suspension: the account may sign in again. */
+  adminUnsuspendUser: (username: string) =>
+    request<AdminUserOut>(`/api/admin/users/${enc(username)}/unsuspend`, { method: "POST" }),
+  /** The suspended accounts, the latest suspension first. */
+  adminSuspendedUsers: () => request<AdminUserList>("/api/admin/users/suspended"),
 
   /** A reader's year in books: the caller's without `username`; the newest year without `year`. */
   personalStats: (params: { username?: string; year?: number } = {}) => {

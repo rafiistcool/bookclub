@@ -13,26 +13,46 @@
   "cover": {
     "alt": "Cover von {title}",
     "report": "Cover melden",
-    "reportTitle": "Dieses Cover melden",
-    "reportWhy": "Was stimmt damit nicht?",
     "reasons": {
       "wrong_book": "Es zeigt ein anderes Buch",
       "offensive": "Es ist anstößig",
       "copyright": "Es verletzt ein Urheberrecht",
       "other": "Etwas anderes"
     },
-    "reportDetails": "Details",
-    "reportSend": "Meldung senden",
-    "reporting": "Wird gesendet…",
-    "reported": "Danke. Jemand aus dem Admin-Team sieht es sich an.",
     "alreadyRemoved": "Dieses Bild wurde schon entfernt. Trotzdem danke.",
-    "reportFailed": "Die Meldung konnte nicht gesendet werden",
     "photoAdd": "Foto deines Exemplars hinzufügen",
     "photoSuggest": "Foto deines Exemplars vorschlagen",
     "photoUploading": "Wird hochgeladen …",
     "photoSet": "Dein Foto ist jetzt das Cover",
     "photoQueued": "Danke. Ein Admin sieht sich dein Foto an.",
     "photoFailed": "Das Foto konnte nicht hochgeladen werden"
+  },
+  "report": {
+    "action": {
+      "avatar": "Profilbild melden",
+      "work": "Dieses Buch melden",
+      "edition": "Melden"
+    },
+    "title": {
+      "cover": "Dieses Cover melden",
+      "avatar": "Dieses Profilbild melden",
+      "work": "Dieses Buch melden",
+      "edition": "Diese Ausgabe melden"
+    },
+    "avatarOf": "Profilbild von {name}",
+    "editionOf": "Die Ausgabe {edition} melden",
+    "why": "Was stimmt damit nicht?",
+    "details": "Details",
+    "next": "Ein Admin entscheidet. Ist deine E-Mail-Adresse bestätigt, erfährst du, was daraus wurde.",
+    "send": "Meldung senden",
+    "sending": "Wird gesendet…",
+    "sent": "Danke. Jemand aus dem Admin-Team sieht es sich an.",
+    "alreadyRemoved": "Ein Admin hat diesen Text schon entfernt. Trotzdem danke.",
+    "failed": "Die Meldung konnte nicht gesendet werden",
+    "noAccount": "Kein Konto hier? Inhalte melden kann man auch per E-Mail an {email}.",
+    "instead": "Kein Fehler, sondern anstößig oder rechtsverletzend?",
+    "removedTitle": "[entfernt]",
+    "removedNote": "Ein Admin hat nach einer Meldung entfernt, was jemand für dieses Buch eingetragen hatte."
   },
   "common": {
     "cancel": "Abbrechen",
@@ -603,7 +623,10 @@
     "termsChanged": "Die Nutzungsbedingungen haben sich geändert. Sieh sie dir an und versuch es nochmal.",
     "pictureRemoved": "Dieses Bild wurde entfernt",
     "receivedInFuture": "Die Meldung kann nicht in der Zukunft eingegangen sein.",
-    "noticeCoversOnly": "Bisher können nur Meldungen zu Buchcovern festgehalten werden.",
+    "accountSuspended": "Dieses Konto ist gesperrt. Fragen? Schreib an die Adresse im Impressum.",
+    "onlyReaderBooks": "Melden kannst du nur Bücher, die jemand selbst eingetragen hat.",
+    "noAccount": "Kein Konto mit diesem Namen",
+    "cannotSuspendSelf": "Dein eigenes Konto kannst du nicht sperren",
     "noSuchClub": "Diesen Club gibt es nicht, oder du bist kein Mitglied",
     "adminsOnly": "Das können nur Club-Admins",
     "ownerOnly": "Das kann nur die Person, der der Club gehört",
@@ -679,7 +702,9 @@
     "deleteOwnEntries": "Du kannst nur deine eigenen Einträge löschen",
     "requestDecided": "Über diese Anfrage wurde schon entschieden",
     "reportResolved": "Diese Meldung wurde schon geschlossen",
-    "invalidValueFor": "Dieser Wert für „{field}“ geht nicht"
+    "invalidValueFor": "Dieser Wert für „{field}“ geht nicht",
+    "reportedBookMerged": "Dieses Buch wurde seit der Meldung mit einem anderen zusammengeführt. Schließ die Meldung und korrigiere das andere Buch mit „Als Admin bearbeiten“, falls es den gemeldeten Text übernommen hat.",
+    "pictureGone": "Das gemeldete Bild ist nicht mehr online: Wer es hochgeladen hat, hat es ersetzt oder gelöscht. Schließ die Meldung."
   },
   "physicalShelf": {
     "title": "Dein Bücherregal",
@@ -1191,14 +1216,15 @@
   },
   "admin": {
     "title": "Verwaltung",
-    "lede": "Was Leser:innen ändern lassen oder gemeldet haben, und Einladungen für die geschlossene Beta.",
+    "lede": "Was Leser:innen ändern lassen oder gemeldet haben, Einladungen für die geschlossene Beta und gesperrte Konten.",
     "sections": "Bereiche der Verwaltung",
     "tabs": {
       "requests": "Anfragen",
       "reports": "Meldungen",
-      "invites": "Einladungen"
+      "invites": "Einladungen",
+      "users": "Konten"
     },
-    "settingsBlurb": "Du betreibst diese Instanz: Korrekturen, Cover-Fotos, Zusammenführungen und gemeldete Cover warten auf dich.",
+    "settingsBlurb": "Du betreibst diese Instanz: Korrekturen, Cover-Fotos, Zusammenführungen und gemeldete Inhalte warten auf dich.",
     "open": "Verwaltung öffnen",
     "loadFailed": "Die Warteschlange konnte nicht geladen werden",
     "decideFailed": "Die Entscheidung konnte nicht gespeichert werden",
@@ -1231,16 +1257,33 @@
     "reject": "Ablehnen",
     "rejected": "Abgelehnt",
     "rejectNote": "Warum nicht? (Die Person sieht das noch nicht)",
-    "reports": "Gemeldete Cover",
-    "reportsBlurb": "Cover, die Leser:innen gemeldet haben. Entfernen nimmt das Bild überall und endgültig heraus; Behalten schließt die Meldung.",
+    "reports": "Meldungen",
+    "reportsBlurb": "Gemeldete Cover, Profilbilder und Bücher, die Leser:innen angelegt haben. Entfernen nimmt ein Bild überall heraus oder löscht, was jemand eingetippt hat, endgültig; Behalten schließt die Meldung. Die Meldenden erfahren die Entscheidung per E-Mail, und wessen Inhalt entfernt wurde, erfährt den Grund.",
     "noReports": "Keine offenen Meldungen.",
     "alreadyRemoved": "Dieses Bild wurde schon entfernt.",
+    "target": {
+      "cover": "Cover",
+      "avatar": "Profilbild",
+      "work": "Von Leser:in angelegtes Buch",
+      "edition": "Von Leser:in angelegte Ausgabe"
+    },
+    "avatarOf": "Profilbild von {name}",
+    "notice": "Meldung per E-Mail · eingegangen {when}",
+    "removeText": "Text entfernen",
+    "removeTextConfirm": "Endgültig entfernen",
+    "removeBlurb": {
+      "avatar": "Das Bild verschwindet aus dem Profil und überall sonst, und dieselbe Datei kann nicht wieder hochgeladen werden.",
+      "work": "Der Titel wird zu „[removed]“, Autor:innen, Beschreibung und Themen werden endgültig gelöscht. Regale, Beiträge und Auswahlen behalten das Buch.",
+      "edition": "Die Ausgabe verliert endgültig ihren eigenen Titel, Untertitel und Verlag und zeigt den Titel ihres Buchs."
+    },
+    "textRemoved": "Text entfernt",
+    "removedBy": "Entfernt von {name} · {when}",
     "takeDown": "Entfernen",
     "takeDownConfirm": "Endgültig entfernen",
     "takeDownBlurb": "Das Bild verschwindet bei jedem Buch und jeder Ausgabe, die es zeigen, und keine Aktualisierung bringt es zurück.",
     "keep": "Behalten",
     "takenDown": "Bild entfernt",
-    "kept": "Meldung geschlossen, das Bild bleibt",
+    "kept": "Meldung geschlossen, nichts wurde entfernt",
     "invites": "Einladungen zur Anmeldung",
     "invitesBlurb": "Solange die Anmeldung eine Einladung braucht, kann man hiermit ein Konto anlegen, ohne einem Club beizutreten.",
     "maxUses": "Wie viele Personen",
@@ -1253,6 +1296,22 @@
     "forPeople": "Für eine Person | Für {n} Personen",
     "noExpiry": "läuft nicht ab",
     "pastInvites": "{n} benutzte oder abgelaufene Einladung | {n} benutzte oder abgelaufene Einladungen",
+    "users": {
+      "title": "Gesperrte Konten",
+      "blurb": "Ein gesperrtes Konto kann sich nicht anmelden, und jede Sitzung und jedes App-Token, das es hatte, endet sofort. Die Einladungen, die es kennt, gelten nicht mehr, und ein Admin verliert die Admin-Rechte. Was es geschrieben hat, bleibt. Hebst du die Sperre auf, kann es sich wieder anmelden, ohne Admin-Rechte.",
+      "manual": "Seine Daten kann es nicht mehr selbst exportieren oder löschen: Die Person schreibt an die Kontaktadresse, und der Betrieb erledigt das von Hand, wie es die Anleitung zu Meldungen und Entfernungen beschreibt („Konten, die sich nicht anmelden können“).",
+      "name": "Benutzername",
+      "suspend": "Sperren",
+      "suspendConfirm": "{name} sperren",
+      "confirmBlurb": "{name} wird überall abgemeldet, kann sich erst wieder anmelden, wenn du die Sperre aufhebst, und verliert etwaige Admin-Rechte. Die Einladungen, die {name} kennt, gelten nicht mehr.",
+      "suspended": "{name} ist gesperrt",
+      "since": "gesperrt {when}",
+      "admin": "Admin",
+      "unsuspend": "Sperre aufheben",
+      "unsuspended": "{name} kann sich wieder anmelden",
+      "none": "Kein Konto ist gesperrt.",
+      "failed": "Das konnte nicht gespeichert werden"
+    },
     "edit": {
       "title": "Buch als Admin bearbeiten",
       "editionTitle": "Ausgabe als Admin bearbeiten",
@@ -1282,7 +1341,8 @@
       "removed": "Entfernt",
       "dismissed": "Behalten",
       "approved": "Freigegeben",
-      "rejected": "Abgelehnt"
+      "rejected": "Abgelehnt",
+      "withdrawn": "Entfernt"
     },
     "takenDownBy": "Entfernt von {name} · {when}",
     "keptBy": "Behalten von {name} · {when}",
@@ -1298,7 +1358,7 @@
     },
     "takeDownForm": {
       "toggle": "Bild per Adresse entfernen",
-      "blurb": "Für eine Meldung, die per E-Mail kam: Füge die Adresse des Bildes ein oder die der Buchseite, die es zeigt. Die Entfernung wird als Meldung festgehalten, die zur Zeit der E-Mail eingegangen ist.",
+      "blurb": "Für eine Meldung, die per E-Mail kam: Füge die Adresse des Bildes ein (ein Cover oder ein Profilbild) oder die der Buchseite, die das Cover zeigt. Die Entfernung wird als Meldung festgehalten, die zur Zeit der E-Mail eingegangen ist.",
       "url": "Adresse des Bildes oder der Buchseite",
       "urlPlaceholder": "…/media/… oder …/book/…",
       "receivedAt": "Wann die Meldung kam",
@@ -1309,11 +1369,14 @@
       "noCover": "Dieses Buch zeigt kein Bild.",
       "future": "Die Meldung kann nicht in der Zukunft eingegangen sein.",
       "done": "Bild entfernt und die Meldung festgehalten",
-      "coversOnly": "Das ist kein Buchcover (etwa ein Profilbild). Eine Meldung dazu kann noch nicht festgehalten werden, deshalb wurde nichts entfernt. Du kannst das Bild ohne Eintrag entfernen.",
-      "withoutRecord": "Ohne Eintrag entfernen",
-      "doneWithoutRecord": "Bild entfernt. Die Meldung wurde nicht festgehalten.",
       "failed": "Das Bild konnte nicht entfernt werden"
-    }
+    },
+    "gone": {
+      "avatar": "Nicht mehr online: Das Bild wurde ersetzt oder gelöscht, es gibt nichts mehr zu entfernen.",
+      "work": "Seit der Meldung mit diesem Buch zusammengeführt, der gemeldete Text erscheint nicht mehr für sich. Hat dieses Buch etwas davon übernommen, korrigiere es mit „Als Admin bearbeiten“."
+    },
+    "closeReport": "Meldung schließen",
+    "closedBy": "Geschlossen von {name} · {when}"
   },
   "notFound": {
     "title": "Seite nicht gefunden",

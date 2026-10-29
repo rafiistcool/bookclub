@@ -1,6 +1,7 @@
 //! Closed-beta sign-up invites minted by an instance admin (`POST/GET /api/admin/invites`,
-//! endpoint-map §3) or by the CLI (`bookclub-server beta-invite`). They have no club: they only
-//! unlock sign-up while `SIGNUP_MODE=invite`.
+//! endpoint-map §3) or by the CLI (`bookclub-server beta-invite`), and revoked by an instance
+//! admin (`DELETE /api/admin/invites/{invite_id}`). They have no club: they only unlock sign-up
+//! while `SIGNUP_MODE=invite`.
 
 use axum::Json;
 use axum::extract::State;
@@ -13,10 +14,10 @@ use utoipa_axum::routes;
 
 use crate::AppState;
 use crate::auth::extract::InstanceAdmin;
-use crate::clubs::invites::insert_invite;
+use crate::clubs::invites::{NO_SUCH_INVITE, insert_invite};
 use crate::clubs::out::{InviteList, InviteOut, invite_out, invite_outs};
-use crate::error::{ApiResult, ErrorBody};
-use crate::extract::{ApiJson, Validate, Validator};
+use crate::error::{ApiResult, AppError, ErrorBody};
+use crate::extract::{ApiJson, ApiPath, Validate, Validator};
 
 /// The expiry of an invite minted without limits (`{}` or `beta-invite` without flags), which
 /// is then single-use.
@@ -24,7 +25,9 @@ const DEFAULT_DAYS: i32 = 30;
 
 /// Instance-admin routes; every path starts with `/api/admin/`.
 pub fn admin_routes() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().routes(routes!(list_signup_invites, create_signup_invite))
+    OpenApiRouter::new()
+        .routes(routes!(list_signup_invites, create_signup_invite))
+        .routes(routes!(revoke_signup_invite))
 }
 
 /// A new sign-up invite. Without either field it is single-use and expires in 30 days.
@@ -113,4 +116,38 @@ pub async fn create_signup_invite(
     .await?;
     let out = invite_out(&mut conn, &state.config, None, id).await?;
     Ok((StatusCode::CREATED, Json(out)))
+}
+
+/// Revokes a sign-up invite: it no longer unlocks sign-up. Revoking twice is harmless. Club
+/// invites are their club admins' to revoke (`DELETE /api/clubs/{slug}/invites/{invite_id}`).
+#[utoipa::path(
+    delete,
+    path = "/api/admin/invites/{invite_id}",
+    operation_id = "admin_revoke_invite",
+    tag = "admin",
+    security(("bookclub_session" = []), ("bearer" = [])),
+    params(("invite_id" = i64, Path, description = "The sign-up invite's id")),
+    responses(
+        (status = 204, description = "Revoked"),
+        (status = 400, body = ErrorBody, description = "The id is not an integer"),
+        (status = 401, body = ErrorBody, description = "`Not signed in`"),
+        (status = 404, body = ErrorBody, description = "`No such invite` (also a club's invite); `Not found` for everyone but instance admins")
+    )
+)]
+pub async fn revoke_signup_invite(
+    InstanceAdmin(_admin): InstanceAdmin,
+    State(state): State<AppState>,
+    ApiPath(invite_id): ApiPath<i64>,
+) -> ApiResult<StatusCode> {
+    let mut conn = state.db.acquire().await?;
+    sqlx::query_scalar!(
+        "UPDATE club_invites SET revoked_at = coalesce(revoked_at, now())
+         WHERE club_id IS NULL AND id = $1
+         RETURNING id",
+        invite_id
+    )
+    .fetch_optional(&mut *conn)
+    .await?
+    .ok_or_else(|| AppError::not_found(NO_SUCH_INVITE))?;
+    Ok(StatusCode::NO_CONTENT)
 }

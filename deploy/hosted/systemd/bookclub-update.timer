@@ -1,0 +1,12 @@
+# Starts bookclub-update.service every 3 minutes. A start that falls due while the previous run is
+# still busy (an update with its backup) is skipped. Not Persistent: a check missed while the VM
+# was off needs no catching up.
+[Unit]
+Description=Bookclub update check every 3 minutes
+
+[Timer]
+OnCalendar=*:0/3
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

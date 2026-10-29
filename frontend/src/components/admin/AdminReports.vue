@@ -9,18 +9,28 @@ import { formatClubDate } from "../../i18n/dates";
 import { useLocale } from "../../stores/locale";
 import { useSession } from "../../stores/session";
 import { useToast } from "../../stores/toast";
+import Avatar from "../Avatar.vue";
 import BookCover from "../BookCover.vue";
 import AdminTakeDown from "./AdminTakeDown.vue";
 import { useQueue } from "./useQueue";
 
 /**
- * Notice and takedown: readers' reports of a cover. "Take down" removes the
- * picture everywhere for good (no refresh brings it back); "Keep it" closes
- * the report. Either decision closes every open report of the picture. Each
- * open report shows how long it has waited, flagged once that passes the
- * target. "Decided" lists the history, newest decision first, with the 90-day
+ * Notice and takedown: readers' reports of a cover, a profile picture, or a
+ * book or edition a reader added (`ReportOut.target_kind`). For a picture,
+ * "Take down" removes it everywhere for good (no refresh brings it back); for
+ * a book or edition, "Remove the text" withdraws what the reader typed and
+ * keeps the record. "Keep it" closes the report. Either decision closes every
+ * open report of the same picture, book or edition, and the server mails the
+ * reporters and, on a removal, whoever's content it was. Each open report
+ * shows how long it has waited, flagged once that passes the target.
+ * "Decided" lists the history, newest decision first, with the 90-day
  * figures. A notice that arrived by email enters through "Take down a picture
- * by URL".
+ * by URL" (pictures; it names no sender) or as a report an admin files.
+ *
+ * A report of something gone (`ReportOut.gone`: a profile picture its owner
+ * replaced or deleted, a book merged into another one since) says so and offers
+ * only "Close the report": nothing is left to take down, and the server refuses
+ * "remove" for it.
  */
 const props = defineProps<{
   /** Hours after which an open report is overdue (`AdminSummary.target_hours`). */
@@ -31,6 +41,12 @@ const props = defineProps<{
 const emit = defineEmits<{ changed: [] }>();
 
 const REASONS = ["wrong_book", "offensive", "copyright", "other"];
+const KINDS = ["cover", "avatar", "work", "edition"];
+
+/** A picture is taken down; a book or edition loses its text. */
+function isPicture(report: ReportOut): boolean {
+  return report.target_kind !== "work" && report.target_kind !== "edition";
+}
 
 const { t } = useI18n();
 const locale = useLocale();
@@ -54,8 +70,18 @@ async function load() {
   await queue.load();
 }
 
-/** The report and every other open report of its picture, which the decision closed too. */
-function dropPicture(report: ReportOut) {
+/**
+ * The report and every other open report of its picture, which the decision
+ * closed too. A book's or edition's other reports, and those of a gone
+ * profile picture (which have no picture id), are not told apart by the list
+ * (an edition report carries its book), so the queue is read again.
+ */
+async function dropDecided(report: ReportOut) {
+  if (!isPicture(report) || report.gone) {
+    queue.drop((row) => row.id === report.id);
+    await load();
+    return;
+  }
   const picture = report.media_public_id;
   queue.drop((row) => row.id === report.id || (picture != null && row.media_public_id === picture));
 }
@@ -70,14 +96,16 @@ async function resolve(report: ReportOut, action: "remove" | "dismiss") {
   busyId.value = report.id;
   try {
     await api.resolveReport(report.id, action);
-    dropPicture(report);
-    toast.show(action === "remove" ? t("admin.takenDown") : t("admin.kept"));
+    if (action === "remove") toast.show(isPicture(report) ? t("admin.takenDown") : t("admin.textRemoved"));
+    else toast.show(t("admin.kept"));
     emit("changed");
+    await dropDecided(report);
   } catch (err) {
-    // Resolved meanwhile (409): it leaves the open queue either way.
+    // 409: resolved meanwhile, or gone since the list was read (the picture
+    // replaced, the book merged). The queue read again shows which.
     if (err instanceof ApiError && err.status === 409) {
-      queue.drop((row) => row.id === report.id);
       emit("changed");
+      await load();
     }
     toast.show(failed(err, t("admin.decideFailed")));
   } finally {
@@ -101,6 +129,33 @@ function reason(code: string): string {
   return REASONS.includes(code) ? t(`cover.reasons.${code}`) : code;
 }
 
+function kind(report: ReportOut): string {
+  return KINDS.includes(report.target_kind) ? t(`admin.target.${report.target_kind}`) : report.target_kind;
+}
+
+/** Who reported it, and when; an emailed notice names no account. */
+function source(report: ReportOut): string {
+  if (report.via === "notice") return t("admin.notice", { when: when(report.created_at) });
+  return t("admin.byOn", { name: report.created_by?.username ?? t("admin.someone"), when: when(report.created_at) });
+}
+
+/** What "remove" does, shown before the second tap. */
+function removeBlurb(report: ReportOut): string {
+  return report.target_kind === "cover" || !KINDS.includes(report.target_kind)
+    ? t("admin.takeDownBlurb")
+    : t(`admin.removeBlurb.${report.target_kind}`);
+}
+
+/** Why a gone report has nothing left to decide. */
+function goneNote(report: ReportOut): string {
+  return t(report.target_kind === "avatar" ? "admin.gone.avatar" : "admin.gone.work");
+}
+
+function statusLabel(report: ReportOut): string {
+  if (report.status === "removed" && !isPicture(report)) return t("admin.status.withdrawn");
+  return t(`admin.status.${report.status}`);
+}
+
 function when(iso: string): string {
   return formatClubDate(iso, session.user?.timezone || "UTC", locale.locale);
 }
@@ -114,14 +169,16 @@ function overdue(report: ReportOut): boolean {
 }
 
 /**
- * "Taken down by root · …" or "Kept by root · …", "someone" when that admin
- * has deleted the account; a report closed on arrival names nobody.
+ * "Taken down by root · …" (a picture), "Removed by root · …" (a book's
+ * text) or "Kept by root · …", "someone" when that admin has deleted the
+ * account; a report closed on arrival names nobody.
  */
 function decision(report: ReportOut): string {
   if (report.closed_on_arrival) return t("admin.closedOnArrival");
   const name = report.resolved_by?.username ?? t("admin.someone");
   const at = report.resolved_at ? when(report.resolved_at) : "";
-  return report.status === "removed" ? t("admin.takenDownBy", { name, when: at }) : t("admin.keptBy", { name, when: at });
+  if (report.status !== "removed") return t(report.gone ? "admin.closedBy" : "admin.keptBy", { name, when: at });
+  return isPicture(report) ? t("admin.takenDownBy", { name, when: at }) : t("admin.removedBy", { name, when: at });
 }
 
 /** "after 5 hours", for a report an admin decided. */
@@ -186,36 +243,55 @@ onMounted(load);
         :class="{ overdue: view === 'open' && overdue(report) }"
       >
         <p class="admin-item-head fine">
+          <span class="badge kind-badge">{{ kind(report) }}</span>
           <span class="badge">{{ reason(report.reason) }}</span>
-          <span v-if="view === 'resolved'" class="badge" :class="`status-${report.status}`">{{ t(`admin.status.${report.status}`) }}</span>
-          <span class="subtle">
-            {{ t("admin.byOn", { name: report.created_by?.username ?? t("admin.someone"), when: when(report.created_at) }) }}
-          </span>
+          <span v-if="view === 'resolved'" class="badge" :class="`status-${report.status}`">{{ statusLabel(report) }}</span>
+          <span class="subtle">{{ source(report) }}</span>
           <template v-if="view === 'open'">
             <span class="age subtle">{{ t("admin.waiting", { age: waited(report) }) }}</span>
             <span v-if="overdue(report)" class="badge overdue-badge">{{ t("admin.overdue") }}</span>
           </template>
         </p>
         <div class="report-body">
+          <Avatar
+            v-if="report.target_kind === 'avatar'"
+            :username="report.target_user?.username ?? '?'"
+            :src="report.avatar_url"
+            size="lg"
+          />
           <BookCover
-            v-if="report.cover_url || report.cover_thumb_url"
+            v-else-if="report.cover_url || report.cover_thumb_url"
             :book="{ title: report.book?.title ?? '', cover_url: report.cover_url, cover_thumb_url: report.cover_thumb_url }"
             size="md"
           />
           <div class="report-text">
-            <RouterLink v-if="report.book" :to="bookPath(report.book)">{{ report.book.title }}</RouterLink>
+            <p v-if="report.target_kind === 'avatar'" class="report-subject">
+              {{ t("admin.avatarOf", { name: report.target_user?.username ?? t("admin.someone") }) }}
+            </p>
+            <RouterLink v-else-if="report.book" :to="bookPath(report.book)">{{ report.book.title }}</RouterLink>
             <p v-if="report.removed && view === 'open'" class="fine subtle">{{ t("admin.alreadyRemoved") }}</p>
+            <p v-if="report.gone && view === 'open'" class="fine subtle gone-note">{{ goneNote(report) }}</p>
             <p v-if="report.details" class="fine report-details">{{ report.details }}</p>
           </div>
         </div>
         <p v-if="view === 'resolved'" class="fine subtle decision">
           {{ decision(report) }}<template v-if="took(report)"> · {{ took(report) }}</template>
         </p>
+        <div v-else-if="report.gone" class="btn-row">
+          <button class="btn btn-ghost btn-sm" type="button" :disabled="busyId === report.id" @click="resolve(report, 'dismiss')">
+            {{ t("admin.closeReport") }}
+          </button>
+        </div>
         <template v-else>
-          <p v-if="confirming === report.id" class="fine">{{ t("admin.takeDownBlurb") }}</p>
+          <p v-if="confirming === report.id" class="fine">{{ removeBlurb(report) }}</p>
           <div class="btn-row">
             <button class="btn btn-danger btn-sm" type="button" :disabled="busyId === report.id" @click="resolve(report, 'remove')">
-              {{ confirming === report.id ? t("admin.takeDownConfirm") : t("admin.takeDown") }}
+              <template v-if="isPicture(report)">
+                {{ confirming === report.id ? t("admin.takeDownConfirm") : t("admin.takeDown") }}
+              </template>
+              <template v-else>
+                {{ confirming === report.id ? t("admin.removeTextConfirm") : t("admin.removeText") }}
+              </template>
             </button>
             <button class="btn btn-ghost btn-sm" type="button" :disabled="busyId === report.id" @click="resolve(report, 'dismiss')">
               {{ t("admin.keep") }}
@@ -276,6 +352,15 @@ onMounted(load);
 
 .badge.status-removed {
   color: var(--danger);
+}
+
+.kind-badge {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.report-subject {
+  font-weight: 600;
 }
 
 .report-body {

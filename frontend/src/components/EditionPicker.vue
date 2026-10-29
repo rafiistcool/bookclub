@@ -3,17 +3,20 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
 import type { EditionOut } from "../api/generated";
-import { editionLine } from "../editions";
+import { editionLine, editionName } from "../editions";
 import { useToast } from "../stores/toast";
 import AddEditionForm from "./AddEditionForm.vue";
 import BottomSheet from "./BottomSheet.vue";
 import EditRequestSheet from "./EditRequestSheet.vue";
+import ReportSheet, { type ReportTarget } from "./ReportSheet.vue";
 
 /**
  * "Your edition" on the book page: which edition of the work the reader owns
  * or reads (`ShelfPatchIn.edition_id`). The shelf and the physical shelf then
  * use its pages and cover. Choosing emits the id, or null for no particular one.
- * A missing edition can be added here, and the chosen one corrected.
+ * A missing edition can be added here, and the chosen one corrected. Each
+ * edition a reader added can be reported from the list (#54), as the
+ * correction sheet reports the chosen one.
  */
 const props = defineProps<{ workId: number; editionId: number | null; disabled?: boolean }>();
 const emit = defineEmits<{ choose: [editionId: number | null] }>();
@@ -25,6 +28,7 @@ const error = ref("");
 const open = ref(false);
 const adding = ref(false);
 const correcting = ref(false);
+const reporting = ref<ReportTarget | null>(null);
 
 async function load() {
   if (editions.value) return;
@@ -48,6 +52,13 @@ function choose(editionId: number | null) {
   open.value = false;
   adding.value = false;
   if (editionId !== props.editionId) emit("choose", editionId);
+}
+
+/** The report sheet for an edition a reader added, in place of the list. */
+function report(edition: EditionOut) {
+  open.value = false;
+  adding.value = false;
+  reporting.value = { kind: "edition", editionId: edition.id, title: editionName(edition) };
 }
 
 /** The ISBN named an edition of this work: choose it, and read the list again in case it was not in it. */
@@ -90,6 +101,7 @@ watch(
       </button>
     </p>
     <EditRequestSheet v-if="correcting && current" :edition="current" @close="correcting = false" />
+    <ReportSheet v-if="reporting" :target="reporting" @close="reporting = null" />
     <BottomSheet v-if="open" :title="t('editions.title')" @close="open = false">
       <p class="fine muted">{{ t("editions.blurb") }}</p>
       <p v-if="error" class="error">{{ error }}</p>
@@ -100,7 +112,7 @@ watch(
             {{ t("editions.any") }}
           </button>
         </li>
-        <li v-for="edition in editions" :key="edition.id">
+        <li v-for="edition in editions" :key="edition.id" class="edition-row">
           <button
             class="edition-option"
             type="button"
@@ -109,6 +121,15 @@ watch(
           >
             <strong v-if="edition.title">{{ edition.title }}</strong>
             <span>{{ editionLine(edition) }}</span>
+          </button>
+          <button
+            v-if="edition.source === 'user'"
+            class="text-btn fine edition-report"
+            type="button"
+            :aria-label="t('report.editionOf', { edition: editionName(edition) })"
+            @click="report(edition)"
+          >
+            {{ t("report.action.edition") }}
           </button>
         </li>
       </ul>
@@ -151,8 +172,20 @@ watch(
   gap: var(--space-2);
 }
 
+.edition-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.edition-report {
+  flex-shrink: 0;
+}
+
 .edition-option {
   display: grid;
+  flex: 1;
+  min-width: 0;
   gap: 2px;
   width: 100%;
   min-height: var(--tap);

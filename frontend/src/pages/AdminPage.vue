@@ -7,15 +7,17 @@ import type { AdminSummary } from "../api/generated";
 import AdminInvites from "../components/admin/AdminInvites.vue";
 import AdminReports from "../components/admin/AdminReports.vue";
 import AdminRequests from "../components/admin/AdminRequests.vue";
+import AdminUsers from "../components/admin/AdminUsers.vue";
 
 /**
  * The instance admin's page (`UserOut.is_admin`; the router keeps everyone
- * else out, and the server answers them 404): the catalog queue, cover
- * reports and sign-up invites. `?tab=` picks the section. Both queue badges
+ * else out, and the server answers them 404): the catalog queue, reports
+ * (covers, profile pictures, books readers added), sign-up invites and
+ * suspended accounts. `?tab=` picks the section. Both queue badges
  * come from `GET /api/admin/summary` on mount and again after each decision,
  * marked when something is overdue.
  */
-const TABS = ["requests", "reports", "invites"] as const;
+const TABS = ["requests", "reports", "invites", "users"] as const;
 type Tab = (typeof TABS)[number];
 /** The overdue threshold until the summary says otherwise. */
 const DEFAULT_TARGET_HOURS = 72;
@@ -82,13 +84,26 @@ onMounted(loadSummary);
       :stats="summary?.report_stats ?? null"
       @changed="loadSummary"
     />
-    <AdminInvites v-else />
+    <AdminInvites v-else-if="tab === 'invites'" />
+    <AdminUsers v-else />
   </section>
 </template>
 
 <style scoped>
 .admin-tabs {
   margin-bottom: var(--space-5);
+}
+
+/*
+ * Four tabs with a count do not fit one line of a phone (at 360 px the
+ * fourth one was cut off inside the scrolling bar): two rows of two there.
+ */
+@media (max-width: 479px) {
+  .admin-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-radius: var(--radius-xl);
+  }
 }
 
 .seg-count.overdue {

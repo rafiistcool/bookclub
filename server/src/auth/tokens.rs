@@ -80,6 +80,7 @@ pub struct SessionList {
         (status = 201, body = TokenOut, description = "The new token"),
         (status = 400, body = ErrorBody, description = "Malformed body"),
         (status = 401, body = ErrorBody, description = "`Wrong username or password`"),
+        (status = 403, body = ErrorBody, description = "`This account is suspended` (the password matched)"),
         (status = 429, body = ErrorBody, description = "`Too many attempts. Wait a few minutes.`"),
         (status = 503, body = ErrorBody, description = "`The server is busy. Try again in a moment.`")
     )

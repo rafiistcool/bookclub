@@ -259,6 +259,29 @@ describe("auth pages", () => {
     expect(none.wrapper.find(".signup-terms").exists()).toBe(false);
   });
 
+  it("tells visitors without an account where to report content, when the server has a contact address", async () => {
+    const none = await mountAt(LoginPage, "/login");
+    expect(none.wrapper.find(".auth-contact").exists()).toBe(false);
+    none.wrapper.unmount();
+
+    const { wrapper } = await mountAt(LoginPage, "/login", "invite", { ...LEGAL, contact_email: "abuse@bookclub.test" });
+    const line = wrapper.get(".auth-contact");
+    expect(line.text()).toBe("No account here? Anyone can report content by writing to abuse@bookclub.test.");
+    expect(line.get("a").attributes("href")).toBe("mailto:abuse@bookclub.test");
+    wrapper.unmount();
+
+    const previousLocale = i18n.global.locale.value;
+    i18n.global.locale.value = "de";
+    try {
+      const german = await mountAt(LoginPage, "/login", "invite", { ...LEGAL, contact_email: "abuse@bookclub.test" });
+      expect(german.wrapper.get(".auth-contact").text()).toBe(
+        "Kein Konto hier? Inhalte melden kann man auch per E-Mail an abuse@bookclub.test.",
+      );
+    } finally {
+      i18n.global.locale.value = previousLocale;
+    }
+  });
+
   it("names the terms above the sign-up button and accepts the version it showed", async () => {
     api.register.mockResolvedValue(user({ clubs: [] }));
     const { wrapper } = await mountAt(SignupPage, "/signup", "open", { ...LEGAL, terms_version: "2026-11-01" });

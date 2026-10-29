@@ -464,7 +464,8 @@ async fn club_sections(
     Ok(())
 }
 
-/// Catalog contributions, edit requests and reports, each as filed and as decided.
+/// Catalog contributions, edit requests and reports, each as filed and as decided, and the
+/// reports about the user's content.
 async fn catalog_sections(
     conn: &mut PgConnection,
     user_id: i64,
@@ -506,9 +507,25 @@ async fn catalog_sections(
     .await?;
     data.insert("edit_requests".into(), requests);
 
+    // `about_me`: the removals of the user's content after a report, one entry per decision,
+    // which the user was told about anyway by the statement of reasons: their profile picture
+    // (`target_user_id`), pictures they uploaded, works and editions they added (a work report
+    // by the work as reported, `target_work_id`, which a merge leaves on the reader's record).
+    // The reporter is never named to the other side (ADM2, Q12), and in a club of 2 to 5 a
+    // report's existence, number or time names them: only club mates can report a profile
+    // picture. So open and dismissed reports, reports closed on arrival, how many reports a
+    // decision closed, how they came in and when are withheld to protect the reporters
+    // (Art. 15 (4) GDPR, § 29 (1) BDSG; security review, Phase 2 Wave 2). A decision is what one
+    // admin resolved in one transaction (`resolved_by`, `resolved_at`), whatever pictures it took
+    // down (a held profile picture with the owner's copy of it) and whichever book showed a
+    // cover when each report came in. Its reason is the one the statement of reasons gave
+    // (`admin::notices::decision_reason`: the recorded notice's, else the oldest report's), so
+    // the two never disagree and tell the owner that several reports came in (security review,
+    // ADM2 merge); its date is the decision's.
     let reports = sqlx::query_scalar!(
         r#"SELECT jsonb_build_object(
                'filed', (SELECT coalesce(jsonb_agg(to_jsonb(r) - 'created_by' - 'resolved_by'
+                                                   - 'target_user_id'
                              ORDER BY r.id), '[]')
                          FROM reports r WHERE r.created_by = $1),
                'resolved', (SELECT coalesce(jsonb_agg(jsonb_build_object(
@@ -516,7 +533,28 @@ async fn catalog_sections(
                                 'media_id', r.media_id, 'reason', r.reason, 'status', r.status,
                                 'resolved_at', r.resolved_at)
                             ORDER BY r.id), '[]')
-                            FROM reports r WHERE r.resolved_by = $1)) AS "rows!""#,
+                            FROM reports r WHERE r.resolved_by = $1),
+               'about_me', (SELECT coalesce(jsonb_agg(jsonb_build_object(
+                                'target_kind', d.target_kind, 'media_id', d.media_id,
+                                'work_id', d.work_id, 'edition_id', d.edition_id,
+                                'reason', d.reason, 'status', d.status,
+                                'resolved_at', d.resolved_at)
+                            ORDER BY d.resolved_at, d.first), '[]')
+                            FROM (SELECT DISTINCT ON (r.resolved_by, r.resolved_at)
+                                         r.target_kind, r.media_id, r.work_id, r.edition_id,
+                                         r.reason, r.status, r.resolved_at, r.id AS first
+                                  FROM reports r
+                                  LEFT JOIN media m ON m.id = r.media_id
+                                  LEFT JOIN works w
+                                         ON w.id = r.target_work_id AND r.target_kind = 'work'
+                                  LEFT JOIN editions e
+                                         ON e.id = r.edition_id AND r.target_kind = 'edition'
+                                  WHERE r.status = 'removed' AND NOT r.closed_on_arrival
+                                    AND (r.target_user_id = $1 OR m.uploaded_by = $1
+                                         OR w.created_by = $1 OR e.created_by = $1)
+                                  ORDER BY r.resolved_by, r.resolved_at,
+                                           r.via = 'notice' DESC, r.created_at, r.id) d))
+               AS "rows!""#,
         user_id
     )
     .fetch_one(&mut *conn)
@@ -558,13 +596,19 @@ impl MediaRow {
     }
 }
 
+/// Every picture the user uploaded, and their current avatar. A profile picture they replaced
+/// or deleted while it was reported is held until an admin decides it (`media/avatar.rs`) and
+/// left out meanwhile: listing it would tell them of the report (see `about_me`). Taken down, it
+/// is listed again, as removed.
 async fn uploaded_media(conn: &mut PgConnection, user_id: i64) -> sqlx::Result<Vec<MediaRow>> {
     sqlx::query_as!(
         MediaRow,
         "SELECT public_id, kind, source, content_type, variants, width, height, byte_size,
                 storage_key, created_at, removed_at
          FROM media
-         WHERE uploaded_by = $1 OR id = (SELECT avatar_media_id FROM users WHERE id = $1)
+         WHERE (uploaded_by = $1 OR id = (SELECT avatar_media_id FROM users WHERE id = $1))
+           AND NOT (kind = 'avatar' AND removed_at IS NULL
+                    AND id IS DISTINCT FROM (SELECT avatar_media_id FROM users WHERE id = $1))
          ORDER BY id",
         user_id
     )

@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT coalesce(e.title, w.title) AS \"title!\"\n           FROM works w LEFT JOIN editions e ON e.id = $2 AND e.work_id = w.id\n           WHERE w.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "title!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "bb8ca5757e58c816f1a374f83a806cd30eb1a792547da4028a399b55c8ad84fd"
+}

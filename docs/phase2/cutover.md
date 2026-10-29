@@ -199,11 +199,15 @@ chown 1000:1000 "$IMPORT"/bookclub.db* && chmod 600 "$IMPORT"/bookclub.db*
 
 ### 3.3 Dry run, go/no-go, real run (app VM)
 
-In the compose directory. Stop the app, so nobody can sign up while the import runs;
+In the compose directory. Stop the update timer and wait for a running update (stopping the
+timer does not stop one), so that no update backs up or replaces the app until the rollback
+window closes (3.6). Then stop the app, so nobody can sign up while the import runs;
 `docker compose run` starts Postgres if it is not running. `-T` keeps the report free of terminal
 line endings (compare.sh reads it).
 
 ```bash
+systemctl stop bookclub-update.timer
+flock /var/lib/bookclub-backup/.update.lock true   # waits for an update that is already running
 docker compose stop app
 docker compose run --rm -T -v "$IMPORT:/import:ro" app \
     bookclub-server import-legacy /import/bookclub.db --owner "$OWNER" \
@@ -323,6 +327,12 @@ curl -sI "https://$OLD_HOST/sw.js" | grep -iE '^(HTTP|content-type|cache-control
 #   HTTP/2 200 / content-type: text/javascript; charset=utf-8 / cache-control: no-store
 ```
 
+On the app VM, start the update timer again (stopped in 3.3); the rollback window has closed:
+
+```bash
+systemctl start bookclub-update.timer
+```
+
 `/sw.js` is not redirected: an installed app from before PR #3 still runs the old offline worker,
 and a browser does not follow a redirect when it checks that worker for updates. The new
 `sw.js` deletes the old caches, unregisters itself and reloads the page, which then follows the
@@ -389,6 +399,9 @@ first night on.
 - **Keep for at least a year:** the redirect of the old host, so old links in chats keep working.
 
 ## 6. Preserving the Python app (Q6)
+
+**Done on 2026-10-29** (Q6 A): `legacy-python` and `legacy-python-final` are on Forgejo at
+1c5efe3, and neither started a run. The commands stay as the record.
 
 Once Rafael answers Q6 with A, the integrator runs these from a checkout whose remote `origin`
 is the Forgejo repository (never the GitHub mirror). 1c5efe3 is v0.10.0-3, the last

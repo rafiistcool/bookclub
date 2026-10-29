@@ -1,0 +1,22 @@
+# The automatic update (deploy/hosted/README.md, "Updates and rollback"), started every 3 minutes
+# by bookclub-update.timer: when the image tag the app follows has moved, it backs up and updates
+# the app. By hand: systemctl start bookclub-update; the log: journalctl -u bookclub-update.
+[Unit]
+Description=Bookclub update: follow the image tag, back up, update the app
+Documentation=https://git.tillhome.de/rafiistcool/bookclub/src/branch/main/deploy/hosted/README.md
+Requires=docker.service
+Wants=network-online.target
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/bookclub/update.sh
+# The registry login that `docker login git.tillhome.de` stored for root. A system service
+# without User= gets no HOME from systemd.
+Environment=DOCKER_CONFIG=/root/.docker
+# An update may wait up to 3 h for a running backup or restore test, then backs up and waits for
+# the app.
+TimeoutStartSec=4h
+PrivateTmp=true
+ProtectSystem=full
+NoNewPrivileges=true
