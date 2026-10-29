@@ -7,23 +7,25 @@
 //! other's audience as before. A block files no report.
 //!
 //! Unblocking deletes the block and the requests the blocked account sent meanwhile, so it never
-//! surfaces an old request. It acts only on the caller's own rows and always answers 200.
+//! surfaces an old request. It acts only on the caller's own rows and always answers 200, after
+//! the same work for an unknown name as for an existing one ([`super::NO_ACCOUNT`]): it is not
+//! counted, so its timing must not tell them apart either.
 
 use axum::Json;
 use axum::extract::State;
 
 use super::out::{FriendsOut, friends_out};
-use super::{PathName, account_id, lock_pair, revoke_pair_invites};
+use super::{NO_ACCOUNT, PathName, account_id, count_request, lock_pair, revoke_pair_invites};
 use crate::AppState;
-use crate::auth::account::account_key;
 use crate::auth::extract::CurrentUser;
+use crate::client_ip::ClientIp;
 use crate::error::{ApiResult, AppError, ErrorBody, msg};
 
 /// Blocks `username`: the friendship ends, pending requests in either direction go, the pair's
 /// open friend invites are revoked, and later requests from them stay hidden from the caller.
-/// Blocking twice is harmless. Counts against the 20 requests and blocks a day, unless the
-/// caller and that account already have a request or a friendship (blocking any number of
-/// requesters is free).
+/// Blocking twice is harmless. Counts against the 20 requests and blocks a day (and the
+/// address's 60), unless the caller and that account already have a request or a friendship
+/// (blocking any number of requesters is free).
 #[utoipa::path(
     put,
     path = "/api/friends/blocks/{username}",
@@ -42,15 +44,10 @@ use crate::error::{ApiResult, AppError, ErrorBody, msg};
 pub async fn block(
     user: CurrentUser,
     State(state): State<AppState>,
+    ClientIp(ip): ClientIp,
     PathName(name): PathName,
 ) -> ApiResult<Json<FriendsOut>> {
-    let count = || {
-        state
-            .limits
-            .friend_request_user
-            .check_and_hit(&account_key(user.id))
-            .map_err(|wait| wait.into_error(msg::SLOW_DOWN))
-    };
+    let count = || count_request(&state.limits, user.id, ip);
     let unknown = || AppError::not_found(msg::NO_ACCOUNT);
     let mut tx = state.db.begin().await?;
     let Some(other) = account_id(&mut tx, name.as_deref()).await? else {
@@ -123,29 +120,29 @@ pub async fn unblock(
     let mut tx = state.db.begin().await?;
     let other = account_id(&mut tx, name.as_deref())
         .await?
-        .filter(|id| *id != user.id);
-    if let Some(other) = other
-        && lock_pair(&mut tx, user.id, other).await?
-    {
-        let unblocked = sqlx::query!(
-            "DELETE FROM user_blocks WHERE user_id = $1 AND blocked_user_id = $2",
-            user.id,
-            other
+        .filter(|id| *id != user.id)
+        .unwrap_or(NO_ACCOUNT);
+    // For an unknown name the same statements run with `NO_ACCOUNT`, and change nothing: the
+    // answer is the same, and so is the work before it.
+    let found = lock_pair(&mut tx, user.id, other).await?;
+    let unblocked = sqlx::query!(
+        "DELETE FROM user_blocks WHERE user_id = $1 AND blocked_user_id = $2",
+        user.id,
+        other
+    )
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if found && unblocked > 0 {
+        // While the block stood, the pair's only row could be a hidden request from them.
+        sqlx::query!(
+            "DELETE FROM friendships
+             WHERE requester_id = $1 AND addressee_id = $2 AND accepted_at IS NULL",
+            other,
+            user.id
         )
         .execute(&mut *tx)
-        .await?
-        .rows_affected();
-        if unblocked > 0 {
-            // While the block stood, the pair's only row could be a hidden request from them.
-            sqlx::query!(
-                "DELETE FROM friendships
-                 WHERE requester_id = $1 AND addressee_id = $2 AND accepted_at IS NULL",
-                other,
-                user.id
-            )
-            .execute(&mut *tx)
-            .await?;
-        }
+        .await?;
     }
     let out = friends_out(&mut tx, user.id).await?;
     tx.commit().await?;

@@ -1745,9 +1745,9 @@ export interface paths {
         /**
          * Blocks `username`: the friendship ends, pending requests in either direction go, the pair's
          *     open friend invites are revoked, and later requests from them stay hidden from the caller.
-         *     Blocking twice is harmless. Counts against the 20 requests and blocks a day, unless the
-         *     caller and that account already have a request or a friendship (blocking any number of
-         *     requesters is free).
+         *     Blocking twice is harmless. Counts against the 20 requests and blocks a day (and the
+         *     address's 60), unless the caller and that account already have a request or a friendship
+         *     (blocking any number of requesters is free).
          */
         put: operations["friends_block"];
         post?: never;
@@ -1814,7 +1814,8 @@ export interface paths {
          * Asks another account to be friends. Sending to someone who already asked the caller makes
          *     them friends at once; sending again, or to a friend, changes nothing. A request to someone
          *     who blocked the caller is stored and shows as sent, but never reaches them. 20 requests and
-         *     blocks per account a day, unknown names and repeats included.
+         *     blocks per account a day, unknown names and repeats included, and 60 per client address a
+         *     day across its accounts.
          */
         post: operations["friends_send_request"];
         delete?: never;

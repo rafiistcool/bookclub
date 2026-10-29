@@ -29,6 +29,11 @@
 //!    hold one of them while it waits for the write;
 //! 3. the `user_blocks` row, then the pair's `friendships` row, then the pair's invite rows.
 //!
+//! **Names.** Only a request and a block tell an unknown name from an existing one, and both are
+//! counted (`count_request`, §4.9). The uncounted writes (accept, decline or cancel, remove,
+//! unblock) take the turn and run their statements for an unknown name too, with
+//! [`NO_ACCOUNT`], so their timing tells nothing either.
+//!
 //! No pair write locks a club. A friend invite (`clubs::invites::create_invite`) holds the club
 //! and then takes the friend's account row `FOR KEY SHARE` and the pair's `friendships` row `FOR
 //! SHARE` ([`locked_friend`]), which conflicts with the `DELETE` of an unfriend or a block: an
@@ -46,12 +51,16 @@ use sqlx::PgConnection;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use std::net::IpAddr;
+
 use crate::AppState;
+use crate::auth::account::account_key;
 use crate::auth::extract::CurrentUser;
 use crate::auth::rules::normalize_username;
 use crate::clubs::invites::NO_SUCH_INVITE;
 use crate::error::{ApiResult, AppError, ErrorBody, msg};
 use crate::extract::ApiPath;
+use crate::ratelimit::{RateLimits, ip_key};
 use out::{FriendsOut, friends_out};
 
 /// The first key of the two-key advisory lock space of a pair's turn ([`lock_pair`]); beside
@@ -62,6 +71,29 @@ pub const PAIR_LOCK_SPACE: i32 = 0x6263_0300;
 /// higher id, so both accounts of a pair take the same turn.
 pub fn pair_key(a: i64, b: i64) -> String {
     format!("{}:{}", a.min(b), a.max(b))
+}
+
+/// The id an uncounted pair write (accept, decline or cancel, remove, unblock) uses for a name
+/// that is unknown or the caller's own. No account has it: ids are positive (the identity
+/// column, and the legacy import's SQLite ids). The write takes the turn of the caller and this
+/// id and runs its statements with it, so it does the same work, and answers as late, as for an
+/// existing account it has nothing with. These routes are not counted (§4.9), so an earlier
+/// answer would tell existing names from unknown ones by its timing, without a limit.
+pub const NO_ACCOUNT: i64 = -1;
+
+/// Counts a friend request, or a block of an account the caller has no request or friendship
+/// with (§4.9): against the account's daily budget, then against its address's, which every
+/// account seen from that address shares. 429 `Slow down a little. Try again later.` over
+/// either.
+pub(crate) fn count_request(limits: &RateLimits, user_id: i64, ip: IpAddr) -> ApiResult<()> {
+    limits
+        .friend_request_user
+        .check_and_hit(&account_key(user_id))
+        .map_err(|wait| wait.into_error(msg::SLOW_DOWN))?;
+    limits
+        .friend_request_ip
+        .check_and_hit(&ip_key(ip))
+        .map_err(|wait| wait.into_error(msg::SLOW_DOWN))
 }
 
 /// The friend routes.

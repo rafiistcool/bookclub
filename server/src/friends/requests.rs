@@ -16,6 +16,10 @@
 //! Anything else is 404: `No such friend request` for accept, decline and cancel, `No friend with
 //! that name` for remove. A declined request leaves no trace; the sender sees it disappear as
 //! after a cancel and may ask again. Requests never expire.
+//!
+//! Only send tells an unknown name from an existing one, and it is counted (§4.9). Accept,
+//! decline, cancel and remove are not, so they answer an unknown name only after the same work
+//! as an existing one ([`super::NO_ACCOUNT`]).
 
 use axum::Json;
 use axum::extract::State;
@@ -23,11 +27,11 @@ use serde::Deserialize;
 use utoipa::ToSchema;
 
 use super::out::{FriendsOut, friends_out};
-use super::{PathName, account_id, lock_pair, revoke_pair_invites};
+use super::{NO_ACCOUNT, PathName, account_id, count_request, lock_pair, revoke_pair_invites};
 use crate::AppState;
-use crate::auth::account::account_key;
 use crate::auth::extract::CurrentUser;
 use crate::auth::rules::normalize_username;
+use crate::client_ip::ClientIp;
 use crate::error::{ApiResult, AppError, ErrorBody, msg};
 use crate::extract::{ApiJson, Validate, Validator};
 
@@ -47,7 +51,8 @@ impl Validate for FriendRequestIn {
 /// Asks another account to be friends. Sending to someone who already asked the caller makes
 /// them friends at once; sending again, or to a friend, changes nothing. A request to someone
 /// who blocked the caller is stored and shows as sent, but never reaches them. 20 requests and
-/// blocks per account a day, unknown names and repeats included.
+/// blocks per account a day, unknown names and repeats included, and 60 per client address a
+/// day across its accounts.
 #[utoipa::path(
     post,
     path = "/api/friends/requests",
@@ -67,13 +72,10 @@ impl Validate for FriendRequestIn {
 pub async fn send(
     user: CurrentUser,
     State(state): State<AppState>,
+    ClientIp(ip): ClientIp,
     ApiJson(body): ApiJson<FriendRequestIn>,
 ) -> ApiResult<Json<FriendsOut>> {
-    state
-        .limits
-        .friend_request_user
-        .check_and_hit(&account_key(user.id))
-        .map_err(|wait| wait.into_error(msg::SLOW_DOWN))?;
+    count_request(&state.limits, user.id, ip)?;
     let mut tx = state.db.begin().await?;
     let unknown = || AppError::not_found(msg::NO_ACCOUNT);
     let other = account_id(&mut tx, Some(&body.username))
@@ -157,10 +159,9 @@ pub async fn accept(
     let other = account_id(&mut tx, name.as_deref())
         .await?
         .filter(|id| *id != user.id)
-        .ok_or_else(no_request)?;
-    if !lock_pair(&mut tx, user.id, other).await? {
-        return Err(no_request());
-    }
+        .unwrap_or(NO_ACCOUNT);
+    // For an unknown name the same statements run with `NO_ACCOUNT`, and change nothing.
+    let found = lock_pair(&mut tx, user.id, other).await?;
     let accepted = sqlx::query!(
         "UPDATE friendships SET accepted_at = clock_timestamp()
          WHERE requester_id = $1 AND addressee_id = $2 AND accepted_at IS NULL
@@ -172,7 +173,7 @@ pub async fn accept(
     .execute(&mut *tx)
     .await?
     .rows_affected();
-    if accepted == 0 {
+    if !found || accepted == 0 {
         return Err(no_request());
     }
     let out = friends_out(&mut tx, user.id).await?;
@@ -205,10 +206,9 @@ pub async fn delete_request(
     let other = account_id(&mut tx, name.as_deref())
         .await?
         .filter(|id| *id != user.id)
-        .ok_or_else(no_request)?;
-    if !lock_pair(&mut tx, user.id, other).await? {
-        return Err(no_request());
-    }
+        .unwrap_or(NO_ACCOUNT);
+    // For an unknown name the same statements run with `NO_ACCOUNT`, and change nothing.
+    let found = lock_pair(&mut tx, user.id, other).await?;
     // The caller's own request, hidden or not; or one to the caller that the caller can see.
     let deleted = sqlx::query!(
         "DELETE FROM friendships
@@ -223,7 +223,7 @@ pub async fn delete_request(
     .execute(&mut *tx)
     .await?
     .rows_affected();
-    if deleted == 0 {
+    if !found || deleted == 0 {
         return Err(no_request());
     }
     let out = friends_out(&mut tx, user.id).await?;
@@ -256,10 +256,9 @@ pub async fn remove(
     let other = account_id(&mut tx, name.as_deref())
         .await?
         .filter(|id| *id != user.id)
-        .ok_or_else(no_friend)?;
-    if !lock_pair(&mut tx, user.id, other).await? {
-        return Err(no_friend());
-    }
+        .unwrap_or(NO_ACCOUNT);
+    // For an unknown name the same statements run with `NO_ACCOUNT`, and change nothing.
+    let found = lock_pair(&mut tx, user.id, other).await?;
     let removed = sqlx::query!(
         "DELETE FROM friendships
          WHERE least(requester_id, addressee_id) = least($1::int8, $2::int8)
@@ -271,7 +270,7 @@ pub async fn remove(
     .execute(&mut *tx)
     .await?
     .rows_affected();
-    if removed == 0 {
+    if !found || removed == 0 {
         return Err(no_friend());
     }
     revoke_pair_invites(&mut tx, user.id, other).await?;

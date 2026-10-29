@@ -1,11 +1,14 @@
 //! Friend requests and friendships (FRIENDS, #57; docs/phase3/work-plan.md §4.2, §4.5, §4.9):
 //! every transition of the request table, the mutual send and its race, the lookups of a name
-//! (also of an account deleted meanwhile), and the daily limit.
+//! (also of an account deleted meanwhile), the daily limits, and the work an uncounted route
+//! does for an unknown name.
 
 mod common;
 
+use std::net::IpAddr;
 use std::time::Duration;
 
+use bookclub_server::friends::{NO_ACCOUNT, PAIR_LOCK_SPACE, pair_key};
 use common::*;
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -352,6 +355,96 @@ async fn twenty_requests_a_day(db: PgPool) {
         .assert_status(200);
     send(&cy, "ada").await.assert_status(200);
     drop_request(&ada, "cy").await.assert_status(200);
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM friendships").await, 0);
+}
+
+/// Every account seen from one address shares 60 counted requests and blocks a day (FRIENDS
+/// security review): accounts made for the purpose, each with its own 20, cannot multiply the
+/// probing for names. A block of someone who already asked stays free; another address has its
+/// own budget.
+#[sqlx::test]
+async fn sixty_requests_a_day_from_one_address(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let home: IpAddr = "203.0.113.7".parse().unwrap();
+    let mut accounts = Vec::new();
+    for name in ["ada", "bob", "cy", "dee"] {
+        accounts.push(app.user(name).await.with_ip(home));
+    }
+    let eve = app
+        .user("eve")
+        .await
+        .with_ip("198.51.100.9".parse().unwrap());
+    send(&eve, "dee").await.assert_status(200);
+    for (i, who) in accounts[..3].iter().enumerate() {
+        for j in 0..20 {
+            send(who, &format!("nobody_{i}_{j}"))
+                .await
+                .assert_detail(404, "No account with that name");
+        }
+    }
+    let dee = &accounts[3];
+    send(dee, "nobody_here")
+        .await
+        .assert_detail(429, "Slow down a little. Try again later.");
+    dee.put("/api/friends/blocks/nobody_here", json!({}))
+        .await
+        .assert_detail(429, "Slow down a little. Try again later.");
+    dee.put("/api/friends/blocks/eve", json!({}))
+        .await
+        .assert_status(200);
+    let away = dee.clone().with_ip("198.51.100.10".parse().unwrap());
+    send(&away, "nobody_here")
+        .await
+        .assert_detail(404, "No account with that name");
+}
+
+/// Accept, decline or cancel, remove and unblock are not counted (§4.9), so an unknown name, or
+/// the caller's own, must not answer sooner than an existing one (FRIENDS security review): it
+/// takes the turn of the caller and `friends::NO_ACCOUNT` and runs the same statements with it.
+/// Holding that turn by hand holds the answer, as holding a pair's turn holds an existing name's.
+#[sqlx::test]
+async fn an_unknown_name_answers_after_the_same_work(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    for (name, other) in [
+        ("nobody_here", NO_ACCOUNT),
+        ("ada", NO_ACCOUNT),
+        ("bob", bob.id()),
+    ] {
+        for route in ["accept", "decline", "remove", "unblock"] {
+            let mut turn = app.db.begin().await.unwrap();
+            sqlx::query("SELECT pg_advisory_xact_lock($1, hashtext($2))")
+                .bind(PAIR_LOCK_SPACE)
+                .bind(pair_key(ada.id(), other))
+                .execute(&mut *turn)
+                .await
+                .unwrap();
+            let task = tokio::spawn({
+                let ada = ada.clone();
+                async move {
+                    match route {
+                        "accept" => accept(&ada, name).await,
+                        "decline" => drop_request(&ada, name).await,
+                        "remove" => remove(&ada, name).await,
+                        _ => ada.delete(&format!("/api/friends/blocks/{name}")).await,
+                    }
+                }
+            });
+            wait_for_a_lock(&app).await;
+            assert!(
+                !task.is_finished(),
+                "{route} of {name} answered before its turn"
+            );
+            turn.rollback().await.unwrap();
+            let res = task.await.unwrap();
+            match route {
+                "accept" | "decline" => res.assert_detail(404, "No such friend request"),
+                "remove" => res.assert_detail(404, "No friend with that name"),
+                _ => res.assert_status(200),
+            };
+        }
+    }
     assert_eq!(app.scalar_i64("SELECT count(*) FROM friendships").await, 0);
 }
 
