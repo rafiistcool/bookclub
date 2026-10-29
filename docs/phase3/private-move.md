@@ -210,13 +210,13 @@ services:
 
 ### 3.2 Only Postgres, and one check of the app
 
-Before move day only `postgres` runs. The app starts once on a spare loopback port, so the old port stays the Python app's, and stops again. With an alias override, the check runs with `-f compose.yaml` only, so the new app never answers under the alias early:
+Before move day only `postgres` runs. The app starts once on a spare loopback port, so the old port stays the Python app's, and stops again. The check runs with `-f compose.yaml` only, so with an alias override the new app never answers under the alias early, and with `--no-deps`, so Postgres keeps the override's labels:
 
 ```bash
 cd "$NEW"
 docker compose pull
 docker compose up -d --wait postgres
-BOOKCLUB_LISTEN=127.0.0.1 BOOKCLUB_PORT=18080 docker compose -f compose.yaml up -d --wait app
+BOOKCLUB_LISTEN=127.0.0.1 BOOKCLUB_PORT=18080 docker compose -f compose.yaml up -d --wait --no-deps app
 docker compose exec app bookclub-server healthcheck        # … answered 200 OK
 curl -sS http://127.0.0.1:18080/api/config; echo           # "signup":"invite", no terms version (not with BIND_ADDR=…:8000)
 docker compose exec app bookclub-server send-test-mail check@example.com; echo "exit $?"
@@ -224,6 +224,8 @@ docker compose exec app bookclub-server send-test-mail check@example.com; echo "
 docker compose stop app
 docker compose ps -a
 ```
+
+If it does not come up: `docker compose logs --no-log-prefix app | grep '^error:' | tail -n 1` names the setting (README, "When it does not start").
 
 **Proxy on this host over loopback** (section 2.3): the app's network exists now, and its gateway is the address the app will see for the proxy:
 
@@ -234,8 +236,6 @@ gateway=$(docker network inspect -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 
 echo "$network $gateway"
 sed -i "s|^TRUSTED_PROXIES=.*|TRUSTED_PROXIES=$gateway/32|" .env
 ```
-
-If it does not come up: `docker compose logs --no-log-prefix app | grep '^error:' | tail -n 1` names the setting (README, "When it does not start").
 
 The importer takes a migrated empty database, and this start migrated it. The target must hold no users and no invites: **no `beta-invite`, no sign-up** until the import.
 
