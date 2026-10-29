@@ -13,7 +13,7 @@
 //!   Library's answer or the pace, which is 2 seconds between two Open Library requests (it runs
 //!   next to the server's job); throttling is waited out, an unavailable answer stops the pass.
 //!   A dry run's cover pass sees the books as they were before the ISBN pass (whose changes
-//!   were rolled back too), and its report says so.
+//!   were rolled back too), and its report's header says so (`REMATCH_DRY_RUN_COVERS`).
 //!
 //! The report gets the `cover search` line and the `without a cover` section (with titles: the
 //! report file is private).
@@ -399,14 +399,6 @@ pub(crate) async fn rematch_covers(
         summarize(&mut conn, &candidates, &fates, &missing, &imported, false).await?;
     report.covers = Some(line);
     report.without_cover = section;
-    if args.dry_run {
-        report.notes.push(
-            "cover search: a dry run searches the imported books as they were before the ISBN \
-             pass above (its upgrades were rolled back), so a real run may search fewer books \
-             and count otherwise"
-                .to_owned(),
-        );
-    }
     Ok(())
 }
 

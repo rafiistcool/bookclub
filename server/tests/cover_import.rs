@@ -396,11 +396,17 @@ async fn rematch_reports_a_book_that_changed_and_what_a_dry_run_sees(db: PgPool)
             .await
         )]
     );
+    // The header says what a dry run's cover pass saw; the lines stay those of a real run.
+    let printed = report.to_string();
     assert!(
-        report.lines.iter().any(|line| line
-            .contains("a dry run searches the imported books as they were before the ISBN pass")),
-        "{:?}",
-        report.lines
+        printed.contains(importer::REMATCH_DRY_RUN_COVERS),
+        "{printed}"
+    );
+    assert!(
+        !report
+            .lines
+            .iter()
+            .any(|line| line.contains("ISBN pass's upgrades"))
     );
     assert_eq!(cover_of(&app, work).await, None);
 }

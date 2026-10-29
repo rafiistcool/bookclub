@@ -109,6 +109,10 @@ pub struct Report {
     pub lines: Vec<String>,
     /// Everything was rolled back.
     pub dry_run: bool,
+    /// The report of `rematch-legacy`: its dry run's header also says that the cover search saw
+    /// the books as they were before the ISBN pass (the header, not `lines`, so a dry run's lines
+    /// still equal the real run's).
+    pub rematch: bool,
     /// One line per entity: source rows → target rows.
     pub entities: Vec<EntityLine>,
     /// Repaired values per `table.column` (legacy-mapping.md §0 "Normalising").
@@ -144,13 +148,17 @@ impl Report {
     }
 
     fn from_rematch(b: ReportBuilder, dry_run: bool) -> Report {
-        Report::from_builder(b, dry_run, HashMap::new())
+        Report {
+            rematch: true,
+            ..Report::from_builder(b, dry_run, HashMap::new())
+        }
     }
 
     fn from_builder(b: ReportBuilder, dry_run: bool, books: HashMap<i64, BookTarget>) -> Report {
         Report {
             lines: b.lines(),
             dry_run,
+            rematch: false,
             entities: b.entities,
             normalised: b.normalised,
             merges: b.merges,
@@ -172,6 +180,9 @@ impl fmt::Display for Report {
                 f,
                 "DRY RUN: everything below was rolled back, and no media bytes were written."
             )?;
+            if self.rematch {
+                writeln!(f, "{REMATCH_DRY_RUN_COVERS}")?;
+            }
         }
         for line in &self.lines {
             writeln!(f, "{line}")?;
@@ -179,6 +190,12 @@ impl fmt::Display for Report {
         Ok(())
     }
 }
+
+/// The second header line of a dry `rematch-legacy` (#74): its cover pass runs after an ISBN pass
+/// whose upgrades were rolled back edition by edition, so it searched the books as they were
+/// before them, and the real run may search fewer and count otherwise.
+pub const REMATCH_DRY_RUN_COVERS: &str = "The cover search looked at the imported books as they \
+     were before the ISBN pass's upgrades; a real run may search fewer books and count otherwise.";
 
 /// The refusal of a target that already has invites (sign-up invites minted with `beta-invite`
 /// before the import): their ids and codes could collide with the legacy invites, which keep
