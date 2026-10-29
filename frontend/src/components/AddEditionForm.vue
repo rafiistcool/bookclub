@@ -21,8 +21,8 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{
   added: [edition: EditionOut];
-  /** The ISBN names an edition of this work that is already listed. */
-  existing: [editionId: number];
+  /** The ISBN sent (as typed) names an edition of this work that is already listed. */
+  existing: [editionId: number, isbn: string | null];
   cancel: [];
 }>();
 
@@ -40,8 +40,8 @@ const language = ref("");
 const title = ref("");
 const busy = ref(false);
 const error = ref("");
-/** A 409 for the ISBN: where the catalog already has it. */
-const known = ref<{ workId: number; editionId: number | null } | null>(null);
+/** A 409 for the ISBN: where the catalog already has it, and the ISBN it was for. */
+const known = ref<{ workId: number; editionId: number | null; isbn: string | null } | null>(null);
 
 const languages = computed(() => languageOptions(locale.locale));
 
@@ -81,6 +81,7 @@ async function submit() {
         known.value = {
           workId: found.work_id,
           editionId: typeof found.edition_id === "number" ? found.edition_id : null,
+          isbn: body.isbn ?? null,
         };
       }
     }
@@ -140,7 +141,7 @@ async function submit() {
           v-if="known.workId === workId && known.editionId != null"
           class="text-btn"
           type="button"
-          @click="emit('existing', known.editionId)"
+          @click="emit('existing', known.editionId, known.isbn)"
         >
           {{ t("editions.chooseExisting") }}
         </button>

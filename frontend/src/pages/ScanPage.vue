@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, useId } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { api, ApiError } from "../api/client";
-import type { BookOut, IsbnHitOut, SearchHit, ShelfItemOut } from "../api/generated";
+import type { BookDetailOut, BookOut, EditionOut, IsbnHitOut, SearchHit, ShelfItemOut } from "../api/generated";
 import AddBookSheet from "../components/AddBookSheet.vue";
 import AddEditionForm from "../components/AddEditionForm.vue";
 import BackLink from "../components/BackLink.vue";
@@ -11,6 +11,7 @@ import BarcodeScanner from "../components/BarcodeScanner.vue";
 import BookCover from "../components/BookCover.vue";
 import CoverPhotoButton from "../components/CoverPhotoButton.vue";
 import { bookPath, STATUSES, statusLabel, statusShort, type Status } from "../constants";
+import { parseIsbn } from "../isbn";
 import { useToast } from "../stores/toast";
 
 /**
@@ -20,8 +21,9 @@ import { useToast } from "../stores/toast";
  * - A hit: shelve it with this edition, or set this edition on the entry the
  *   reader already has; a photo when the edition has no cover.
  * - A miss: find the work by title and add the edition to it, or add a new
- *   book; either way the ISBN is looked up again (now a local hit) and shows
- *   as a hit card.
+ *   book; either way the ISBN it was saved with is looked up (now a local hit)
+ *   and shows as a hit card. The reader may change or clear the scanned ISBN
+ *   in the form: a save without one opens the book.
  *
  * Nothing goes onto the shelf without a tap.
  */
@@ -61,6 +63,8 @@ let lookupAbort: AbortController | null = null;
 let clock: ReturnType<typeof setInterval> | null = null;
 /** Bumped when the miss flow starts over; a search that comes back later is dropped. */
 let findRun = 0;
+/** The work a save in the miss flow went to: if its ISBN still misses, the book opens instead. */
+let savedWork: number | null = null;
 
 const coverBook = computed(() =>
   hit.value
@@ -141,6 +145,11 @@ async function lookup() {
   } catch (err) {
     if (controller.signal.aborted) return;
     if (err instanceof ApiError && err.status === 404) {
+      if (savedWork !== null) {
+        // Never the miss card for a book just saved: it would invite a second, duplicate one.
+        void router.push(bookPath(savedWork));
+        return;
+      }
       hit.value = null;
       resetMiss();
       phase.value = "miss";
@@ -157,6 +166,7 @@ async function lookup() {
 }
 
 function onIsbn(value: string) {
+  savedWork = null;
   isbn.value = value;
   void lookup();
 }
@@ -169,6 +179,7 @@ function cancelLookup() {
 
 function scanAnother() {
   abortLookup();
+  savedWork = null;
   resetMiss();
   hit.value = null;
   isbn.value = "";
@@ -257,15 +268,34 @@ async function findWorks() {
   }
 }
 
-/** A save in the miss flow: the ISBN is in the catalog now, so this lookup is local. */
-function onSaved() {
+/**
+ * A save in the miss flow. The ISBN it was saved with is in the catalog now, so its lookup is
+ * local and shows the hit card; it need not be the scanned one, since the forms let the reader
+ * change or clear it. A save without an ISBN opens the book.
+ */
+function showSaved(workId: number, savedIsbn: string | null) {
   addingBook.value = false;
+  if (!savedIsbn) {
+    void router.push(bookPath(workId));
+    return;
+  }
+  savedWork = workId;
+  isbn.value = savedIsbn;
   void lookup();
 }
 
-function editionAdded() {
+function editionAdded(edition: EditionOut) {
   toast.show(t("editions.added"));
-  onSaved();
+  showSaved(edition.work_id, edition.isbn13);
+}
+
+/** The ISBN sent is an edition of the chosen work already ("Choose that edition"). */
+function editionExists(_editionId: number, sent: string | null) {
+  if (chosenWork.value) showSaved(chosenWork.value.id, sent ? parseIsbn(sent) : null);
+}
+
+function bookAdded(book: BookDetailOut, sent: string | null) {
+  showSaved(book.id, sent ? parseIsbn(sent) : null);
 }
 
 onBeforeUnmount(() => {
@@ -387,7 +417,7 @@ onBeforeUnmount(() => {
           :work-id="chosenWork.id"
           :initial-isbn="isbn"
           @added="editionAdded"
-          @existing="onSaved"
+          @existing="editionExists"
           @cancel="chosenWork = null"
         />
       </div>
@@ -443,7 +473,7 @@ onBeforeUnmount(() => {
         v-if="addingBook"
         :initial-isbn="isbn"
         stay
-        @added="onSaved"
+        @added="bookAdded"
         @close="addingBook = false"
       />
     </section>

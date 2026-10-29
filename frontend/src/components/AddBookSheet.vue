@@ -19,7 +19,11 @@ const props = defineProps<{
   stay?: boolean;
 }>();
 
-const emit = defineEmits<{ close: []; added: [book: BookDetailOut] }>();
+const emit = defineEmits<{
+  close: [];
+  /** With `stay`: the new book and the ISBN it was saved with, as typed (`BookDetailOut` has none). */
+  added: [book: BookDetailOut, isbn: string | null];
+}>();
 
 const router = useRouter();
 const toast = useToast();
@@ -53,16 +57,17 @@ async function submit() {
   try {
     const yearRaw = String(year.value ?? "").trim();
     const parsedYear = yearRaw ? Number(yearRaw) : null;
+    const sentIsbn = isbn.value.trim() || null;
     const book = await api.createCustomBook({
       title: trimmed,
       authors: authors.value.trim(),
       year: parsedYear && Number.isFinite(parsedYear) ? parsedYear : null,
       description: description.value.trim(),
-      ...(isbn.value.trim() ? { isbn: isbn.value.trim() } : {}),
+      ...(sentIsbn ? { isbn: sentIsbn } : {}),
     });
     toast.show(t("addBook.added"));
     if (props.stay) {
-      emit("added", book);
+      emit("added", book, sentIsbn);
       emit("close");
     } else {
       await open(bookPath(book));

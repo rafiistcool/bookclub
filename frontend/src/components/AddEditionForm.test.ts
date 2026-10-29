@@ -68,8 +68,10 @@ describe("AddEditionForm", () => {
     await wrapper.get("form").trigger("submit");
     await flushPromises();
     expect(wrapper.text()).toContain("That ISBN is already in the catalog");
+    // The choice names the ISBN the 409 was for, also when the field changes afterwards.
+    await wrapper.get("input[name='isbn']").setValue("0-306-40615-2");
     const choose = wrapper.findAll("button").find((button) => button.text() === "Choose that edition");
     await choose!.trigger("click");
-    expect(wrapper.emitted("existing")).toEqual([[40]]);
+    expect(wrapper.emitted("existing")).toEqual([[40, "9780316769488"]]);
   });
 });

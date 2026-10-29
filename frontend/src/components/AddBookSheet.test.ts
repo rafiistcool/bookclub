@@ -113,9 +113,31 @@ describe("AddBookSheet", () => {
     await wrapper.get('input[type="text"]').setValue("Kitchen Zine 2");
     await wrapper.get("form").trigger("submit");
     await flushPromises();
-    expect(wrapper.emitted("added")).toEqual([[{ id: 31, title: "Kitchen Zine 2" }]]);
+    expect(wrapper.emitted("added")).toEqual([[{ id: 31, title: "Kitchen Zine 2" }, "9780316769488"]]);
     expect(wrapper.emitted("close")).toHaveLength(1);
     expect(push).not.toHaveBeenCalled();
+  });
+
+  it("with stay, emits the ISBN as saved: a changed one as typed, a cleared one as null", async () => {
+    const changed = mount(AddBookSheet, {
+      props: { initialIsbn: "9780316769488", stay: true },
+      global: { plugins: [createPinia(), i18n] },
+    });
+    await changed.get('input[type="text"]').setValue("Kitchen Zine 2");
+    await changed.findAll('input[type="text"]')[2].setValue(" 0-306-40615-2 ");
+    await changed.get("form").trigger("submit");
+    await flushPromises();
+    expect(changed.emitted("added")?.[0][1]).toBe("0-306-40615-2");
+
+    const cleared = mount(AddBookSheet, {
+      props: { initialIsbn: "9780316769488", stay: true },
+      global: { plugins: [createPinia(), i18n] },
+    });
+    await cleared.get('input[type="text"]').setValue("Kitchen Zine 2");
+    await cleared.findAll('input[type="text"]')[2].setValue("");
+    await cleared.get("form").trigger("submit");
+    await flushPromises();
+    expect(cleared.emitted("added")?.[0][1]).toBeNull();
   });
 
   it("with stay, keeps the form and its values when the save fails", async () => {
