@@ -474,7 +474,7 @@ The window lasts until the other member writes to the new app. Until then the ol
 3. In `$NEW`: `docker compose down -v` and `find "$DATA/media" -mindepth 1 -delete`, so the next attempt starts from an empty target. Before the next attempt, section 3.2 again (`up -d --wait postgres`, the check on 18080).
 4. Rafael tells the other member the update is postponed, and I record why in #52.
 
-Python's `restart: unless-stopped` keeps a stopped container stopped after a reboot. Starting it while the new app holds the port fails with "port already allocated", which is safe.
+Python's `restart: unless-stopped` keeps a stopped container stopped after a reboot. Starting it while the new app holds the port fails with "port already allocated", which is safe. In the alias case no port stops it: it would answer under the same alias as the new app. So nothing runs `docker compose up` or `start` in `$OLD` outside the rollback, also when the proxy is a service of that project.
 
 After the window there is no rollback: the members' writes exist only on the new app. Problems are fixed forward; the backup timer covers the new data from the first night on.
 
@@ -544,7 +544,7 @@ The file holds a new random password of 20 characters (capital letters and digit
 
 ## 11. After 30 days (M6): the cleanup block
 
-**[Rafael]** pastes this on the host as root, with the three values filled in at the move. It deletes only when the last 8 days hold a passing restore test and the newest snapshot is from last night; otherwise it stops and deletes nothing.
+**[Rafael]** pastes this on the host as root, with the three values filled in at the move. It deletes only when the last 8 days hold a passing restore test from the timer, the newest snapshot is from last night, and a restore test run right then passes (about a minute): a pass from last week says nothing about this week's run. Otherwise it stops and deletes nothing.
 
 ```bash
 bash -s <<'CLEANUP'
@@ -554,7 +554,7 @@ OLD=<OLD>                 # the Python app's compose directory
 OLD_DATA=<OLD_DATA>       # its data directory, with bookclub.db
 cd "$NEW"
 if ! journalctl -u bookclub-restore-test --since '8 days ago' --no-pager | grep -F 'restore test passed' >/dev/null; then
-    echo "stop: no passing restore test in the last 8 days; nothing was deleted"
+    echo "stop: no passing restore test in the last 8 days (is bookclub-restore-test.timer on?); nothing was deleted"
     exit 1
 fi
 snapshots=$("$NEW/backup.sh" restic snapshots --latest 1 --json)
@@ -564,14 +564,23 @@ if [[ -z $latest ]] || (( $(date +%s) - $(date -d "$latest" +%s) > 36 * 3600 ));
     exit 1
 fi
 [[ -f $OLD_DATA/bookclub.db ]] || { echo "stop: $OLD_DATA holds no bookclub.db; nothing was deleted"; exit 1; }
+if ! systemctl start bookclub-restore-test; then
+    echo "stop: the restore test failed just now (journalctl -u bookclub-restore-test); nothing was deleted"
+    exit 1
+fi
 cd "$OLD"
 container=$(docker compose ps -aq bookclub)
 image=$(docker inspect -f '{{.Image}}' "$container")
-docker compose down
+# Every tag of the image (two registries, or :latest and :0.10): by ID alone, docker refuses an
+# image that has more than one.
+mapfile -t tags < <(docker image inspect -f '{{range .RepoTags}}{{println .}}{{end}}' "$image" | grep -v '^$')
+# Only the Python service's container: the project's other services (a proxy, as SELFHOST.md
+# allows) and its networks stay.
+docker compose rm --stop --force bookclub
 rm -rf -- "$OLD_DATA"
-docker image rm "$image"
-echo "done: the Python app, its data and its image are gone (backups: restore test passed, newest snapshot $latest)"
+docker image rm "${tags[@]:-$image}"
+echo "done: the Python app, its data and its image are gone (backups: restore test passed just now, newest snapshot $latest)"
 CLEANUP
 ```
 
-`$OLD` itself, with the old `compose.yaml` and `.env`, stays as the record; delete it by hand when it is no longer wanted (its `.env` holds the old app's `SECRET_KEY`, which nothing uses any more).
+`$OLD` itself, with the old `compose.yaml` and `.env`, stays as the record; delete it by hand when it is no longer wanted (its `.env` holds the old app's `SECRET_KEY`, which nothing uses any more). When that project still runs other services, its `compose.yaml` still names `bookclub`, and a later `docker compose up -d` there would create the Python container again: **[Rafael]** removes the `bookclub` service from that file.
