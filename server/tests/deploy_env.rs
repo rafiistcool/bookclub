@@ -16,6 +16,8 @@
 //!   stopped during the backup), waits an hour before it tries a failed image again, runs once at
 //!   a time, ignores one-off containers, and pings the heartbeat with the outcome without putting
 //!   the ping URL on a command line or into the log.
+//! - The heartbeat pings of `update.sh` and of `supervise` (`backup-lib.sh`, which runs
+//!   `backup.sh` and `restore-test.sh`) carry the end of the log without any picture's public id.
 //! - `deploy/hosted/backup.sh`, with `docker` stood in for, keeps every snapshot of the last 14
 //!   days, so the backup before an update survives later backups the same day.
 
@@ -782,9 +784,10 @@ fn systemd_units_start_scripts_that_exist() {
 ///   makes the pull fail and `ping-down` every ping. `inspect` of any other ID fails as Docker's
 ///   does (`No such object`).
 /// - `curl` reads the ping URL from its config on stdin (`-K -`) and fails when the URL is on its
-///   command line.
-/// - `backup.sh` is a stub that logs its run, copies the files in `state/after-backup/` over
-///   `state/` (whatever happened while it ran) and exits with `state/backup-status` (default 0).
+///   command line. It appends the body of each ping (`--data-binary @<file>`) to `bodies.log`.
+/// - `backup.sh` is a stub that logs its run, prints `state/backup-says` (if there is one) as
+///   its output, copies the files in `state/after-backup/` over `state/` (whatever happened while
+///   it ran) and exits with `state/backup-status` (default 0).
 struct UpdateRig {
     dir: tempfile::TempDir,
 }
@@ -829,6 +832,11 @@ const FAKE_CURL: &str = r#"() {
         echo "curl: (7) Failed to connect" >&2
         return 7
     fi
+    local previous='' arg
+    for arg in "$@"; do
+        if [ "$previous" = --data-binary ]; then cat "${arg#@}" >>"$RIG/bodies.log"; fi
+        previous=$arg
+    done
     sed -n 's/^url = "\(.*\)"$/ping \1/p' >>"$RIG/calls.log"
 }"#;
 
@@ -848,6 +856,7 @@ impl UpdateRig {
         std::fs::write(
             opt.join("backup.sh"),
             "#!/usr/bin/env bash\nprintf 'backup.sh\\n' >>\"$RIG/calls.log\"\n\
+             if [ -r \"$RIG/state/backup-says\" ]; then cat \"$RIG/state/backup-says\"; fi\n\
              if [ -d \"$RIG/state/after-backup\" ]; then cp \"$RIG/state/after-backup/\"* \"$RIG/state/\"; fi\n\
              exit \"$(cat \"$RIG/state/backup-status\" 2>/dev/null || echo 0)\"\n",
         )
@@ -914,6 +923,7 @@ impl UpdateRig {
     fn run_with(&self, prefix: &[&std::ffi::OsStr]) -> (Output, Vec<String>) {
         let log = self.dir.path().join("calls.log");
         let _ = std::fs::remove_file(&log);
+        let _ = std::fs::remove_file(self.dir.path().join("bodies.log"));
         let script = self.dir.path().join("opt/update.sh");
         let mut argv: Vec<&std::ffi::OsStr> = prefix.to_vec();
         argv.push("bash".as_ref());
@@ -934,6 +944,11 @@ impl UpdateRig {
             .collect();
         (output, calls)
     }
+}
+
+/// The bodies of the last run's pings, in order.
+fn bodies(rig: &Path) -> String {
+    std::fs::read_to_string(rig.join("bodies.log")).unwrap_or_default()
 }
 
 /// What a script printed: stdout, then stderr. `update.sh` logs an update's errors on stdout too.
@@ -1342,6 +1357,83 @@ fn a_bad_update_setting_stops_only_the_updates() {
         "{}",
         printed(&output)
     );
+}
+
+/// A picture's public id: 26 characters of `[a-z0-9]` (`media.public_id`'s check), the secret
+/// part of its URL.
+const PUBLIC_ID: &str = "k7m2q9x4p1r8t5w3z6b0c2d4f6";
+
+/// The update's ping carries the end of its log, which holds `backup.sh`'s output. A line there
+/// can name a picture by its path (one deleted during the backup), so the ping has `<id>` in
+/// place of every public id, and healthchecks.io receives none (`docs/legal/processors.md`). The
+/// log on the VM keeps it.
+#[cfg(unix)]
+#[test]
+fn update_pings_carry_no_public_id() {
+    let rig = UpdateRig::new("sha256:b");
+    rig.set(
+        "backup-says",
+        &format!("warning: avatars/k7/{PUBLIC_ID}/a was deleted during the backup"),
+    );
+    let (output, calls) = rig.run();
+    assert!(output.status.success(), "{}", printed(&output));
+    assert_eq!(pings(&calls), ["start", "0"], "{calls:#?}");
+    let body = bodies(rig.dir.path());
+    assert!(
+        body.contains("warning: avatars/k7/<id>/a was deleted during the backup"),
+        "{body}"
+    );
+    assert!(!body.contains(PUBLIC_ID), "{body}");
+    let log = std::fs::read_to_string(rig.backup_dir().join("update.log")).unwrap();
+    assert!(log.contains(PUBLIC_ID), "{log}");
+}
+
+/// `supervise` (`backup-lib.sh`), which runs `backup.sh` and `restore-test.sh`, blanks the
+/// public ids in its ping the same way, and pings the run's exit status.
+#[cfg(unix)]
+#[test]
+fn supervise_pings_carry_no_public_id() {
+    const SCRIPT: &str = r#"set -euo pipefail
+. "$1"
+BACKUP_DIR=$RIG/backup
+said() {
+    printf 'restic: avatars/k7/%s/a: no such file or directory\n' "$1"
+    return 3
+}
+status=0
+supervise backup https://hc.test/ping/backup said "$2" || status=$?
+exit "$status"
+"#;
+    let dir = tempfile::tempdir().unwrap();
+    let output = std::process::Command::new("bash")
+        .args(["-c", SCRIPT, "supervise"])
+        .arg(repo().join("deploy/hosted/backup-lib.sh"))
+        .arg(PUBLIC_ID)
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("RIG", dir.path())
+        .env("BASH_FUNC_curl%%", FAKE_CURL)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(3), "{}", printed(&output));
+    let calls = std::fs::read_to_string(dir.path().join("calls.log")).unwrap_or_default();
+    assert_eq!(
+        calls.lines().collect::<Vec<_>>(),
+        [
+            "ping https://hc.test/ping/backup/start",
+            "ping https://hc.test/ping/backup/3"
+        ],
+        "{}",
+        printed(&output)
+    );
+    let body = bodies(dir.path());
+    assert!(
+        body.contains("restic: avatars/k7/<id>/a: no such file or directory"),
+        "{body}"
+    );
+    assert!(!body.contains(PUBLIC_ID), "{body}");
+    let log = std::fs::read_to_string(dir.path().join("backup/backup.log")).unwrap();
+    assert!(log.contains(PUBLIC_ID), "{log}");
 }
 
 /// `backup.sh` against a stand-in for `docker`, which logs every call to `calls.log` and answers

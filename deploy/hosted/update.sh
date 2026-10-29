@@ -17,7 +17,8 @@
 #         nothing else) and waits up to UPDATE_WAIT_SECONDS for Docker's healthcheck;
 #      e. a check that the app runs the new image and is healthy; the image it ran before is
 #         removed once no tag names it;
-#      f. the heartbeat with the exit status and the end of the log.
+#      f. the heartbeat with the exit status and the end of the log, its public ids blanked
+#         (log_tail in backup-lib.sh).
 #      A failed backup leaves the app as it was. A failed update of an image is tried again an
 #      hour later (BACKUP_DIR/update.failed), not on every run, because each try starts with a
 #      full backup; a new image for the tag is tried at once.
@@ -202,7 +203,7 @@ main() {
     ) 2>&1 | tee "$report"
     result=${PIPESTATUS[0]}
     set -e
-    tail -n 50 "$report" >"$report.tail"
+    log_tail "$report" "$report.tail"
     heartbeat "$UPDATE_HEARTBEAT_URL" "$result" "$report.tail"
     rm -f "$report.tail"
     return "$result"

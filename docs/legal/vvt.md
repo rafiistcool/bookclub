@@ -206,13 +206,13 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 |---|---|
 | Purpose | Alert the operator when the service or a timer stops |
 | Legal basis | Art. 6 (1) (f) |
-| Data subjects | none: the heartbeats name no user once picture ids are blanked out of them (chosen; to do in DEP2's scripts, `privacy-facts.md` §0). Until then, users through a picture's storage key in rare log lines |
+| Data subjects | none: picture ids are blanked out of the heartbeats before they are sent, so they name no user (`privacy-facts.md` §0, §5) |
 | Data | the health answer (`{"status":"ok"}`); per heartbeat the job's exit status and the last 50 lines of its log (row counts, restic's summary), with every picture's public id blanked out (`privacy-facts.md` §5) |
 | Tables | none |
 | Recipients | the uptime check (Better Stack or UptimeRobot, to confirm) and healthchecks.io (Q10 A; `processors.md`) |
 | Third countries | to confirm with the chosen services |
 | Retention | the services' check and ping history (to confirm) |
-| Source | `server/src/health.rs`; `deploy/hosted/backup-lib.sh` (`heartbeat`), `deploy/hosted/update.sh` |
+| Source | `server/src/health.rs`; `deploy/hosted/backup-lib.sh` (`heartbeat`, `log_tail`), `deploy/hosted/update.sh` |
 
 ### 14. Migration of the old app's data (one-off, at the cutover)
 

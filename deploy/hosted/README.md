@@ -105,7 +105,7 @@ The app deletes old records itself, every hour, with nothing to configure (Q14, 
 4. `docker compose up -d --no-deps --wait app` replaces the app container, and nothing else, and waits up to `UPDATE_WAIT_SECONDS` (300) for it to turn healthy. `update.sh` then checks that the app runs the new image, and removes the old image once no tag names it.
 5. The heartbeat `UPDATE_HEARTBEAT_URL` of `backup.env`:
    - `<url>/0` after every check that finds the app up to date and healthy;
-   - `<url>/start` before an update, and `<url>/<exit status>` with the end of its log after it;
+   - `<url>/start` before an update, and `<url>/<exit status>` with the end of its log after it (every public id blanked, as for the backups);
    - `<url>/1` while the app runs the tag's image but is unhealthy or restarting, so a failed update keeps the check down until it is fixed;
    - `<url>/1` while a failed update waits for its next try (below);
    - nothing when the registry does not answer (the run exits 1): only an outage that outlasts the check's grace time alerts.
@@ -370,7 +370,7 @@ The importer reads a private copy of the database and its `-wal` in the containe
 2. `restic backup` of that directory and of `/srv/bookclub/media`. The dump comes first: a picture is on disk before its row commits, so the dump never references a picture saved after restic read the media. A picture deleted in between (a replaced profile picture, a takedown, a deleted account) can be missing from the snapshot while the dump still references it. restic then saves the snapshot without it and names it as a file it could not read. `backup.sh` logs that as a warning and goes on when every such file is a picture that no longer exists, and fails otherwise.
 3. `restic forget --prune`, keeping every snapshot of the last 14 days, and beyond them 7 daily, 4 weekly and 12 monthly snapshots. The 14 days keep the backup that `update.sh` takes before an update, which a later backup the same day would otherwise prune: `--keep-daily` keeps only the newest snapshot of each day.
 4. On Sundays, `restic check --read-data-subset=5%`, which reads back 5 % of the stored data.
-5. A heartbeat ping when it starts, and one with its exit status and the end of its log when it ends.
+5. A heartbeat ping when it starts, and one with its exit status and the end of its log when it ends. The log can name a picture by its path (step 2), and a picture's public id is the secret part of its URL, so the ping carries the last 50 lines with every run of 26 or more lowercase letters and digits replaced by `<id>` (`log_tail` in `backup-lib.sh`); restic's ids are blanked with them. The full log stays in `/var/lib/bookclub-backup`.
 
 `restore-test.sh` runs every Sunday at 05:30 (see "Restore"). Both scripts read `backup.env`, share one lock, and log to the journal. restic runs from the image `restic/restic:0.17.3`, so nothing needs installing besides `curl`.
 
