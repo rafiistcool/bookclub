@@ -34,6 +34,7 @@ import type {
   InviteList,
   InviteOut,
   InvitePreview,
+  IsbnHitOut,
   LegalDoc,
   LegalDocumentOut,
   LoginIn,
@@ -269,6 +270,14 @@ export const api = {
     request<BookDetailOut>(`${workPath(workId)}/refresh`, { method: "POST" }),
   createCustomBook: (body: CustomBookIn) =>
     request<BookDetailOut>("/api/books/custom", json("POST", body)),
+  /**
+   * The edition of an ISBN (ISBN-10 or ISBN-13), from the catalog or, when it
+   * is not there yet, from the DNB or Open Library, stored on the way. Counts
+   * as a catalog request of the account (429 `Slow down a little…`).
+   * 404 `No book found for that ISBN` is a miss, not an error.
+   */
+  lookupIsbn: (isbn: string, signal?: AbortSignal) =>
+    request<IsbnHitOut>(`/api/books/isbn/${enc(isbn)}`, { signal }),
   /** Notice-and-takedown for a cover, by `cover_public_id`. */
   reportCover: (publicId: string, body: ReportIn) =>
     request<ReportCreated>(`/api/media/${enc(publicId)}/reports`, json("POST", body)),

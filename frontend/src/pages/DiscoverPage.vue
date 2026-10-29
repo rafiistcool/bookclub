@@ -749,6 +749,26 @@ defineExpose({ loadPage });
             >
               {{ t("common.clear") }}
             </button>
+            <RouterLink
+              class="icon-btn scan-link"
+              to="/scan"
+              :aria-label="t('scan.entry')"
+              :title="t('scan.entry')"
+            >
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                aria-hidden="true"
+              >
+                <path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16" />
+                <path d="M8 8.5v7M11 8.5v7M13.5 8.5v7M16 8.5v7" />
+              </svg>
+            </RouterLink>
           </span>
           <section
             v-if="showHistory"
@@ -1088,6 +1108,22 @@ defineExpose({ loadPage });
 
 .search-field input:focus-visible {
   outline: none;
+}
+
+/* The scan button sits at the field's right edge and keeps the input as wide
+   as it can on a 360 px phone. */
+.scan-link {
+  flex: none;
+  min-width: 40px;
+  min-height: 40px;
+  margin-right: calc(-1 * var(--space-3));
+  color: var(--text-muted);
+}
+
+/* "Clear" already empties the field; the browser's own × only took its room. */
+.search-field input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 .search-field:focus-within {

@@ -41,6 +41,7 @@ export type {
   ClubRole,
   ClubSummary,
   InvitePreview,
+  IsbnHitOut,
   LegalDoc,
   LegalDocumentOut,
   MilestoneOut,

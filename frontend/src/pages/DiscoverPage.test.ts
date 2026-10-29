@@ -603,6 +603,13 @@ describe("DiscoverPage and ISBNs", () => {
     newReleases.mockReset().mockResolvedValue(page([]));
   });
 
+  it("opens /scan from a button in the search bar", async () => {
+    const { wrapper } = await mountDiscover();
+    const link = wrapper.get(".search-field a[href='/scan']");
+    expect(link.attributes("aria-label")).toBe("Scan a barcode");
+    wrapper.unmount();
+  });
+
   it("puts a searched ISBN into the new book's ISBN field, not its title", async () => {
     const { wrapper } = await mountDiscover("/discover?q=978-0-316-76948-8");
     await wrapper.findAll("button").find((button) => button.text() === "Add your own book")!.trigger("click");

@@ -68,6 +68,8 @@ const router = createRouter({
       children: [
         { path: "", component: () => import("./pages/HomePage.vue") },
         { path: "discover", component: () => import("./pages/DiscoverPage.vue") },
+        // The barcode scanner (#56), opened from Discover; Back closes it.
+        { path: "scan", component: () => import("./pages/ScanPage.vue") },
         { path: "shelf", component: () => import("./pages/ShelfPage.vue") },
         { path: "shelf/physical", component: () => import("./pages/PhysicalShelfPage.vue") },
         { path: "diary", component: () => import("./pages/DiaryPage.vue") },
