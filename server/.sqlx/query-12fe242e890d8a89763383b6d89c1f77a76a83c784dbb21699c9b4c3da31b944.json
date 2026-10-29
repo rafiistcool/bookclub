@@ -1,0 +1,172 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.id, s.status, s.work_id, s.ol_work_id, s.ol_edition_id, s.title, s.authors,\n                  s.year, s.language, s.reason, s.created_at, s.decided_at,\n                  m.public_id AS \"cover?\"\n           FROM cover_suggestions s\n           LEFT JOIN media m ON m.ol_cover_id = s.ol_cover_id AND m.removed_at IS NULL\n                            AND m.ol_gone_at IS NULL\n           WHERE s.id = ANY($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "cover_suggestions",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "cover_suggestions",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "work_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "cover_suggestions",
+            "name": "work_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "ol_work_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "cover_suggestions",
+            "name": "ol_work_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "ol_edition_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "cover_suggestions",
+            "name": "ol_edition_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "title",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "cover_suggestions",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "authors",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "cover_suggestions",
+            "name": "authors"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "year",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "cover_suggestions",
+            "name": "year"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "language",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "cover_suggestions",
+            "name": "language"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "reason",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "cover_suggestions",
+            "name": "reason"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "cover_suggestions",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "decided_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "cover_suggestions",
+            "name": "decided_at"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "cover?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "public_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "12fe242e890d8a89763383b6d89c1f77a76a83c784dbb21699c9b4c3da31b944"
+}

@@ -61,7 +61,10 @@ Everything here is done before the announcement goes out, and checked again the 
 - [ ] The dry run and the real run of the rehearsal exited 0, `compare.sh` matched, and Rafael
       signed in with his old password and saw his data.
 - [ ] The slug (D5), the run time and the lookup wait are in #38. The downtime window is the run
-      time twice (dry run and real run), plus the lookup wait, plus one hour for the checks.
+      time twice (dry run and real run), plus the lookup wait, plus the cover search twice, plus
+      15 minutes for the cover suggestions (3.5), plus one hour for the checks. The rehearsal ran
+      before `import-legacy` searched covers: count about 3 s for each imported book without a
+      cover (the rehearsal had at least 17 of 51), at most 5 minutes per run.
 
 **The old host and the Caddy host**
 
@@ -225,7 +228,11 @@ empty (wipe it, section 1); exit 1 prints the reason.
 - every entity line `source → target`: the differences are the listed merges and skips;
 - the counts are at least the rehearsal's (the club kept writing since), and nothing new is in
   `notes`;
-- `normalised`, `merges`, `differences` and `isbn keys` hold nothing unexpected.
+- `normalised`, `merges`, `differences` and `isbn keys` hold nothing unexpected;
+- the `cover search` line and the `without a cover` section: no book is "not searched (database
+  error)". "Not searched" for an outage, a busy Open Library or the time budget is no no-go:
+  `rematch-legacy` searches those books again (3.5), and the server's cover search takes them
+  first after the start. A book without a cover is no no-go either.
 
 Anything unexpected: stop here and roll back (section 4). The target is still empty.
 
@@ -238,8 +245,9 @@ echo "exit $?"
 diff <(tail -n +2 dry.txt) real.txt
 ```
 
-The diff may show only the `lookup wait` line, or an ISBN whose upstream record changed in
-between.
+The diff may show only the `lookup wait` line, an ISBN whose upstream record changed in between,
+and the `cover search` line and the `without a cover` section: Open Library answers, throttles or
+fails differently between two runs, and the time budget may stop the search at another book.
 
 ### 3.4 Independent count check, before anyone signs in
 
@@ -303,13 +311,24 @@ Rafael, in the browser on `https://<NEW_HOST>` (on the allowed address):
    quotes and the activity feed are there.
 3. Old links resolve: open a `/works/OL…W` link from an old chat.
 
-If `isbn unmatched` or `isbn error` in `real.txt` is not 0, rematch now or later (it commits per
-edition and is safe on the live server):
+If `isbn unmatched` or `isbn error` in `real.txt` is not 0, or books in its `without a cover`
+section are "not searched", rematch now or later (it commits per edition and per step of each
+book's cover search, and is safe on the live server). After its ISBN pass it searches the
+imported books still without a cover, 2 seconds apart; a dry run searches them as they were
+before the ISBN pass, so its cover line may differ from the real run's:
 
 ```bash
 docker compose exec -T app bookclub-server rematch-legacy --dry-run
 docker compose exec -T app bookclub-server rematch-legacy
 ```
+
+Then **review the cover suggestions**, at most 15 minutes (members see the "moving" message
+meanwhile): Admin → Covers → Suggestions. For each one, compare our book with Open Library's
+candidate and choose "Use this cover" when the picture shows this book, "Not this book"
+otherwise. What is left after 15 minutes waits until after 3.6. Pictures for the books still
+without a cover come after 3.6 too: readers who have such a book on their shelf are asked for a
+photo of their copy, the background search keeps looking, and an admin can upload one. A
+missing cover is no no-go.
 
 ### 3.6 Open the new host and redirect the old one (Caddy host)
 
@@ -384,7 +403,13 @@ first night on.
     `docker compose up -d app`.
   - Delete the import copy on the app VM: `rm -rf "$IMPORT"/bookclub.db* "$IMPORT"/SHA256SUMS`.
     It holds every password hash.
-  - Remove `dry.txt` and `real.txt` once the counts are in #38: the report names users and books.
+  - Remove `dry.txt` and `real.txt` once the counts are in #38: the report names users and books
+    (the `without a cover` section names titles too; post none of it).
+- **The day after:**
+  - Admin → Covers → Without a cover: the import could not check the imported Open Library cover
+    ids, and the server has fetched them by now. Those that fail to load show the date; those
+    Open Library no longer has are gone and searched again. Decide the new suggestions, and
+    upload pictures for the books readers use that are still listed.
 - **Within days:**
   - Merge `cutover/remove-python` (CUT-R, §2.4 of the work plan) once Forgejo CI is green.
   - Mint the closed-beta invites (`docker compose exec app bookclub-server beta-invite`). Never

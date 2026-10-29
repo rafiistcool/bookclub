@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n               (SELECT count(*) FROM cover_suggestions\n                WHERE status = 'open' AND NOT bc_cover_suggestion_moot(id)) AS \"suggestions!\",\n               (SELECT count(*) FROM cover_gaps WHERE in_use) AS \"missing!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "suggestions!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "missing!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "b7d6637d99f35adcc4ab1c809f64a2daf257431ff2f71e86713ea54fe6f6128e"
+}

@@ -10,9 +10,14 @@
 //! work ids: legacy books map onto works through `legacy_work_keys`.
 //!
 //! [`rematch`] (`rematch-legacy`) re-resolves the legacy bare-facts editions by ISBN later.
+//!
+//! Both search a cover for every imported catalog book without one (#74, `covers`): the import
+//! right after the books, inside its transaction, each book in a savepoint; the rematch after
+//! its ISBN pass, each book in a transaction of its own.
 
 mod books;
 mod club;
+mod covers;
 mod events;
 mod layout;
 mod personal;
@@ -36,7 +41,7 @@ use sqlx::{PgPool, Postgres, Transaction};
 pub use self::books::{BookTarget, MatchKind};
 pub use self::rematch::rematch;
 use self::report::ReportBuilder;
-pub use self::report::{EntityLine, IsbnLine, IsbnOutcome};
+pub use self::report::{CoverSearchLine, EntityLine, IsbnLine, IsbnOutcome};
 pub use self::source::{LegacyDb, parse_timestamp, read_conn};
 use crate::catalog::shared::lookup::CatalogLookup;
 use crate::media::shared::MediaStore;
@@ -74,6 +79,9 @@ pub struct Args {
     /// Wait before retrying a throttled lookup, instead of the host cooldown (tests set 0).
     #[arg(long, hide = true)]
     pub retry_wait_ms: Option<u64>,
+    /// The cover search's time budget, instead of 5 minutes (tests).
+    #[arg(long, hide = true)]
+    pub cover_budget_ms: Option<u64>,
 }
 
 /// Flags of `rematch-legacy`.
@@ -85,6 +93,9 @@ pub struct RematchArgs {
     /// Wait before retrying a throttled lookup, instead of the host cooldown (tests set 0).
     #[arg(long, hide = true)]
     pub retry_wait_ms: Option<u64>,
+    /// The wait between two cover searches, instead of 2 seconds (tests set 0).
+    #[arg(long, hide = true)]
+    pub cover_pace_ms: Option<u64>,
 }
 
 /// What an import or rematch did, one line per entity. `main.rs` prints it with `Display`.
@@ -98,6 +109,10 @@ pub struct Report {
     pub lines: Vec<String>,
     /// Everything was rolled back.
     pub dry_run: bool,
+    /// The report of `rematch-legacy`: its dry run's header also says that the cover search saw
+    /// the books as they were before the ISBN pass (the header, not `lines`, so a dry run's lines
+    /// still equal the real run's).
+    pub rematch: bool,
     /// One line per entity: source rows → target rows.
     pub entities: Vec<EntityLine>,
     /// Repaired values per `table.column` (legacy-mapping.md §0 "Normalising").
@@ -115,6 +130,10 @@ pub struct Report {
     /// Rows skipped or changed one by one (dropped references, skipped pick notes, layouts
     /// imported as the default, `quote_added` events without their quote, …).
     pub notes: Vec<String>,
+    /// The cover search's counts (#74), when it ran or was skipped with `--offline`.
+    pub covers: Option<CoverSearchLine>,
+    /// The imported books still without a cover, with titles (the `without a cover` section).
+    pub without_cover: Vec<String>,
 }
 
 impl Report {
@@ -129,13 +148,17 @@ impl Report {
     }
 
     fn from_rematch(b: ReportBuilder, dry_run: bool) -> Report {
-        Report::from_builder(b, dry_run, HashMap::new())
+        Report {
+            rematch: true,
+            ..Report::from_builder(b, dry_run, HashMap::new())
+        }
     }
 
     fn from_builder(b: ReportBuilder, dry_run: bool, books: HashMap<i64, BookTarget>) -> Report {
         Report {
             lines: b.lines(),
             dry_run,
+            rematch: false,
             entities: b.entities,
             normalised: b.normalised,
             merges: b.merges,
@@ -144,6 +167,8 @@ impl Report {
             lookup_wait: b.lookup_wait,
             books,
             notes: b.notes,
+            covers: b.covers,
+            without_cover: b.without_cover,
         }
     }
 }
@@ -155,6 +180,9 @@ impl fmt::Display for Report {
                 f,
                 "DRY RUN: everything below was rolled back, and no media bytes were written."
             )?;
+            if self.rematch {
+                writeln!(f, "{REMATCH_DRY_RUN_COVERS}")?;
+            }
         }
         for line in &self.lines {
             writeln!(f, "{line}")?;
@@ -162,6 +190,12 @@ impl fmt::Display for Report {
         Ok(())
     }
 }
+
+/// The second header line of a dry `rematch-legacy` (#74): its cover pass runs after an ISBN pass
+/// whose upgrades were rolled back edition by edition, so it searched the books as they were
+/// before them, and the real run may search fewer and count otherwise.
+pub const REMATCH_DRY_RUN_COVERS: &str = "The cover search looked at the imported books as they \
+     were before the ISBN pass's upgrades; a real run may search fewer books and count otherwise.";
 
 /// The refusal of a target that already has invites (sign-up invites minted with `beta-invite`
 /// before the import): their ids and codes could collide with the legacy invites, which keep
@@ -312,6 +346,7 @@ impl Importer {
         self.import_club().await?;
         self.import_invites().await?;
         self.import_books().await?;
+        self.search_covers().await?;
         self.import_shelf().await?;
         self.import_layouts().await?;
         self.import_favorites().await?;

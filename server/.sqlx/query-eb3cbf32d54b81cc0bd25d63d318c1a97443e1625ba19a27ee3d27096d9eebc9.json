@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE cover_suggestions\n         SET status = 'open', decided_at = NULL, created_at = now(), ol_edition_id = $3,\n             ol_cover_id = $4, title = $5, authors = $6, year = $7, language = $8, reason = $9\n         WHERE work_id = $1 AND ol_work_id = $2 AND status = 'closed'\n         RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "cover_suggestions",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Int8",
+        "Text",
+        "Text",
+        "Int4",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "eb3cbf32d54b81cc0bd25d63d318c1a97443e1625ba19a27ee3d27096d9eebc9"
+}

@@ -10,7 +10,9 @@ use super::openlibrary::{OlDoc, isbn_edition};
 use super::shared::dnb_marc::DnbRecord;
 use super::shared::ingest::{self, CoverTarget, Mode, Source, WorkGrouping};
 use super::shared::isbn::{Isbn13, is_german_group};
-use super::shared::lookup::{CatalogLookup, LookupError, Resolved, local_isbn};
+use super::shared::lookup::{
+    CatalogLookup, CoverAnswer, CoverQuery, LookupError, Resolved, local_isbn,
+};
 use crate::config::Config;
 use crate::error::is_deadlock;
 use crate::outbound::Outbound;
@@ -344,5 +346,19 @@ impl CatalogLookup for CatalogService {
                 Err(error) => return Err(error.into()),
             }
         }
+    }
+
+    /// Open Library's `search.json` by title and author (`ol_cover_search`); persists nothing.
+    async fn cover_candidates(&self, query: &CoverQuery) -> Result<CoverAnswer, LookupError> {
+        self.ol_cover_search(query)
+            .await
+            .map_err(|error| lookup_error(&error))
+    }
+
+    /// `/isbn/{isbn}.json` (`ol_isbn_cover`): the edition's first cover id, or none.
+    async fn cover_by_isbn(&self, isbn: &Isbn13) -> Result<Option<i64>, LookupError> {
+        self.ol_isbn_cover(isbn)
+            .await
+            .map_err(|error| lookup_error(&error))
     }
 }

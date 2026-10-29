@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bookColorKey, coverSources, sameOriginPath } from "./covers";
+import { asksForCoverPhoto, bookColorKey, coverSources, sameOriginPath } from "./covers";
 
 const book = (cover_url: string | null, cover_thumb_url: string | null) => ({
   id: 4,
@@ -43,5 +43,18 @@ describe("cover sources", () => {
     expect(bookColorKey({ id: 4, ol_work_key: "/works/OL1W", title: "Circe" })).toBe("/works/OL1W");
     expect(bookColorKey({ id: 4, ol_work_key: null, title: "Circe" })).toBe("work:4");
     expect(bookColorKey({ title: "Circe", authors: "Madeline Miller" })).toBe("Circe:Madeline Miller");
+  });
+});
+
+describe("the book page's request for a photo", () => {
+  const book = { custom: false, on_shelf: "want_to_read", cover_url: null, cover_thumb_url: null };
+
+  it("asks only a reader who has a catalog book without a cover on their shelf", () => {
+    expect(asksForCoverPhoto(book)).toBe(true);
+    expect(asksForCoverPhoto({ ...book, on_shelf: "did_not_finish" })).toBe(true);
+    expect(asksForCoverPhoto({ ...book, on_shelf: null })).toBe(false);
+    expect(asksForCoverPhoto({ ...book, custom: true })).toBe(false);
+    expect(asksForCoverPhoto({ ...book, cover_url: "/media/abc/l" })).toBe(false);
+    expect(asksForCoverPhoto({ ...book, cover_thumb_url: "/media/abc/s" })).toBe(false);
   });
 });

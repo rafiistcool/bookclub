@@ -12,9 +12,12 @@ import ClubBookActions from "../components/ClubBookActions.vue";
 import ReportSheet, { isWithdrawn, type ReportTarget } from "../components/ReportSheet.vue";
 import EditionPicker from "../components/EditionPicker.vue";
 import CoverPhotoButton from "../components/CoverPhotoButton.vue";
+import AdminEditionCover from "../components/AdminEditionCover.vue";
+import CoverPrompt from "../components/CoverPrompt.vue";
 import MergeRequestSheet from "../components/MergeRequestSheet.vue";
 import EditRequestSheet from "../components/EditRequestSheet.vue";
 import { clubsFor } from "../clubActions";
+import { asksForCoverPhoto } from "../covers";
 import { worthRetrying } from "../retry";
 import {
   bookPath,
@@ -86,6 +89,12 @@ function syncDrafts(detail: BookDetail) {
   reasonDraft.value = detail.dnf_reason;
   progressDraft.value = detail.progress ?? 0;
 }
+
+/**
+ * The book asks the reader for a photo of their copy (#74): the prompt beside
+ * the cover takes the place of the small link under it.
+ */
+const coverPrompted = computed(() => (book.value ? asksForCoverPhoto(book.value) : false));
 
 /** A photo became the cover: show it without reloading the page. */
 function adoptCover(updated: BookOut) {
@@ -338,6 +347,17 @@ async function editEditionAsAdmin() {
   }
 }
 
+/**
+ * The admin set the book's own cover. The answer is the work's cover, but a
+ * page in the viewer's edition shows the edition's cover when it has one, so
+ * then the page reads the book again rather than show a cover its readers
+ * do not see.
+ */
+function adminCoverSet(updated: BookOut) {
+  if (book.value?.edition_id == null) adoptCover(updated);
+  else void adminEditionSaved();
+}
+
 /** An edition changed: its title, pages or cover may be what the page shows. */
 async function adminEditionSaved() {
   editionsVersion.value += 1;
@@ -440,6 +460,7 @@ watch(param, load);
             {{ t("cover.report") }}
           </button>
           <CoverPhotoButton
+            v-if="!coverPrompted"
             :work-id="book.id"
             :edition-id="book.edition_id"
             :has-cover="Boolean(book.cover_url || book.cover_thumb_url)"
@@ -499,8 +520,29 @@ watch(param, load);
                 <span class="subtle" aria-hidden="true"> · </span>
                 <button class="text-btn" type="button" @click="editEditionAsAdmin">{{ t("admin.editEditionAsAdmin") }}</button>
               </template>
+              <span class="subtle" aria-hidden="true"> · </span>
+              <CoverPhotoButton
+                admin
+                look="inline"
+                class="admin-set-cover"
+                :label="t('admin.setCover')"
+                :work-id="book.id"
+                :edition-id="null"
+                :has-cover="Boolean(book.cover_url || book.cover_thumb_url)"
+                @covered="adminCoverSet"
+              />
+              <span class="subtle" aria-hidden="true"> · </span>
+              <AdminEditionCover
+                class="admin-set-edition-cover"
+                :work-id="book.id"
+                :edition-id="book.edition_id"
+                :title="shownTitle"
+                @covered="adminEditionSaved"
+              />
             </p>
           </div>
+
+          <CoverPrompt :book="book" class="detail-cover-prompt" @covered="adoptCover" />
 
           <div class="panel shelf-panel">
             <p class="caps subtle">{{ t("book.yourShelf") }}</p>
@@ -769,7 +811,8 @@ watch(param, load);
   display: contents;
 }
 
-.detail-hero .shelf-panel {
+.detail-hero .shelf-panel,
+.detail-hero .detail-cover-prompt {
   grid-column: 1 / -1;
 }
 
@@ -891,6 +934,14 @@ watch(param, load);
   color: var(--accent);
 }
 
+/* The admin's cover uploads are labels: laid out like the text buttons beside them. */
+.detail-intro .admin-edit-links .cover-photo {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  text-align: center;
+}
+
 .description {
   white-space: pre-line;
   color: var(--text-muted);
@@ -954,7 +1005,8 @@ watch(param, load);
     min-width: 0;
   }
 
-  .detail-hero .shelf-panel {
+  .detail-hero .shelf-panel,
+  .detail-hero .detail-cover-prompt {
     grid-column: auto;
   }
 

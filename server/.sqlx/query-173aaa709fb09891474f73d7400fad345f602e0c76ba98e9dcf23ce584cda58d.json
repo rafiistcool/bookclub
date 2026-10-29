@@ -1,0 +1,47 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT (SELECT f.failed_at FROM cover_failing f WHERE f.media_id = w.cover_media_id)\n                      AS \"work_failed_at?\",\n                  fe.edition_id AS \"edition_id?\", fe.failed_at AS \"edition_failed_at?\"\n           FROM works w\n           LEFT JOIN LATERAL (\n               SELECT f.edition_id, f.failed_at FROM cover_failing_editions f\n               WHERE f.work_id = w.id ORDER BY f.edition_id LIMIT 1\n           ) fe ON true\n           WHERE w.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "work_failed_at?",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "edition_id?",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "cover_failing_editions",
+            "name": "edition_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "edition_failed_at?",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "cover_failing_editions",
+            "name": "failed_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      true,
+      true
+    ]
+  },
+  "hash": "173aaa709fb09891474f73d7400fad345f602e0c76ba98e9dcf23ce584cda58d"
+}

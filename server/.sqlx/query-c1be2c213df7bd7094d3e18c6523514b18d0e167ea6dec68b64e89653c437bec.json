@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT work_id AS \"id!\" FROM cover_gaps\n               ORDER BY in_use DESC, lower(bc_unaccent(title)), work_id\n               LIMIT $1 OFFSET $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "cover_gaps",
+            "name": "work_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "c1be2c213df7bd7094d3e18c6523514b18d0e167ea6dec68b64e89653c437bec"
+}

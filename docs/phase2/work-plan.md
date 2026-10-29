@@ -144,7 +144,7 @@ Cutover CUT-R: branch cutover/remove-python, merged only on cutover day   (#52)
    If a crate is needed after all, the integrator adds it on `phase-2`.
 
 4. **Migrations.**
-   - Reserved blocks: ADM and ADM2 use 2100–2199, LEG and LEG2 use 2200–2299, the integrator uses 2900–2999.
+   - Reserved blocks: ADM and ADM2 use 2100–2199, LEG and LEG2 use 2200–2299, COVER uses 2300–2399, the integrator uses 2900–2999.
    - There is no squash (default D7).
    - A migration merged into `phase-2` is never edited afterwards.
    - A new foreign key to `users` needs a section in the export, or the `pg_constraint` completeness check in `server/tests/auth_export.rs` fails (conventions.md §5.7).
@@ -161,8 +161,8 @@ Cutover CUT-R: branch cutover/remove-python, merged only on cutover day   (#52)
 
 6. **Worktrees, databases and build resources.**
    - Each package runs its own Postgres server: `docker run -d --name bookclub-pg-<pkg> -p 127.0.0.1:<port>:5432 … postgres:17 -c max_connections=200 -c shared_buffers=64MB`.
-   - Ports: ADM 5451, LEG 5452, DEP 5453, GATE 5454, CUT 5455, the CUT2 rehearsal 5456. The integrator uses the compose server on 5432.
-   - Each package that checks pages in a browser runs the built SPA from the server (`STATIC_DIR=../frontend/dist`) with `BIND_ADDR=0.0.0.0:<port> PUBLIC_URL=http://agents.lan:<port>`. Ports: ADM 8083, LEG 8084, CUT 8085, the DEP staging stack 8081, the GATE Caddy stack 8082, the CUT2 rehearsal 8080.
+   - Ports: ADM 5451, LEG 5452, DEP 5453, GATE 5454, CUT 5455, the CUT2 rehearsal 5456, COVER 5458. The integrator uses the compose server on 5432.
+   - Each package that checks pages in a browser runs the built SPA from the server (`STATIC_DIR=../frontend/dist`) with `BIND_ADDR=0.0.0.0:<port> PUBLIC_URL=http://agents.lan:<port>`. Ports: ADM 8083, LEG 8084, CUT 8085, COVER 8087, the DEP staging stack 8081, the GATE Caddy stack 8082, the CUT2 rehearsal 8080.
    - Copy the main checkout's untracked `.cargo/config.toml` (`jobs = 3`, debug info off) into each worktree and change its `DATABASE_URL`. Also export `DATABASE_URL` for `cargo sqlx`.
    - At most 5 worktrees build at once (the VM has 12 CPUs, 17 GiB RAM and 113 GB free disk today).
    - DEP's `docker build`s count as one build slot. Run `docker builder prune -f` after its image tests.
@@ -534,6 +534,18 @@ All five run in parallel. They need no answer from Rafael. Where an answer is st
   - Rafael logs in with his old password and sees his data.
   - #38 is closed.
 
+#### COVER: covers for every catalog and imported book (#74, before Wave 3)
+
+- **Size:** L. **Dependencies:** Wave 2 merged (`phase-2` at 7793faf). Blocks #52.
+- **Scope:** #74: a cover search by title and author on Open Library for every work without a cover that is not a reader's own, suggestions for uncertain matches in a new admin tab, the photo prompt on the book page, the admin's direct cover, and the import report's count of books still without a cover. The design, the file list and the tests are in `docs/phase2/notes/cover.md`.
+- **Worktree:** `../bookclub-cover`, branch `phase2/cover`; Postgres 5458, browser 8087; migrations 2300–2399.
+- **Touches frozen interfaces additively** (recorded in its notes for the integrator): `CatalogLookup::cover_candidates` and `cover_by_isbn` (with default bodies) in `catalog/shared/lookup.rs`; in `ingest`, `clear_media` (also records the takedown for the cover search), `ol_cover_medias` (skips pictures Open Library confirmed gone) and the new `clear_gone_media`. It also changes MED's `media/service.rs` (Open Library fetches refuse removed hashes; `recheck_cover`, `probe_covers`) and adds `media.ol_gone_at` and an index on `editions.cover_media_id`.
+- **Edits other packages' files** (each hunk in its notes §8.1):
+  - server: `catalog/{mod,openlibrary,service}.rs`, `catalog/shared/{lookup,ingest}.rs`, `media/{service,cover,mod}.rs`, `admin/summary.rs`, `importer/{mod,report,rematch}.rs`, `jobs.rs`;
+  - server tests: `admin_guard.rs`, `admin_summary.rs`, `parity_importer.rs`, `parity_schema.rs`, `importer_books.rs`, `common/catalog.rs`, `fixtures/legacy/harness.rs`;
+  - SPA: `api/client.ts`, `api/generated.ts`, `i18n/{en,de}.json`, `i18n/apiErrors.ts` and its test, `admin.ts` and its test, `covers.ts` and its test, `components/CoverPhotoButton.vue` and its test, `components/admin/useQueue.ts`, `pages/AdminPage.vue` and its test, `pages/BookDetailPage.vue` and its test;
+  - docs: `docs/phase1/parity-checklist.md`, `docs/phase2/cutover.md`.
+
 ### 2.4 Cutover branch CUT-R (#52), merged only on cutover day
 
 - **Branch:** `cutover/remove-python`, cut from `main` after Wave 1 lands there. It has a draft PR into `main`, is rebased whenever `main` moves, and is **merged only after the real import is verified** (the counts match and Rafael has checked in the browser).
@@ -572,6 +584,7 @@ All five run in parallel. They need no answer from Rafael. Where an answer is st
 | LEG2 | LEG, ADM; Q14 | Wave 2 | |
 | DEP2 | DEP; Q5, Q7, Q8 | Wave 2 | |
 | CUT2 | CUT; A2, A4 | Wave 2 | Needs real data; touches no repo files |
+| COVER | Wave 2 merged | alone, before Wave 3 | Changes `lookup.rs`, `ingest.rs` and `media/service.rs` additively; blocks #52 |
 | CUT-R | Wave 1 in `main` | rebased continuously | Merged on cutover day only |
 
 ---

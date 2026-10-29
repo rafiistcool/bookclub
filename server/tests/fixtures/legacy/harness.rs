@@ -44,6 +44,7 @@ impl Legacy {
             offline: false,
             allow_unmatched: false,
             retry_wait_ms: Some(0),
+            cover_budget_ms: None,
         }
     }
 }

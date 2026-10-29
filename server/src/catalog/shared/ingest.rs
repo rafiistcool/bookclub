@@ -555,7 +555,7 @@ impl Merger {
 /// Catalog text is stored composed (NFC), so the same title from two sources compares equal.
 /// Control characters other than tab and line breaks are dropped: Postgres `text` refuses U+0000,
 /// which Open Library JSON sometimes carries, and the others are never meant as text.
-fn nfc(value: &str) -> String {
+pub(crate) fn nfc(value: &str) -> String {
     value
         .chars()
         .filter(|c| !c.is_control() || matches!(c, '\t' | '\n' | '\r'))
@@ -563,7 +563,8 @@ fn nfc(value: &str) -> String {
         .collect()
 }
 
-fn clean_line(value: Option<&str>, max: usize) -> Option<String> {
+/// [`nfc`], whitespace collapsed, cut to `max` characters; `None` when nothing is left.
+pub(crate) fn clean_line(value: Option<&str>, max: usize) -> Option<String> {
     let value = collapse_ws(&nfc(value?));
     (!value.is_empty()).then(|| truncate_chars(&value, max).to_owned())
 }
@@ -975,7 +976,8 @@ async fn replace_contributors(
 // ---------------------------------------------------------------------------------------------
 
 /// The media row for an Open Library cover id (insert-only). `None` when that row was removed by
-/// a takedown, so no caller can attach it again, and for ids ≤ 0.
+/// a takedown or Open Library confirmed it gone (`media.ol_gone_at`, the cover search's dead
+/// check), so no caller can attach it again, and for ids ≤ 0.
 pub async fn ol_cover_media(
     conn: &mut PgConnection,
     ol_cover_id: i64,
@@ -988,7 +990,8 @@ pub async fn ol_cover_media(
         .remove(&ol_cover_id))
 }
 
-/// [`ol_cover_media`] for many cover ids at once: the usable (not removed) media id per cover id.
+/// [`ol_cover_media`] for many cover ids at once: the usable (not removed, not gone, and not
+/// stored with the bytes of a cover picture a takedown judged, #74) media id per cover id.
 /// The rows are locked `FOR SHARE` until the transaction ends, so a takedown's
 /// `UPDATE media SET removed_at` waits for this ingest to commit and its `clear_media` then sees
 /// the reference.
@@ -1029,8 +1032,10 @@ async fn ol_cover_medias(
         .await?;
     }
     let rows = sqlx::query!(
-        r#"SELECT id, ol_cover_id AS "ol_cover_id!" FROM media
-           WHERE ol_cover_id = ANY($1) AND removed_at IS NULL
+        r#"SELECT id, ol_cover_id AS "ol_cover_id!" FROM media m
+           WHERE ol_cover_id = ANY($1) AND removed_at IS NULL AND ol_gone_at IS NULL
+             AND NOT EXISTS (SELECT 1 FROM media_removed_hashes h
+                             WHERE h.sha256 = m.sha256 AND h.blocks_covers)
            ORDER BY id
            FOR SHARE"#,
         &wanted
@@ -2119,17 +2124,55 @@ pub async fn set_cover(
 }
 
 /// Takedown: clears every works/editions `cover_media_id` that points at the media row (and its
-/// provenance). Returns the number of rows cleared.
+/// provenance). Returns the number of rows cleared. Every work it cleared gets the cover
+/// search's takedown flag (`cover_search.takedown_at`, #74): from then on the search only
+/// suggests a cover for it, a person decides. It is due for the search at once (an earlier
+/// miss backoff is dropped: the book had a cover since).
 pub async fn clear_media(conn: &mut PgConnection, media_id: i64) -> sqlx::Result<u64> {
-    let works = sqlx::query!(
+    let (works, editions) = clear_references(conn, media_id).await?;
+    if !works.is_empty() {
+        sqlx::query!(
+            "INSERT INTO cover_search (work_id, takedown_at)
+             SELECT id, now() FROM unnest($1::int8[]) AS t (id)
+             ON CONFLICT (work_id) DO UPDATE SET
+                 takedown_at = now(), next_search_at = NULL, misses = 0",
+            &works
+        )
+        .execute(conn)
+        .await?;
+    }
+    Ok(works.len() as u64 + editions)
+}
+
+/// An Open Library picture confirmed gone (#74, the cover search's dead check): clears every
+/// works/editions reference to the media row and its provenance, like [`clear_media`] but
+/// without the takedown flag. The caller locked the media row `FOR UPDATE` first. Returns the
+/// works it cleared, which are due for the cover search at once (an earlier miss backoff is
+/// dropped: the book had a cover since).
+pub async fn clear_gone_media(conn: &mut PgConnection, media_id: i64) -> sqlx::Result<Vec<i64>> {
+    let works = clear_references(conn, media_id).await?.0;
+    if !works.is_empty() {
+        sqlx::query!(
+            "UPDATE cover_search SET next_search_at = NULL, misses = 0 WHERE work_id = ANY($1)",
+            &works
+        )
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(works)
+}
+
+/// The works and the number of editions whose cover was `media_id`, cleared (works first).
+async fn clear_references(conn: &mut PgConnection, media_id: i64) -> sqlx::Result<(Vec<i64>, u64)> {
+    let works = sqlx::query_scalar!(
         "UPDATE works SET cover_media_id = NULL, field_sources = field_sources - 'cover_media_id',
                 updated_at = now()
-         WHERE cover_media_id = $1",
+         WHERE cover_media_id = $1
+         RETURNING id",
         media_id
     )
-    .execute(&mut *conn)
-    .await?
-    .rows_affected();
+    .fetch_all(&mut *conn)
+    .await?;
     let editions = sqlx::query!(
         "UPDATE editions SET cover_media_id = NULL,
                 field_sources = field_sources - 'cover_media_id', updated_at = now()
@@ -2139,7 +2182,7 @@ pub async fn clear_media(conn: &mut PgConnection, media_id: i64) -> sqlx::Result
     .execute(conn)
     .await?
     .rows_affected();
-    Ok(works + editions)
+    Ok((works, editions))
 }
 
 fn invalid(key: &str) -> AppError {

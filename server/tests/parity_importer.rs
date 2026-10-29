@@ -103,6 +103,7 @@ async fn rematch(app: &TestApp) -> Report {
         RematchArgs {
             dry_run: false,
             retry_wait_ms: Some(0),
+            cover_pace_ms: Some(0),
         },
     )
     .await
@@ -279,6 +280,19 @@ async fn an_offline_import_with_the_real_lookup_asks_no_upstream(db: PgPool) {
     );
 }
 
+/// The upstream requests apart from the cover searches by title and author (#74: `q`
+/// starting with `title:(`), and those.
+fn split_cover_searches(
+    requests: Vec<wiremock::Request>,
+) -> (Vec<wiremock::Request>, Vec<wiremock::Request>) {
+    requests.into_iter().partition(|request| {
+        !request
+            .url
+            .query_pairs()
+            .any(|(key, value)| key == "q" && value.starts_with("title:("))
+    })
+}
+
 /// Work-plan PAR, IMP's note: `rematch-legacy` with the real lookup resolves each legacy edition
 /// with an ISBN once, remotely (the local step would find the bare-facts edition itself): a
 /// 978-3 ISBN asks the DNB first and Open Library's search only after a DNB miss (a DNB hit
@@ -344,7 +358,11 @@ async fn rematch_legacy_asks_each_legacy_isbn_once_along_the_real_route(db: PgPo
         .await;
 
     let first = rematch(&app).await;
-    let requests = app.upstream_requests().await;
+    let (requests, covers) = split_cover_searches(app.upstream_requests().await);
+    // COVER (#74): after the ISBN pass, every imported book without a cover is searched once
+    // by title and author; those requests are counted apart.
+    assert!(!covers.is_empty());
+    assert!(covers.iter().all(|r| r.url.path() == "/search.json"));
     let isbn10 = parse_isbn(ISBN10_KEY).unwrap().as_str().to_owned();
     // The legacy editions with an ISBN: the four bare-facts ones. The matched key's edition is
     // the catalog's own (source openlibrary), so it is not asked about.
@@ -417,7 +435,12 @@ async fn rematch_legacy_asks_each_legacy_isbn_once_along_the_real_route(db: PgPo
 
     // A second run asks only about the two editions that are still bare facts.
     let second = rematch(&app).await;
-    let requests = app.upstream_requests().await;
+    let (requests, all_covers) = split_cover_searches(app.upstream_requests().await);
+    assert_eq!(
+        all_covers.len(),
+        2 * covers.len(),
+        "each run searches them again"
+    );
     assert_eq!(lookups(&requests, GERMAN), (1, 0, 1));
     assert_eq!(lookups(&requests, ENGLISH), (0, 1, 0));
     assert_eq!(lookups(&requests, ISBN_UNMATCHED), (2, 2, 0));

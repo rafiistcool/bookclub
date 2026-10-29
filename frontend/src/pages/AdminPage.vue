@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { api } from "../api/client";
 import type { AdminSummary } from "../api/generated";
+import AdminCovers from "../components/admin/AdminCovers.vue";
 import AdminInvites from "../components/admin/AdminInvites.vue";
 import AdminReports from "../components/admin/AdminReports.vue";
 import AdminRequests from "../components/admin/AdminRequests.vue";
@@ -12,12 +13,14 @@ import AdminUsers from "../components/admin/AdminUsers.vue";
 /**
  * The instance admin's page (`UserOut.is_admin`; the router keeps everyone
  * else out, and the server answers them 404): the catalog queue, reports
- * (covers, profile pictures, books readers added), sign-up invites and
- * suspended accounts. `?tab=` picks the section. Both queue badges
- * come from `GET /api/admin/summary` on mount and again after each decision,
- * marked when something is overdue.
+ * (covers, profile pictures, books readers added), the cover search's
+ * suggestions and the books without a cover (#74), sign-up invites and
+ * suspended accounts. `?tab=` picks the section. The badges come from
+ * `GET /api/admin/summary` on mount and again after each decision, the two
+ * queues' marked when something is overdue; cover suggestions have no
+ * response target, so they are never overdue.
  */
-const TABS = ["requests", "reports", "invites", "users"] as const;
+const TABS = ["requests", "reports", "covers", "invites", "users"] as const;
 type Tab = (typeof TABS)[number];
 /** The overdue threshold until the summary says otherwise. */
 const DEFAULT_TARGET_HOURS = 72;
@@ -38,6 +41,7 @@ function queueOf(name: Tab) {
   if (!summary.value) return null;
   if (name === "requests") return summary.value.edit_requests;
   if (name === "reports") return summary.value.reports;
+  if (name === "covers") return { open: summary.value.covers.suggestions, overdue: 0 };
   return null;
 }
 
@@ -84,6 +88,7 @@ onMounted(loadSummary);
       :stats="summary?.report_stats ?? null"
       @changed="loadSummary"
     />
+    <AdminCovers v-else-if="tab === 'covers'" :counts="summary?.covers ?? null" @changed="loadSummary" />
     <AdminInvites v-else-if="tab === 'invites'" />
     <AdminUsers v-else />
   </section>
@@ -95,14 +100,19 @@ onMounted(loadSummary);
 }
 
 /*
- * Four tabs with a count do not fit one line of a phone (at 360 px the
- * fourth one was cut off inside the scrolling bar): two rows of two there.
+ * Five tabs with a count do not fit one line of a phone (at 360 px the
+ * fourth one was cut off inside the scrolling bar): rows of two there, the
+ * last one across both columns.
  */
 @media (max-width: 479px) {
   .admin-tabs {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     border-radius: var(--radius-xl);
+  }
+
+  .admin-tabs button:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
   }
 }
 

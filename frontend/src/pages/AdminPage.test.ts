@@ -23,6 +23,12 @@ const api: Record<string, ReturnType<typeof vi.fn>> = {
   adminSuspendedUsers: vi.fn(),
   adminSuspendUser: vi.fn(),
   adminUnsuspendUser: vi.fn(),
+  adminCoverSuggestionPage: vi.fn(),
+  approveCoverSuggestion: vi.fn(),
+  rejectCoverSuggestion: vi.fn(),
+  adminMissingCovers: vi.fn(),
+  adminSearchCover: vi.fn(),
+  adminSetCover: vi.fn(),
 };
 
 vi.mock("../api/client", () => {
@@ -110,6 +116,7 @@ function summary(overrides: Partial<AdminSummary> = {}): AdminSummary {
     reports: queueSummary(0),
     edit_requests: queueSummary(0),
     report_stats: { days: 90, resolved: 0, median_hours: null, max_hours: null, over_target: 0 },
+    covers: { suggestions: 0, missing: 0 },
     ...overrides,
   };
 }
@@ -347,16 +354,64 @@ describe("AdminPage", () => {
     expect(wrapper.findAll(".admin-tabs button")[1]!.text()).toBe("Reports 1");
   });
 
-  it("shows both badges on first load, with the overdue ones marked", async () => {
-    api.adminSummary.mockResolvedValue(summary({ edit_requests: queueSummary(2), reports: queueSummary(3, 1) }));
+  it("shows the badges on first load, with the overdue ones marked", async () => {
+    api.adminSummary.mockResolvedValue(
+      summary({ edit_requests: queueSummary(2), reports: queueSummary(3, 1), covers: { suggestions: 4, missing: 9 } }),
+    );
     const { wrapper } = await mountAdmin();
     const tabs = wrapper.findAll(".admin-tabs button");
-    expect(tabs.map((node) => node.text())).toEqual(["Requests 2", "Reports 3", "Invites", "Accounts"]);
+    expect(tabs.map((node) => node.text())).toEqual(["Requests 2", "Reports 3", "Covers 4", "Invites", "Accounts"]);
     expect(tabs[0]!.get(".seg-count").classes()).not.toContain("overdue");
     expect(tabs[1]!.get(".seg-count").classes()).toContain("overdue");
     expect(tabs[1]!.get(".seg-count").attributes("title")).toBe("1 overdue");
-    // Only the shown queue is read; the other badge comes from the summary.
+    // Cover suggestions have no response target: never overdue.
+    expect(tabs[2]!.get(".seg-count").classes()).not.toContain("overdue");
+    expect(tabs[2]!.get(".seg-count").attributes("title")).toBeUndefined();
+    // Only the shown queue is read; the other badges come from the summary.
     expect(api.adminReportPage).not.toHaveBeenCalled();
+    expect(api.adminCoverSuggestionPage).not.toHaveBeenCalled();
+  });
+
+  it("opens the Covers tab, and reads the badges again after a decision", async () => {
+    api.adminSummary.mockResolvedValueOnce(summary({ covers: { suggestions: 1, missing: 3 } }));
+    api.adminSummary.mockResolvedValueOnce(summary({ covers: { suggestions: 0, missing: 2 } }));
+    api.adminCoverSuggestionPage.mockResolvedValue(
+      page([
+        {
+          id: 5,
+          status: "open",
+          work_id: 40,
+          book: bookOut({ id: 40, title: "Momo", source: "legacy" }),
+          cover_url: "/media/candcandcandcandcandcandca/l",
+          cover_thumb_url: "/media/candcandcandcandcandcandca/s",
+          cover_public_id: "candcandcandcandcandcandca",
+          ol_work_id: "OL1W",
+          ol_edition_id: null,
+          title: "Momo",
+          authors: "",
+          year: null,
+          language: null,
+          reason: "no_author",
+          created_at: "2026-10-29T08:00:00Z",
+          decided_at: null,
+        },
+      ]),
+    );
+    api.approveCoverSuggestion.mockResolvedValue({});
+    const { wrapper, router } = await mountAdmin();
+    await buttonIn(wrapper.get(".admin-tabs"), "Covers 1").trigger("click");
+    await flushPromises();
+    expect(router.currentRoute.value.fullPath).toBe("/admin?tab=covers");
+    expect(api.adminCoverSuggestionPage).toHaveBeenCalledWith("open", 1);
+    expect(wrapper.get(".cover-sections").text()).toContain("Without a cover 3");
+    const item = wrapper.get(".suggestion-item");
+    await buttonIn(item, "Use this cover").trigger("click");
+    await buttonIn(item, "Use it for everyone").trigger("click");
+    await flushPromises();
+    expect(api.approveCoverSuggestion).toHaveBeenCalledWith(5);
+    expect(api.adminSummary).toHaveBeenCalledTimes(2);
+    expect(buttonIn(wrapper.get(".admin-tabs"), "Covers")).toBeTruthy();
+    expect(wrapper.get(".cover-sections").text()).toContain("Without a cover 2");
   });
 
   it("shows how long each open item has waited, and flags it after 72 hours", async () => {

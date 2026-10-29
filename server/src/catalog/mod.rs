@@ -15,9 +15,11 @@
 //!   direct admin edit.
 //! - [`reports`]: reports on works and editions readers added, and what "remove" does to them.
 //! - [`merge`]: `merge_works`, two works becoming one (conventions §7.6).
+//! - [`covers`]: the cover search for catalog and imported books without a cover (#74).
 
 pub mod admin;
 pub mod cache;
+pub mod covers;
 pub mod custom;
 pub mod detail;
 pub mod dnb_sru;
@@ -70,6 +72,9 @@ pub const MERGE_INTO_ITSELF: &str = "A book cannot be merged into itself";
 pub const PICTURE_REMOVED: &str = "This picture was removed";
 /// Approving or rejecting a request that is no longer open (admin only).
 pub const REQUEST_DECIDED: &str = "This request was already decided";
+/// 409 on approving a cover suggestion or searching a book's cover when the book has a cover
+/// meanwhile (#74). Mapped in apiErrors.ts.
+pub const COVER_EXISTS: &str = "This book has a cover now";
 
 /// Catalog routes under `/api/books`.
 pub fn routes() -> OpenApiRouter<AppState> {
@@ -99,6 +104,11 @@ pub fn admin_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(admin::merge_work))
         .routes(routes!(admin::edit_work))
         .routes(routes!(admin::edit_edition))
+        .routes(routes!(covers::admin::list_cover_suggestions))
+        .routes(routes!(covers::admin::approve_cover_suggestion))
+        .routes(routes!(covers::admin::reject_cover_suggestion))
+        .routes(routes!(covers::admin::list_missing_covers))
+        .routes(routes!(covers::admin::search_cover))
 }
 
 /// One account's turn at a request that may call Open Library (search, trending, a subject, the
