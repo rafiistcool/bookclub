@@ -121,13 +121,14 @@ Nothing blocks the cutover, and no command in `docs/phase2/cutover.md` needs to 
 
 **Go/no-go baseline:** the counts above. At the cutover every count is at least these, and nothing appears in `notes`.
 
-## Still to do
+## After the rehearsal
 
-1. **Rafael's browser check** at `http://agents.lan:8080` (the orchestrator starts the server with the command above): sign in with the old password, then check the shelves, layouts, picks, diary, activity feed and an old `/works/OL…W` link. The sign-in re-hashes his password hash, and the email prompt may store an address. After that, compare.sh no longer reports matching accounts, which is expected.
-2. **#38:** post only the counts, the slug, the run time and the lookup wait, then close it once Rafael confirms.
-3. **Delete everything right after the check** (Q14 A: the dev-VM copy is deleted right after the rehearsal):
-   - stop the server;
-   - `docker rm -fv bookclub-pg-rehearsal`;
-   - `rm -rf ~/bookclub-prod-kopie`: the copy, the reports, the compare output, the media and the private owner and slug files (the slug is in #38 by then);
-   - `git worktree remove --force ../bookclub-cut2`.
+Done on 2026-10-29:
+
+1. **Rafael's browser check** at `http://agents.lan:8080`: he checked the imported club and confirmed it.
+2. **#38:** the counts and the run time are posted, and the issue is closed. Lookup wait 0 s, slug `bookclub-8rqp`.
+3. **Everything is deleted** (Q14 A: the dev-VM copy is deleted right after the rehearsal). The server is stopped, `bookclub-pg-rehearsal` is removed with its volume, `~/bookclub-prod-kopie` is deleted (the copy, the reports, the compare output, the media and the private owner and slug files), and the worktree `../bookclub-cut2` is removed.
+
+Still to do:
+
 4. **Before the cutover:** Rafael's production facts (§5 item 2): `BOOKCLUB_NAME`, `BOOKCLUB_TZ` and the owner's username. If the name is not "Bookclub", decide on the slug (see the assumptions).
