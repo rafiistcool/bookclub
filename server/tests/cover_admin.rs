@@ -358,6 +358,80 @@ async fn search_now_rechecks_a_failing_picture(db: PgPool) {
     );
 }
 
+/// "Search now" on a book whose picture still fails after the recheck (a body that does not
+/// decode; an edition's 404 while the probe fails) answers `failing` with the time and the
+/// edition, not "This book has a cover now": readers still see the cloth.
+#[sqlx::test]
+async fn search_now_says_when_a_picture_still_fails(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let root = app.admin("root").await;
+    let own = legacy_work(&app, "Momo", "Michael Ende").await;
+    let media = ol_media(&app, 302).await;
+    set_cover(&app, CoverTarget::Work(own), media, Source::OpenLibrary).await;
+    app.exec(&format!(
+        "UPDATE media SET fetch_failed_at = now() - interval '2 days' WHERE id = {media}"
+    ))
+    .await;
+    serve_cover(&app, 302, 200, b"not a picture".to_vec()).await;
+    let res = root
+        .post(&format!("/api/admin/works/{own}/cover-search"), json!({}))
+        .await;
+    res.assert_status(200);
+    let out = res.json();
+    assert_eq!(out["outcome"], "failing");
+    assert_eq!(out["failing_edition_id"], Value::Null);
+    assert!(out["failed_at"].is_string());
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM media
+             WHERE id = {media} AND fetch_failed_at > now() - interval '1 minute'"
+        ))
+        .await,
+        1,
+        "fetched again just now"
+    );
+    assert!(app.catalog.cover_calls().is_empty(), "nothing searched");
+
+    // A covered book whose edition readers use has a picture Open Library answers 404 for,
+    // with no stored picture to probe with: it stays failing.
+    let work = app.ol_work("OL31W", "Circe", "Madeline Miller").await;
+    use_work(&app, work.id).await;
+    set_cover(
+        &app,
+        CoverTarget::Work(work.id),
+        upload_media(&app).await,
+        Source::User,
+    )
+    .await;
+    let edition = app.edition(&work, "9780000000019").await;
+    let edition_media = ol_media(&app, 303).await;
+    set_cover(
+        &app,
+        CoverTarget::Edition(edition.id),
+        edition_media,
+        Source::OpenLibrary,
+    )
+    .await;
+    app.exec(&format!(
+        "UPDATE media SET fetch_failed_at = now() WHERE id = {edition_media};
+         INSERT INTO legacy_work_keys (legacy_key, legacy_book_id, work_id, edition_id, match)
+         VALUES ('/works/GBcirce', 777001, {}, {}, 'google_volume')",
+        work.id, edition.id
+    ))
+    .await;
+    serve_cover(&app, 303, 404, Vec::new()).await;
+    let res = root
+        .post(
+            &format!("/api/admin/works/{}/cover-search", work.id),
+            json!({}),
+        )
+        .await;
+    res.assert_status(200);
+    assert_eq!(res.json()["outcome"], "failing");
+    assert_eq!(res.json()["failing_edition_id"], edition.id);
+    assert!(res.json()["failed_at"].is_string());
+}
+
 /// The list names the edition readers use whose picture fails, not a lower-id edition nobody
 /// uses; a book under takedown says so.
 #[sqlx::test]

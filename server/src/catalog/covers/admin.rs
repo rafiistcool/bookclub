@@ -126,12 +126,49 @@ pub struct MissingCoverList {
 /// What "Search now" came to.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct CoverSearchOut {
-    /// `attached`, `inherited`, `isbn`, `suggested` or `no_match`.
+    /// `attached`, `inherited`, `isbn`, `suggested`, `no_match`, or `failing`: the book's own
+    /// Open Library picture, or that of an edition readers use, was fetched again and still
+    /// cannot be loaded. The search never replaces a picture the book has; an uploaded picture
+    /// does.
     pub outcome: String,
     /// The book as it is now.
     pub book: BookOut,
     /// `suggested`: the suggestion to decide.
     pub suggestion: Option<CoverSuggestionOut>,
+    /// `failing`: when the picture failed to load this time.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub failed_at: Option<OffsetDateTime>,
+    /// `failing`: the edition whose picture fails, when it is not the book's own.
+    pub failing_edition_id: Option<i64>,
+}
+
+/// A failing Open Library picture of a work: its own, else the one of the lowest-id edition
+/// readers use (`cover_failing_editions`), as (when it last failed, the edition).
+async fn failing_picture(
+    conn: &mut PgConnection,
+    work_id: i64,
+) -> sqlx::Result<Option<(OffsetDateTime, Option<i64>)>> {
+    let row = sqlx::query!(
+        r#"SELECT (SELECT f.failed_at FROM cover_failing f WHERE f.media_id = w.cover_media_id)
+                      AS "work_failed_at?",
+                  fe.edition_id AS "edition_id?", fe.failed_at AS "edition_failed_at?"
+           FROM works w
+           LEFT JOIN LATERAL (
+               SELECT f.edition_id, f.failed_at FROM cover_failing_editions f
+               WHERE f.work_id = w.id ORDER BY f.edition_id LIMIT 1
+           ) fe ON true
+           WHERE w.id = $1"#,
+        work_id
+    )
+    .fetch_optional(conn)
+    .await?;
+    Ok(
+        row.and_then(|row| match (row.work_failed_at, row.edition_failed_at) {
+            (Some(at), _) => Some((at, None)),
+            (None, Some(at)) => Some((at, row.edition_id)),
+            (None, None) => None,
+        }),
+    )
 }
 
 /// `?scope=&page=` of the books without a cover.
@@ -602,8 +639,10 @@ async fn missing_cover_outs(
 
 /// Searches this book now: ignores the schedule, the misses and the stop for books nobody
 /// uses, respects rejections, approvals and takedowns. A failing Open Library picture of the
-/// book is fetched again first; an open suggestion is returned as it is. For catalog and
-/// imported books only: a reader's own book is never sent to Open Library.
+/// book is fetched again first: when it (or that of an edition readers use) still cannot be
+/// loaded, the outcome is `failing` and nothing is searched (the search never replaces a
+/// picture the book has; an upload does). An open suggestion is returned as it is. For catalog
+/// and imported books only: a reader's own book is never sent to Open Library.
 #[utoipa::path(
     post,
     path = "/api/admin/works/{work_id}/cover-search",
@@ -612,7 +651,7 @@ async fn missing_cover_outs(
     security(("bookclub_session" = []), ("bearer" = [])),
     params(("work_id" = String, Path, description = "A work id, `OL…W`, or a legacy key")),
     responses(
-        (status = 200, body = CoverSearchOut, description = "What the search came to"),
+        (status = 200, body = CoverSearchOut, description = "What the search came to, or `failing` when the book's picture still cannot be loaded"),
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
         (status = 404, body = ErrorBody, description = "`No such book.` (also for a book a reader added), or `Not found` (not an instance admin)"),
         (status = 409, body = ErrorBody, description = "`This book has a cover now`"),
@@ -652,7 +691,21 @@ pub async fn search_cover(
     .fetch_one(&mut *conn)
     .await?;
     if !missing {
-        return Err(AppError::conflict(COVER_EXISTS));
+        // The picture the book has (or an edition readers use has) may still fail to load:
+        // that is no cover for its readers, and the admin needs to know it is not settled.
+        let Some((failed_at, edition_id)) = failing_picture(&mut conn, work_id).await? else {
+            return Err(AppError::conflict(COVER_EXISTS));
+        };
+        let book = book_out(&mut conn, BookRef::work(work_id))
+            .await?
+            .ok_or_else(|| AppError::not_found(msg::NO_SUCH_BOOK))?;
+        return Ok(Json(CoverSearchOut {
+            outcome: "failing".to_owned(),
+            book,
+            suggestion: None,
+            failed_at: Some(failed_at),
+            failing_edition_id: edition_id,
+        }));
     }
     let mut pacer = Pacer::none();
     let mut ctx = Context {
@@ -690,6 +743,8 @@ pub async fn search_cover(
         outcome: name.to_owned(),
         book,
         suggestion,
+        failed_at: None,
+        failing_edition_id: None,
     }))
 }
 
