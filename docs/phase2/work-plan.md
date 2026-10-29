@@ -60,7 +60,7 @@ A completeness review checked this plan against the code at 84006bd. Where this 
 22. The registry already holds `rafiistcool/bookclub:{0.10.0,0.10,latest}`, pushed on 2026-10-18 but not by a Forgejo run. The v0.10.0 compose pulls `ghcr.io/rafiistcool/bookclub:latest`. Q5's recommendation (a new image name) therefore stands.
 23. **Done (2026-10-29):** `REGISTRY_TOKEN` is an action secret of the user `rafiistcool` (a token with `write:package`, set on 2026-10-18), which `release.yml` gets like a repository secret. The repository's secret list does not show user secrets, so the repo only seemed to lack it.
 24. **Done (2026-10-29):** the runner labelled `docker-host` runs on VM 101, with its own registration and a capacity of 1, and is the only runner that hands job containers the Docker socket (`docs/phase2/notes/dep.md`, "The runner"). The existing runner (`ubuntu-latest`, `docker`) no longer has the socket; before, every job got it. The `image` job of main's run 10 (531c3fa) passed on the new runner. The label is not `docker` because PR #71's first run showed that the existing runner already has forgejo-runner's default label `docker`, without the daemon (`docker: command not found`).
-25. Q6 (the `legacy-python` branch and tag) waits for Rafael's answer. CUT puts the commands into the runbook and pushes nothing.
+25. **Done (2026-10-29):** Q6 A. Branch `legacy-python` and annotated tag `legacy-python-final` are on Forgejo at 1c5efe3 (`git ls-remote origin refs/heads/legacy-python refs/tags/legacy-python-final`), with the commands of `docs/phase2/cutover.md` §6; neither started a run.
 26. Corrections:
     - `server/src/ratelimit.rs:273-302` are the thresholds; the limit tests are in `server/tests/auth_*.rs`.
     - The `ci.yml` server job is lines 52-108.
@@ -144,6 +144,7 @@ Cutover CUT-R: branch cutover/remove-python, merged only on cutover day   (#52)
    - There is no squash (default D7).
    - A migration merged into `phase-2` is never edited afterwards.
    - A new foreign key to `users` needs a section in the export, or the `pg_constraint` completeness check in `server/tests/auth_export.rs` fails (conventions.md §5.7).
+   - Since LEG2 it also needs a `NOT EXISTS` in `auth::empty_sign_ups` and a `DATA` row in `server/tests/jobs.rs`, or a `TRACES` row with the reason. A new column of `users` needs a `USERS_COLUMNS` row there, and a new foreign key to `media` a check in `auth::delete_rejected_cover_photos` and a `MEDIA_REFERENCES` row (conventions.md §5.7).
 
 5. **New paths.** Each new path belongs to one package:
 
@@ -185,7 +186,7 @@ Cutover CUT-R: branch cutover/remove-python, merged only on cutover day   (#52)
 ### 2.2 Wave 1: packages I can build now
 
 **Status (2026-10-28):** all five are merged into `phase-2`, and their notes are applied to `conventions.md`, `endpoint-map.md`, `CLAUDE.md`, `README.md` and `deploy/hosted/README.md`. Open items are in each notes file.
-- **CUT:** merged (adcd9be). Open: Q6, the `legacy-python` branch and tag (Rafael); the rehearsal is CUT2.
+- **CUT:** merged (adcd9be). Q6 is done (item 25, 2026-10-29); the rehearsal is CUT2.
 - **LEG:** merged (4b88ec7). The integrator added `needs_terms: false` to the shared `user()` fixture, so `User` is plain `UserOut` again. Open: the optional file grants, and the final texts (LEG2, Rafael).
 - **ADM:** merged (bd4e454); the integrator's fix keeps a field an admin clears empty (59443d4). The integrator added `errors.receivedInFuture` and `errors.noticeCoversOnly` with their `apiErrors.ts` lines. Open: ADM2.
 - **DEP:** merged (b88622a); follow-ups dd5d1b4 (shellcheck without `-x`) and fe82997 (the Google scan reads the root `Dockerfile`). The integrator added `.github/actionlint.yaml`. The `image` job's first run on PR #71 landed on the existing runner, which has forgejo-runner's default label `docker`, so the label is now `docker-host`. Items 23 and 24 are done (2026-10-29): `REGISTRY_TOKEN` is a user secret of `rafiistcool`, and the `docker-host` runner on VM 101 passed main's `image` job.
@@ -456,6 +457,12 @@ All five run in parallel. They need no answer from Rafael. Where an answer is st
 
 ### 2.3 Wave 2: after the Wave 1 merge and Rafael's answers
 
+**Status (2026-10-29):** LEG2 and DEP2 are merged into `phase-2`, and their notes are applied to `conventions.md`, `endpoint-map.md`, `CLAUDE.md`, `README.md`, `deploy/hosted/README.md`, `cutover.md` and `security-review.md`. Open items are in each notes file.
+- **LEG2:** merged (236726e). The integrator runs `auth::delete_rejected_cover_photos` in the hourly job, with a test (9296688). Open: at ADM2's merge, `users.suspended_at` and `reports.target_user_id` in the purge and the `takedown.md` retention line (`notes/leg2.md`, "When merging ADM2"); the heartbeat filter that blanks public ids in `backup-lib.sh` and `update.sh` before the pings (`notes/leg2.md`, "When merging DEP2"; until then `processors.md`, `privacy-facts.md` §0 and §5 and `vvt.md` activity 13 mark it as to do); the go-live values marked "to confirm" and "to sign" (`privacy-facts.md` §0).
+- **DEP2:** merged (bc37d39). `v0.11.0-rc.1` published `bookclub-server:0.11.0-rc.1` (run 13). The integrator added the update timer's stop and start to `cutover.md` 3.3 and 3.6, and DEP2's additions to §5 items 10, 12, 13 and 15.1. Open: after the first final release (`v0.11.0`), `bookclub-server` must hold `0.11.0`, `0.11` and `stable` with one digest; everything that needs the VM, the Storage Box or healthchecks.io (`notes/dep2.md`, "Not verified").
+- **ADM2:** in its worktree (`phase2/adm2`), not merged yet. Its merge also applies LEG2's "When merging ADM2".
+- **CUT2:** rehearsed on 2026-10-29 at 8ecc528 (`notes/cut2.md`): both runs exited 0 in about 20 s with 0 s lookup wait, `compare.sh` matched every count and both accounts, and the slug is `bookclub-8rqp`. Waiting for Rafael's browser check at `http://agents.lan:8080` and the #38 post (counts, slug, run time and lookup wait only); then the copy, the rehearsal database and the worktree are deleted (Q14 A).
+
 #### ADM2: reports on user content, decision notices, suspension (#54, #55)
 
 - **Size:** L. **Dependencies:** ADM and LEG merged; Q11, Q12 and Q15, and Q17 only if per-address counting is chosen.
@@ -576,7 +583,7 @@ All five run in parallel. They need no answer from Rafael. Where an answer is st
 | LEG2: retention jobs | Q14 | The retention statements in the VVT and privacy policy |
 | DEP2: auto-deploy | Q8 | #51 "tags build the image and deploy it" |
 | DEP2: first release and registry tags | Q5 | Any release from `main`; the staging deploy |
-| CUT: `legacy-python` branch and tag | Q6 | #52 step 8; a Python hotfix path |
+| CUT: `legacy-python` branch and tag (done 2026-10-29) | Q6 | #52 step 8; a Python hotfix path |
 | CUT2: rehearsal | A2, A4 (snapshot and facts) | Closing #38; the size of the downtime window |
 | Admin and decision mails in production | Q4, and A21 (a verified admin address) | #54 response time, #55 |
 | Staging deploy on the VM | A6–A13 | #51 acceptance (LAN isolation, restore, monitor) |
@@ -768,13 +775,14 @@ Ordered by how much work each answer unblocks. "Take the recommendations" is a v
 10. Proxmox: create the app VM (Debian 13, about 2 vCPU, 4 GB RAM, 40 GB disk, Docker Engine and the compose plugin) in its own VLAN.
     - Inbound: only Caddy's IP to 8080, plus SSH from your admin host.
     - Outbound: DNS, NTP, 443 to the internet, git.tillhome.de per Q7, SMTP 465/587, and the backup port. Deny RFC1918 addresses.
+    - The inbound rule goes into the Proxmox firewall or the VLAN's router: Docker routes a published port before the VM's own `INPUT` rules. Outbound to RFC 1918 addresses only the pinhole to Caddy:443 and the VLAN's DNS and NTP (`deploy/hosted/README.md`, "The VM's network").
     - Check the #51 acceptance criterion: from the VM, `nc -vz -w3 <nas-ip> 445` and a curl to Forgejo's LAN address both fail.
 11. Forgejo: create a read-only package token (ideally a bot account with `read:package`), run `docker login git.tillhome.de` on the VM, and check that the `REGISTRY_TOKEN` user secret (item 23) is still valid.
-12. Backups: create the backup target and sign its DPA. Add the VM's SSH key, and keep the restic password in your password manager, not only on the VM.
-13. Monitoring: set up the uptime check on `/api/health` and heartbeat checks for the backup, update and restore-test timers, all alerting your phone.
+12. Backups: create the backup target and sign its DPA. Add the VM's SSH key, and keep the restic password in your password manager, not only on the VM. Enable the Storage Box's automatic snapshots (all slots of the plan, daily after the 03:30 backup, for example 06:00), SSH support and External Reachability (`deploy/hosted/README.md`, "Storage Box snapshots").
+13. Monitoring: set up the uptime check on `/api/health` and heartbeat checks for the backup, update and restore-test timers, all alerting your phone. The heartbeat "update" has a period of 5 minutes and a grace time of 1 hour.
 14. Caddy: add the site block from `deploy/hosted/Caddyfile.example` for the staging host and reload. Rebuild with `caddy-ratelimit` only if Q16 = B.
 15. On the VM:
-    1. Install `deploy/hosted/` (compose, the filled env, the systemd timers).
+    1. Install `deploy/hosted/` (compose, the filled env, the systemd timers). After the backups, `cp deploy/hosted/update.sh /opt/bookclub/`, set `UPDATE_HEARTBEAT_URL` in `backup.env`, run `/opt/bookclub/update.sh` once, then `systemctl enable --now bookclub-update.timer` (`deploy/hosted/README.md`, "Updates and rollback", "Setting up").
     2. Run `docker compose up -d --wait`, then `docker compose exec app bookclub-server beta-invite`, and sign up on staging.
     3. Wipe staging before the cutover (`docker compose down -v`, empty `/srv/bookclub/media`).
 16. #51 acceptance: run `restore-test.sh` and keep the output. Run `docker compose stop app`, confirm that the monitor alerts, then start the app again.

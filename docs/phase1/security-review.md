@@ -279,7 +279,7 @@ The verifiers corrected two details:
 - **(B) rest-server `--append-only`.** Runs on a host the VM cannot log in to. `backup.sh` stops pruning, and that host prunes instead.
 - **(C) An S3 bucket with object lock.** Changes `RESTIC_REPOSITORY` and the provider.
 
-(A) is the smallest step. **Rafael chose (A) on 2026-10-29**; `deploy/hosted/README.md` ("Backups") describes the snapshot setup. Until the snapshots run, the off-site copy protects against losing the VM, not against someone who controls it.
+(A) is the smallest step. **Rafael chose (A) on 2026-10-29**; `deploy/hosted/README.md` describes the setup ("Backups", "Storage Box snapshots") and the restore after a compromise ("Restore", "Restoring from a Storage Box snapshot"). It takes effect when Rafael enables the snapshot plan (work plan §5, item 12). Until the snapshots run, the off-site copy protects against losing the VM, not against someone who controls it.
 
 ### Rejected
 

@@ -93,6 +93,8 @@ In production, only after the legacy import, which needs an empty database (see 
 
 The admin page `/admin` holds the catalog requests and the picture reports, each with its age, an "Overdue" mark after 72 hours, and a "Decided" view with the history and the 90-day figures. "Edit as admin", on a book page and in the queue, changes a book's facts at once. "Take down a picture by URL", above the open reports, records an emailed notice with its arrival time. Instance admins with a verified address get a mail when new reports arrive (at most one an hour) and a digest of new catalog requests (at most one a day), through `SMTP_URL`.
 
+The app deletes old records itself, every hour, with nothing to configure (Q14, `docs/legal/privacy-facts.md` §7): decided reports and catalog requests 3 years after the decision, the photo of a rejected cover request with its request, and sign-ups that stayed empty (no verified address, no data, not an admin) 30 days after their last sign-in. Open reports and requests stay until they are decided. The app log shows only the counts.
+
 ## Updates and rollback
 
 `BOOKCLUB_TAG` in `.env` names the image tag the app follows: `stable` follows the highest release (see "Releases"), and an exact version such as `0.11.0` stays on that version. `update.sh`, which `bookclub-update.timer` starts every 3 minutes, carries out every change of that tag:

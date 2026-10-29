@@ -140,6 +140,9 @@ Notes for the integrator. The package owns `server/src/importer/source.rs`,
   ls-remote origin refs/heads/legacy-python` is still open) and D9 (#27, #29 now; #34, #35 at the
   cutover) wait for Rafael and the integrator. The package rules forbid pushing and touching
   Forgejo, and work-plan §0 item 25 says CUT pushes nothing until Q6 is answered.
+  **Done on 2026-10-29** (Q6 A, work-plan §0 item 25): `git ls-remote origin
+  refs/heads/legacy-python refs/tags/legacy-python-final` shows the branch at 1c5efe3 and the
+  annotated tag pointing at it, and neither push started a run. #27 and #29 are closed (D9).
 - CUT-R (`cutover/remove-python`) is not opened; it comes after Wave 1 is in `main`.
 - The "For the docs" items above are not moved into `legacy-mapping.md`, `imp.md` or DEP's
   `deploy/hosted/README.md`: those files belong to the integrator and DEP.

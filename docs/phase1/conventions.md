@@ -404,6 +404,7 @@ impl ApiMultipart {
   - A password reset deletes all of them.
   - Account deletion cascades.
 - An hourly job (§16) deletes expired sessions and used or expired email tokens.
+- **A session that ends before it expires** (a logout, a revoked session, a password change or reset) leaves its `last_used_at` on the account as `users.last_seen_at` (LEG2, migration 2201): the trigger `sessions_keep_last_use` (`AFTER DELETE ON sessions`, only when `expires_at > now()`) writes it when it is newer. Its `UPDATE` takes the users row `FOR NO KEY UPDATE SKIP LOCKED`, so a logout never waits for a users row that a password change, a reset, an account deletion or the purge holds, and cannot deadlock with them; a transaction that holds the row itself (a password change deleting the other sessions) is not skipped. An expired session writes nothing, so the hourly cleanup stays a plain delete. Code that deletes sessions needs nothing new. The purge of empty sign-ups (§16) counts `last_seen_at` as a sign-in.
 
 ### 5.2 Bearer tokens
 
@@ -604,6 +605,8 @@ Body `{password}`. The password is checked with `auth::account::verify_current_p
 
 **The decision #39 asks for:** club posts are **deleted**; they are only kept as an anonymous tombstone when others replied to them. Activity events are deleted. Structural club records (picks, nominations) stay, without the name.
 
+**A second caller: the purge of empty sign-ups** (`auth::purge_empty_sign_ups`, LEG2, §16) runs `delete_user` in a transaction of its own per account, with the password hash it read under its lock. Its lock order is the user row, then the user's sessions (both `FOR UPDATE`), as in a password change and a reset; it takes no club row first, because an empty account has no row in any club and none can arrive while its row is locked, so `lock_clubs` locks nothing (`delete_user`'s doc comment says so). A failing `delete_user` is rolled back and logged (`deleting an empty sign-up failed; kept`, no account named), and the purge goes on with the next account.
+
 **Replacing an avatar** (`PUT /api/auth/me/avatar`, MED) deletes the previous avatar row in the same transaction and its bytes after commit, so normally a user has at most one avatar row; step 3 also catches rows left behind by a crash.
 
 ### 5.7 DSGVO export (`GET /api/auth/me/export`)
@@ -663,6 +666,11 @@ The response is a ZIP that contains `data.json` and `media/`. It is `auth::expor
 **Exempt, with the reason in the test's allow-list:** `email_tokens.user_id` (one-time secrets that expire within 48 h; the only personal datum on them, a pending address, is exported as `profile.pending_email`).
 
 **Completeness test** (`tests/auth_export.rs`, `SOURCES` and `EXEMPT`). It reads `pg_constraint` for every foreign-key column that references `users(id)` and asserts that each `table.column` is either a source in the table above (the test holds the same list) or in the allow-list, and that `data.json` has exactly the keys of the table. A second test gives one user a row behind every one of these columns and checks that each section holds it and nothing of another user. A new column that points at users fails it until it is exported or exempted with a reason. (Matching on column names would also hit `work_authors.author_id`, which references `authors`.)
+
+**The purge of empty sign-ups has the same kind of check** (LEG2, `tests/jobs.rs`; it reads only the schema):
+- A new foreign key to `users` also needs a `NOT EXISTS` in `auth::empty_sign_ups` and a row in `DATA` (SQL that gives an account a row there), or a row in `TRACES` with the reason when it is a trace of signing up or in (today `sessions.user_id`, `email_tokens.user_id`, and `club_invite_uses.user_id` of a sign-up invite). `every_reference_to_an_account_is_data_or_a_trace_of_signing_in` fails otherwise.
+- A new column of `users` needs a row in `USERS_COLUMNS` with how the purge reads it (`every_column_of_users_is_considered_by_the_purge`), and a condition in `empty_sign_ups` when it records a sign-in or keeps the account.
+- A new foreign key to `media` needs a check in `auth::delete_rejected_cover_photos` and a row in `MEDIA_REFERENCES` (`rejected_cover_photos_go_with_their_request`).
 
 ### 5.8 Cross-site requests (CSRF)
 
@@ -1475,8 +1483,12 @@ pub fn round_half_even(x: f64, digits: usize) -> f64;  // via format!("{:.*}") �
     - `1200_editions_dnb_record_idn.sql` (HAR's block, added by the integrator's follow-up package INT): `editions.dnb_record_idn`, the IDN of the newest DNB record that delivered an edition, on every edition of a multi-ISBN record, with its index; `withdraw_dnb_edition` withdraws by it (§7.2, §7.5). Its backfill gives rows harvested before it the record IDN (the other ISBNs of a record by HAR's sibling heuristic, the same work and DNB planned date) and withdraws the editions HAR's removed new-releases clause hid (`docs/phase1/notes/int.md` decision 3).
     - `1300_media_removed_hashes.sql` (MED): `media_removed_hashes`, the hashes a taken-down picture must never come back under.
     - `1900_club_memberships_admin_until.sql` (the integrator's block, 1900–1999, security review 2026-10-28 #9): `club_memberships.admin_until`, when a member last stopped being an admin, so their removal revokes the invites they could list (§5.3).
+    - Phase 2 blocks (`docs/phase2/work-plan.md` §2.1 rule 4): ADM and ADM2 2100–2199, LEG and LEG2 2200–2299, the integrator 2900–2999.
+    - `2100_admin_notify_state.sql` (ADM): `reports.notified_at` and `catalog_edit_requests.notified_at`, the state of the admin mails (§16).
+    - `2200_users_terms.sql` (LEG): `users.terms_version` and `terms_accepted_at` (§5.9).
+    - `2201_users_last_seen.sql` (LEG2): `users.last_seen_at` and the trigger `sessions_keep_last_use` (§5.1).
   - sqlx applies a lower version that is missing even after a higher one was applied (1200 after 1300), so a database migrated before 1200 existed only needs `cargo sqlx migrate run` again.
-  - Before Phase 2 (#52) the migrations may be squashed back into one file, since no production database exists yet.
+  - There is no squash (work plan default D7): a migration merged into `phase-2` is never edited.
 
 ## 14. OpenAPI (utoipa 6 / utoipa-axum 0.3)
 
@@ -1508,7 +1520,10 @@ pub async fn record(conn: &mut PgConnection, ev: NewEvent) -> sqlx::Result<i64>;
 ## 16. Background jobs and CLI
 
 - `jobs::spawn_all(state, shutdown) -> tokio::task::JoinSet<()>` starts (signatures in §3); `serve` cancels `shutdown` on SIGTERM/Ctrl+C and waits up to 10 s for the set:
-  - `auth::cleanup` (hourly)
+  - `auth::cleanup`, then `auth::delete_rejected_cover_photos` (`jobs::auth_cleanup_loop`, hourly, the first tick at startup, one `run_locked` run under `AUTH_CLEANUP`). The retention periods are Q14 A (LEG2, `docs/legal/privacy-facts.md` §7); none is a setting:
+    - `cleanup` deletes expired sessions and used or expired email tokens; `reports` with `status <> 'open'` 3 years after `resolved_at`, and `catalog_edit_requests` with `status <> 'open'` 3 years after `decided_at` (open ones stay however old they are; the period runs from the decision, not the filing), except a rejected `cover_replace` whose photo is still stored; then up to `auth::PURGE_BATCH` (500) empty sign-ups (`auth::purge_empty_sign_ups`). It logs counts only: `deleted expired sessions and email tokens, old decisions and empty sign-ups` with `sessions`, `tokens`, `reports`, `edit_requests`, `sign_ups`.
+    - **An empty sign-up** (`auth::empty_sign_ups`, re-checked per account by `auth::is_empty_sign_up`): an address it never verified (`email IS NOT NULL AND email_verified_at IS NULL`; an imported account without an address is never purged), not an instance admin, no sign-in for 30 days (`greatest(created_at, password_changed_at, terms_accepted_at, last_seen_at)`, no session used and no email token created within them), and no data (no avatar, and a `NOT EXISTS` for every foreign key to `users` except the traces of signing up and in, §5.7). Each account goes in a transaction of its own: the user row, then its sessions, both `FOR UPDATE`, then `is_empty_sign_up` again in a new statement (a write that gave it data or used a session meanwhile has committed and is seen, or waits and fails), then `auth::deletion::delete_user` (§5.6), so a sign-up invite keeps its use with `user_id` NULL. 500 a run; a spam wave goes over several hours.
+    - `delete_rejected_cover_photos(conn, store)` deletes the photos of rejected `cover_replace` requests decided more than 3 years ago and not taken down, lowest media id first, at most `PURGE_BATCH`, each in a transaction of its own: the media row `FOR UPDATE` (media rows first, §7.2), a second look in a new statement (the photo stays, with its request, while a work or an edition has it as its cover, an account as its picture, a report or a removed hash names it, or a request that is not due references it), `DELETE FROM media` (the request goes with it through `ON DELETE CASCADE`), then after the commit the files (`media::delete_prefixes`, a failure is logged). It logs `deleted the photos of rejected cover requests` with `photos`.
   - `admin::notify::run` (ADM #54; `jobs::admin_notify_loop`, every 5 minutes, `admin::notify::RUN_EVERY`, the first tick at startup): per queue, when the queue's last mail (its newest `notified_at`, migration 2100) is at least the interval old (1 hour for reports, 24 hours for catalog requests) and open items without `notified_at` exist, it mails every user with `is_admin` and a verified address, in `users.locale` (§9), through `state.email` directly (15 s each, not `auth::mail::deliver`'s per-address limits), then stamps `notified_at = now()` on the items it counted, only when at least one mail went out. No setting; with `EMAIL_TRANSPORT=log` the mails go to the log.
   - `harvest::run_forever` (only when `DNB_HARVEST`)
   - `shelf::goodreads::resume` (once at startup: re-queues `queued`/`running` jobs)
