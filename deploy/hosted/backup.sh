@@ -31,7 +31,7 @@ readonly COUNTS_IN_CONTAINER=/tmp/bookclub-backup-counts.tsv
 # MEDIA_DIR must be what the app mounts, or the backup would hold another directory's pictures.
 check_media_mount() {
     local id mounted
-    id=$(docker compose ps -a -q app)
+    id=$(app_container)
     if [[ -z $id ]]; then
         log "warning: no app container, so MEDIA_DIR is not compared with its mount"
         return 0

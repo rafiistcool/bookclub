@@ -1,6 +1,6 @@
 # shellcheck shell=bash
-# Shared by backup.sh and restore-test.sh (README.md, "Backups"); sourced, never run. The caller
-# sets `here` to its own directory first.
+# Shared by backup.sh, restore-test.sh and update.sh (README.md, "Backups" and "Updates and
+# rollback"); sourced, never run. The caller sets `here` to its own directory first.
 
 # The scripts' settings: backup.env next to them, or the file BACKUP_ENV names.
 load_config() {
@@ -20,6 +20,10 @@ load_config() {
     BACKUP_HEARTBEAT_URL=${BACKUP_HEARTBEAT_URL-}
     RESTORE_TEST_HEARTBEAT_URL=${RESTORE_TEST_HEARTBEAT_URL-}
     RESTORE_POSTGRES_IMAGE=${RESTORE_POSTGRES_IMAGE:-postgres:17}
+    UPDATE_HEARTBEAT_URL=${UPDATE_HEARTBEAT_URL-}
+    UPDATE_WAIT_SECONDS=${UPDATE_WAIT_SECONDS:-300}
+    [[ $UPDATE_WAIT_SECONDS =~ ^[1-9][0-9]*$ ]] ||
+        die "UPDATE_WAIT_SECONDS=$UPDATE_WAIT_SECONDS is not a number of seconds"
     [[ -n ${RESTIC_REPOSITORY-} ]] || die "$file sets no RESTIC_REPOSITORY"
     [[ -r ${RESTIC_PASSWORD_FILE-} ]] || die "cannot read RESTIC_PASSWORD_FILE ${RESTIC_PASSWORD_FILE-}"
     local dir
@@ -35,6 +39,19 @@ log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 die() {
     log "error: $*" >&2
     exit 1
+}
+
+# The ID of the app service's container in the compose project of the current directory, running
+# or not; nothing when there is none. The one-off containers of `docker compose run app …` (the
+# legacy import, for one) carry the service's name too, and are left out.
+app_container() {
+    local id
+    for id in $(docker compose ps -a -q app); do
+        if [[ $(docker inspect -f '{{index .Config.Labels "com.docker.compose.oneoff"}}' "$id") != True ]]; then
+            printf '%s\n' "$id"
+            return 0
+        fi
+    done
 }
 
 # restic, from RESTIC_IMAGE, with the caller's uid. The container sees BACKUP_DIR (read-write)

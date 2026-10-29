@@ -1,6 +1,6 @@
 # Bookclub hosted: operator runbook
 
-This directory runs the hosted service on one VM: `compose.yaml` starts the app and its Postgres, and `env.example` lists every setting. `backup.sh` and `restore-test.sh` back it up with restic, from the systemd timers in `systemd/`. The commands below run as root on the VM, in `/opt/bookclub`, unless a step says otherwise.
+This directory runs the hosted service on one VM: `compose.yaml` starts the app and its Postgres, and `env.example` lists every setting. `backup.sh` and `restore-test.sh` back it up with restic, and `update.sh` follows the release tag, all from the systemd timers in `systemd/`. The commands below run as root on the VM, in `/opt/bookclub`, unless a step says otherwise.
 
 ## What runs where
 
@@ -14,17 +14,17 @@ This directory runs the hosted service on one VM: `compose.yaml` starts the app 
   | `/opt/bookclub/.env` | the settings, mode 0600 (from `env.example`) |
   | `/srv/bookclub/media` | pictures (covers, avatars), mounted at `/data/media`, owned by uid 1000 |
   | `/srv/bookclub/legal` | the legal texts, mounted read-only at `/app/legal`, owned by uid 1000 |
-  | `/opt/bookclub/backup.sh`, `restore-test.sh`, `backup-lib.sh` | the backup scripts, from `deploy/hosted/` |
+  | `/opt/bookclub/backup.sh`, `restore-test.sh`, `backup-lib.sh`, `update.sh` | the backup and update scripts, from `deploy/hosted/` |
   | `/opt/bookclub/backup.env`, `restic-password` | their settings and the repository password, mode 0600 |
-  | `/var/lib/bookclub-backup` | the newest dump (`db/`), the restic cache, the last run's log; mode 0700 |
-  | `/etc/systemd/system/bookclub-*` | the backup and restore-test units and timers, from `deploy/hosted/systemd/` |
+  | `/var/lib/bookclub-backup` | the newest dump (`db/`), the restic cache, the last runs' logs; mode 0700 |
+  | `/etc/systemd/system/bookclub-*` | the backup, restore-test and update units and timers, from `deploy/hosted/systemd/` |
 
 ## Requirements
 
-- Debian 13 with Docker Engine 25 or newer and the compose plugin 2.24 or newer, and `curl` for the backup heartbeats.
-- `docker login git.tillhome.de` with a read-only package token.
+- Debian 13 with Docker Engine 25 or newer and the compose plugin 2.24 or newer, and `curl` for the heartbeats.
+- `docker login git.tillhome.de` with a read-only package token, as root: the update timer pulls with it.
 - **An SMTP account, for staging too.** Without `DEV_MODE` the server does not start without `SMTP_URL` and `EMAIL_FROM`, and `EMAIL_TRANSPORT=log` needs `DEV_MODE`, which this setup never sets. Until the mail provider is chosen, staging uses an interim account. `SMTP_URL` must use TLS: `smtps://…:465`, or `smtp://…:587?tls=required`.
-- The reverse proxy (Caddy) terminates TLS and forwards to `BOOKCLUB_LISTEN:BOOKCLUB_PORT`. Only the proxy may reach that port.
+- The reverse proxy (Caddy) terminates TLS and forwards to `BOOKCLUB_LISTEN:BOOKCLUB_PORT`. Only the proxy may reach that port (see "The VM's network").
 
 ## First boot
 
@@ -69,6 +69,8 @@ This directory runs the hosted service on one VM: `compose.yaml` starts the app 
 
 6. Set up the backups (see "Backups") before the first real data arrives.
 
+7. Then the automatic updates, which back up before every update (see "Updates and rollback", "Setting up").
+
 ## The first account
 
 In production, only after the legacy import, which needs an empty database (see "The legacy import"). Staging is wiped before the import anyway.
@@ -93,18 +95,76 @@ The admin page `/admin` holds the catalog requests and the picture reports, each
 
 ## Updates and rollback
 
-`BOOKCLUB_TAG=stable` follows the highest release (see "Releases"). To update:
+`BOOKCLUB_TAG` in `.env` names the image tag the app follows: `stable` follows the highest release (see "Releases"), and an exact version such as `0.11.0` stays on that version. `update.sh`, which `bookclub-update.timer` starts every 3 minutes, carries out every change of that tag:
+
+1. `docker compose pull app`. While the tag has not moved, that is one request to the registry.
+2. If the app already runs the tag's image, nothing happens.
+3. Otherwise `backup.sh` runs first: the new version applies its database migrations when it starts, and migrations only go forward. If the backup fails, the app stays as it is, and the next run tries again.
+4. `docker compose up -d --no-deps --wait app` replaces the app container, and nothing else, and waits up to `UPDATE_WAIT_SECONDS` (300) for it to turn healthy. `update.sh` then checks that the app runs the new image, and removes the old image once no tag names it.
+5. The heartbeat `UPDATE_HEARTBEAT_URL` of `backup.env`:
+   - `<url>/0` after every check that finds the app up to date and healthy;
+   - `<url>/start` before an update, and `<url>/<exit status>` with the end of its log after it;
+   - `<url>/1` while the app runs the tag's image but is unhealthy or restarting, so a failed update keeps the check down until it is fixed;
+   - nothing when the registry does not answer (the run exits 1): only an outage that outlasts the check's grace time alerts.
+
+`update.sh` never starts an app that is not running. While the stack is down (a restore) or the app is stopped (`docker compose stop app`, the legacy import), it changes nothing and pings nothing. Stop the timer for such work anyway, so that no update starts in between, and start it again afterwards:
 
 ```sh
-docker compose pull app
-docker compose up -d --wait app
+systemctl stop bookclub-update.timer
+systemctl start bookclub-update.timer
 ```
 
-The new version applies its migrations when it starts. Migrations only go forward, so run a backup first (`/opt/bookclub/backup.sh`).
+### Setting up
 
-To roll back, or to hold updates back, pin an exact version in `.env`, for example `BOOKCLUB_TAG=0.11.0`, and run the same two commands. `docker compose images app` shows the tag that runs.
+After the backups (see "Backups", "Setting up"), because every update starts with one:
 
-A version cannot run on a database that a newer version has migrated: it stops at startup with `cannot apply the database migrations: migration <N> was previously applied but is missing in the resolved migrations`. A rollback across a migration therefore needs the backup from before the update (see "Restoring for real").
+1. The script, next to the backup scripts. It reads `backup.env` too, so the backup it runs covers the same stack:
+
+   ```sh
+   cp deploy/hosted/update.sh /opt/bookclub/
+   ```
+
+2. The heartbeat: a third check at healthchecks.io, "update", with a period of 5 minutes and a grace time of 1 hour. Its ping URL goes into `UPDATE_HEARTBEAT_URL` in `backup.env`. The grace time covers an update that waits for the nightly backup or the Sunday restore test, which hold the backup lock; it alerts when the checks stop, when the registry stays out of reach, and at once on a failed update.
+
+3. One run by hand. It prints a line such as `git.tillhome.de/rafiistcool/bookclub-server:stable is up to date (…@sha256:…), and the app is healthy`, or updates the app:
+
+   ```sh
+   /opt/bookclub/update.sh
+   ```
+
+4. The timer:
+
+   ```sh
+   cp deploy/hosted/systemd/bookclub-update.* /etc/systemd/system/
+   systemctl daemon-reload
+   systemctl enable --now bookclub-update.timer
+   systemctl list-timers 'bookclub-*'
+   ```
+
+### By hand
+
+- A check now, as the timer runs it: `systemctl start bookclub-update`. The runs: `journalctl -u bookclub-update`; the last update's log: `/var/lib/bookclub-backup/update.log`.
+- The same steps without the script:
+
+  ```sh
+  /opt/bookclub/backup.sh
+  docker compose pull app
+  docker compose up -d --wait app
+  ```
+
+### Rollback
+
+To roll back, or to hold updates back, pin an exact version in `.env`. The timer carries the pin out like a release: its next run backs up and starts that version. `systemctl start bookclub-update` does it now, and `docker compose images app` shows the tag that runs:
+
+```sh
+sed -i 's/^BOOKCLUB_TAG=.*/BOOKCLUB_TAG=0.11.0/' .env
+systemctl start bookclub-update
+docker compose images app
+```
+
+Later releases leave a pinned app alone. `BOOKCLUB_TAG=stable` follows the releases again, from the next run on.
+
+A version cannot run on a database that a newer version has migrated: it stops at startup with `cannot apply the database migrations: migration <N> was previously applied but is missing in the resolved migrations`, and `update.sh` reports a failed update. A rollback across a migration therefore needs the backup from before the update: stop the timer, and restore the snapshot that `update.sh` took right before the newer version started (see "Restoring for real"; `backup.sh restic snapshots` lists them with their times). Whatever was written since then is lost.
 
 ## Releases
 
@@ -125,6 +185,8 @@ git push origin v0.11.0
 
 The exact version is pushed first. Then `release-tags.sh` compares the tag with the release tags (`vX.Y.Z`, no pre-releases) that the repository has at that moment, and points the floating tags at the new image only if it is the highest. A backport such as `v0.10.5` after `v0.11.0` therefore moves `0.10` but not `stable`, and of two release runs that overlap, the older version never moves `stable` back, whichever run ends last. If the newest release's run fails, `stable` stays where it was until that version is released again.
 
+Once `stable` has moved, the VM's update timer picks the release up within about 3 minutes (see "Updates and rollback"). A pre-release never reaches a stack that follows `stable`; to try one on staging, pin its exact version there (`BOOKCLUB_TAG=0.11.0-rc.1`).
+
 There is no `latest` and no floating major. A tag that is not `vX.Y.Z` or `vX.Y.Z-<pre-release>` fails the run. The publish job runs on the Forgejo runner with the label `docker-host` (`docs/phase2/notes/dep.md`, "The runner") and logs in with the action secret `REGISTRY_TOKEN`, a Forgejo token with `write:package`. It is a secret of the user `rafiistcool`, which the repository's own secret list does not show. The old Python image `rafiistcool/bookclub` is never touched.
 
 Every action in the Forgejo workflows is pinned to a commit, with its release in a comment, because the publish job hands its actions that token and the host's Docker daemon. A pin moves only on purpose; the comment above `jobs:` in `release.yml` says how, and `server/tests/deploy_env.rs` fails on an unpinned `uses:`.
@@ -138,7 +200,41 @@ docker compose down -v
 find /srv/bookclub/media -mindepth 1 -delete
 ```
 
-To run a second stack on the same Docker host, from another directory, give its `.env` its own `COMPOSE_PROJECT_NAME`, `BOOKCLUB_PORT` and `BOOKCLUB_DATA_DIR`. Compose takes the project name from `.env` too, so the commands in this file work unchanged in that directory.
+To run a second stack on the same Docker host, from another directory, give its `.env` its own `COMPOSE_PROJECT_NAME`, `BOOKCLUB_PORT` and `BOOKCLUB_DATA_DIR`. Compose takes the project name from `.env` too, so the commands in this file work unchanged in that directory. Its backups and updates need their own copy of the scripts with a `backup.env` for that directory, and copies of the units under other names that start them there.
+
+## The VM's network
+
+The app VM sits in a VLAN of its own, and the Caddy that serves git.tillhome.de forwards to it (Q7, option A). Caddy's connections reach the VM without source NAT, so the app sees Caddy's own address as the peer of every request, and the client's address in Caddy's `X-Forwarded-For`. The real addresses go in once the VM exists (work plan §5, item 10); until then `TRUSTED_PROXIES=CHANGE_ME` keeps the app from starting.
+
+- **`TRUSTED_PROXIES=<Caddy IP>/32`** in `.env`: Caddy's address as the app VM sees it, and nothing wider. The app reads `X-Forwarded-For` only from these addresses and counts its rate limits per client from it. With a wrong value, the app takes Caddy for the client, and every user lands in one rate-limit bucket: one client's failed attempts lock everyone out of sign-up and password reset for an hour, and out of login for 10 minutes. A wider value, such as the whole VLAN, lets any machine in it forge `X-Forwarded-For` and slip past the limits.
+- **Inbound:** only Caddy may reach the published port (`BOOKCLUB_PORT`, 8080), plus SSH from the admin host. Put the rule into the Proxmox firewall of the VM, or the VLAN's router, not into nftables or ufw on the VM: Docker routes the packets of a published port before the host's `INPUT` chain, so such a rule never sees them. On the VM itself only a rule in Docker's `DOCKER-USER` chain would work.
+- **Outbound to git.tillhome.de:** the VM pulls the image from Forgejo's registry behind the same Caddy. It does not go out to the public address and back in (hairpin NAT), but takes the LAN path:
+  - split DNS: on the VM, `git.tillhome.de` resolves to Caddy's LAN address, from the VLAN's DNS server or from one line in `/etc/hosts` (`<Caddy IP> git.tillhome.de`);
+  - one pinhole in the VLAN's firewall: from the VM to Caddy, TCP 443, and no other connection to a private (RFC 1918) address.
+
+  The name stays the same, and so does Caddy's certificate for it.
+
+Checks, once the VM and the rules exist:
+
+1. On the VM, the registry by the LAN path. `getent hosts git.tillhome.de` shows Caddy's LAN address, and the `curl` prints that address and `401` (the registry wants a login). Then log in with the read-only token and pull:
+
+   ```sh
+   getent hosts git.tillhome.de
+   curl -sS -o /dev/null -w '%{remote_ip} %{http_code}\n' https://git.tillhome.de/v2/
+   docker login git.tillhome.de
+   docker compose pull app
+   ```
+
+2. From another machine in the LAN, `curl -m 5 http://<VM address>:8080/api/health` gets no answer; from Caddy's host it gets `{"status":"ok"}`.
+
+3. The address the app sees, while Caddy forwards to it (its health check every 15 s is enough). The `Peer Address:Port` column must hold Caddy's address and nothing else; that address with `/32` is `TRUSTED_PROXIES`:
+
+   ```sh
+   nsenter -n -t "$(docker inspect -f '{{.State.Pid}}' "$(docker compose ps -q app)")" \
+       ss -tn state established '( sport = :8080 )'
+   ```
+
+4. `verify-limits.sh` and one sign-up from a second network ("Reverse proxy", step 5).
 
 ## Reverse proxy
 
@@ -147,7 +243,7 @@ TLS ends at the Caddy that already serves git.tillhome.de, which forwards to `BO
 1. Copy the block into that Caddyfile, or `import` the file. Set two variables in Caddy's environment:
    - `BOOKCLUB_HOST`: the public host name.
    - `BOOKCLUB_UPSTREAM`: the app VM's address and published port, e.g. `10.0.20.5:8080`. Without it the block proxies to `127.0.0.1:8080`.
-2. In the app's `.env`, set `TRUSTED_PROXIES` to this Caddy's address as the app VM sees it, with `/32` (Q7), and run `docker compose up -d --wait app`. If it is wrong, every user lands in Caddy's one rate-limit bucket, and one client can lock everyone out of sign-up and reset.
+2. In the app's `.env`, set `TRUSTED_PROXIES` to this Caddy's address as the app VM sees it, with `/32` (see "The VM's network", check 3), and run `docker compose up -d --wait app`. If it is wrong, every user lands in Caddy's one rate-limit bucket, and one client can lock everyone out of sign-up and reset.
 3. Install the logrotate rule from the comment above the block's `log` as `/etc/logrotate.d/bookclub-access` (root-owned, mode 0644; logrotate ignores a group- or world-writable file), on the host that holds `/var/log/caddy`. If Caddy runs in a container, bind-mount that directory from the host. Check it with `logrotate -d /etc/logrotate.d/bookclub-access`. If logrotate refuses the directory's permissions, add `su <caddy user> <caddy group>` to the rule.
 4. Check and load: `caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`, then `caddy reload`.
 5. From home, run `verify-limits.sh` (next section), then make one sign-up attempt from a second network, such as a phone on mobile data. That attempt must not get 429.
@@ -209,9 +305,10 @@ The cutover (#52) imports the Python app's SQLite database once, into an empty d
    chmod 0600 /srv/bookclub/import/bookclub.db*
    ```
 
-2. Stop the app, so nobody signs up while the import runs. The importer runs in a one-off container of the same image, which `docker compose run` starts (with Postgres, if it is not running). `-T` keeps the report free of terminal line endings. First a dry run, which rolls everything back:
+2. Stop the update timer and the app, so that nobody signs up and no update starts while the import runs. The importer runs in a one-off container of the same image, which `docker compose run` starts (with Postgres, if it is not running). `-T` keeps the report free of terminal line endings. First a dry run, which rolls everything back:
 
    ```sh
+   systemctl stop bookclub-update.timer
    docker compose stop app
    docker compose run --rm -T -v /srv/bookclub/import:/import:ro app \
        bookclub-server import-legacy /import/bookclub.db --owner <username> \
@@ -227,6 +324,7 @@ The cutover (#52) imports the Python app's SQLite database once, into an empty d
        --club-name '<club name>' --timezone Europe/Berlin --club-slug <slug> \
        --allow-unmatched > import.txt
    docker compose up -d --wait
+   systemctl start bookclub-update.timer
    ```
 
 3. `--allow-unmatched` keeps going when the DNB or Open Library cannot answer, and keeps those ISBN rows as bare facts. Resolve them later, with the app running:
@@ -269,7 +367,7 @@ The importer reads a private copy of the database and its `-wal` in the containe
    ssh-keyscan -p 23 uNNNNNN.your-storagebox.de >> /root/.ssh/known_hosts
    ```
 
-   Upload the public key to the box as Hetzner's Storage Box documentation describes, and compare the scanned host key with the fingerprints Hetzner publishes. `RESTIC_REPOSITORY` is then `sftp:bookclub-backup:bookclub`. A local path or an `s3:` URL also works (`backup.env.example`).
+   Upload the public key to the box as Hetzner's Storage Box documentation describes, and compare the scanned host key with the fingerprints Hetzner publishes. In the box's settings in the Hetzner Console, turn on SSH support (port 23) and "External Reachability": the VM is outside Hetzner's network. `RESTIC_REPOSITORY` is then `sftp:bookclub-backup:bookclub`. A local path or an `s3:` URL also works (`backup.env.example`). Then set up the box's snapshots (see "Storage Box snapshots").
 
 2. The scripts, their settings and the repository password:
 
@@ -307,6 +405,25 @@ The importer reads a private copy of the database and its `-wal` in the containe
 - The last runs: `journalctl -u bookclub-backup -u bookclub-restore-test`, or `/var/lib/bookclub-backup/backup.log`.
 - Any restic command with this setup: `/opt/bookclub/backup.sh restic <command>`, for example `snapshots`, `stats` or `check`. restic can write only into `/var/lib/bookclub-backup`, so a restore goes there.
 
+### Storage Box snapshots
+
+The VM's SSH key can write to the restic repository, so it can also delete it: whoever takes over the VM could delete the backups along with the data. The Storage Box's own snapshots close that gap (`docs/phase1/security-review.md`, Phase 2 Wave 1, finding 3, option A). Hetzner takes them on a schedule; the box's users, the VM's SFTP login among them, can read them but cannot write to or delete them; only the Hetzner Console and the Hetzner API can delete a snapshot or roll the box back to one.
+
+1. In the Hetzner Console, from the admin machine: "Storage Boxes", the box, "Snapshots", "Enable automatic snapshots".
+   - Daily, at a time after the nightly backup. That starts at 03:30 on the VM's clock, plus up to 30 minutes, and takes minutes; 06:00 leaves room. Check which time zone the console uses.
+   - The maximum number of snapshot slots: all that the plan allows (BX11: 10, BX21: 20, BX31: 30, BX41: 40).
+   - Save.
+2. Leave "Display snapshot directory" on, so that a restore can read the snapshots in `.zfs/snapshot` (see "Restoring from a Storage Box snapshot").
+3. The next day, check that the snapshot is listed in the console, and on the VM:
+
+   ```sh
+   ssh bookclub-backup ls .zfs/snapshot
+   ```
+
+- **How far back:** one snapshot a day, so 10 slots (BX11) reach back 10 days: a deleted or damaged repository has to be noticed within that time. Once the slots are full, Hetzner deletes the oldest snapshot as it takes a new one. The repository's own history (7 daily, 4 weekly, 12 monthly backups) is unchanged; the snapshots protect it.
+- **Space:** snapshots cost nothing extra but count against the box's capacity. A new snapshot takes no space; it grows by what is changed or deleted on the box after it. `backup.sh` only adds files to the repository, and its `forget --prune` deletes the files that no backup needs any more: mostly the old database dumps, and pictures deleted in the app. Those stay in the snapshots until the last snapshot that holds them is deleted. So the snapshots take about 10 days' worth of dumps (each `backup.sh` run logs the dump's size) plus the pictures deleted in that time. The console shows the box's usage, snapshots included. A full box fails `backup.sh`, and its heartbeat alerts; fewer slots free space.
+- **Credentials:** never put the Hetzner Console login, a Hetzner API token or the box's password on the VM, or anywhere the VM can read them. Whoever holds the login or a token can delete the snapshots and the box. The VM needs only its SSH key for the box, which cannot touch the snapshots.
+
 ## Restore
 
 ### The restore test
@@ -322,7 +439,7 @@ It removes the container and the restored files afterwards, and ends with a line
 
 ### Restoring for real
 
-When the database or the pictures are lost, on this VM or on a new one set up as in "First boot", with `.env`, `backup.env`, the SSH key and the restic password from the password manager:
+When the database or the pictures are lost, on this VM or on a new one set up as in "First boot", with `.env`, `backup.env`, the SSH key and the restic password from the password manager. Stop the update timer first (`systemctl stop bookclub-update.timer`), so that no update starts in between; step 5 starts it again.
 
 1. Restore the snapshot into the backup directory. `latest` is the newest; `snapshots` lists the others by ID:
 
@@ -358,12 +475,37 @@ When the database or the pictures are lost, on this VM or on a new one set up as
 
    `backup.sh` warns that there is no app container to compare `MEDIA_DIR` with; that is expected here.
 
-5. Start the app, with the version that made the backup or a newer one (`BOOKCLUB_TAG`; the last line of `counts.tsv` names the newest migration), and remove the restored files:
+5. Start the app, with the version that made the backup or a newer one (`BOOKCLUB_TAG`; the last line of `counts.tsv` names the newest migration), remove the restored files, and start the update timer again:
 
    ```sh
    docker compose up -d --wait
    rm -rf /var/lib/bookclub-backup/restore
+   systemctl start bookclub-update.timer
    ```
+
+### Restoring from a Storage Box snapshot
+
+When the repository itself is gone or damaged, for example because someone deleted it from the VM. Treat that VM as compromised: restore onto a new VM set up as in "First boot", give it a new SSH key for the box, and remove the old key from the box.
+
+1. Find a snapshot from before the damage, in the console or with `ssh bookclub-backup ls .zfs/snapshot`.
+
+2. Read the repository inside that snapshot, without changing anything on the box: a copy of `backup.env` points restic at it, and `--no-lock` keeps restic from writing its lock file into the read-only snapshot. `<snapshot>` is the name `ls` printed:
+
+   ```sh
+   (umask 077 && sed 's#^RESTIC_REPOSITORY=.*#RESTIC_REPOSITORY=sftp:bookclub-backup:.zfs/snapshot/<snapshot>/bookclub#' \
+       /opt/bookclub/backup.env > /opt/bookclub/backup-snapshot.env)
+   BACKUP_ENV=/opt/bookclub/backup-snapshot.env /opt/bookclub/backup.sh restic --no-lock snapshots
+   BACKUP_ENV=/opt/bookclub/backup-snapshot.env /opt/bookclub/backup.sh restic --no-lock \
+       restore latest --host bookclub --tag bookclub --target /var/lib/bookclub-backup/restore
+   ```
+
+   Then go on with step 2 of "Restoring for real".
+
+3. Make the repository whole again for the next backups, in one of two ways:
+   - Roll the box back to that snapshot in the console ("Snapshots", the snapshot's menu). A rollback undoes every change on the box since the snapshot: the backups taken after it, and the newer snapshots, are gone.
+   - Or leave the box as it is, and start a new repository in a new directory: `RESTIC_REPOSITORY=sftp:bookclub-backup:bookclub-<date>` in `backup.env`, then `backup.sh restic init` and `backup.sh`.
+
+4. Remove the copy: `rm /opt/bookclub/backup-snapshot.env`.
 
 ## Legal texts
 
@@ -421,7 +563,4 @@ The answer holds `"signup":"open"` (the address is `BOOKCLUB_LISTEN` and `BOOKCL
 - `SMTP_URL must use TLS without DEV_MODE: …`: use `smtps://` or `?tls=required`.
 - `SIGNUP_MODE=open needs the legal texts outside DEV_MODE: …` or `LEGAL_DIR/…`: see "Legal texts".
 - `cannot reach the database (gave up after 60 s)`: check `docker compose ps postgres` and `POSTGRES_PASSWORD`.
-
-## Still to come
-
-Automatic updates with a timer that follows `stable` (DEP2, Q8).
+- `cannot apply the database migrations: migration <N> was previously applied but is missing in the resolved migrations`: a version older than the database; see "Rollback".
