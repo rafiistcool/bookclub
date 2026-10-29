@@ -389,6 +389,9 @@ pub async fn is_empty_sign_up(conn: &mut PgConnection, user_id: i64) -> sqlx::Re
 ///   account without any is an imported one that never added an address, and it stays. An
 ///   imported account that typed an address without verifying it stays while it holds data.
 /// - **is not an instance admin.**
+/// - **is not suspended.** A suspension (`suspended_at`) is a moderation record: purging would
+///   free the username, and a suspended account cannot sign in, so it would otherwise go 30 days
+///   after its last sign-in.
 /// - **shows no sign-in for 30 days:** it was created, changed its password, accepted the terms
 ///   and last used a session that has ended (`last_seen_at`) more than 30 days ago, and no
 ///   session of it was used and no mail link was sent to it since then.
@@ -412,6 +415,7 @@ async fn empty_sign_ups(
            AND u.email IS NOT NULL
            AND u.email_verified_at IS NULL
            AND NOT u.is_admin
+           AND u.suspended_at IS NULL
            -- no sign-in for 30 days
            AND greatest(u.created_at, u.password_changed_at, u.terms_accepted_at,
                         u.last_seen_at)
@@ -450,6 +454,7 @@ async fn empty_sign_ups(
            AND NOT EXISTS (SELECT 1 FROM catalog_edit_requests x WHERE x.decided_by = u.id)
            AND NOT EXISTS (SELECT 1 FROM reports x WHERE x.created_by = u.id)
            AND NOT EXISTS (SELECT 1 FROM reports x WHERE x.resolved_by = u.id)
+           AND NOT EXISTS (SELECT 1 FROM reports x WHERE x.target_user_id = u.id)
          ORDER BY u.id
          LIMIT $2",
         only,

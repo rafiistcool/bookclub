@@ -399,8 +399,8 @@ async fn cleanup_deletes_sign_ups_that_stayed_empty_for_30_days(db: PgPool) {
     )
     .await;
 
-    // Kept: inside the period, signed in or active within it, verified, imported, an admin, or
-    // holding data.
+    // Kept: inside the period, signed in or active within it, verified, imported, an admin,
+    // suspended, or holding data.
     let kept = [
         ("signed up 29 days ago", sign_up(db, "young", 29).await, ""),
         (
@@ -459,6 +459,11 @@ async fn cleanup_deletes_sign_ups_that_stayed_empty_for_30_days(db: PgPool) {
             "UPDATE users SET is_admin = true WHERE id = {u}",
         ),
         (
+            "a suspension",
+            sign_up(db, "suspended", 60).await,
+            "UPDATE users SET suspended_at = now() - interval '40 days' WHERE id = {u}",
+        ),
+        (
             "a profile picture",
             sign_up(db, "avatar", 60).await,
             "INSERT INTO media (public_id, kind, source) VALUES (repeat('b', 26), 'avatar', 'legacy');
@@ -509,7 +514,7 @@ async fn cleanup_deletes_sign_ups_that_stayed_empty_for_30_days(db: PgPool) {
 /// Every foreign key to `users` whose row means the account holds data, with SQL that gives the
 /// account `{u}` such a row. The other names are the fixture rows of
 /// [`every_reference_to_an_account_is_data_or_a_trace_of_signing_in`].
-const DATA: [(&str, &str); 26] = [
+const DATA: [(&str, &str); 27] = [
     (
         "shelf_entries.user_id",
         "INSERT INTO shelf_entries (user_id, work_id, status) VALUES ({u}, {work}, 'finished')",
@@ -624,6 +629,10 @@ const DATA: [(&str, &str); 26] = [
         "INSERT INTO reports (target_kind, media_id, work_id, reason, status, resolved_by,
                               resolved_at)
          VALUES ('cover', {cover}, {work}, 'other', 'dismissed', {u}, now())",
+    ),
+    (
+        "reports.target_user_id",
+        "INSERT INTO reports (target_kind, reason, target_user_id) VALUES ('avatar', 'offensive', {u})",
     ),
 ];
 
@@ -901,7 +910,7 @@ async fn a_failing_deletion_keeps_that_account_and_the_purge_goes_on(db: PgPool)
 /// a sign-in or a state that keeps the account (a suspension) needs a condition in
 /// `auth::empty_sign_ups` and a kept case in
 /// [`cleanup_deletes_sign_ups_that_stayed_empty_for_30_days`] before it is named here.
-const USERS_COLUMNS: [(&str, &str); 20] = [
+const USERS_COLUMNS: [(&str, &str); 21] = [
     ("id", "the account"),
     ("username", "no bearing"),
     (
@@ -943,6 +952,7 @@ const USERS_COLUMNS: [(&str, &str); 20] = [
         "last_seen_at",
         "a sign-in: the last use of a session that has ended",
     ),
+    ("suspended_at", "a suspended account is never purged"),
 ];
 
 /// A new column of `users` is not a foreign key, so
