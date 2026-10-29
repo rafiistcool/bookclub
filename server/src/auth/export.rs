@@ -508,8 +508,9 @@ async fn catalog_sections(
     data.insert("edit_requests".into(), requests);
 
     // `about_me`: reports of the user's profile picture (`target_user_id`), of pictures they
-    // uploaded and of works and editions they added, without who filed them or what they
-    // wrote: the reporter is never named to the other side (ADM2, Q12).
+    // uploaded and of works and editions they added (a work report by the work as reported,
+    // `target_work_id`, which a merge leaves on the reader's record), without who filed them or
+    // what they wrote: the reporter is never named to the other side (ADM2, Q12).
     let reports = sqlx::query_scalar!(
         r#"SELECT jsonb_build_object(
                'filed', (SELECT coalesce(jsonb_agg(to_jsonb(r) - 'created_by' - 'resolved_by'
@@ -531,7 +532,8 @@ async fn catalog_sections(
                             ORDER BY r.id), '[]')
                             FROM reports r
                             LEFT JOIN media m ON m.id = r.media_id
-                            LEFT JOIN works w ON w.id = r.work_id AND r.target_kind = 'work'
+                            LEFT JOIN works w
+                                   ON w.id = r.target_work_id AND r.target_kind = 'work'
                             LEFT JOIN editions e
                                    ON e.id = r.edition_id AND r.target_kind = 'edition'
                             WHERE r.target_user_id = $1 OR m.uploaded_by = $1

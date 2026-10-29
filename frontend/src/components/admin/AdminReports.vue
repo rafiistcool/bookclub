@@ -26,6 +26,11 @@ import { useQueue } from "./useQueue";
  * "Decided" lists the history, newest decision first, with the 90-day
  * figures. A notice that arrived by email enters through "Take down a picture
  * by URL" (pictures; it names no sender) or as a report an admin files.
+ *
+ * A report of something gone (`ReportOut.gone`: a profile picture its owner
+ * replaced or deleted, a book merged into another one since) says so and offers
+ * only "Close the report": nothing is left to take down, and the server refuses
+ * "remove" for it.
  */
 const props = defineProps<{
   /** Hours after which an open report is overdue (`AdminSummary.target_hours`). */
@@ -67,11 +72,12 @@ async function load() {
 
 /**
  * The report and every other open report of its picture, which the decision
- * closed too. A book's or edition's other reports are not told apart by the
- * list (an edition report carries its book), so the queue is read again.
+ * closed too. A book's or edition's other reports, and those of a gone
+ * profile picture (which have no picture id), are not told apart by the list
+ * (an edition report carries its book), so the queue is read again.
  */
 async function dropDecided(report: ReportOut) {
-  if (!isPicture(report)) {
+  if (!isPicture(report) || report.gone) {
     queue.drop((row) => row.id === report.id);
     await load();
     return;
@@ -95,10 +101,11 @@ async function resolve(report: ReportOut, action: "remove" | "dismiss") {
     emit("changed");
     await dropDecided(report);
   } catch (err) {
-    // Resolved meanwhile (409): it leaves the open queue either way.
+    // 409: resolved meanwhile, or gone since the list was read (the picture
+    // replaced, the book merged). The queue read again shows which.
     if (err instanceof ApiError && err.status === 409) {
-      queue.drop((row) => row.id === report.id);
       emit("changed");
+      await load();
     }
     toast.show(failed(err, t("admin.decideFailed")));
   } finally {
@@ -139,6 +146,11 @@ function removeBlurb(report: ReportOut): string {
     : t(`admin.removeBlurb.${report.target_kind}`);
 }
 
+/** Why a gone report has nothing left to decide. */
+function goneNote(report: ReportOut): string {
+  return t(report.target_kind === "avatar" ? "admin.gone.avatar" : "admin.gone.work");
+}
+
 function statusLabel(report: ReportOut): string {
   if (report.status === "removed" && !isPicture(report)) return t("admin.status.withdrawn");
   return t(`admin.status.${report.status}`);
@@ -165,7 +177,7 @@ function decision(report: ReportOut): string {
   if (report.closed_on_arrival) return t("admin.closedOnArrival");
   const name = report.resolved_by?.username ?? t("admin.someone");
   const at = report.resolved_at ? when(report.resolved_at) : "";
-  if (report.status !== "removed") return t("admin.keptBy", { name, when: at });
+  if (report.status !== "removed") return t(report.gone ? "admin.closedBy" : "admin.keptBy", { name, when: at });
   return isPicture(report) ? t("admin.takenDownBy", { name, when: at }) : t("admin.removedBy", { name, when: at });
 }
 
@@ -258,12 +270,18 @@ onMounted(load);
             </p>
             <RouterLink v-else-if="report.book" :to="bookPath(report.book)">{{ report.book.title }}</RouterLink>
             <p v-if="report.removed && view === 'open'" class="fine subtle">{{ t("admin.alreadyRemoved") }}</p>
+            <p v-if="report.gone && view === 'open'" class="fine subtle gone-note">{{ goneNote(report) }}</p>
             <p v-if="report.details" class="fine report-details">{{ report.details }}</p>
           </div>
         </div>
         <p v-if="view === 'resolved'" class="fine subtle decision">
           {{ decision(report) }}<template v-if="took(report)"> · {{ took(report) }}</template>
         </p>
+        <div v-else-if="report.gone" class="btn-row">
+          <button class="btn btn-ghost btn-sm" type="button" :disabled="busyId === report.id" @click="resolve(report, 'dismiss')">
+            {{ t("admin.closeReport") }}
+          </button>
+        </div>
         <template v-else>
           <p v-if="confirming === report.id" class="fine">{{ removeBlurb(report) }}</p>
           <div class="btn-row">

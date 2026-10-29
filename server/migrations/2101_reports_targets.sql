@@ -6,7 +6,10 @@
 --   cover    media_id (the picture), work_id and edition_id (the book that showed it)
 --   avatar   media_id (the picture), target_user_id (whose profile picture it was when reported:
 --            the picture row goes when its owner replaces it, the report keeps the owner)
---   work     work_id (a work with source 'user')
+--   work     target_work_id (the work as reported, with source 'user') and work_id (the same
+--            work; a merge re-points work_id to the surviving work, catalog/merge.rs, so the
+--            queue shows the book readers see now, while target_work_id stays on the reported
+--            record: a decision never touches a work the reader did not add)
 --   edition  edition_id (an edition with source 'user') and work_id (its work)
 -- Every target column is ON DELETE SET NULL, so a report outlives what it named.
 ALTER TABLE reports DROP CONSTRAINT reports_target_kind_check;
@@ -14,8 +17,10 @@ ALTER TABLE reports
     ADD CONSTRAINT reports_target_kind_check
         CHECK (target_kind IN ('cover', 'avatar', 'work', 'edition')),
     ADD COLUMN target_user_id bigint NULL REFERENCES users (id) ON DELETE SET NULL,
+    ADD COLUMN target_work_id bigint NULL REFERENCES works (id) ON DELETE SET NULL,
     ADD CONSTRAINT reports_media_targets CHECK (target_kind IN ('cover', 'avatar') OR media_id IS NULL),
-    ADD CONSTRAINT reports_target_user_avatars CHECK (target_kind = 'avatar' OR target_user_id IS NULL);
+    ADD CONSTRAINT reports_target_user_avatars CHECK (target_kind = 'avatar' OR target_user_id IS NULL),
+    ADD CONSTRAINT reports_target_work_works CHECK (target_kind = 'work' OR target_work_id IS NULL);
 
 -- How a report came in: `app` (a reader's report) or `notice` (an emailed notice an admin
 -- recorded with a direct takedown, D2). Before, a notice was told from a report of a reader who
@@ -41,13 +46,15 @@ UPDATE reports SET via = 'notice' WHERE created_by IS NULL AND status = 'removed
 -- The user deletion's ON DELETE SET NULL looks the reports up by this column.
 CREATE INDEX reports_target_user_id_idx ON reports (target_user_id) WHERE target_user_id IS NOT NULL;
 -- "Every open report of this work (edition)": a decision closes them together.
-CREATE INDEX reports_open_work_idx ON reports (work_id) WHERE status = 'open' AND target_kind = 'work';
+CREATE INDEX reports_open_work_idx ON reports (target_work_id) WHERE status = 'open' AND target_kind = 'work';
 CREATE INDEX reports_open_edition_idx ON reports (edition_id) WHERE status = 'open' AND target_kind = 'edition';
 
 COMMENT ON COLUMN reports.target_kind IS
-    'What was reported: cover (media_id, and the book that showed it), avatar (media_id, target_user_id), work (work_id, a user-added work) or edition (edition_id and its work_id, a user-added edition).';
+    'What was reported: cover (media_id, and the book that showed it), avatar (media_id, target_user_id), work (target_work_id, a user-added work, and work_id) or edition (edition_id and its work_id, a user-added edition).';
 COMMENT ON COLUMN reports.target_user_id IS
     'Avatar reports only: the account whose profile picture was reported, when it was reported. Exported to that account without the reporter (reports.about_me).';
+COMMENT ON COLUMN reports.target_work_id IS
+    'Work reports only: the user-added work as reported. A merge re-points work_id to the surviving work but leaves this, so a decision acts on the reported record only (a merged-away one is closed, never withdrawn).';
 COMMENT ON COLUMN reports.via IS
     'app: a signed-in reader filed it; notice: an admin recorded an emailed notice with a direct takedown (created_by is NULL).';
 COMMENT ON COLUMN reports.closed_on_arrival IS

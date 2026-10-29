@@ -39,6 +39,14 @@
 //! reporter is mailed the decision, and on a removal the uploader, the avatar's owner or the
 //! reader who added the record gets a statement of reasons. A rollback sends nothing.
 //!
+//! **Gone** (`ReportOut.gone`): a profile picture its owner replaced or deleted while it was
+//! reported (`media/avatar.rs` deletes the row; the report keeps `target_user_id`), or a work
+//! merged into another one since it was reported (`catalog::reports`). Nothing is left to take
+//! down, so "remove" is refused (409 [`PICTURE_GONE`], `catalog::reports::REPORTED_BOOK_MERGED`)
+//! and "dismiss" closes the report, with every other open report of the same gone picture (the
+//! owner's profile pictures without a row) or work; the reporters learn that it is no longer
+//! online, and nobody gets a statement of reasons.
+//!
 //! **Closed on arrival** (`reports.closed_on_arrival`, migration 2101): a report or notice that
 //! arrives when the picture is down already is recorded as `removed`, closed at once, with no
 //! `resolved_by` and `resolved_at = created_at`.
@@ -84,6 +92,9 @@ pub const REASON_CHOICES: &str =
 pub const ACTION_CHOICES: &str = "Input should be 'remove' or 'dismiss'";
 /// 409 for a report an admin already resolved (admin only).
 pub const REPORT_RESOLVED: &str = "This report was already resolved";
+/// 409 for "remove" on a report of a profile picture its owner replaced or deleted since
+/// (admin only): there is nothing left to take down.
+pub const PICTURE_GONE: &str = "The reported picture is no longer online";
 /// The decision note of a `cover_replace` request whose picture a takedown removed.
 pub const TAKEN_DOWN_NOTE: &str = "The picture was taken down";
 /// 400 for a notice `received_at` in the future (pydantic's `PastDatetime` message).
@@ -166,6 +177,10 @@ pub struct ReportOut {
     /// admin decided it (`reports.closed_on_arrival`). A decided report whose admin deleted the
     /// account has no `resolved_by` either, but is not closed on arrival.
     pub closed_on_arrival: bool,
+    /// What was reported no longer shows as reported, as it is now: a profile picture its owner
+    /// replaced or deleted, or a book merged into another one (`book` is that one). Only
+    /// `dismiss` decides such a report; `remove` answers 409.
+    pub gone: bool,
 }
 
 /// A page of the report queue: the open reports oldest first, or the resolved ones newest
@@ -341,12 +356,14 @@ pub async fn report(
     .await?;
     // Then the picture (conventions §7.2), FOR SHARE: a takedown or a dismissal that is under
     // way finishes first and this report sees it; a later one waits and then resolves it.
+    // A profile picture its owner replaced or deleted since the plain read has no row any more.
     let removed = sqlx::query_scalar!(
         r#"SELECT removed_at IS NOT NULL AS "removed!" FROM media WHERE id = $1 FOR SHARE"#,
         media_id
     )
-    .fetch_one(&mut *tx)
-    .await?;
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::not_found(msg::NOT_FOUND))?;
     let status = if removed { "removed" } else { "open" };
     let earlier = sqlx::query_scalar!(
         "SELECT id FROM reports
@@ -493,7 +510,10 @@ pub async fn list_reports(
 /// good) or withdraws the text of a reported work or edition a reader added; `dismiss` keeps
 /// it. Either way every open report of the same picture, work or edition is resolved with it.
 /// After the commit each reporter is mailed the decision, and on a removal the uploader, the
-/// avatar's owner or the reader who added the record gets a statement of reasons.
+/// avatar's owner or the reader who added the record gets a statement of reasons. A report of
+/// something gone (`ReportOut.gone`: a profile picture its owner replaced or deleted, a work
+/// merged away) is only dismissed, with the other open reports of it; its reporters learn that
+/// it is no longer online.
 #[utoipa::path(
     post,
     path = "/api/admin/reports/{report_id}/resolve",
@@ -504,10 +524,10 @@ pub async fn list_reports(
     request_body = ReportResolveIn,
     responses(
         (status = 200, body = ReportOut, description = "The resolved report"),
-        (status = 400, body = ErrorBody, description = "`Input should be 'remove' or 'dismiss'`"),
+        (status = 400, body = ErrorBody, description = "`Input should be 'remove' or 'dismiss'`; on `remove`, `Only books readers added can be reported` (a work or edition from another source)"),
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
         (status = 404, body = ErrorBody, description = "`Not found`"),
-        (status = 409, body = ErrorBody, description = "`This report was already resolved`")
+        (status = 409, body = ErrorBody, description = "`This report was already resolved`; on `remove`, `The reported picture is no longer online` (a profile picture its owner replaced or deleted) or `The reported book was merged into another one`")
     )
 )]
 pub async fn resolve_report(
@@ -517,7 +537,8 @@ pub async fn resolve_report(
     ApiJson(body): ApiJson<ReportResolveIn>,
 ) -> ApiResult<Json<ReportOut>> {
     let report = sqlx::query!(
-        "SELECT target_kind, media_id, work_id, edition_id, reason, status
+        "SELECT target_kind, media_id, work_id, edition_id, target_work_id, target_user_id,
+                reason, status
          FROM reports WHERE id = $1",
         report_id
     )
@@ -529,20 +550,21 @@ pub async fn resolve_report(
     }
     let remove = body.action == "remove";
     let status = if remove { "removed" } else { "dismissed" };
+    let avatar = report.target_kind == "avatar";
     let mut tx = state.db.begin().await?;
     let mut prefixes = Vec::new();
-    // What the notices name, and on a removal whose content it was.
-    let (title, owner, removed) = match report.target_kind.as_str() {
+    let decision = match report.target_kind.as_str() {
         "work" | "edition" => {
             let target = match (
                 report.target_kind.as_str(),
-                report.work_id,
+                report.target_work_id,
                 report.edition_id,
             ) {
+                // The work as reported, not the one a merge re-pointed `work_id` to.
                 ("work", Some(work_id), _) => Some(CatalogTarget::Work(work_id)),
-                ("edition", work_id, Some(id)) => Some(CatalogTarget::Edition {
+                ("edition", _, Some(id)) => Some(CatalogTarget::Edition {
                     id,
-                    work_id: work_id.unwrap_or_default(),
+                    work_id: report.work_id.unwrap_or_default(),
                 }),
                 _ => None,
             };
@@ -550,58 +572,65 @@ pub async fn resolve_report(
                 Some(target) => catalog_reports::decide(&mut tx, target, remove).await?,
                 None => None,
             };
-            match decided {
-                Some(decided) => (
-                    Some(decided.title),
-                    decided.owner,
-                    remove && decided.changed,
-                ),
-                None => (None, None, false),
-            }
+            decided.map(|decided| Decision {
+                title: Some(decided.title),
+                owner: decided.owner,
+                removed: remove && decided.changed,
+                gone: decided.merged,
+            })
         }
         _ => {
             let title = book_title(&mut tx, report.work_id, report.edition_id).await?;
-            match (report.media_id, remove) {
+            // The picture first, as a takedown and a report lock it: dismissals and takedowns
+            // of one picture take turns, and a report filed meanwhile is resolved too. A
+            // profile picture its owner replaced or deleted has no row any more.
+            let present = match report.media_id {
+                Some(media_id) => lock_picture(&mut tx, media_id, remove).await?,
+                None => false,
+            };
+            let gone = avatar && !present;
+            if gone && remove {
+                return Err(AppError::conflict(PICTURE_GONE));
+            }
+            Some(match report.media_id.filter(|_| present) {
                 // Resolves the picture's open reports, this one included.
-                (Some(media_id), true) => {
+                Some(media_id) if remove => {
                     prefixes =
                         take_down_locked(&mut tx, state.media.as_ref(), media_id, admin.id).await?;
-                    (
+                    Decision {
                         title,
-                        uploader(&mut tx, media_id).await?,
-                        !prefixes.is_empty(),
-                    )
+                        owner: uploader(&mut tx, media_id).await?,
+                        removed: !prefixes.is_empty(),
+                        gone,
+                    }
                 }
-                // The picture first, as a takedown and a report lock it: dismissals and
-                // takedowns of one picture take turns, and a report filed meanwhile is dismissed
-                // too.
-                (Some(media_id), false) => {
-                    sqlx::query_scalar!(
-                        "SELECT id FROM media WHERE id = $1 FOR NO KEY UPDATE",
-                        media_id
-                    )
-                    .fetch_optional(&mut *tx)
-                    .await?;
-                    (title, None, false)
-                }
-                (None, _) => (title, None, false),
-            }
+                _ => Decision {
+                    title,
+                    owner: None,
+                    removed: false,
+                    gone,
+                },
+            })
         }
     };
-    // This report, and every other open report of the same picture, work or edition.
+    let gone = decision.as_ref().is_some_and(|decision| decision.gone);
+    // This report, and every other open report of the same picture, work or edition; for a
+    // gone profile picture, every open report of the owner's pictures that have no row.
     sqlx::query!(
         "UPDATE reports SET status = $3, resolved_by = $2, resolved_at = now()
          WHERE status = 'open'
            AND (id = $1 OR media_id = $4
-                OR (target_kind = 'work' AND $5 = 'work' AND work_id = $6)
-                OR (target_kind = 'edition' AND $5 = 'edition' AND edition_id = $7))",
+                OR (target_kind = 'work' AND $5 = 'work' AND target_work_id = $6)
+                OR (target_kind = 'edition' AND $5 = 'edition' AND edition_id = $7)
+                OR (target_kind = 'avatar' AND media_id IS NULL AND target_user_id = $8))",
         report_id,
         admin.id,
         status,
         report.media_id,
         report.target_kind,
-        report.work_id,
-        report.edition_id
+        report.target_work_id,
+        report.edition_id,
+        report.target_user_id.filter(|_| avatar && gone)
     )
     .execute(&mut *tx)
     .await?;
@@ -619,16 +648,27 @@ pub async fn resolve_report(
     if !ours {
         return Err(AppError::conflict(REPORT_RESOLVED));
     }
-    let notices = match reported(&report.target_kind, title.as_deref()) {
-        Some(what) => {
-            let removal = removed.then_some(Removal {
-                owner,
+    let what = decision
+        .as_ref()
+        .and_then(|decision| reported(&report.target_kind, decision.title.as_deref()));
+    let notices = match (&decision, what) {
+        (Some(decision), Some(what)) => {
+            let removal = decision.removed.then_some(Removal {
+                owner: decision.owner,
                 reason: Some(&report.reason),
             });
-            notices::decided(&mut tx, &state.config, admin.id, what, removal).await?
+            notices::decided(
+                &mut tx,
+                &state.config,
+                admin.id,
+                what,
+                removal,
+                decision.gone,
+            )
+            .await?
         }
         // The work or edition is gone: nothing left to name.
-        None => Notices::default(),
+        _ => Notices::default(),
     };
     tx.commit().await?;
     delete_prefixes(state.media.as_ref(), &prefixes).await;
@@ -639,6 +679,38 @@ pub async fn resolve_report(
         .pop()
         .ok_or_else(|| AppError::not_found(msg::NOT_FOUND))?;
     Ok(Json(out))
+}
+
+/// What a decision found, for its notices.
+struct Decision {
+    /// The reported book's title (a cover's book, a work or edition as it was before).
+    title: Option<String>,
+    /// On a removal, whose content it was (the uploader, the avatar's owner, the reader who
+    /// added the record).
+    owner: Option<i64>,
+    /// The decision removed something, so the owner gets a statement of reasons.
+    removed: bool,
+    /// What was reported no longer shows as reported (`ReportOut.gone`).
+    gone: bool,
+}
+
+/// Locks a reported picture's row for a decision, as a takedown (`FOR UPDATE`, on `remove`) or
+/// a dismissal (`FOR NO KEY UPDATE`) locks it. False when the row is gone: a profile picture its
+/// owner replaced or deleted.
+async fn lock_picture(conn: &mut PgConnection, media_id: i64, remove: bool) -> sqlx::Result<bool> {
+    let row = if remove {
+        sqlx::query_scalar!("SELECT id FROM media WHERE id = $1 FOR UPDATE", media_id)
+            .fetch_optional(conn)
+            .await?
+    } else {
+        sqlx::query_scalar!(
+            "SELECT id FROM media WHERE id = $1 FOR NO KEY UPDATE",
+            media_id
+        )
+        .fetch_optional(conn)
+        .await?
+    };
+    Ok(row.is_some())
 }
 
 /// What a decision's notices name: a cover (with its book's title), a profile picture, or a
@@ -771,7 +843,7 @@ pub async fn take_down(
         owner: picture.uploaded_by,
         reason: reason.as_deref(),
     });
-    let notices = notices::decided(&mut tx, &state.config, admin.id, what, removal).await?;
+    let notices = notices::decided(&mut tx, &state.config, admin.id, what, removal, false).await?;
     tx.commit().await?;
     delete_prefixes(state.media.as_ref(), &prefixes).await;
     notices.send(&state).await;
@@ -946,7 +1018,12 @@ pub async fn report_outs(conn: &mut PgConnection, ids: &[i64]) -> sqlx::Result<V
                   r.details AS "details!", r.status AS "status!", r.via AS "via!", r.work_id,
                   r.edition_id, r.target_user_id, r.created_by, r.created_at AS "created_at!",
                   r.resolved_by, r.resolved_at, r.closed_on_arrival AS "closed_on_arrival!",
-                  m.public_id AS "public_id?", m.removed_at IS NOT NULL AS "removed?"
+                  m.public_id AS "public_id?", m.removed_at IS NOT NULL AS "removed?",
+                  CASE r.target_kind
+                      WHEN 'avatar' THEN r.media_id IS NULL
+                      WHEN 'work' THEN r.target_work_id IS DISTINCT FROM r.work_id
+                      ELSE false
+                  END AS "gone!"
            FROM reports r
            LEFT JOIN media m ON m.id = r.media_id
            WHERE r.id = ANY($1)"#,
@@ -1005,6 +1082,7 @@ pub async fn report_outs(conn: &mut PgConnection, ids: &[i64]) -> sqlx::Result<V
                 resolved_by: row.resolved_by.and_then(|id| users.get(&id).cloned()),
                 resolved_at: row.resolved_at,
                 closed_on_arrival: row.closed_on_arrival,
+                gone: row.gone,
             };
             (row.id, out)
         })

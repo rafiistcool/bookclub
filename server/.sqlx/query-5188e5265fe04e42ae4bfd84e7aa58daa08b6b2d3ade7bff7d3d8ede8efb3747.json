@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT r.id AS \"id!\", r.target_kind AS \"target_kind!\", r.reason AS \"reason!\",\n                  r.details AS \"details!\", r.status AS \"status!\", r.via AS \"via!\", r.work_id,\n                  r.edition_id, r.target_user_id, r.created_by, r.created_at AS \"created_at!\",\n                  r.resolved_by, r.resolved_at, r.closed_on_arrival AS \"closed_on_arrival!\",\n                  m.public_id AS \"public_id?\", m.removed_at IS NOT NULL AS \"removed?\"\n           FROM reports r\n           LEFT JOIN media m ON m.id = r.media_id\n           WHERE r.id = ANY($1)",
+  "query": "SELECT r.id AS \"id!\", r.target_kind AS \"target_kind!\", r.reason AS \"reason!\",\n                  r.details AS \"details!\", r.status AS \"status!\", r.via AS \"via!\", r.work_id,\n                  r.edition_id, r.target_user_id, r.created_by, r.created_at AS \"created_at!\",\n                  r.resolved_by, r.resolved_at, r.closed_on_arrival AS \"closed_on_arrival!\",\n                  m.public_id AS \"public_id?\", m.removed_at IS NOT NULL AS \"removed?\",\n                  CASE r.target_kind\n                      WHEN 'avatar' THEN r.media_id IS NULL\n                      WHEN 'work' THEN r.target_work_id IS DISTINCT FROM r.work_id\n                      ELSE false\n                  END AS \"gone!\"\n           FROM reports r\n           LEFT JOIN media m ON m.id = r.media_id\n           WHERE r.id = ANY($1)",
   "describe": {
     "columns": [
       {
@@ -173,6 +173,12 @@
         "name": "removed?",
         "type_info": "Bool",
         "origin": "Expression"
+      },
+      {
+        "ordinal": 16,
+        "name": "gone!",
+        "type_info": "Bool",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -196,8 +202,9 @@
       true,
       true,
       false,
+      null,
       null
     ]
   },
-  "hash": "5adc96ac603422bc0a668f8daccf7b268ded8d4260514d547a632bb824ca8256"
+  "hash": "5188e5265fe04e42ae4bfd84e7aa58daa08b6b2d3ade7bff7d3d8ede8efb3747"
 }

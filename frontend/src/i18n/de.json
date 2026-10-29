@@ -46,7 +46,10 @@
     "sending": "Wird gesendet…",
     "sent": "Danke. Jemand aus dem Admin-Team sieht es sich an.",
     "failed": "Die Meldung konnte nicht gesendet werden",
-    "noAccount": "Kein Konto hier? Inhalte melden kann man auch per E-Mail an {email}."
+    "noAccount": "Kein Konto hier? Inhalte melden kann man auch per E-Mail an {email}.",
+    "instead": "Kein Fehler, sondern anstößig oder rechtsverletzend?",
+    "removedTitle": "[entfernt]",
+    "removedNote": "Ein Admin hat nach einer Meldung entfernt, was jemand für dieses Buch eingetragen hatte."
   },
   "common": {
     "cancel": "Abbrechen",
@@ -696,7 +699,9 @@
     "deleteOwnEntries": "Du kannst nur deine eigenen Einträge löschen",
     "requestDecided": "Über diese Anfrage wurde schon entschieden",
     "reportResolved": "Diese Meldung wurde schon geschlossen",
-    "invalidValueFor": "Dieser Wert für „{field}“ geht nicht"
+    "invalidValueFor": "Dieser Wert für „{field}“ geht nicht",
+    "reportedBookMerged": "Dieses Buch wurde seit der Meldung mit einem anderen zusammengeführt. Schließ die Meldung und korrigiere das andere Buch mit „Als Admin bearbeiten“, falls es den gemeldeten Text übernommen hat.",
+    "pictureGone": "Das gemeldete Bild ist nicht mehr online: Wer es hochgeladen hat, hat es ersetzt oder gelöscht. Schließ die Meldung."
   },
   "physicalShelf": {
     "title": "Dein Bücherregal",
@@ -1362,7 +1367,13 @@
       "future": "Die Meldung kann nicht in der Zukunft eingegangen sein.",
       "done": "Bild entfernt und die Meldung festgehalten",
       "failed": "Das Bild konnte nicht entfernt werden"
-    }
+    },
+    "gone": {
+      "avatar": "Nicht mehr online: Das Bild wurde ersetzt oder gelöscht, es gibt nichts mehr zu entfernen.",
+      "work": "Seit der Meldung mit diesem Buch zusammengeführt, der gemeldete Text erscheint nicht mehr für sich. Hat dieses Buch etwas davon übernommen, korrigiere es mit „Als Admin bearbeiten“."
+    },
+    "closeReport": "Meldung schließen",
+    "closedBy": "Geschlossen von {name} · {when}"
   },
   "notFound": {
     "title": "Seite nicht gefunden",

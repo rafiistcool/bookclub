@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT title, subtitle, author_names, description,\n                  cardinality(subjects) AS \"subjects!\", created_by\n           FROM works WHERE id = $1 FOR UPDATE",
+  "query": "SELECT title, subtitle, author_names, description,\n                  cardinality(subjects) AS \"subjects!\", created_by,\n                  source AS \"source: CatalogSource\", merged_into_id IS NOT NULL AS \"merged!\"\n           FROM works WHERE id = $1 FOR UPDATE",
   "describe": {
     "columns": [
       {
@@ -63,6 +63,23 @@
             "name": "created_by"
           }
         }
+      },
+      {
+        "ordinal": 6,
+        "name": "source: CatalogSource",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "source"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "merged!",
+        "type_info": "Bool",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -76,8 +93,10 @@
       false,
       false,
       null,
-      true
+      true,
+      false,
+      null
     ]
   },
-  "hash": "dfa25a50dd77968f31121a21f9f8db75f7f79e1311c17e922b0eff120a073704"
+  "hash": "c17593bbfb8cf7c7db989f7596d3fdd23b000dc4949b91226fa60e4f1ba60d7e"
 }

@@ -9,7 +9,7 @@ import BookCover from "../components/BookCover.vue";
 import BookDiary from "../components/BookDiary.vue";
 import QuoteList from "../components/QuoteList.vue";
 import ClubBookActions from "../components/ClubBookActions.vue";
-import ReportSheet, { type ReportTarget } from "../components/ReportSheet.vue";
+import ReportSheet, { REMOVED_TITLE, type ReportTarget } from "../components/ReportSheet.vue";
 import EditionPicker from "../components/EditionPicker.vue";
 import CoverPhotoButton from "../components/CoverPhotoButton.vue";
 import MergeRequestSheet from "../components/MergeRequestSheet.vue";
@@ -50,6 +50,8 @@ const refreshing = ref(false);
 const expanded = ref(false);
 /** What the reader is reporting: the cover, or a book a reader added (#54). */
 const reporting = ref<ReportTarget | null>(null);
+/** A book a reader added whose text an admin removed on a report: its stored placeholder title is shown translated. */
+const withdrawn = computed(() => Boolean(book.value?.custom && book.value.title === REMOVED_TITLE));
 const requestingMerge = ref(false);
 const requestingEdit = ref(false);
 /** An instance admin's direct edit: of the book, or of the viewer's edition (read fresh). */
@@ -445,7 +447,8 @@ watch(param, load);
         <div class="detail-side">
           <div class="detail-intro">
             <p v-if="book.club_picks.length" class="kicker">{{ t("book.currentPickIn", { clubs: pickNames }) }}</p>
-            <h1 class="display">{{ book.title }}</h1>
+            <h1 class="display">{{ withdrawn ? t("report.removedTitle") : book.title }}</h1>
+            <p v-if="withdrawn" class="fine subtle">{{ t("report.removedNote") }}</p>
             <p v-if="book.subtitle" class="detail-subtitle">{{ book.subtitle }}</p>
             <p v-if="book.authors" class="detail-authors">{{ book.authors }}</p>
             <p v-if="book.rating_count" class="club-rating">

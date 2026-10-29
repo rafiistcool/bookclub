@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT jsonb_build_object(\n               'filed', (SELECT coalesce(jsonb_agg(to_jsonb(r) - 'created_by' - 'resolved_by'\n                                                   - 'target_user_id'\n                             ORDER BY r.id), '[]')\n                         FROM reports r WHERE r.created_by = $1),\n               'resolved', (SELECT coalesce(jsonb_agg(jsonb_build_object(\n                                'id', r.id, 'target_kind', r.target_kind,\n                                'media_id', r.media_id, 'reason', r.reason, 'status', r.status,\n                                'resolved_at', r.resolved_at)\n                            ORDER BY r.id), '[]')\n                            FROM reports r WHERE r.resolved_by = $1),\n               'about_me', (SELECT coalesce(jsonb_agg(jsonb_build_object(\n                                'id', r.id, 'target_kind', r.target_kind,\n                                'media_id', r.media_id, 'work_id', r.work_id,\n                                'edition_id', r.edition_id, 'reason', r.reason,\n                                'status', r.status, 'via', r.via, 'created_at', r.created_at,\n                                'resolved_at', r.resolved_at)\n                            ORDER BY r.id), '[]')\n                            FROM reports r\n                            LEFT JOIN media m ON m.id = r.media_id\n                            LEFT JOIN works w\n                                   ON w.id = r.target_work_id AND r.target_kind = 'work'\n                            LEFT JOIN editions e\n                                   ON e.id = r.edition_id AND r.target_kind = 'edition'\n                            WHERE r.target_user_id = $1 OR m.uploaded_by = $1\n                               OR w.created_by = $1 OR e.created_by = $1)) AS \"rows!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "rows!",
+        "type_info": "Jsonb",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "f6ba137db3300e52649cc8f9392cd59eca4076f9d8adda077de613007c6ef93e"
+}

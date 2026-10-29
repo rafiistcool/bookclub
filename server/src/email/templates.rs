@@ -360,15 +360,35 @@ pub enum Reported<'a> {
     Edition(&'a str),
 }
 
-/// To the reporter, after an admin decided their report (DSA Art. 16 (5)): removed, or kept.
-/// Names neither the uploader nor what the report said. `contact` is `CONTACT_EMAIL`.
+/// What came of a report, for its reporter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    /// An admin removed it.
+    Removed,
+    /// An admin kept it: no breach found.
+    Kept,
+    /// It no longer shows as reported, so there was nothing left to decide: a picture its owner
+    /// replaced or deleted, or a book merged into another entry of the same book.
+    Gone,
+}
+
+/// To the reporter, after an admin decided their report (DSA Art. 16 (5)): removed, kept, or no
+/// longer online. Names neither the uploader nor what the report said. `contact` is
+/// `CONTACT_EMAIL`.
 pub fn report_decision(
     site: Site,
     to: Recipient,
     what: Reported,
-    removed: bool,
+    outcome: Outcome,
     contact: Option<&str>,
 ) -> Email {
+    let book = matches!(what, Reported::Work(_) | Reported::Edition(_));
+    // German: "es" for das Coverbild, das Profilbild, das Buch; "sie" for die Ausgabe.
+    let (it, it_upper) = if matches!(what, Reported::Edition(_)) {
+        ("sie", "Sie")
+    } else {
+        ("es", "Es")
+    };
     let (subject, text) = if german(to) {
         let what = match what {
             Reported::Cover(Some(title)) => {
@@ -381,8 +401,8 @@ pub fn report_decision(
                 format!("die Ausgabe von „{title}“, die du gemeldet hast,")
             }
         };
-        let (outcome, decision, next) = if removed {
-            (
+        let (outcome, decision, next) = match outcome {
+            Outcome::Removed => (
                 "entfernt",
                 format!(
                     "Ein Admin von {} hat {what} geprüft und entfernt.",
@@ -391,9 +411,8 @@ pub fn report_decision(
                 "Wer den Inhalt hochgeladen oder eingetragen hat, erfährt, dass und warum er \
                  entfernt wurde, aber nicht, von wem die Meldung kam."
                     .to_owned(),
-            )
-        } else {
-            (
+            ),
+            Outcome::Kept => (
                 "nicht entfernt",
                 format!(
                     "Ein Admin von {} hat {what} geprüft und nicht entfernt: Ein Verstoß gegen \
@@ -404,7 +423,29 @@ pub fn report_decision(
                     "Wenn du anderer Meinung bist, schreib an {}.",
                     contact_de(site, contact)
                 ),
-            )
+            ),
+            Outcome::Gone if book => (
+                "zusammengeführt",
+                format!(
+                    "Ein Admin von {} hat {what} geprüft: {it_upper} wird nicht mehr eigenständig \
+                     angezeigt, weil {it} mit einem anderen Eintrag desselben Buchs \
+                     zusammengeführt wurde.",
+                    site.service
+                ),
+                format!(
+                    "Wenn du dort noch ein Problem siehst, schreib an {}.",
+                    contact_de(site, contact)
+                ),
+            ),
+            Outcome::Gone => (
+                "nicht mehr online",
+                format!(
+                    "Ein Admin von {} hat {what} geprüft: {it_upper} ist nicht mehr online, weil {it} \
+                     ersetzt oder gelöscht wurde.",
+                    site.service
+                ),
+                format!("Wenn {it} wieder auftaucht, kannst du {it} erneut melden."),
+            ),
         };
         (
             format!("Deine Meldung bei {}: {outcome}", site.service),
@@ -427,8 +468,8 @@ pub fn report_decision(
             Reported::Work(title) => format!("the book \"{title}\" you reported"),
             Reported::Edition(title) => format!("the edition of \"{title}\" you reported"),
         };
-        let (outcome, decision, next) = if removed {
-            (
+        let (outcome, decision, next) = match outcome {
+            Outcome::Removed => (
                 "removed",
                 format!(
                     "An admin of {} reviewed {what} and removed it.",
@@ -437,9 +478,8 @@ pub fn report_decision(
                 "Whoever uploaded or added it is told that it was removed and why, but not who \
                  reported it."
                     .to_owned(),
-            )
-        } else {
-            (
+            ),
+            Outcome::Kept => (
                 "not removed",
                 format!(
                     "An admin of {} reviewed {what} and did not remove it: the admin found no \
@@ -447,7 +487,28 @@ pub fn report_decision(
                     site.service
                 ),
                 format!("If you disagree, write to {}.", contact_en(site, contact)),
-            )
+            ),
+            Outcome::Gone if book => (
+                "merged",
+                format!(
+                    "An admin of {} reviewed {what}: it no longer shows on its own, because it \
+                     was merged with another entry of the same book.",
+                    site.service
+                ),
+                format!(
+                    "If you still see a problem there, write to {}.",
+                    contact_en(site, contact)
+                ),
+            ),
+            Outcome::Gone => (
+                "no longer online",
+                format!(
+                    "An admin of {} reviewed {what}: it is no longer online, because it was \
+                     replaced or deleted.",
+                    site.service
+                ),
+                "If it shows up again, you can report it again.".to_owned(),
+            ),
         };
         (
             format!("Your report on {}: {outcome}", site.service),
@@ -836,8 +897,8 @@ mod tests {
             ),
         ];
         for what in REPORTED {
-            for removed in [true, false] {
-                let mail = report_decision(SITE, to, what, removed, Some(CONTACT));
+            for outcome in [Outcome::Removed, Outcome::Kept, Outcome::Gone] {
+                let mail = report_decision(SITE, to, what, outcome, Some(CONTACT));
                 mails.push(("report_decision", mail));
             }
             for reason in [Some("copyright"), None] {
@@ -894,7 +955,13 @@ mod tests {
     /// object to a kept report; nothing names the uploader.
     #[test]
     fn the_reporter_learns_the_decision() {
-        let removed = report_decision(SITE, to("en"), Reported::Work("Circe"), true, None);
+        let removed = report_decision(
+            SITE,
+            to("en"),
+            Reported::Work("Circe"),
+            Outcome::Removed,
+            None,
+        );
         assert_eq!(removed.subject, "Your report on Bookclub: removed");
         assert!(
             removed
@@ -905,7 +972,13 @@ mod tests {
             "An admin of Bookclub reviewed the book \"Circe\" you reported and removed it."
         ));
         assert!(removed.text.contains("but not who reported it"));
-        let kept = report_decision(SITE, to("en"), Reported::Avatar, false, Some(CONTACT));
+        let kept = report_decision(
+            SITE,
+            to("en"),
+            Reported::Avatar,
+            Outcome::Kept,
+            Some(CONTACT),
+        );
         assert_eq!(kept.subject, "Your report on Bookclub: not removed");
         assert!(
             kept.text
@@ -915,10 +988,16 @@ mod tests {
             kept.text
                 .contains("If you disagree, write to abuse@books.example.com.")
         );
-        let kept = report_decision(SITE, to("en"), Reported::Cover(None), false, None);
+        let kept = report_decision(SITE, to("en"), Reported::Cover(None), Outcome::Kept, None);
         assert!(kept.text.contains("write to the admins of Bookclub."));
 
-        let removed = report_decision(SITE, to("de"), Reported::Edition("Circe"), true, None);
+        let removed = report_decision(
+            SITE,
+            to("de"),
+            Reported::Edition("Circe"),
+            Outcome::Removed,
+            None,
+        );
         assert_eq!(removed.subject, "Deine Meldung bei Bookclub: entfernt");
         assert!(
             removed
@@ -929,13 +1008,75 @@ mod tests {
             "Ein Admin von Bookclub hat die Ausgabe von „Circe“, die du gemeldet hast, geprüft \
              und entfernt."
         ));
-        let kept = report_decision(SITE, to("de"), Reported::Cover(Some("Circe")), false, None);
+        let kept = report_decision(
+            SITE,
+            to("de"),
+            Reported::Cover(Some("Circe")),
+            Outcome::Kept,
+            None,
+        );
         assert_eq!(kept.subject, "Deine Meldung bei Bookclub: nicht entfernt");
         assert!(
             kept.text
                 .contains("hat das Coverbild von „Circe“, das du gemeldet hast, geprüft und nicht")
         );
         assert!(kept.text.contains("schreib an die Admins von Bookclub."));
+
+        // Nothing left to decide: a profile picture its owner replaced, a book merged away.
+        let gone = report_decision(
+            SITE,
+            to("en"),
+            Reported::Avatar,
+            Outcome::Gone,
+            Some(CONTACT),
+        );
+        assert_eq!(gone.subject, "Your report on Bookclub: no longer online");
+        assert!(gone.text.contains(
+            "reviewed the profile picture you reported: it is no longer online, because it was \
+             replaced or deleted."
+        ));
+        assert!(
+            gone.text
+                .contains("If it shows up again, you can report it again.")
+        );
+        let merged = report_decision(SITE, to("en"), Reported::Work("Zine"), Outcome::Gone, None);
+        assert_eq!(merged.subject, "Your report on Bookclub: merged");
+        assert!(merged.text.contains(
+            "reviewed the book \"Zine\" you reported: it no longer shows on its own, because it \
+             was merged with another entry of the same book."
+        ));
+        assert!(merged.text.contains("write to the admins of Bookclub."));
+        let gone = report_decision(SITE, to("de"), Reported::Avatar, Outcome::Gone, None);
+        assert_eq!(
+            gone.subject,
+            "Deine Meldung bei Bookclub: nicht mehr online"
+        );
+        assert!(gone.text.contains(
+            "hat das Profilbild, das du gemeldet hast, geprüft: Es ist nicht mehr online, weil \
+             es ersetzt oder gelöscht wurde."
+        ));
+        assert!(
+            gone.text
+                .contains("Wenn es wieder auftaucht, kannst du es erneut melden.")
+        );
+        let merged = report_decision(
+            SITE,
+            to("de"),
+            Reported::Edition("Zine"),
+            Outcome::Gone,
+            None,
+        );
+        assert_eq!(
+            merged.subject,
+            "Deine Meldung bei Bookclub: zusammengeführt"
+        );
+        assert!(merged.text.contains(
+            "die du gemeldet hast, geprüft: Sie wird nicht mehr eigenständig angezeigt, weil sie \
+             mit einem anderen Eintrag desselben Buchs zusammengeführt wurde."
+        ));
+        for mail in [&gone, &merged] {
+            assert!(!mail.text.contains("Verstoß"), "{}", mail.text);
+        }
     }
 
     /// Q12 (DSA Art. 17): the uploader learns what was removed, the reported ground, that a

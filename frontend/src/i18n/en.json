@@ -46,7 +46,10 @@
     "sending": "Sending…",
     "sent": "Thanks. An admin will look at it.",
     "failed": "Could not send that report",
-    "noAccount": "No account here? Anyone can report content by writing to {email}."
+    "noAccount": "No account here? Anyone can report content by writing to {email}.",
+    "instead": "Not a mistake, but offensive or infringing someone’s rights?",
+    "removedTitle": "[removed]",
+    "removedNote": "An admin removed what a reader had entered for this book, after a report."
   },
   "common": {
     "cancel": "Cancel",
@@ -696,7 +699,9 @@
     "deleteOwnEntries": "You can only delete your own entries",
     "requestDecided": "Someone already decided this request",
     "reportResolved": "Someone already closed this report",
-    "invalidValueFor": "That value of “{field}” cannot be used"
+    "invalidValueFor": "That value of “{field}” cannot be used",
+    "reportedBookMerged": "This book was merged into another one since it was reported. Close the report, and correct the other book with “Edit as admin” if it took over the reported text.",
+    "pictureGone": "The reported picture is no longer online: its owner replaced or deleted it. Close the report."
   },
   "physicalShelf": {
     "title": "Your real bookshelf",
@@ -1362,7 +1367,13 @@
       "future": "The notice cannot have arrived in the future.",
       "done": "Picture taken down and the notice recorded",
       "failed": "Could not take the picture down"
-    }
+    },
+    "gone": {
+      "avatar": "No longer online: its owner replaced or deleted the picture, so there is nothing left to take down.",
+      "work": "Merged into this book since it was reported, so the reported text no longer shows on its own. If this book took some of it over, correct it with “Edit as admin”."
+    },
+    "closeReport": "Close the report",
+    "closedBy": "Closed by {name} · {when}"
   },
   "notFound": {
     "title": "Page not found",

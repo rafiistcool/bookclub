@@ -2,7 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
-import { bookDetail, user } from "../test/fixtures";
+import { bookDetail, edition, user } from "../test/fixtures";
 
 const api: Record<string, ReturnType<typeof vi.fn>> = {
   reportCover: vi.fn(),
@@ -32,7 +32,8 @@ import MemberShelfPage from "../pages/MemberShelfPage.vue";
 import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
-import ReportSheet, { picturePublicId, type ReportTarget } from "./ReportSheet.vue";
+import EditRequestSheet from "./EditRequestSheet.vue";
+import ReportSheet, { picturePublicId, REMOVED_TITLE, type ReportTarget } from "./ReportSheet.vue";
 
 const PICTURE = "abcdefghijklmnopqrstuvwxyz";
 const COVER: ReportTarget = { kind: "cover", publicId: "abc2def", title: "Circe" };
@@ -189,12 +190,12 @@ describe("the report actions", () => {
     expect((await memberPage("ada", `/media/${PICTURE}/a`)).find("button.report-avatar").exists()).toBe(false);
   });
 
-  async function bookPage(custom: boolean) {
+  async function bookPage(custom: boolean, title = "Manual Zine") {
     api.book.mockResolvedValue(
       bookDetail({
         id: 4,
         ol_work_key: custom ? null : "/works/OL4W",
-        title: "Manual Zine",
+        title,
         source: custom ? "user" : "openlibrary",
         custom,
       }),
@@ -224,5 +225,46 @@ describe("the report actions", () => {
     await flushPromises();
     expect(api.reportWork).toHaveBeenCalledWith(4, { reason: "copyright", details: null });
     expect(useToast().items.at(-1)?.message).toBe("Thanks. An admin will look at it.");
+  });
+
+  it("shows the placeholder title of a book whose text an admin removed in the reader's language", async () => {
+    i18n.global.locale.value = "de";
+    const removed = await bookPage(true, REMOVED_TITLE);
+    expect(removed.get("h1").text()).toBe("[entfernt]");
+    expect(removed.text()).toContain("Ein Admin hat nach einer Meldung entfernt, was jemand für dieses Buch eingetragen hatte.");
+
+    i18n.global.locale.value = "en";
+    // Only a book a reader added: a catalog book with that title is shown as it is.
+    const catalog = await bookPage(false, REMOVED_TITLE);
+    expect(catalog.get("h1").text()).toBe("[removed]");
+    expect(catalog.text()).not.toContain("after a report");
+  });
+
+  function correctionSheet(props: InstanceType<typeof EditRequestSheet>["$props"]) {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    return mount(EditRequestSheet, { props, global: { plugins: [pinia] } });
+  }
+
+  it("reports an edition a reader added from its correction sheet", async () => {
+    const own = edition({ id: 13, title: "Mein Heft", publisher: "Basement Press", source: "user" });
+    const wrapper = correctionSheet({ edition: own });
+    expect(wrapper.text()).toContain("Not a mistake, but offensive or infringing someone’s rights?");
+    await wrapper.get(".report-instead button").trigger("click");
+    expect(wrapper.text()).toContain("Report this edition");
+    expect(wrapper.find('textarea[name="note"]').exists()).toBe(false);
+    api.reportEdition.mockResolvedValue({ id: 11, status: "open" });
+    await wrapper.get('input[value="offensive"]').setValue(true);
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(api.reportEdition).toHaveBeenCalledWith(13, { reason: "offensive", details: null });
+    expect(wrapper.emitted("close")).toHaveLength(1);
+  });
+
+  it("offers no report on a catalog edition's correction sheet, or in an admin's edit", () => {
+    expect(correctionSheet({ edition: edition({ source: "dnb" }) }).find(".report-instead").exists()).toBe(false);
+    expect(correctionSheet({ edition: edition({ source: "user" }), admin: true }).find(".report-instead").exists()).toBe(false);
+    const book = correctionSheet({ book: bookDetail({ id: 4, title: "Manual Zine", source: "user", custom: true }) });
+    expect(book.get(".report-instead button").text()).toBe("Report this book");
   });
 });

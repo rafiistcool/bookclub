@@ -183,7 +183,10 @@ export interface paths {
          *     good) or withdraws the text of a reported work or edition a reader added; `dismiss` keeps
          *     it. Either way every open report of the same picture, work or edition is resolved with it.
          *     After the commit each reporter is mailed the decision, and on a removal the uploader, the
-         *     avatar's owner or the reader who added the record gets a statement of reasons.
+         *     avatar's owner or the reader who added the record gets a statement of reasons. A report of
+         *     something gone (`ReportOut.gone`: a profile picture its owner replaced or deleted, a work
+         *     merged away) is only dismissed, with the other open reports of it; its reporters learn that
+         *     it is no longer online.
          */
         post: operations["media_admin_resolve_report"];
         delete?: never;
@@ -3591,6 +3594,12 @@ export interface components {
              *     account has no `resolved_by` either, but is not closed on arrival.
              */
             closed_on_arrival: boolean;
+            /**
+             * @description What was reported no longer shows as reported, as it is now: a profile picture its owner
+             *     replaced or deleted, or a book merged into another one (`book` is that one). Only
+             *     `dismiss` decides such a report; `remove` answers 409.
+             */
+            gone: boolean;
         };
         /** @description What the admin decided. */
         ReportResolveIn: {
@@ -4788,7 +4797,7 @@ export interface operations {
                     "application/json": components["schemas"]["ReportOut"];
                 };
             };
-            /** @description `Input should be 'remove' or 'dismiss'` */
+            /** @description `Input should be 'remove' or 'dismiss'`; on `remove`, `Only books readers added can be reported` (a work or edition from another source) */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -4815,7 +4824,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description `This report was already resolved` */
+            /** @description `This report was already resolved`; on `remove`, `The reported picture is no longer online` (a profile picture its owner replaced or deleted) or `The reported book was merged into another one` */
             409: {
                 headers: {
                     [name: string]: unknown;

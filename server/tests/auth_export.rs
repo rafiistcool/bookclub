@@ -383,6 +383,12 @@ async fn every_section_holds_the_users_rows(db: PgPool) {
               resolved_by, resolved_at)
              SELECT 'avatar', id, {a}, 'other', 'bobs report', 'removed', {b}, {a}, now()
              FROM media WHERE public_id = '{avatar}';
+         INSERT INTO reports (target_kind, media_id, reason, created_by)
+             SELECT 'cover', id, 'copyright', {cleo} FROM media WHERE public_id = '{cover}';
+         INSERT INTO reports (target_kind, work_id, target_work_id, reason, created_by)
+             VALUES ('work', {w2}, {w}, 'offensive', {cleo});
+         INSERT INTO reports (target_kind, work_id, edition_id, reason, created_by)
+             VALUES ('edition', {w}, {e}, 'other', {cleo});
          INSERT INTO shelf_entries (user_id, work_id, status, rating, take)
              VALUES ({a}, {w}, 'finished', 5, 'loved it'), ({b}, {w}, 'finished', 1, 'bobs take');
          INSERT INTO physical_shelf_layouts (user_id, layout)
@@ -411,7 +417,10 @@ async fn every_section_holds_the_users_rows(db: PgPool) {
     let data = data_json(&res);
     let bobs = data_json(&export(&bob).await);
     assert_utc_timestamps(&data, "data");
-    assert_section_sizes(&data, &[("posts", 2), ("uploaded_media", 2)]);
+    assert_section_sizes(
+        &data,
+        &[("posts", 2), ("uploaded_media", 2), ("reports.about_me", 4)],
+    );
     assert_section_sizes(&bobs, &[]);
 
     // One value per section that tells the two users apart: Ada's, then Bob's.
@@ -534,10 +543,26 @@ async fn every_section_holds_the_users_rows(db: PgPool) {
     assert_eq!(data["profile"]["pending_email"], "next@example.test");
     // ADM2: the reporter is never named to the other side, and a report filed names no other
     // account; the profile carries the suspension column.
-    let about = data["reports"]["about_me"][0].as_object().unwrap();
-    for hidden in ["created_by", "details", "resolved_by", "target_user_id"] {
-        assert!(!about.contains_key(hidden), "about_me.{hidden}");
+    // About Ada's content: her profile picture, a cover she uploaded, a book and an edition she
+    // added. The book report names her work as reported (`target_work_id`), though `work_id`
+    // now points at Bob's work, as after a merge: it is Ada's, not Bob's.
+    let kinds = |data: &Value| -> Vec<String> {
+        data["reports"]["about_me"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["target_kind"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(kinds(&data), ["avatar", "cover", "work", "edition"]);
+    assert_eq!(kinds(&bobs), ["avatar"]);
+    for about in data["reports"]["about_me"].as_array().unwrap() {
+        let about = about.as_object().unwrap();
+        for hidden in ["created_by", "details", "resolved_by", "target_user_id"] {
+            assert!(!about.contains_key(hidden), "about_me.{hidden}");
+        }
     }
+    let about = data["reports"]["about_me"][0].as_object().unwrap();
     assert_eq!(about["target_kind"], "avatar");
     assert_eq!(about["status"], "removed");
     let filed = data["reports"]["filed"][0].as_object().unwrap();

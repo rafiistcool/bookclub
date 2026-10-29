@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO reports (target_kind, work_id, edition_id, reason, details, created_by)\n         VALUES ($1, $2, $3, $4, $5, $6)\n         RETURNING id",
+  "query": "SELECT id FROM reports\n         WHERE created_by = $1 AND target_kind = $2 AND status = 'open'\n           AND CASE $2 WHEN 'work' THEN target_work_id = $3 ELSE edition_id = $4 END\n         ORDER BY id DESC LIMIT 1",
   "describe": {
     "columns": [
       {
@@ -17,11 +17,9 @@
     ],
     "parameters": {
       "Left": [
-        "Text",
-        "Int8",
         "Int8",
         "Text",
-        "Text",
+        "Int8",
         "Int8"
       ]
     },
@@ -29,5 +27,5 @@
       false
     ]
   },
-  "hash": "524e85ba3afeb2462dfd5a8fc86d5ea669398cecb2baf102a510ee56be4db1f6"
+  "hash": "482b9e23fdebf29bc9649288015bd24eebd5978bdc3008329982caa80c88d380"
 }

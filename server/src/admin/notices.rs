@@ -19,7 +19,7 @@ use crate::AppState;
 use crate::auth::mail::site;
 use crate::config::Config;
 use crate::email::Email;
-use crate::email::templates::{self, Recipient, Reported};
+use crate::email::templates::{self, Outcome, Recipient, Reported};
 
 /// The longest one notice waits for the mail transport.
 const SEND_TIMEOUT: Duration = Duration::from_secs(15);
@@ -62,13 +62,16 @@ impl Account {
 /// The notices of the reports `admin_id` resolved in this transaction (`resolved_at = now()`,
 /// so the caller runs this after its last update of `reports`), all about `what`, plus the
 /// statement of reasons of `removal` when the decision removed something. A reporter who is
-/// also the owner gets the statement only.
+/// also the owner gets the statement only. With `gone` (what was reported no longer shows as
+/// reported: a profile picture its owner replaced or deleted, a work merged away) the reporters
+/// learn that instead of a decision on it.
 pub async fn decided(
     conn: &mut PgConnection,
     config: &Config,
     admin_id: i64,
     what: Reported<'_>,
     removal: Option<Removal<'_>>,
+    gone: bool,
 ) -> sqlx::Result<Notices> {
     let site = site(config);
     let contact = config.contact_email.as_deref();
@@ -103,12 +106,18 @@ pub async fn decided(
         if owner.as_ref().is_some_and(|owner| owner.id == reporter.id) {
             continue;
         }
-        let removed = reporter.status == "removed";
+        let outcome = if gone {
+            Outcome::Gone
+        } else if reporter.status == "removed" {
+            Outcome::Removed
+        } else {
+            Outcome::Kept
+        };
         mails.push(templates::report_decision(
             site,
             reporter.recipient(),
             what,
-            removed,
+            outcome,
             contact,
         ));
     }

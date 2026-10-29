@@ -3,10 +3,15 @@
 
 mod common;
 
+use std::net::IpAddr;
+use std::time::Duration;
+
 use bookclub_server::admin::notify;
 use common::*;
 use serde_json::{Value, json};
 use sqlx::PgPool;
+use tokio::sync::OwnedSemaphorePermit;
+use tokio::time::timeout;
 
 async fn suspend(admin: &TestClient, username: &str) -> TestResponse {
     admin
@@ -256,4 +261,75 @@ async fn suspended_admins_are_not_notified(db: PgPool) {
     assert_eq!(app.email.sent_to("root@example.test").len(), 1);
     assert!(app.email.sent_to("grace@example.test").is_empty());
     drop(grace);
+}
+
+/// Takes every password verification slot, so a login waits right before it verifies the
+/// password until the permit is dropped.
+async fn hold_passwords(app: &TestApp) -> OwnedSemaphorePermit {
+    let permits = app.state.passwords.permits.clone();
+    let all = u32::try_from(permits.available_permits()).unwrap();
+    permits.acquire_many_owned(all).await.unwrap()
+}
+
+/// Waits until the login failure key `key` is blocked, i.e. until the request that made the
+/// tenth hit has looked the account up and waits to verify the password.
+async fn until_limited(app: &TestApp, key: &str) {
+    timeout(Duration::from_secs(10), async {
+        while !app.state.limits.login_failures.is_limited(key) {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    })
+    .await
+    .expect("the request never reached the password check");
+}
+
+/// A login and a bearer token request racing a suspension create no session (`login::confirm`):
+/// both read the account before the suspension and wait to verify the password; the suspension
+/// commits meanwhile; the transaction that would create the session locks the user row, sees
+/// the suspension and answers 403. A check of `suspended_at` before the password verification,
+/// outside that transaction, would let both through and leave a live session behind.
+#[sqlx::test]
+async fn a_login_racing_a_suspension_creates_no_session(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let root = app.admin("root").await;
+    let ada = app.user("ada").await;
+    let key = format!("u:{}", ada.id());
+    // Eight earlier failures: the two attempts' own hits block the key, which shows that both
+    // have looked the account up.
+    for _ in 0..8 {
+        app.state.limits.login_failures.hit(&key);
+    }
+    let held = hold_passwords(&app).await;
+    let browser = app.anon();
+    let cookie_login = tokio::spawn({
+        let browser = browser.clone();
+        async move {
+            browser
+                .post(
+                    "/api/auth/login",
+                    json!({"username": "ada", "password": PASSWORD}),
+                )
+                .await
+        }
+    });
+    let app_login = tokio::spawn({
+        let client = app.anon().with_ip(IpAddr::from([10, 0, 0, 1]));
+        async move {
+            client
+                .post(
+                    "/api/auth/tokens",
+                    json!({"username": "ada", "password": PASSWORD, "label": "phone"}),
+                )
+                .await
+        }
+    });
+    until_limited(&app, &key).await;
+    suspend(&root, "ada").await.assert_status(200);
+    drop(held);
+    for res in [cookie_login.await.unwrap(), app_login.await.unwrap()] {
+        res.assert_detail(403, "This account is suspended");
+        assert!(res.set_cookies().is_empty());
+    }
+    assert!(browser.cookie().is_none());
+    assert_eq!(sessions_of(&app, &ada).await, 0);
 }

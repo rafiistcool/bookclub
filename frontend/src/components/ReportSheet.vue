@@ -9,6 +9,14 @@ export type ReportTarget =
   | { kind: "work"; workId: number; title: string }
   | { kind: "edition"; editionId: number; title: string };
 
+/**
+ * The stored title of a book a reader added whose text an admin removed on a
+ * report (`catalog::reports::REMOVED_TITLE` on the server, which
+ * `server/tests/catalog_reports.rs` holds to this line). The book page shows
+ * it translated (`report.removedTitle`).
+ */
+export const REMOVED_TITLE = "[removed]";
+
 /** The public id in a picture's address (`/media/{public_id}/a`); null for anything else. */
 export function picturePublicId(url: string | null | undefined): string | null {
   const match = /^\/media\/([a-z0-9]{26})\//.exec(url ?? "");

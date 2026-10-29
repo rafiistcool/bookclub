@@ -89,6 +89,7 @@ function report(overrides: Partial<ReportOut> = {}): ReportOut {
     resolved_by: null,
     resolved_at: null,
     closed_on_arrival: false,
+    gone: false,
     ...overrides,
   };
 }
@@ -675,6 +676,57 @@ describe("AdminPage", () => {
     expect(wrapper.get(".report-item .kind-badge").text()).toBe("Profilbild");
   });
 
+  it("offers only closing a report of something gone, and reads the queue again on a 409", async () => {
+    const circe = bookOut({ id: 9, title: "Circe" });
+    const avatarGone = report({
+      id: 51,
+      target_kind: "avatar",
+      media_public_id: null,
+      cover_url: null,
+      cover_thumb_url: null,
+      avatar_url: null,
+      target_user: GRACE,
+      book: null,
+      gone: true,
+    });
+    const merged = report({ id: 52, target_kind: "work", media_public_id: null, cover_url: null, cover_thumb_url: null, book: circe, gone: true });
+    const avatar = report({ id: 53, target_kind: "avatar", media_public_id: "gracegracegracegracegrace", cover_url: null, cover_thumb_url: null, avatar_url: GRACE.avatar_url, target_user: GRACE, book: null });
+    api.adminReportPage.mockResolvedValue(page([avatarGone, merged, avatar]));
+    const { wrapper } = await mountAdmin("/admin?tab=reports");
+    const [gonePicture, mergedBook, live] = wrapper.findAll(".report-item");
+    expect(gonePicture!.text()).toContain("No longer online: its owner replaced or deleted the picture");
+    expect(mergedBook!.text()).toContain("Merged into this book since it was reported");
+    for (const item of [gonePicture!, mergedBook!]) {
+      expect(item.findAll("button").map((node) => node.text())).toEqual(["Close the report"]);
+    }
+
+    // Dismissing closes the owner's other gone reports too: the queue is read again.
+    api.resolveReport.mockResolvedValue({ ...avatarGone, status: "dismissed" });
+    api.adminReportPage.mockResolvedValue(page([merged, avatar]));
+    await buttonIn(gonePicture!, "Close the report").trigger("click");
+    await flushPromises();
+    expect(api.resolveReport).toHaveBeenCalledWith(51, "dismiss");
+    expect(useToast().items.at(-1)?.message).toBe("Report closed, nothing was removed");
+    expect(wrapper.findAll(".report-item")).toHaveLength(2);
+
+    // The owner replaced the picture after the list was read: the takedown is refused, and the
+    // queue read again shows the report as gone.
+    const liveItem = wrapper.findAll(".report-item")[1]!;
+    await buttonIn(liveItem, "Take down").trigger("click");
+    api.resolveReport.mockRejectedValue(
+      new ApiError(i18n.global.t("errors.pictureGone"), 409, "The reported picture is no longer online"),
+    );
+    api.adminReportPage.mockResolvedValue(page([merged, { ...avatar, media_public_id: null, avatar_url: null, gone: true }]));
+    await buttonIn(liveItem, "Take down for good").trigger("click");
+    await flushPromises();
+    expect(useToast().items.at(-1)?.message).toBe(
+      "The reported picture is no longer online: its owner replaced or deleted it. Close the report.",
+    );
+    expect(api.adminReportPage).toHaveBeenLastCalledWith("open", 1);
+    const [, refreshed] = wrapper.findAll(".report-item");
+    expect(refreshed!.findAll("button").map((node) => node.text())).toEqual(["Close the report"]);
+  });
+
   it("names an emailed notice and a removed book's text in the history", async () => {
     const root = { id: 1, username: "root", avatar_url: null };
     const decided = [
@@ -702,12 +754,26 @@ describe("AdminPage", () => {
         resolved_by: root,
         resolved_at: "2026-10-26T13:00:00Z",
       }),
+      report({
+        id: 42,
+        target_kind: "work",
+        status: "dismissed",
+        media_public_id: null,
+        cover_url: null,
+        cover_thumb_url: null,
+        gone: true,
+        created_at: "2026-10-26T10:00:00Z",
+        resolved_by: root,
+        resolved_at: "2026-10-26T11:00:00Z",
+      }),
     ];
     const { wrapper } = await mountAdmin("/admin?tab=reports");
     api.adminReportPage.mockResolvedValueOnce(page(decided));
     await buttonIn(wrapper.get(".queue-views"), "Decided").trigger("click");
     await flushPromises();
-    const [notice, work] = wrapper.findAll(".report-item");
+    const [notice, work, merged] = wrapper.findAll(".report-item");
+    // A report of a book merged away was closed, not kept.
+    expect(merged!.get(".decision").text()).toMatch(/^Closed by root · .+ · after an hour$/);
     expect(notice!.get(".admin-item-head").text()).toMatch(/Emailed notice · received .+/);
     expect(notice!.get(".admin-item-head").text()).not.toContain("someone");
     expect(notice!.get(".decision").text()).toMatch(/^Taken down by root · .+ · after 2 hours$/);

@@ -41,6 +41,8 @@ const API_ERROR_KEYS: Record<string, string> = {
   "Only books readers added can be reported": "errors.onlyReaderBooks",
   "No account with that name": "errors.noAccount",
   "You cannot suspend your own account": "errors.cannotSuspendSelf",
+  "The reported picture is no longer online": "errors.pictureGone",
+  "The reported book was merged into another one": "errors.reportedBookMerged",
 
   // Clubs
   "No such club": "errors.noSuchClub",

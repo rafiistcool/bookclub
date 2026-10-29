@@ -1795,3 +1795,137 @@ async fn a_rolled_back_decision_mails_nobody(db: PgPool) {
         .assert_status(200);
     assert!(app.sent_emails().is_empty(), "{:#?}", app.sent_emails());
 }
+
+/// A profile picture its owner replaces (or deletes) while it is reported loses its row
+/// (`media/avatar.rs`), and its reports their `media_id`. The queue says so (`gone`), "remove"
+/// is refused, as nothing is left to take down, and "dismiss" closes every open report of the
+/// owner's gone pictures in one decision: the reporters learn that it is no longer online, and
+/// the owner gets no statement of reasons. A report of the new picture stays open.
+#[sqlx::test]
+async fn reports_of_an_avatar_replaced_meanwhile_are_closed_as_gone(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let carl = app.user("carl").await;
+    let root = app.admin("root").await;
+    let club = app.club(&ada, "Readers").await;
+    app.join(&club, &bob, "member").await;
+    app.join(&club, &carl, "member").await;
+    let old = upload_avatar(&ada, [10, 120, 200]).await;
+    let first = report(&bob, &old, json!({"reason": "offensive"}))
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+    report(&carl, &old, json!({"reason": "other"}))
+        .await
+        .assert_status(201);
+
+    let new = upload_avatar(&ada, [200, 30, 30]).await;
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM reports WHERE media_id IS NULL")
+            .await,
+        2,
+        "the old picture's row is gone"
+    );
+    let fresh = report(&bob, &new, json!({"reason": "offensive"}))
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+
+    let items = root.get("/api/admin/reports").await.json()["items"].clone();
+    let gone: Vec<&Value> = items
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["gone"] == true)
+        .collect();
+    assert_eq!(gone.len(), 2, "{items:#?}");
+    for item in &gone {
+        assert_eq!(item["target_kind"], "avatar");
+        assert_eq!(item["target_user"]["username"], "ada");
+        assert_eq!(item["avatar_url"], Value::Null);
+        assert_eq!(item["media_public_id"], Value::Null);
+        assert_eq!(item["removed"], false);
+    }
+    let current = items
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == fresh)
+        .unwrap();
+    assert_eq!(current["gone"], false);
+    assert_eq!(current["avatar_url"], format!("/media/{new}/a"));
+
+    let path = format!("/api/admin/reports/{first}/resolve");
+    root.post(&path, json!({"action": "remove"}))
+        .await
+        .assert_detail(409, "The reported picture is no longer online");
+    assert!(app.sent_emails().is_empty());
+    let res = root.post(&path, json!({"action": "dismiss"})).await;
+    res.assert_status(200);
+    assert_eq!(res.json()["status"], "dismissed");
+    assert_eq!(res.json()["gone"], true);
+    let open: Vec<i64> = sqlx::query_scalar("SELECT id FROM reports WHERE status = 'open'")
+        .fetch_all(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        open,
+        [fresh],
+        "carl's report closed with bob's; the new one stays"
+    );
+
+    for reporter in ["bob", "carl"] {
+        let mails = mails_to(&app, reporter);
+        assert_eq!(mails.len(), 1, "{reporter}");
+        assert_eq!(
+            mails[0].subject,
+            "Your report on Bookclub: no longer online"
+        );
+        assert!(
+            mails[0].text.contains(
+                "reviewed the profile picture you reported: it is no longer online, because \
+                 it was replaced or deleted."
+            ),
+            "{}",
+            mails[0].text
+        );
+    }
+    assert!(mails_to(&app, "ada").is_empty(), "no statement of reasons");
+    assert_eq!(
+        ada.get("/api/auth/me").await.json()["avatar_url"],
+        format!("/media/{new}/a"),
+        "the new picture stays"
+    );
+}
+
+/// A profile picture its owner deletes after a report read it, but before the report locked it,
+/// is 404 like an unknown picture, not a 500: the report waits for the reader's turn (held here),
+/// the owner's deletion commits meanwhile, and the locked read finds no row.
+#[sqlx::test]
+async fn a_report_of_an_avatar_deleted_meanwhile_is_404(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let club = app.club(&ada, "Readers").await;
+    app.join(&club, &bob, "member").await;
+    let avatar = upload_avatar(&ada, [10, 120, 200]).await;
+    let media = media_id(&app, &avatar).await;
+
+    let mut holder = hold_reader_turn(&app, bob.id(), media).await;
+    let filing = tokio::spawn({
+        let bob = bob.clone();
+        let avatar = avatar.clone();
+        async move { report(&bob, &avatar, json!({"reason": "offensive"})).await }
+    });
+    until_a_lock_wait(&app.db).await;
+    ada.delete("/api/auth/me/avatar").await.assert_status(200);
+    sqlx::query("SELECT pg_advisory_unlock_all()")
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    filing.await.unwrap().assert_detail(404, "Not found");
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM reports").await, 0);
+}
