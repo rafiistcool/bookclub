@@ -576,7 +576,10 @@ async fn a_wrong_book_takedown_leaves_the_picture_to_its_own_book(db: PgPool) {
     let shown = upload_cover(&app, &reader, wrong.id, Some(first.id), bytes.clone()).await;
     let copy = upload_cover(&app, &reader, wrong.id, Some(second.id), bytes).await;
     report_and_remove(&app, shown, "wrong_book").await;
-    assert!(removed(&app, copy).await, "the copy on the same book went with it");
+    assert!(
+        removed(&app, copy).await,
+        "the copy on the same book went with it"
+    );
     assert_eq!(
         app.scalar_i64("SELECT count(*) FROM media_removed_hashes WHERE blocks_covers")
             .await,
@@ -632,7 +635,10 @@ async fn a_profile_pictures_takedown_leaves_book_covers_alone(db: PgPool) {
             .await,
         CoverOutcome::Stored
     );
-    assert_eq!(cover_of(&app, work).await, Some((621, "openlibrary".into())));
+    assert_eq!(
+        cover_of(&app, work).await,
+        Some((621, "openlibrary".into()))
+    );
 }
 
 /// The dead check: a failing picture a day old that answers 404 again is gone, while the
@@ -777,10 +783,9 @@ async fn the_dead_check_marks_nothing_gone_on_a_broken_cover_server(db: PgPool) 
 async fn one_picture_that_keeps_failing_does_not_hold_up_the_dead_check(db: PgPool) {
     let app = TestApp::new(db).await;
     let mut ids = Vec::new();
-    for (cover, status, body, hours) in [
-        (311, 403, Vec::new(), 50),
-        (312, 200, jpeg([4, 5, 6]), 25),
-    ] {
+    for (cover, status, body, hours) in
+        [(311, 403, Vec::new(), 50), (312, 200, jpeg([4, 5, 6]), 25)]
+    {
         let work = legacy_work(&app, &format!("Buch {cover}"), "Anna Autorin").await;
         let media = ol_media(&app, cover).await;
         set_cover(&app, CoverTarget::Work(work), media, Source::OpenLibrary).await;
@@ -829,7 +834,11 @@ async fn one_picture_that_keeps_failing_does_not_hold_up_the_dead_check(db: PgPo
     .await;
     let report = run_job(&app).await;
     assert_eq!(
-        (report.dead.failed, report.dead.rechecked, report.dead.stopped),
+        (
+            report.dead.failed,
+            report.dead.rechecked,
+            report.dead.stopped
+        ),
         (3, 3, true),
         "{report:?}"
     );

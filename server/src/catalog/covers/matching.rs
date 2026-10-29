@@ -993,7 +993,10 @@ mod tests {
         assert_eq!(escape("?!*"), "");
         // Operators count only in capitals and only as whole words.
         assert_eq!(escape("IN DER NOT"), "IN DER not");
-        assert_eq!(escape("CATS AND DOGS OR NOTHING"), "CATS and DOGS or NOTHING");
+        assert_eq!(
+            escape("CATS AND DOGS OR NOTHING"),
+            "CATS and DOGS or NOTHING"
+        );
         assert_eq!(escape("Not And Or"), "Not And Or");
         let book = Book {
             title: "?!*".into(),
@@ -1447,7 +1450,12 @@ mod tests {
         tenth.edition_count = Some(40);
         let mut trilogy = doc(2, "Die Tribute von Panem 1-3", "", "Suzanne Collins");
         trilogy.edition_count = Some(30);
-        let first = doc(3, "Die Tribute von Panem", "Tödliche Spiele", "Suzanne Collins");
+        let first = doc(
+            3,
+            "Die Tribute von Panem",
+            "Tödliche Spiele",
+            "Suzanne Collins",
+        );
         let v = judge(&ours, vec![tenth, trilogy, first]);
         assert_eq!(reason(&v), Some(Reason::TitleDiffers));
         assert_eq!(

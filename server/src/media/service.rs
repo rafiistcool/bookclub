@@ -48,8 +48,8 @@ use super::pipeline::{self, PictureError, PictureKind, Processed};
 use crate::AppState;
 use crate::catalog::shared::ingest;
 use crate::config::Config;
-use crate::media::shared::urls::{object_key, storage_prefix};
 use crate::media::shared::MediaStore;
+use crate::media::shared::urls::{object_key, storage_prefix};
 use crate::outbound::{Outbound, RetryPolicy, UpstreamError, get_bytes};
 
 /// Ids the prefetch queue holds at most; further ids are dropped until the worker catches up.

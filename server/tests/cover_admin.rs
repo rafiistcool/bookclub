@@ -624,7 +624,9 @@ async fn private_quotes_and_diary_entries_do_not_mark_a_book_in_use(db: PgPool) 
         .await;
     let (quoted, _) = app.dnb_work("Birne", "Anna Autorin", "9783161484100").await;
     let (noted, _) = app.dnb_work("Apfel", "Anna Autorin", "9780306406157").await;
-    let (shared, _) = app.dnb_work("Quitte", "Anna Autorin", "9781861972712").await;
+    let (shared, _) = app
+        .dnb_work("Quitte", "Anna Autorin", "9781861972712")
+        .await;
     app.exec(&format!(
         "INSERT INTO quotes (user_id, work_id, body, visibility)
          VALUES ({bea}, {}, 'Nur für mich', 'only_me'), ({bea}, {}, 'Für alle', 'audience')",
