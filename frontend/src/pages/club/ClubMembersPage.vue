@@ -610,7 +610,13 @@ onMounted(() => {
 .invite-meta {
   display: grid;
   gap: 2px;
-  min-width: 0;
+  /* What the actions leave, but never less than the code. */
+  flex: 1 1 0;
+  min-width: min-content;
+}
+
+.invite-meta .finer {
+  overflow-wrap: anywhere;
 }
 
 .invite-meta code {
@@ -618,9 +624,15 @@ onMounted(() => {
   letter-spacing: 0.05em;
 }
 
+/*
+ * The actions wrap onto two lines when they do not fit beside the code: at
+ * 360 px, German "Kopieren" and "Zurückziehen" are wider than what is left.
+ */
 .invite-actions {
   display: flex;
-  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  flex: 0 1 auto;
 }
 
 .past-invites {
