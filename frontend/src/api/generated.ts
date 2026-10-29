@@ -3160,7 +3160,10 @@ export interface components {
             max_uses: number | null;
             /** Format: int32 */
             use_count: number;
-            /** @description Who redeemed it, oldest first, one entry per use (deleted accounts are left out). */
+            /**
+             * @description Who redeemed it, oldest first, one entry per use (deleted accounts are left out). Empty
+             *     for a personal invite another admin made, as `invitee` is null for it.
+             */
             used_by: string[];
             revoked: boolean;
             /** @description Not revoked, not expired and not used up: it can still be redeemed. */

@@ -492,7 +492,7 @@ async fn a_friend_invite_lasts_thirty_days(db: PgPool) {
 }
 
 /// Answer 24: the invitee's name is shown to the invite's creator only; another admin of the
-/// club sees a personal invite without the name.
+/// club sees a personal invite without the name, before and after the friend joins with it.
 #[sqlx::test]
 async fn only_the_creator_sees_whom_an_invite_is_for(db: PgPool) {
     let app = TestApp::new(db).await;
@@ -516,6 +516,54 @@ async fn only_the_creator_sees_whom_an_invite_is_for(db: PgPool) {
     );
     assert_eq!(theirs[0]["created_by"], "ada");
     assert!(!theirs.iter().any(|i| i.to_string().contains("\"bob\"")));
+
+    // Once used, the invite still names the friend to its creator alone: `used_by` would
+    // otherwise tell the co-admin whom it was for.
+    accept(&bob, &code_of(&invite)).await.assert_status(200);
+    let mine = invites_of(&ada, &club).await;
+    assert_eq!(
+        (
+            &mine[0]["invitee"],
+            &mine[0]["used_by"],
+            &mine[0]["use_count"]
+        ),
+        (&json!("bob"), &json!(["bob"]), &json!(1))
+    );
+    let theirs = invites_of(&cy, &club).await;
+    assert_eq!(theirs[0]["id"], invite["id"]);
+    assert_eq!(
+        (
+            &theirs[0]["personal"],
+            &theirs[0]["invitee"],
+            &theirs[0]["used_by"],
+            &theirs[0]["use_count"],
+            &theirs[0]["active"]
+        ),
+        (
+            &json!(true),
+            &Value::Null,
+            &json!([]),
+            &json!(1),
+            &json!(false)
+        )
+    );
+    assert!(!theirs.iter().any(|i| i.to_string().contains("\"bob\"")));
+    // An ordinary invite still lists who used it, for every admin.
+    let open = cy
+        .post(
+            &format!("/api/clubs/{}/invites", club.slug),
+            json!({"kind": "single_use"}),
+        )
+        .await;
+    open.assert_status(201);
+    let dan = app.user("dan").await;
+    accept(&dan, &code_of(&open.json()))
+        .await
+        .assert_status(200);
+    for admin in [&ada, &cy] {
+        let listed = invites_of(admin, &club).await;
+        assert_eq!(listed[0]["used_by"], json!(["dan"]));
+    }
 }
 
 /// The invite reads the friendship under a lock (`FOR SHARE`, after the club's): an unfriend

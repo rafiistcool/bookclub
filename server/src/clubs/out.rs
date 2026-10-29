@@ -88,7 +88,8 @@ pub struct InviteOut {
     /// Null for a link without a use limit.
     pub max_uses: Option<i32>,
     pub use_count: i32,
-    /// Who redeemed it, oldest first, one entry per use (deleted accounts are left out).
+    /// Who redeemed it, oldest first, one entry per use (deleted accounts are left out). Empty
+    /// for a personal invite another admin made, as `invitee` is null for it.
     pub used_by: Vec<String>,
     pub revoked: bool,
     /// Not revoked, not expired and not used up: it can still be redeemed.
@@ -269,8 +270,10 @@ pub async fn invite_outs(
     club_invite_outs(conn, config, None, club_id, only).await
 }
 
-/// [`invite_outs`] as `viewer` sees them: `invitee` is filled for the personal invites `viewer`
-/// created, and null for everyone else's.
+/// [`invite_outs`] as `viewer` sees them: a personal invite names its friend, as `invitee` and
+/// once redeemed in `used_by`, only to `viewer` when `viewer` created it; everyone else's show
+/// null and an empty `used_by` (answer 24: a co-admin would learn whom the creator is friends
+/// with). `use_count` stays, so a used one still reads as used.
 pub async fn club_invite_outs(
     conn: &mut PgConnection,
     config: &Config,
@@ -283,10 +286,12 @@ pub async fn club_invite_outs(
                   i.max_uses, i.use_count, i.revoked_at IS NOT NULL AS "revoked!",
                   (i.revoked_at IS NULL AND (i.expires_at IS NULL OR i.expires_at > now())
                    AND (i.max_uses IS NULL OR i.use_count < i.max_uses)) AS "active!",
-                  ARRAY(SELECT v.username
-                        FROM club_invite_uses x JOIN users v ON v.id = x.user_id
-                        WHERE x.invite_id = i.id
-                        ORDER BY x.used_at, x.id) AS "used_by!",
+                  CASE WHEN i.invitee_id IS NULL OR i.created_by = $3
+                       THEN ARRAY(SELECT v.username
+                                  FROM club_invite_uses x JOIN users v ON v.id = x.user_id
+                                  WHERE x.invite_id = i.id
+                                  ORDER BY x.used_at, x.id)
+                       ELSE '{}' END AS "used_by!",
                   i.invitee_id IS NOT NULL AS "personal!",
                   CASE WHEN i.created_by = $3 THEN f.username END AS "invitee?"
            FROM club_invites i
