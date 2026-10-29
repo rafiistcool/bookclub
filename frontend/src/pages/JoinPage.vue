@@ -7,6 +7,7 @@ import LanguageSwitch from "../components/LanguageSwitch.vue";
 import LegalLinks from "../components/LegalLinks.vue";
 import { clearJoinCode, parseInviteCode, rememberJoinCode } from "../invites";
 import { useClubs } from "../stores/clubs";
+import { useFriends } from "../stores/friends";
 import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
@@ -16,6 +17,11 @@ import type { InvitePreview } from "../types";
  * An invite link (`/join/<code>`). Signed in, one tap joins the club. Signed
  * out, the code waits (in the login `next` and in this tab) while the reader
  * signs in or creates an account, and then they come back here.
+ *
+ * A personal invite (a club admin's invite for one friend) never makes an
+ * account, so signed out it offers only signing in. Signed in, the page joins
+ * only when the invite is among the reader's own invitations
+ * (`GET /api/friends`); anyone else learns it is someone else's.
  */
 const { t } = useI18n();
 const route = useRoute();
@@ -23,6 +29,7 @@ const router = useRouter();
 const service = useService();
 const session = useSession();
 const clubs = useClubs();
+const friends = useFriends();
 const toast = useToast();
 
 const code = computed(() => parseInviteCode(String(route.params.code ?? "")));
@@ -30,20 +37,44 @@ const preview = ref<InvitePreview | null>(null);
 const loaded = ref(false);
 const error = ref("");
 const pending = ref(false);
+/** A personal invite that is not among the signed-in reader's invitations. */
+const notYours = ref(false);
 
 const signedIn = computed(() => Boolean(session.user));
 const club = computed(() => preview.value?.club ?? null);
+const personal = computed(() => Boolean(preview.value?.personal));
 const alreadyIn = computed(() =>
   Boolean(club.value && session.user?.clubs.some((row) => row.slug === club.value!.slug)),
 );
 const loginLink = computed(() => ({ path: "/login", query: { next: `/join/${code.value}` } }));
 const signupLink = computed(() => ({ path: "/signup", query: { code: code.value } }));
 
+/** Codes compare as the server normalises them: no spaces or dashes, any case. */
+function sameCode(a: string, b: string): boolean {
+  const norm = (code: string) => code.replace(/[\s-]+/g, "").toUpperCase();
+  return norm(a) === norm(b);
+}
+
+/**
+ * Whether a personal invite was made for someone else: true only when the
+ * reader's invitations load and do not hold it. A failed load leaves the
+ * decision to the server, which refuses another account's join.
+ */
+async function isSomeoneElses(): Promise<boolean> {
+  await friends.load();
+  const lists = friends.lists;
+  return Boolean(lists && !lists.club_invites.some((invite) => sameCode(invite.code, code.value)));
+}
+
 async function load() {
   try {
     preview.value = await api.previewInvite(code.value);
     error.value = "";
-    if (!session.user) rememberJoinCode(code.value);
+    if (preview.value.personal && session.user && !alreadyIn.value) {
+      notYours.value = await isSomeoneElses();
+    }
+    // A personal code never signs anyone up, so sign-up need not keep it.
+    if (!session.user && !preview.value.personal) rememberJoinCode(code.value);
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : t("join.loadFailed");
   } finally {
@@ -89,7 +120,14 @@ onMounted(load);
       <h2 class="display join-club">{{ club.name }}</h2>
       <p v-if="error" class="error">{{ error }}</p>
 
-      <template v-if="signedIn">
+      <template v-if="signedIn && notYours && !alreadyIn">
+        <p class="lede">{{ t("friends.personalInvite.notYours") }}</p>
+        <div class="stack">
+          <RouterLink class="btn btn-primary btn-block" to="/">{{ t("join.home") }}</RouterLink>
+        </div>
+      </template>
+
+      <template v-else-if="signedIn">
         <p v-if="alreadyIn" class="lede">{{ t("join.alreadyIn") }}</p>
         <p v-else class="lede">{{ t("join.lede", { name: session.user?.username ?? "" }) }}</p>
         <div class="stack">
@@ -100,6 +138,13 @@ onMounted(load);
             {{ pending ? t("join.joining") : t("join.join", { club: club.name }) }}
           </button>
           <RouterLink class="btn btn-ghost btn-block" to="/">{{ t("join.notNow") }}</RouterLink>
+        </div>
+      </template>
+
+      <template v-else-if="personal">
+        <p class="lede">{{ t("friends.personalInvite.signedOut") }}</p>
+        <div class="stack">
+          <RouterLink class="btn btn-primary btn-block" :to="loginLink">{{ t("join.signIn") }}</RouterLink>
         </div>
       </template>
 

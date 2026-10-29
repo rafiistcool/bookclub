@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT c.slug AS \"slug?\", c.name AS \"name?\"\n           FROM club_invites i\n           LEFT JOIN clubs c ON c.id = i.club_id\n           WHERE i.code = $1 AND i.revoked_at IS NULL\n             AND (i.expires_at IS NULL OR i.expires_at > now())\n             AND (i.max_uses IS NULL OR i.use_count < i.max_uses)",
+  "query": "SELECT c.slug AS \"slug?\", c.name AS \"name?\", i.invitee_id IS NOT NULL AS \"personal!\"\n           FROM club_invites i\n           LEFT JOIN clubs c ON c.id = i.club_id\n           WHERE i.code = $1 AND i.revoked_at IS NULL\n             AND (i.expires_at IS NULL OR i.expires_at > now())\n             AND (i.max_uses IS NULL OR i.use_count < i.max_uses)",
   "describe": {
     "columns": [
       {
@@ -24,6 +24,12 @@
             "name": "name"
           }
         }
+      },
+      {
+        "ordinal": 2,
+        "name": "personal!",
+        "type_info": "Bool",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -33,8 +39,9 @@
     },
     "nullable": [
       true,
-      true
+      true,
+      null
     ]
   },
-  "hash": "3d2bd904a8a1660bb2f0a06eac555730c0eb4fd37b6423b986c0840fc36b733d"
+  "hash": "780bdab166a803d79b9a4945d5d3ce8a5a4e58835a56b3f0c4e92841d24d13a1"
 }

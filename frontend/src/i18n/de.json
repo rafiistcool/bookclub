@@ -985,6 +985,10 @@
       "sent": "Einladung verschickt",
       "failed": "Die Einladung konnte nicht verschickt werden",
       "done": "Fertig"
+    },
+    "personalInvite": {
+      "signedOut": "Das ist eine persönliche Einladung. Melde dich mit dem Konto an, für das sie gedacht ist, dann trittst du direkt danach bei.",
+      "notYours": "Das ist eine persönliche Einladung für jemand anderen. Nur das Konto, für das sie gedacht ist, kann damit beitreten."
     }
   },
   "clubSettings": {

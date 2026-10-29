@@ -204,7 +204,7 @@ describe("#48 acceptance", () => {
         lists = { ...lists, incoming: [], friends: [friendOut("mia")] };
         return lists;
       },
-      "GET /api/invites/7K3M9QX2HD": () => ({ club: { slug: readers.slug, name: readers.name }, kind: "club" }),
+      "GET /api/invites/7K3M9QX2HD": () => ({ club: { slug: readers.slug, name: readers.name }, kind: "club", personal: true }),
       "POST /api/invites/7K3M9QX2HD/accept": () => {
         // Joined: the invitation no longer waits.
         lists = { ...lists, club_invites: [] };

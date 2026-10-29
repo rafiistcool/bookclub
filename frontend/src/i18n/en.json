@@ -985,6 +985,10 @@
       "sent": "Invitation sent",
       "failed": "Could not send the invitation",
       "done": "Done"
+    },
+    "personalInvite": {
+      "signedOut": "This is a personal invite. Sign in with the account it was made for, and you join right after.",
+      "notYours": "This is a personal invite for someone else. Only the account it was made for can join with it."
     }
   },
   "clubSettings": {

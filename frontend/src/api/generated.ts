@@ -3182,6 +3182,11 @@ export interface components {
         InvitePreview: {
             club: components["schemas"]["ClubRef"] | null;
             kind: components["schemas"]["InviteTarget"];
+            /**
+             * @description A personal invite (a club admin's invite for one friend, FRIENDS #57): only the account it
+             *     was made for can join with it, and it never makes an account. Whom it is for is not told.
+             */
+            personal: boolean;
         };
         /**
          * @description What an invite leads to.
