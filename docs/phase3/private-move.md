@@ -12,8 +12,8 @@ Counts, statuses and exit codes only. No command whose output holds a secret, a 
 
 - The restic password is generated straight into its file (section 4), and **[Rafael]** copies it from his own SSH session. **[Rafael]** runs `docker login` himself when the registry needs it (section 2.3). No token or password passes through my terminal.
 - `set-password`, if needed, writes to a root-only file (`umask 077`) that **[Rafael]** reads and deletes (section 10).
-- The import reports and `compare.sh`'s output stay on the host, in root-only files. I read `compare.sh`'s exit status and result lines, and the reports through `summary` (section 0): the entity lines, `lookup wait` and `cover search`, and the other sections as line counts. Never the `isbn keys` or `without a cover` sections, which name books.
-- The app's log only through `grep '^error:'`: its request lines carry paths.
+- The import reports and `compare.sh`'s output stay on the host, in root-only files. I read `compare.sh`'s exit status and result lines, and the reports through `summary` (section 0): the entity lines, `lookup wait` and `cover search`, and the other sections as line counts. Never the `isbn keys` or `without a cover` sections, which name books; what I need from them I count on the host with `grep -c`.
+- The app's log only through `grep '^error:'`: its request lines carry paths. The log of `import-legacy` and `rematch-legacy` goes to a root-only file next to its report, and I read only its `error:` lines and a count of warnings: a throttled or failed lookup logs its ISBN.
 - The proxy's address for `TRUSTED_PROXIES` is not a client's. `host-facts.sh` prints the peers of the old app, which behind a proxy is the proxy.
 
 The notes (`docs/phase3/notes/move.md`) get the facts found on the host without secrets or usernames, the counts, and the phone test's result.
@@ -26,7 +26,7 @@ The notes (`docs/phase3/notes/move.md`) get the facts found on the host without 
 | §2 announcement | Replaced by one short chat message, DE and EN, a few days ahead (section 6) |
 | §3.1 stop, snapshot | **Keep** `docker compose stop bookclub` in `$OLD` (stop, never down) and the `-journal` check. **Drop** the maintenance block, the checksums and the gpg copy: the stopped container and its untouched data directory are the rollback copy for 30 days (section 7.1) |
 | §3.2 transfer | `cp` of `bookclub.db` (and `-wal` if present) into `$IMPORT`, `chown 1000:1000`, `chmod 600`: the same host, no `scp` (section 7.2) |
-| §3.3 dry run, go/no-go, real run | As COVER leaves it; the update timer is not enabled yet. The go is CUT2's entity counts: users 2 → 2, 50 works, 36 editions, 146 events. Each run takes about 20 s plus about a minute of cover search (at most 5 minutes). `lookup wait` may be above 0 from the cover pass, and the `cover search` line and `without a cover` section may differ between the runs; neither is a no-go (section 7.3) |
+| §3.3 dry run, go/no-go, real run | As COVER leaves it; the update timer is not enabled yet. The go: `users 2 → 2` and the club with 2 members exactly; every other entity line carries its source over or names the difference, with counts at CUT2's (50 works, 36 editions, 146 events) or above, since CUT2 read an older copy and the club kept writing. Each run takes about 20 s plus about a minute of cover search (at most 5 minutes). `lookup wait` may be above 0 from the cover pass, and the `cover search` line and `without a cover` section may differ between the runs; neither is a no-go (section 7.3) |
 | §3.4 `compare.sh` | Unchanged; exit 0 is the go (section 7.4) |
 | §3.5 start and check | No gate. Start the app on the old port, `healthcheck`, `make-admin "$OWNER"`, Rafael's check, `rematch-legacy` if needed, `/sw.js`, `verify-limits.sh` from the agents VM, the phone test. No email step. COVER's review of cover suggestions waits until after "done" (section 7.5) |
 | §3.6 open | No Caddy step: the port takeover was the switch. `backup.sh` and `restore-test.sh` once, then Rafael sends "done" (section 7.6) |
@@ -328,7 +328,7 @@ ls -l "$IMPORT" | awk 'NR > 1 { print $1, $3, $5, $NF }'
 
 ### 7.3 Dry run, go/no-go, real run
 
-In `$NEW`. The app is stopped (section 3.2), so nobody signs up while the import runs; the update timer is not on yet. `-T` keeps the report free of terminal line endings; `umask 077` keeps it root's.
+In `$NEW`. The app is stopped (section 3.2), so nobody signs up while the import runs; the update timer is not on yet. `-T` keeps the report free of terminal line endings; `umask 077` keeps the report and the log root's. The log stays in `dry.log`: a throttled or failed lookup logs its ISBN.
 
 ```bash
 cd "$NEW"
@@ -336,18 +336,22 @@ docker compose stop app
 (umask 077; docker compose run --rm -T -v "$IMPORT:/import:ro" app \
     bookclub-server import-legacy /import/bookclub.db --owner "$OWNER" \
     --club-name "$CLUB_NAME" --timezone "$CLUB_TZ" --club-slug "$SLUG" \
-    --allow-unmatched --dry-run > dry.txt); echo "exit $?"
+    --allow-unmatched --dry-run > dry.txt 2> dry.log); echo "exit $?"
+grep '^error:' dry.log; grep -c ' WARN ' dry.log
 summary dry.txt
+grep -c ': not searched (database error)$' dry.txt      # 0
 ```
 
-Exit 2 means the target is not empty (section 5); exit 1 prints the reason. `--allow-unmatched` (D6) keeps going when the DNB or Open Library cannot answer: those ISBN rows become bare facts (`isbn error`), and `rematch-legacy` resolves them later.
+Exit 2 means the target is not empty (section 5); exit 1: the `error:` line says why. `--allow-unmatched` (D6) keeps going when the DNB or Open Library cannot answer: those ISBN rows become bare facts (`isbn error`), and `rematch-legacy` resolves them later.
 
-**Go/no-go**, against CUT2's report (`docs/phase2/notes/cut2.md`, "Results"):
+**Go/no-go**, against CUT2's report (`docs/phase2/notes/cut2.md`, "Results"). CUT2 read an older copy of `bookclub.db`, and the club kept writing since, so CUT2's counts are a floor, not the expected values:
 
-- the entity lines: `users 2 → 2`, `books 51 → 50 works`, `editions - → 36`, `events 146 → 146`, `club - → 1` with `$SLUG` and 2 members; every other count at least CUT2's (the club kept writing since), the differences being the listed merges and skips;
+- exactly `users 2 → 2`, and `club - → 1` with `$SLUG` and 2 members;
+- every other entity line carries its source over: the target equals the source, or the line names the difference (`merged`, `dropped`, `with a dangling reference`; `push_subscriptions … → DROPPED`). `books N → M works`: M is N minus the line's `merged`, and its class counts add up to N. `editions - → E`: E is at most the `isbn keys` section's line count;
+- the counts at CUT2's or above (`books 51 → 50 works`, `editions - → 36`, `events 146 → 146`, `shelf 50 → 50`, …). A few below, where a member removed something, is possible; many below is a no-go;
 - `notes`: 0 lines (CUT2 had none). Anything there: stop, and Rafael reads `dry.txt` on the host;
-- `merges` and `differences` about CUT2's (1 and 19 lines), `isbn keys` about 36;
-- the `cover search` line: no book "not searched (database error)". "Not searched" for an outage, a busy Open Library or the time budget, and books without a cover, are no no-go: `rematch-legacy` and the server's cover search take them later.
+- `merges` and `differences` about CUT2's (1 and 19 lines) or more, `isbn keys` about 36 or more;
+- no book "not searched (database error)": the reason stands in the `without a cover` section, which names books, so the last command above counts it on the host and must print 0. "Not searched" for an outage, a busy Open Library or the time budget, and books without a cover, are no no-go: `rematch-legacy` and the server's cover search take them later.
 
 Anything unexpected: stop here and roll back (section 8). The target is still empty.
 
@@ -355,12 +359,14 @@ Anything unexpected: stop here and roll back (section 8). The target is still em
 (umask 077; docker compose run --rm -T -v "$IMPORT:/import:ro" app \
     bookclub-server import-legacy /import/bookclub.db --owner "$OWNER" \
     --club-name "$CLUB_NAME" --timezone "$CLUB_TZ" --club-slug "$SLUG" \
-    --allow-unmatched > real.txt); echo "exit $?"
+    --allow-unmatched > real.txt 2> real.log); echo "exit $?"
+grep '^error:' real.log; grep -c ' WARN ' real.log
 summary real.txt
 diff <(tail -n +2 dry.txt | summary) <(summary real.txt)
+grep -c ': not searched (database error)$' real.txt     # 0
 ```
 
-The diff may show only the `lookup wait` line, the `cover search` line and the line counts of `without a cover` and `isbn keys` (an ISBN whose upstream record changed in between): Open Library answers, throttles or fails differently between two runs, and the time budget may stop the search at another book.
+The diff may show only the `lookup wait` line, the `cover search` line and the line count of `without a cover`: Open Library answers, throttles or fails differently between two runs, and the time budget may stop the search at another book. When a lookup answered in one run only, the `books` line's `isbn …` counts differ, and `editions`, `merges` and `differences` may move with them; then the real run's summary goes through the go/no-go above once more, and `compare.sh` checks that report against the database.
 
 ### 7.4 The count check, before anyone signs in
 
@@ -406,8 +412,11 @@ If he cannot sign in with the old password: section 10, then the check.
 If `isbn unmatched` or `isbn error` in the report's `books` line is not 0, rematch now (it commits per edition and per step of each book's cover search, and is safe on the running app):
 
 ```bash
-docker compose exec -T app bookclub-server rematch-legacy --dry-run | summary
-docker compose exec -T app bookclub-server rematch-legacy | summary
+cd "$NEW"
+(umask 077; docker compose exec -T app bookclub-server rematch-legacy --dry-run 2> rematch-dry.log | summary)
+grep '^error:' rematch-dry.log; grep -c ' WARN ' rematch-dry.log
+(umask 077; docker compose exec -T app bookclub-server rematch-legacy 2> rematch.log | summary)
+grep '^error:' rematch.log; grep -c ' WARN ' rematch.log
 ```
 
 COVER's review of cover suggestions (Admin → Covers) waits until after "done": a missing cover is no no-go, and Rafael decides them later (answer 45).
@@ -474,10 +483,10 @@ After the window there is no rollback: the members' writes exist only on the new
   docker compose up -d --wait app
   ```
 
-- The counts into #52, counts only (no usernames, no titles), then the import copy and the reports go. The copy holds every password hash:
+- The counts into #52, counts only (no usernames, no titles), then the import copy, the reports and their logs go. The copy holds every password hash:
 
   ```bash
-  rm -f "$IMPORT"/bookclub.db* "$NEW"/dry.txt "$NEW"/real.txt "$NEW"/compare.txt
+  rm -f "$IMPORT"/bookclub.db* "$NEW"/{dry,real,compare}.txt "$NEW"/{dry,real,rematch-dry,rematch}.log
   ```
 
 **The next day, or when the other member has used the app** (the rollback window has closed): the update timer (README, "Updates and rollback", "Setting up"; the units are installed, section 4):
