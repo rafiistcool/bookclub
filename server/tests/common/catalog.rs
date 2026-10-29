@@ -7,7 +7,9 @@ use bookclub_server::catalog::shared::ingest::{
     self, AuthorRecord, EditionRecord, Mode, Source, WorkGrouping, WorkRecord,
 };
 use bookclub_server::catalog::shared::isbn::Isbn13;
-use bookclub_server::catalog::shared::lookup::{CatalogLookup, LookupError, Resolved, local_isbn};
+use bookclub_server::catalog::shared::lookup::{
+    CatalogLookup, CoverAnswer, CoverQuery, LookupError, Resolved, local_isbn,
+};
 use sqlx::{Connection, PgConnection};
 
 /// What a programmed lookup resolves to.
@@ -65,6 +67,13 @@ struct FakeState {
     /// `None` = always; `Some(n)` = the next n calls.
     fail_isbn: HashMap<String, (FakeError, Option<usize>)>,
     calls: Vec<String>,
+    /// Cover searches by (title, author) as `CoverQuery` sends them.
+    covers: HashMap<(String, Option<String>), CoverAnswer>,
+    /// ISBN cover checks by ISBN-13.
+    isbn_covers: HashMap<String, Option<i64>>,
+    /// The next n cover searches and ISBN cover checks fail.
+    fail_covers: Option<(FakeError, usize)>,
+    cover_calls: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +119,44 @@ impl FakeCatalog {
     /// Every call so far: `isbn:978…`, `isbn_remote:978…`, `text:<title>|<authors>`.
     pub fn calls(&self) -> Vec<String> {
         self.lock().calls.clone()
+    }
+
+    /// `cover_candidates` for this title and author (`CoverQuery.title` and `.author`) answers
+    /// `answer` (#74). Unprogrammed searches answer no match.
+    pub fn on_covers(&self, title: &str, author: Option<&str>, answer: CoverAnswer) {
+        self.lock()
+            .covers
+            .insert((title.to_owned(), author.map(str::to_owned)), answer);
+    }
+
+    /// `cover_by_isbn(isbn13)` answers `cover` (#74). Unprogrammed ISBNs have no cover.
+    pub fn on_isbn_cover(&self, isbn13: &str, cover: Option<i64>) {
+        self.lock().isbn_covers.insert(isbn13.to_owned(), cover);
+    }
+
+    /// The next `times` cover searches and ISBN cover checks fail with `err`.
+    pub fn fail_covers(&self, err: FakeError, times: usize) {
+        self.lock().fail_covers = Some((err, times));
+    }
+
+    /// Every cover search and ISBN cover check so far, apart from [`FakeCatalog::calls`]:
+    /// `cover:<title>|<author>|<lang>` and `isbn_cover:978…`.
+    pub fn cover_calls(&self) -> Vec<String> {
+        self.lock().cover_calls.clone()
+    }
+
+    fn cover_failure(&self) -> Option<FakeError> {
+        let mut state = self.lock();
+        if let Some(error) = state.fail_all {
+            return Some(error);
+        }
+        match state.fail_covers {
+            Some((error, n)) if n > 0 => {
+                state.fail_covers = Some((error, n - 1));
+                Some(error)
+            }
+            _ => None,
+        }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, FakeState> {
@@ -273,5 +320,34 @@ impl CatalogLookup for FakeCatalog {
         self.record(format!("text:{title}|{authors}"));
         self.remote(conn, Key::Text(title.to_owned(), authors.to_owned()), None)
             .await
+    }
+
+    async fn cover_candidates(&self, query: &CoverQuery) -> Result<CoverAnswer, LookupError> {
+        self.lock().cover_calls.push(format!(
+            "cover:{}|{}|{}",
+            query.title,
+            query.author.as_deref().unwrap_or_default(),
+            query.language.as_deref().unwrap_or_default()
+        ));
+        if let Some(error) = self.cover_failure() {
+            return Err(error.into());
+        }
+        let key = (query.title.clone(), query.author.clone());
+        Ok(self.lock().covers.get(&key).cloned().unwrap_or_default())
+    }
+
+    async fn cover_by_isbn(&self, isbn: &Isbn13) -> Result<Option<i64>, LookupError> {
+        self.lock()
+            .cover_calls
+            .push(format!("isbn_cover:{}", isbn.as_str()));
+        if let Some(error) = self.cover_failure() {
+            return Err(error.into());
+        }
+        Ok(self
+            .lock()
+            .isbn_covers
+            .get(isbn.as_str())
+            .copied()
+            .flatten())
     }
 }

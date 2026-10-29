@@ -555,7 +555,7 @@ impl Merger {
 /// Catalog text is stored composed (NFC), so the same title from two sources compares equal.
 /// Control characters other than tab and line breaks are dropped: Postgres `text` refuses U+0000,
 /// which Open Library JSON sometimes carries, and the others are never meant as text.
-fn nfc(value: &str) -> String {
+pub(crate) fn nfc(value: &str) -> String {
     value
         .chars()
         .filter(|c| !c.is_control() || matches!(c, '\t' | '\n' | '\r'))
@@ -563,7 +563,8 @@ fn nfc(value: &str) -> String {
         .collect()
 }
 
-fn clean_line(value: Option<&str>, max: usize) -> Option<String> {
+/// [`nfc`], whitespace collapsed, cut to `max` characters; `None` when nothing is left.
+pub(crate) fn clean_line(value: Option<&str>, max: usize) -> Option<String> {
     let value = collapse_ws(&nfc(value?));
     (!value.is_empty()).then(|| truncate_chars(&value, max).to_owned())
 }
