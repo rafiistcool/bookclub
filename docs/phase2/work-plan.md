@@ -58,8 +58,8 @@ A completeness review checked this plan against the code at 84006bd. Where this 
 **Facts settled since the draft**
 
 22. The registry already holds `rafiistcool/bookclub:{0.10.0,0.10,latest}`, pushed on 2026-10-18 but not by a Forgejo run. The v0.10.0 compose pulls `ghcr.io/rafiistcool/bookclub:latest`. Q5's recommendation (a new image name) therefore stands.
-23. The repo has no `REGISTRY_TOKEN` action secret, though `release.yml` logs in with it. It may be set at user level. This is a question for Rafael before the first release.
-24. Whether the self-hosted runner can `docker build` inside a job is still unknown. PR #71's first run showed that the existing runner already has forgejo-runner's default label `docker`, without the daemon (`docker: command not found`). `image` and `publish` therefore run on `docker-host`, a label only the runner described in `docs/phase2/notes/dep.md` ("The runner") gets.
+23. **Done (2026-10-29):** `REGISTRY_TOKEN` is an action secret of the user `rafiistcool` (a token with `write:package`, set on 2026-10-18), which `release.yml` gets like a repository secret. The repository's secret list does not show user secrets, so the repo only seemed to lack it.
+24. **Done (2026-10-29):** the runner labelled `docker-host` runs on VM 101, with its own registration and a capacity of 1, and is the only runner that hands job containers the Docker socket (`docs/phase2/notes/dep.md`, "The runner"). The existing runner (`ubuntu-latest`, `docker`) no longer has the socket; before, every job got it. The `image` job of main's run 10 (531c3fa) passed on the new runner. The label is not `docker` because PR #71's first run showed that the existing runner already has forgejo-runner's default label `docker`, without the daemon (`docker: command not found`).
 25. Q6 (the `legacy-python` branch and tag) waits for Rafael's answer. CUT puts the commands into the runbook and pushes nothing.
 26. Corrections:
     - `server/src/ratelimit.rs:273-302` are the thresholds; the limit tests are in `server/tests/auth_*.rs`.
@@ -188,7 +188,7 @@ Cutover CUT-R: branch cutover/remove-python, merged only on cutover day   (#52)
 - **CUT:** merged (adcd9be). Open: Q6, the `legacy-python` branch and tag (Rafael); the rehearsal is CUT2.
 - **LEG:** merged (4b88ec7). The integrator added `needs_terms: false` to the shared `user()` fixture, so `User` is plain `UserOut` again. Open: the optional file grants, and the final texts (LEG2, Rafael).
 - **ADM:** merged (bd4e454); the integrator's fix keeps a field an admin clears empty (59443d4). The integrator added `errors.receivedInFuture` and `errors.noticeCoversOnly` with their `apiErrors.ts` lines. Open: ADM2.
-- **DEP:** merged (b88622a); follow-ups dd5d1b4 (shellcheck without `-x`) and fe82997 (the Google scan reads the root `Dockerfile`). The integrator added `.github/actionlint.yaml`. Open: the `REGISTRY_TOKEN` secret and the runner labelled `docker-host` (items 23, 24, Rafael). The `image` job's first run on PR #71 landed on the existing runner, which has forgejo-runner's default label `docker`, so the label is now `docker-host`.
+- **DEP:** merged (b88622a); follow-ups dd5d1b4 (shellcheck without `-x`) and fe82997 (the Google scan reads the root `Dockerfile`). The integrator added `.github/actionlint.yaml`. The `image` job's first run on PR #71 landed on the existing runner, which has forgejo-runner's default label `docker`, so the label is now `docker-host`. Items 23 and 24 are done (2026-10-29): `REGISTRY_TOKEN` is a user secret of `rafiistcool`, and the `docker-host` runner on VM 101 passed main's `image` job.
 - **GATE:** merged (89b7da6); the integrator fixed the two FE observations (b42d99f, f604e59). The end-to-end run behind Caddy covered LEG's `/imprint`, `/privacy` and `/terms` and ADM's admin pages with no CSP violation. Open: Q17 (Rafael).
 
 All five run in parallel. They need no answer from Rafael. Where an answer is still open, they build the recommended option, and the alternative changes only a path or a constant. The suggested merge order is **DEP, CUT, LEG, ADM, GATE**:
@@ -761,7 +761,7 @@ Ordered by how much work each answer unblocks. "Take the recommendations" is a v
     - Inbound: only Caddy's IP to 8080, plus SSH from your admin host.
     - Outbound: DNS, NTP, 443 to the internet, git.tillhome.de per Q7, SMTP 465/587, and the backup port. Deny RFC1918 addresses.
     - Check the #51 acceptance criterion: from the VM, `nc -vz -w3 <nas-ip> 445` and a curl to Forgejo's LAN address both fail.
-11. Forgejo: create a read-only package token (ideally a bot account with `read:package`), run `docker login git.tillhome.de` on the VM, and check that the `REGISTRY_TOKEN` repo secret is still valid.
+11. Forgejo: create a read-only package token (ideally a bot account with `read:package`), run `docker login git.tillhome.de` on the VM, and check that the `REGISTRY_TOKEN` user secret (item 23) is still valid.
 12. Backups: create the backup target and sign its DPA. Add the VM's SSH key, and keep the restic password in your password manager, not only on the VM.
 13. Monitoring: set up the uptime check on `/api/health` and heartbeat checks for the backup, update and restore-test timers, all alerting your phone.
 14. Caddy: add the site block from `deploy/hosted/Caddyfile.example` for the staging host and reload. Rebuild with `caddy-ratelimit` only if Q16 = B.
