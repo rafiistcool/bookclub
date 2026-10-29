@@ -12,6 +12,7 @@ use tokio::task::JoinSet;
 use tokio::time::{Instant, MissedTickBehavior};
 use tokio_util::sync::CancellationToken;
 
+use crate::catalog::covers::job::{self as cover_job, Breaker, JobSettings};
 use crate::{AppState, admin, auth, harvest, media, shelf};
 
 /// `pg_try_advisory_lock` keys, one per periodic job, so a second instance never runs the same
@@ -20,6 +21,8 @@ pub mod lock_ids {
     pub const AUTH_CLEANUP: i64 = 0x6263_0001;
     pub const DNB_HARVEST: i64 = 0x6263_0002;
     pub const ADMIN_NOTIFY: i64 = 0x6263_0003;
+    /// The cover search (#74, `catalog::covers::job`).
+    pub const COVER_SEARCH: i64 = 0x6263_0004;
 }
 
 const CLEANUP_EVERY: Duration = Duration::from_secs(3600);
@@ -30,6 +33,7 @@ pub fn spawn_all(state: AppState, shutdown: CancellationToken) -> JoinSet<()> {
     let mut jobs = JoinSet::new();
     jobs.spawn(auth_cleanup_loop(state.clone(), shutdown.clone()));
     jobs.spawn(admin_notify_loop(state.clone(), shutdown.clone()));
+    jobs.spawn(cover_search_loop(state.clone(), shutdown.clone()));
     if state.config.dnb_harvest {
         jobs.spawn(harvest::run_forever(state.clone(), shutdown.clone()));
     }
@@ -96,6 +100,35 @@ async fn admin_notify_loop(state: AppState, shutdown: CancellationToken) {
             },
         )
         .await;
+    }
+}
+
+/// Runs the cover search (`catalog::covers::job`) every ten minutes until `shutdown`, the first
+/// run at startup. The breaker skips runs after Open Library was unavailable (10 minutes ×
+/// 2^(k − 1) after the k-th such run in a row, at most 6 hours; any answer closes it). It lives
+/// here, in memory: a restart tries once at once.
+async fn cover_search_loop(state: AppState, shutdown: CancellationToken) {
+    let mut every = tokio::time::interval(cover_job::COVER_SEARCH_EVERY);
+    every.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let settings = JobSettings::default();
+    let mut breaker = Breaker::default();
+    loop {
+        tokio::select! {
+            () = shutdown.cancelled() => return,
+            _ = every.tick() => {}
+        }
+        if !breaker.allows(Instant::now()) {
+            continue;
+        }
+        if let Some(report) = cover_job::run_once(&state, &shutdown, &settings).await {
+            breaker.record(&report, Instant::now());
+            if report.unavailable {
+                tracing::warn!(
+                    outages = breaker.outages(),
+                    "cover search: Open Library unavailable; pausing"
+                );
+            }
+        }
     }
 }
 

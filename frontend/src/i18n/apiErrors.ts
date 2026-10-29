@@ -93,6 +93,7 @@ const API_ERROR_KEYS: Record<string, string> = {
   "That ISBN is already in the catalog": "errors.isbnInCatalog",
   "A book cannot be merged into itself": "errors.mergeIntoItself",
   "This request was already decided": "errors.requestDecided",
+  "This book has a cover now": "errors.coverExists",
   "That is not a valid ISBN-10 or ISBN-13": "errors.invalidIsbn",
   "Could not look that ISBN up right now. Try again.": "errors.isbnLookupFailed",
   "This book was added by a reader, not Open Library.": "errors.addedByReader",

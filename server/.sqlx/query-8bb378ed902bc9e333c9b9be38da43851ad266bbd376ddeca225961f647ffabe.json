@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT work_id, ol_work_id, ol_cover_id, status FROM cover_suggestions WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "work_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "cover_suggestions",
+            "name": "work_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "ol_work_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "cover_suggestions",
+            "name": "ol_work_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "ol_cover_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "cover_suggestions",
+            "name": "ol_cover_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "cover_suggestions",
+            "name": "status"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "8bb378ed902bc9e333c9b9be38da43851ad266bbd376ddeca225961f647ffabe"
+}

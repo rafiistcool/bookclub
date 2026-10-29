@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT m.id FROM media m\n           WHERE m.storage_key IS NULL AND m.fetch_failed_at IS NOT NULL AND m.removed_at IS NULL\n             AND m.ol_gone_at IS NULL AND m.source = 'openlibrary'\n             AND m.fetch_failed_at <= now() - interval '24 hours'\n             AND (EXISTS (SELECT 1 FROM works w WHERE w.cover_media_id = m.id)\n                  OR EXISTS (SELECT 1 FROM editions e WHERE e.cover_media_id = m.id))\n           ORDER BY (EXISTS (SELECT 1 FROM works w\n                             WHERE w.cover_media_id = m.id AND bc_cover_in_use(w.id))\n                     OR EXISTS (SELECT 1 FROM editions e\n                                WHERE e.cover_media_id = m.id AND bc_cover_in_use(e.work_id)))\n                        DESC,\n                    m.fetch_failed_at, m.id\n           LIMIT $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8c341a5a8f82bde74d6f7667c7ca954d85224405bee5011a4b93401792aa52ca"
+}

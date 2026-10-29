@@ -5,7 +5,7 @@
 //!
 //! The walk uses real ids and valid bodies: an open edit request, an open report, a live
 //! picture, a work and an edition, an account to suspend and a suspended one, an active sign-up
-//! invite. With dummy ids an
+//! invite, an open cover suggestion. With dummy ids an
 //! unguarded approve, resolve, takedown or suspension would answer 404 too (nothing to find), so
 //! only real targets tell a guarded route from an unguarded one; the rows are compared before
 //! and after the walk.
@@ -22,27 +22,33 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 
 /// Every admin operation. A new one is added here, with its seeded ids and a valid body below.
-const ADMIN_OPERATIONS: [&str; 16] = [
+const ADMIN_OPERATIONS: [&str; 22] = [
     "DELETE /api/admin/invites/{invite_id}",
     "DELETE /api/admin/media/{public_id}",
+    "GET /api/admin/cover-suggestions",
     "GET /api/admin/edit-requests",
     "GET /api/admin/invites",
+    "GET /api/admin/missing-covers",
     "GET /api/admin/reports",
     "GET /api/admin/summary",
     "GET /api/admin/users/suspended",
     "PATCH /api/admin/editions/{edition_id}",
     "PATCH /api/admin/works/{work_id}",
+    "POST /api/admin/cover-suggestions/{suggestion_id}/approve",
+    "POST /api/admin/cover-suggestions/{suggestion_id}/reject",
     "POST /api/admin/edit-requests/{request_id}/approve",
     "POST /api/admin/edit-requests/{request_id}/reject",
     "POST /api/admin/invites",
     "POST /api/admin/reports/{report_id}/resolve",
     "POST /api/admin/users/{username}/suspend",
     "POST /api/admin/users/{username}/unsuspend",
+    "POST /api/admin/works/{work_id}/cover-search",
     "POST /api/admin/works/{work_id}/merge",
+    "PUT /api/admin/works/{work_id}/cover",
 ];
 
 /// The tables an admin operation writes; the walk must leave every row as it was.
-const WATCHED_TABLES: [&str; 10] = [
+const WATCHED_TABLES: [&str; 12] = [
     "works",
     "editions",
     "media",
@@ -53,6 +59,8 @@ const WATCHED_TABLES: [&str; 10] = [
     "legacy_work_keys",
     "users",
     "sessions",
+    "cover_search",
+    "cover_suggestions",
 ];
 
 /// Every row of the watched tables, as JSON.
@@ -154,6 +162,19 @@ async fn seed(app: &TestApp, reader: &TestClient, club: &TestClub) -> Seeded {
              RETURNING id",
         )
         .await;
+    // An open cover suggestion (#74) for the work without a cover, its picture's row first.
+    {
+        let mut conn = app.db.acquire().await.unwrap();
+        ol_cover_media(&mut conn, 778).await.unwrap().unwrap();
+    }
+    let suggestion_id = app
+        .scalar_i64(&format!(
+            "INSERT INTO cover_suggestions (work_id, ol_work_id, ol_cover_id, title, reason)
+             VALUES ({}, 'OL1W', 778, 'Circe', 'title_differs')
+             RETURNING id",
+            other.id
+        ))
+        .await;
 
     let op_ids = HashMap::from([
         (
@@ -173,6 +194,7 @@ async fn seed(app: &TestApp, reader: &TestClient, club: &TestClub) -> Seeded {
         ("work_id", work.id.to_string()),
         ("edition_id", edition.id.to_string()),
         ("invite_id", invite_id.to_string()),
+        ("suggestion_id", suggestion_id.to_string()),
     ]);
     let bodies = HashMap::from([
         // The takedown with the notice it answers, which also writes a report row.
@@ -205,6 +227,9 @@ async fn seed(app: &TestApp, reader: &TestClient, club: &TestClub) -> Seeded {
             "PATCH /api/admin/editions/{edition_id}",
             json!({"fields": {"pages": 999}}),
         ),
+        // A multipart picture upload: `InstanceAdmin` (the route layer) refuses before the body
+        // is read, so any body serves the walk.
+        ("PUT /api/admin/works/{work_id}/cover", json!({})),
     ]);
     Seeded {
         ids,
@@ -308,6 +333,10 @@ async fn the_seeded_requests_act_for_an_admin(db: PgPool) {
         ),
         (Method::POST, "/api/admin/reports/{report_id}/resolve"),
         (Method::POST, "/api/admin/users/{username}/suspend"),
+        (
+            Method::POST,
+            "/api/admin/cover-suggestions/{suggestion_id}/approve",
+        ),
     ] {
         let op = find(&method, path).expect("documented");
         let res = op.send(&root, &seeded.path(&op), &seeded.body(&op)).await;
@@ -333,7 +362,9 @@ async fn the_seeded_requests_act_for_an_admin(db: PgPool) {
             "reports",
             "club_invites",
             "users",
-            "sessions"
+            "sessions",
+            "cover_search",
+            "cover_suggestions"
         ]
     );
 }

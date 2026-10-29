@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE cover_search cs SET\n             searched_key = w.match_key, outcome = 'no_match',\n             misses = (CASE WHEN cs.searched_key IS NOT DISTINCT FROM w.match_key THEN cs.misses\n                            ELSE 0 END) + 1,\n             next_search_at = now() + LEAST(\n                 interval '30 days'\n                     * power(2, LEAST(CASE WHEN cs.searched_key IS NOT DISTINCT FROM w.match_key\n                                           THEN cs.misses ELSE 0 END, 8)),\n                 interval '180 days'),\n             last_error = $2\n         FROM works w\n         WHERE cs.work_id = $1 AND w.id = cs.work_id\n           AND EXISTS (SELECT 1 FROM cover_search o\n                       WHERE o.work_id <> $1 AND o.searched_at > now() - interval '24 hours')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a1bd9847d5cb86a72f6ff3c5a441ee636e8be1c5c683413c83b00d2386c5c3e3"
+}

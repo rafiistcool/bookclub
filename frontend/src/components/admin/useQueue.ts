@@ -16,11 +16,15 @@ function failed(err: unknown, fallback: string): string {
 /**
  * One admin queue as a paged list (`?status=&page=`): the open items oldest
  * first or the decided ones newest first, 50 a page, with "Load more". An
- * answer that arrives after the view changed is dropped.
+ * answer that arrives after the view changed is dropped. Another kind of
+ * view (the books without a cover: `in_use` or `all`) names its first one.
  */
-export function useQueue<T extends { id: number }>(fetchPage: (view: QueueView, page: number) => Promise<Page<T>>) {
+export function useQueue<T extends { id: number }, V extends string = QueueView>(
+  fetchPage: (view: V, page: number) => Promise<Page<T>>,
+  initial: V = "open" as V,
+) {
   const toast = useToast();
-  const view = ref<QueueView>("open");
+  const view = ref(initial) as Ref<V>;
   const items = ref([]) as Ref<T[]>;
   const loaded = ref(false);
   const error = ref("");
@@ -61,7 +65,7 @@ export function useQueue<T extends { id: number }>(fetchPage: (view: QueueView, 
   }
 
   /** Switches the view and reads its first page; resolves once that is shown. */
-  async function show(next: QueueView) {
+  async function show(next: V) {
     if (view.value === next) return;
     view.value = next;
     items.value = [];

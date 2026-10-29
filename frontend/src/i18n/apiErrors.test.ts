@@ -33,6 +33,7 @@ describe("translateApiError", () => {
     expect(translateApiError("Invalid value for pages")).toBe("Dieser Wert für „Seiten“ geht nicht");
     expect(translateApiError("Invalid value for shelf_mark")).toBe("Dieser Wert für „shelf_mark“ geht nicht");
     expect(translateApiError("This request was already decided")).toBe("Über diese Anfrage wurde schon entschieden");
+    expect(translateApiError("This book has a cover now")).toBe("Dieses Buch hat inzwischen ein Cover.");
   });
 
   it("shows details it does not know as the server wrote them", () => {
