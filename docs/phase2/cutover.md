@@ -325,10 +325,14 @@ docker compose exec -T app bookclub-server rematch-legacy
 Then **review the cover suggestions**, at most 15 minutes (members see the "moving" message
 meanwhile): Admin → Covers → Suggestions. For each one, compare our book with Open Library's
 candidate and choose "Use this cover" when the picture shows this book, "Not this book"
-otherwise. What is left after 15 minutes waits until after 3.6. Pictures for the books still
-without a cover come after 3.6 too: readers who have such a book on their shelf are asked for a
-photo of their copy, the background search keeps looking, and an admin can upload one. A
-missing cover is no no-go.
+otherwise. What is left after 15 minutes waits until after 3.6. Then open Admin → Covers →
+Without a cover ("Readers use it") once, within the same 15 minutes: it lists the books still
+waiting for a picture, which are the books of the `without a cover` section less those you just
+approved, plus any whose imported Open Library picture already failed to load (the server
+started fetching those pictures with the app). Its titles stay out of #38. Pictures for the
+books still without a cover come after 3.6: readers who have such a book on their shelf are
+asked for a photo of their copy, the background search keeps looking, and an admin can upload
+one ("Upload a picture"). A missing cover is no no-go.
 
 ### 3.6 Open the new host and redirect the old one (Caddy host)
 

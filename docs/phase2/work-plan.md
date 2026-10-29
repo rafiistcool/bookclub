@@ -110,6 +110,8 @@ Two things stop any release from `main` today:
 Wave 1  DEP #51 ─ GATE #55 ─ ADM #54 ─ LEG #53 ─ CUT #52/#38            parallel, start now
           │  (Wave 1 merged, phase-2 → main; Rafael's answers to §4)
 Wave 2  DEP2 #51 ─ ADM2 #54/#55 ─ LEG2 #53 ─ CUT2 #38                     parallel
+          │
+COVER   #74 covers for every catalog and imported book                  alone, before Wave 3; blocks #52
           │  (Rafael: domain, mail, VM, legal texts live)
 Cutover CUT-R: branch cutover/remove-python, merged only on cutover day   (#52)
           │
@@ -536,6 +538,8 @@ All five run in parallel. They need no answer from Rafael. Where an answer is st
 
 #### COVER: covers for every catalog and imported book (#74, before Wave 3)
 
+**Status (2026-10-29):** merged into `phase-2` (8392cc5). Its notes are applied to `conventions.md` (§7.2–§7.4, §8, §13, §16, §17), `endpoint-map.md` (§4, §6, §10, §11), `legacy-mapping.md` (§0 "Report", §3.3, §3.5), `cutover.md` (the window, the go/no-go, rematch's cover pass, the review in 3.5 and the day-after revisit), `CLAUDE.md`, `deploy/hosted/README.md` and the legal documents (`privacy-facts.md` §5, §6, §10, `processors.md`, `vvt.md`, `takedown.md` §4). Rafael's four open questions (`notes/cover.md`, "Open questions") are answered with the recommendations, as in §4 "Answers": no second rehearsal (the cutover's own dry run measures the search), suggestions decided before 3.6 and photos after, the single-record bar kept as built, and the "readers use it" flag kept and listed under "Instance admins see" in `privacy-facts.md` §10. Open: `README.md`'s feature list waits for CUT-R's rewrite (§2.4); "Open Library's picture cannot be used" is not told apart from a passing failure on the Covers tab (`notes/cover.md`, Part 2 deviation 2); an Open Library cover taken down before its first fetch has no hash, so only its cover id is blocked.
+
 - **Size:** L. **Dependencies:** Wave 2 merged (`phase-2` at 7793faf). Blocks #52.
 - **Scope:** #74: a cover search by title and author on Open Library for every work without a cover that is not a reader's own, suggestions for uncertain matches in a new admin tab, the photo prompt on the book page, the admin's direct cover, and the import report's count of books still without a cover. The design, the file list and the tests are in `docs/phase2/notes/cover.md`.
 - **Worktree:** `../bookclub-cover`, branch `phase2/cover`; Postgres 5458, browser 8087; migrations 2300–2399.
@@ -560,7 +564,7 @@ All five run in parallel. They need no answer from Rafael. Where an answer is st
   - `.github/workflows/` (D8)
   - the Python lines in `.gitignore`. It also adds `server/data/` to `.gitignore`.
 - **Docs:**
-  - `README.md` describes the hosted service and the dev setup, and mentions the password change again (the README criterion of #35).
+  - `README.md` describes the hosted service and the dev setup, and mentions the password change again (the README criterion of #35). Its feature list names covers for every catalog and imported book (Open Library by title and author, readers' photos), the photo prompt on the book page and the admin page's Covers tab (COVER #74).
   - `SELFHOST.md` is deleted.
   - `CLAUDE.md` loses the "In transition" paragraph and the Python commands and sections.
   - `docs/plan.md` gets a status line with the cutover date.
@@ -602,10 +606,11 @@ All five run in parallel. They need no answer from Rafael. Where an answer is st
 | DEP2: first release and registry tags | Q5 | Any release from `main`; the staging deploy |
 | CUT: `legacy-python` branch and tag (done 2026-10-29) | Q6 | #52 step 8; a Python hotfix path |
 | CUT2: rehearsal | A2, A4 (snapshot and facts) | Closing #38; the size of the downtime window |
+| COVER: covers for every catalog and imported book (merged 2026-10-29, 8392cc5) | #74 | #52: the import gives its books covers and reports the rest |
 | Admin and decision mails in production | Q4, and A21 (a verified admin address) | #54 response time, #55 |
 | Staging deploy on the VM | A6–A13 | #51 acceptance (LAN isolation, restore, monitor) |
 | Legal texts live | Q1, A15–A18, LEG merged | #53; #52 if Q3 = at cutover; #55 |
-| Cutover | Q1, Q2, Q3, Q4, #51 done, CUT2 done | #52, then the beta invites |
+| Cutover | Q1, Q2, Q3, Q4, #51 done, CUT2 done, COVER merged (#74, done) | #52, then the beta invites |
 | Open sign-up | Everything above, A23–A26 | #55 |
 | Phase 1 "Needs Rafael" (`docs/phase1/work-plan.md:589-600`) | The mail provider is Q4; the production copy is A4; Open Library descriptions are Q18; the other defaults stand unless overridden | |
 
@@ -622,6 +627,7 @@ Ordered by how much work each answer unblocks. "Take the recommendations" is a v
 - **Option chosen, real values later:** Q4 Brevo (account, DNS and DPA once the domain exists), Q7 A (the Caddy IP goes into `TRUSTED_PROXIES` once the VM exists), Q10 A (the monitor account comes with the VM).
 - **Deferred:** Q1, the name. I prepare `docs/phase2/name-check.md` as a first pass; BRAND waits for the choice. The production facts of §5 item 2 wait too: CUT2's rehearsal assumes them, and its notes say how.
 - **Backups** (security review, Phase 2 Wave 1 finding 3): option A, Storage Box snapshots. DEP2 documents the setup.
+- **COVER (#74), its open questions, recommendations taken and built:** 1. no second rehearsal: the cutover's own dry run measures the cover search, and the window counts about 3 s per book without a cover, at most 5 minutes per run (`cutover.md` §1). 2. Before the go (3.5) the cover suggestions are decided, time-boxed to 15 minutes; photos for the books still without a cover come after 3.6. 3. The only title-equal Open Library record attaches only with at least two editions, else it is a suggestion; readers' reports and the takedown remain the way out. 4. Option (a): the Covers tab keeps its "Readers use it" flag (no name, no count; `only_me` quotes and diary entries never count), and `privacy-facts.md` §10 lists it under "Instance admins see".
 
 **Q1. Which public name (#50)?**
 - **Options:** Eselsohr, Shelfmates, Marginalia, Lesezirkel, or another name.
