@@ -21,9 +21,8 @@ load_config() {
     RESTORE_TEST_HEARTBEAT_URL=${RESTORE_TEST_HEARTBEAT_URL-}
     RESTORE_POSTGRES_IMAGE=${RESTORE_POSTGRES_IMAGE:-postgres:17}
     UPDATE_HEARTBEAT_URL=${UPDATE_HEARTBEAT_URL-}
+    # Checked by update.sh alone: a bad value must not stop the backups.
     UPDATE_WAIT_SECONDS=${UPDATE_WAIT_SECONDS:-300}
-    [[ $UPDATE_WAIT_SECONDS =~ ^[1-9][0-9]*$ ]] ||
-        die "UPDATE_WAIT_SECONDS=$UPDATE_WAIT_SECONDS is not a number of seconds"
     [[ -n ${RESTIC_REPOSITORY-} ]] || die "$file sets no RESTIC_REPOSITORY"
     [[ -r ${RESTIC_PASSWORD_FILE-} ]] || die "cannot read RESTIC_PASSWORD_FILE ${RESTIC_PASSWORD_FILE-}"
     local dir
@@ -92,14 +91,19 @@ SQL
 psql_tsv=(psql -X -q -A -t -F $'\t' -v ON_ERROR_STOP=1 -U bookclub -d bookclub)
 
 # A heartbeat in the style of healthchecks.io: GET <url>/start, or POST <url>/<exit status> with
-# a body file (the end of the log). No URL, no ping; a failed ping is only logged.
+# a body file (the end of the log). No URL, no ping; a failed ping is only logged. The URL's path
+# is the check's only credential, so it reaches curl on stdin (`-K -`), never on its command line
+# (the process list), and the log names only the host.
 heartbeat() {
-    local url=$1 what=$2 body=${3-}
+    local url=$1 what=$2 body=${3-} host
     [[ -n $url ]] || return 0
     local -a data=()
     [[ -z $body ]] || data=(--data-binary "@$body")
-    curl -fsS -m 10 --retry 3 -o /dev/null "${data[@]}" "${url%/}/$what" ||
-        log "warning: the heartbeat ping ${url%/}/$what failed"
+    host=${url#*://}
+    host=${host%%/*}
+    printf 'url = "%s/%s"\n' "${url%/}" "$what" |
+        curl -fsS -m 10 --retry 3 -o /dev/null "${data[@]}" -K - ||
+        log "warning: the heartbeat ping $what to $host failed"
 }
 
 # Runs the function "$3" with its arguments under the lock both scripts share, waiting up to 3 h

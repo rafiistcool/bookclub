@@ -12,8 +12,10 @@
 //! - `deploy/hosted/backup.env.example` names every setting of the backup and update scripts,
 //!   and every systemd unit starts a script that exists.
 //! - `deploy/hosted/update.sh`, with `docker` and `curl` stood in for: it backs up before it
-//!   replaces the app, never touches an app that is up to date or stopped, and pings the heartbeat
-//!   with the outcome.
+//!   replaces the app, never touches an app that is up to date or stopped (also when it was
+//!   stopped during the backup), waits an hour before it tries a failed image again, runs once at
+//!   a time, ignores one-off containers, and pings the heartbeat with the outcome without putting
+//!   the ping URL on a command line or into the log.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -769,33 +771,63 @@ fn systemd_units_start_scripts_that_exist() {
 
 /// A stand-in VM around copies of `update.sh` and `backup-lib.sh`:
 /// - `docker` and `curl` are bash functions, imported from the environment, that log each call
-///   to `calls.log` and answer from the files in `state/`: `tag` is the image the followed tag
-///   names after a pull, `running` the image the app container runs, `status` its state and
-///   health, `after-up` the status a `compose up` leaves, `registry-down` makes the pull fail;
-/// - `backup.sh` is a stub that logs its run and exits with `state/backup-status` (default 0).
+///   to `calls.log` and answer from the files in `state/`: `ps` the IDs `compose ps -a -q app`
+///   prints (`app-container`, the service's container, and `oneoff-1`, a running one-off
+///   container of `docker compose run app`), `tag` the image the followed tag names after a pull,
+///   `running` the image `app-container` runs, `status` its state and health, `after-up` the
+///   status a `compose up` leaves, `up-exit` (optional) `compose up`'s exit status, else 0 only
+///   for `running healthy`, `old-tags` what `RepoTags` prints for the old image, `registry-down`
+///   makes the pull fail and `ping-down` every ping. `inspect` of any other ID fails as Docker's
+///   does (`No such object`).
+/// - `curl` reads the ping URL from its config on stdin (`-K -`) and fails when the URL is on its
+///   command line.
+/// - `backup.sh` is a stub that logs its run, copies the files in `state/after-backup/` over
+///   `state/` (whatever happened while it ran) and exits with `state/backup-status` (default 0).
 struct UpdateRig {
     dir: tempfile::TempDir,
 }
 
 const FAKE_DOCKER: &str = r#"() {
     printf 'docker %s\n' "$*" >>"$RIG/calls.log"
+    local id=${*: -1}
     case "$*" in
         "compose config --images app") printf '%s\n' postgres:17 registry.test/bookclub-server:stable ;;
-        "compose ps -a -q app") echo app-container ;;
-        *com.docker.compose.oneoff*) echo False ;;
-        *State.Status*) cat "$RIG/state/status" ;;
+        "compose ps -a -q app") cat "$RIG/state/ps" ;;
         "compose pull --quiet app") [ ! -e "$RIG/state/registry-down" ] ;;
-        "image inspect -f {{.Id}} "*) cat "$RIG/state/tag" ;;
-        "inspect -f {{.Image}} app-container") cat "$RIG/state/running" ;;
         "compose up "*)
             cp "$RIG/state/tag" "$RIG/state/running"
             cp "$RIG/state/after-up" "$RIG/state/status"
+            if [ -e "$RIG/state/up-exit" ]; then return "$(cat "$RIG/state/up-exit")"; fi
             [ "$(cat "$RIG/state/status")" = "running healthy" ] ;;
-        *RepoTags*) echo ;;
-        *RepoDigests*) echo "registry.test/bookclub-server@${*: -1}" ;;
+        "image inspect -f {{.Id}} "*) cat "$RIG/state/tag" ;;
+        *RepoTags*) cat "$RIG/state/old-tags" 2>/dev/null || echo ;;
+        *RepoDigests*) echo "registry.test/bookclub-server@$id" ;;
         "image rm "*) ;;
+        "inspect "*)
+            case $id in
+                app-container | oneoff-1) ;;
+                *) echo "Error: No such object: $id" >&2; return 1 ;;
+            esac
+            case "$*:$id" in
+                *com.docker.compose.oneoff*:oneoff-1) echo True ;;
+                *com.docker.compose.oneoff*) echo False ;;
+                *State.Status*:oneoff-1) echo "running none" ;;
+                *State.Status*) cat "$RIG/state/status" ;;
+                "inspect -f {{.Image}} app-container:app-container") cat "$RIG/state/running" ;;
+                *) echo "unexpected: docker $*" >&2; return 99 ;;
+            esac ;;
         *) echo "unexpected: docker $*" >&2; return 99 ;;
     esac
+}"#;
+
+const FAKE_CURL: &str = r#"() {
+    case "$*" in *hc.test*) echo "curl: the ping URL is on the command line: $*" >&2; return 99 ;; esac
+    if [ -e "$RIG/state/ping-down" ]; then
+        cat >/dev/null
+        echo "curl: (7) Failed to connect" >&2
+        return 7
+    fi
+    sed -n 's/^url = "\(.*\)"$/ping \1/p' >>"$RIG/calls.log"
 }"#;
 
 impl UpdateRig {
@@ -814,6 +846,7 @@ impl UpdateRig {
         std::fs::write(
             opt.join("backup.sh"),
             "#!/usr/bin/env bash\nprintf 'backup.sh\\n' >>\"$RIG/calls.log\"\n\
+             if [ -d \"$RIG/state/after-backup\" ]; then cp \"$RIG/state/after-backup/\"* \"$RIG/state/\"; fi\n\
              exit \"$(cat \"$RIG/state/backup-status\" 2>/dev/null || echo 0)\"\n",
         )
         .unwrap();
@@ -835,6 +868,7 @@ impl UpdateRig {
         )
         .unwrap();
         let rig = Self { dir };
+        rig.set("ps", "app-container");
         rig.set("tag", tag);
         rig.set("running", "sha256:a");
         rig.set("status", "running healthy");
@@ -850,6 +884,13 @@ impl UpdateRig {
         .unwrap();
     }
 
+    /// What the stub `backup.sh` sets while it runs.
+    fn set_after_backup(&self, name: &str, value: &str) {
+        let dir = self.dir.path().join("state/after-backup");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(name), format!("{value}\n")).unwrap();
+    }
+
     fn get(&self, name: &str) -> String {
         std::fs::read_to_string(self.dir.path().join("state").join(name))
             .unwrap()
@@ -857,20 +898,31 @@ impl UpdateRig {
             .to_owned()
     }
 
+    /// `BACKUP_DIR`, which `update.sh` creates on its first run.
+    fn backup_dir(&self) -> PathBuf {
+        self.dir.path().join("backup")
+    }
+
     /// Runs `update.sh` once; returns its output and the calls it made, in order.
     fn run(&self) -> (Output, Vec<String>) {
+        self.run_with(&[])
+    }
+
+    /// Runs `update.sh` once under the command `prefix` (for example `flock <file>`).
+    fn run_with(&self, prefix: &[&std::ffi::OsStr]) -> (Output, Vec<String>) {
         let log = self.dir.path().join("calls.log");
         let _ = std::fs::remove_file(&log);
-        let output = std::process::Command::new("bash")
-            .arg(self.dir.path().join("opt/update.sh"))
+        let script = self.dir.path().join("opt/update.sh");
+        let mut argv: Vec<&std::ffi::OsStr> = prefix.to_vec();
+        argv.push("bash".as_ref());
+        argv.push(script.as_os_str());
+        let output = std::process::Command::new(argv[0])
+            .args(&argv[1..])
             .env_clear()
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())
             .env("RIG", self.dir.path())
             .env("BASH_FUNC_docker%%", FAKE_DOCKER)
-            .env(
-                "BASH_FUNC_curl%%",
-                r#"() { printf 'ping %s\n' "${*: -1}" >>"$RIG/calls.log"; }"#,
-            )
+            .env("BASH_FUNC_curl%%", FAKE_CURL)
             .output()
             .unwrap();
         let calls = std::fs::read_to_string(&log)
@@ -905,8 +957,13 @@ fn position(calls: &[String], prefix: &str) -> usize {
         .unwrap_or_else(|| panic!("no call {prefix:?} in {calls:#?}"))
 }
 
+fn has_call(calls: &[String], prefix: &str) -> bool {
+    calls.iter().any(|call| call.starts_with(prefix))
+}
+
 /// While the tag names the image the app runs, a run pulls, backs nothing up, replaces nothing,
-/// and pings 0; a starting app gets no ping.
+/// and pings 0; a starting app gets no ping. A failed ping is only logged, and the log names the
+/// host but not the URL, whose path is the check's secret.
 #[cfg(unix)]
 #[test]
 fn update_leaves_an_up_to_date_app_alone() {
@@ -920,6 +977,17 @@ fn update_leaves_an_up_to_date_app_alone() {
             .any(|call| call == "backup.sh" || call.starts_with("docker compose up"))
     );
     assert_eq!(pings(&calls), ["0"], "{calls:#?}");
+
+    rig.set("ping-down", "");
+    let (output, _) = rig.run();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = printed(&output);
+    assert!(
+        text.contains("warning: the heartbeat ping 0 to hc.test failed"),
+        "{text}"
+    );
+    assert!(!text.contains("/ping/update"), "{text}");
+    std::fs::remove_file(rig.dir.path().join("state/ping-down")).unwrap();
 
     rig.set("status", "running starting");
     let (output, calls) = rig.run();
@@ -955,6 +1023,19 @@ fn update_backs_up_before_it_replaces_the_app() {
     );
 }
 
+/// An image that a tag still names (an older release, or a pin) is kept for a rollback.
+#[cfg(unix)]
+#[test]
+fn update_keeps_an_old_image_that_a_tag_still_names() {
+    let rig = UpdateRig::new("sha256:b");
+    rig.set("old-tags", "registry.test/bookclub-server:0.11.0");
+    let (output, calls) = rig.run();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(pings(&calls), ["start", "0"], "{calls:#?}");
+    assert_eq!(rig.get("running"), "sha256:b");
+    assert!(!has_call(&calls, "docker image rm"), "{calls:#?}");
+}
+
 /// A new image that does not turn healthy fails the run and pings 1, and so does every later run
 /// while the app stays unhealthy on it, without another backup.
 #[cfg(unix)]
@@ -966,7 +1047,7 @@ fn update_reports_an_app_that_does_not_turn_healthy() {
     assert!(!output.status.success());
     assert!(position(&calls, "backup.sh") < position(&calls, "docker compose up"));
     assert_eq!(pings(&calls), ["start", "1"], "{calls:#?}");
-    assert!(!calls.iter().any(|call| call.starts_with("docker image rm")));
+    assert!(!has_call(&calls, "docker image rm"));
     assert!(
         printed(&output).contains("did not turn healthy"),
         "{}",
@@ -984,7 +1065,28 @@ fn update_reports_an_app_that_does_not_turn_healthy() {
     assert_eq!(pings(&calls), ["1"], "{calls:#?}");
 }
 
-/// A failed backup leaves the app as it was and pings 1; the next run tries again.
+/// `compose up` that succeeds is not trusted alone: an app that is not healthy afterwards fails
+/// the update.
+#[cfg(unix)]
+#[test]
+fn update_checks_the_app_after_compose_up() {
+    let rig = UpdateRig::new("sha256:b");
+    rig.set("up-exit", "0");
+    rig.set("after-up", "running unhealthy");
+    let (output, calls) = rig.run();
+    assert!(!output.status.success());
+    assert_eq!(pings(&calls), ["start", "1"], "{calls:#?}");
+    assert!(!has_call(&calls, "docker image rm"), "{calls:#?}");
+    assert!(
+        printed(&output).contains("the app is running unhealthy after the update"),
+        "{}",
+        printed(&output)
+    );
+}
+
+/// A failed backup leaves the app as it was and pings 1. The same image is tried again only an
+/// hour later, because every try starts with a full backup; the runs in between ping 1 without
+/// one.
 #[cfg(unix)]
 #[test]
 fn update_never_replaces_the_app_without_a_backup() {
@@ -993,41 +1095,139 @@ fn update_never_replaces_the_app_without_a_backup() {
     let (output, calls) = rig.run();
     assert!(!output.status.success());
     assert!(calls.contains(&"backup.sh".to_owned()));
-    assert!(
-        !calls
-            .iter()
-            .any(|call| call.starts_with("docker compose up")),
-        "{calls:#?}"
-    );
+    assert!(!has_call(&calls, "docker compose up"), "{calls:#?}");
     assert_eq!(pings(&calls), ["start", "1"], "{calls:#?}");
     assert_eq!(rig.get("running"), "sha256:a");
 
     rig.set("backup-status", "0");
+    let (output, calls) = rig.run();
+    assert!(!output.status.success());
+    assert!(!calls.iter().any(|call| call == "backup.sh"), "{calls:#?}");
+    assert!(!has_call(&calls, "docker compose up"), "{calls:#?}");
+    assert_eq!(pings(&calls), ["1"], "{calls:#?}");
+    assert!(
+        printed(&output).contains("the next try comes after"),
+        "{}",
+        printed(&output)
+    );
+    assert_eq!(rig.get("running"), "sha256:a");
+
+    // An hour later.
+    let failed = rig.backup_dir().join("update.failed");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    std::fs::write(&failed, format!("sha256:b {}\n", now - 3601)).unwrap();
+    let (output, calls) = rig.run();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(pings(&calls), ["start", "0"], "{calls:#?}");
+    assert_eq!(rig.get("running"), "sha256:b");
+    assert!(!failed.exists());
+}
+
+/// The wait after a failed update applies to that image only: a new image for the tag, or the
+/// operator's `rm BACKUP_DIR/update.failed`, is tried at once.
+#[cfg(unix)]
+#[test]
+fn update_tries_a_new_image_at_once() {
+    let rig = UpdateRig::new("sha256:b");
+    rig.set("backup-status", "1");
+    let (output, _) = rig.run();
+    assert!(!output.status.success());
+    rig.set("backup-status", "0");
+
+    rig.set("tag", "sha256:c");
+    let (output, calls) = rig.run();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(pings(&calls), ["start", "0"], "{calls:#?}");
+    assert_eq!(rig.get("running"), "sha256:c");
+
+    let rig = UpdateRig::new("sha256:b");
+    rig.set("backup-status", "1");
+    let (output, _) = rig.run();
+    assert!(!output.status.success());
+    rig.set("backup-status", "0");
+    std::fs::remove_file(rig.backup_dir().join("update.failed")).unwrap();
     let (output, calls) = rig.run();
     assert!(output.status.success(), "{}", stderr(&output));
     assert_eq!(pings(&calls), ["start", "0"], "{calls:#?}");
     assert_eq!(rig.get("running"), "sha256:b");
 }
 
-/// A stopped app (the import, a restore) is never pulled for, started or pinged about, and a
-/// registry that does not answer fails the run without a ping and without a backup.
+/// An app stopped while the update's backup ran (`docker compose stop app` for the import, or
+/// `down` for a restore, after the timer was stopped but before the run ended) stays stopped:
+/// no `compose up`, and the update fails with ping 1. Once the app runs again, the update
+/// follows at once.
+#[cfg(unix)]
+#[test]
+fn update_never_starts_an_app_stopped_during_its_backup() {
+    for (name, value) in [("status", "exited none"), ("ps", "")] {
+        let rig = UpdateRig::new("sha256:b");
+        rig.set_after_backup(name, value);
+        let (output, calls) = rig.run();
+        assert!(!output.status.success(), "{name}");
+        assert!(calls.contains(&"backup.sh".to_owned()), "{calls:#?}");
+        assert!(!has_call(&calls, "docker compose up"), "{calls:#?}");
+        assert_eq!(pings(&calls), ["start", "1"], "{calls:#?}");
+        assert!(
+            printed(&output).contains("it was stopped while the backup ran"),
+            "{}",
+            printed(&output)
+        );
+        assert_eq!(rig.get("running"), "sha256:a");
+
+        std::fs::remove_dir_all(rig.dir.path().join("state/after-backup")).unwrap();
+        let (output, calls) = rig.run();
+        assert!(output.status.success(), "{}", stderr(&output));
+        assert!(
+            !calls.iter().any(|call| call == "backup.sh"
+                || call.starts_with("docker compose pull")
+                || call.starts_with("ping")),
+            "{calls:#?}"
+        );
+
+        rig.set("ps", "app-container");
+        rig.set("status", "running healthy");
+        let (output, calls) = rig.run();
+        assert!(output.status.success(), "{}", stderr(&output));
+        assert_eq!(pings(&calls), ["start", "0"], "{calls:#?}");
+        assert_eq!(rig.get("running"), "sha256:b");
+    }
+}
+
+/// A stopped app (the import, a restore) and a stack without an app container are never pulled
+/// for, started or pinged about, and a registry that does not answer fails the run without a
+/// ping and without a backup.
 #[cfg(unix)]
 #[test]
 fn update_leaves_a_stopped_app_and_a_dead_registry_alone() {
+    let untouched = |calls: &[String]| {
+        !calls.iter().any(|call| {
+            call == "backup.sh"
+                || call.starts_with("docker compose pull")
+                || call.starts_with("docker compose up")
+                || call.starts_with("ping")
+        })
+    };
     let rig = UpdateRig::new("sha256:b");
     rig.set("status", "exited none");
     let (output, calls) = rig.run();
     assert!(output.status.success(), "{}", stderr(&output));
-    assert!(
-        !calls
-            .iter()
-            .any(|call| call.starts_with("docker compose pull")
-                || call.starts_with("docker compose up")
-                || call.starts_with("ping")),
-        "{calls:#?}"
-    );
+    assert!(untouched(&calls), "{calls:#?}");
     assert_eq!(rig.get("running"), "sha256:a");
 
+    rig.set("ps", "");
+    let (output, calls) = rig.run();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(untouched(&calls), "{calls:#?}");
+    assert!(
+        printed(&output).contains("there is no app container"),
+        "{}",
+        printed(&output)
+    );
+
+    rig.set("ps", "app-container");
     rig.set("status", "running healthy");
     rig.set("registry-down", "");
     let (output, calls) = rig.run();
@@ -1044,4 +1244,100 @@ fn update_leaves_a_stopped_app_and_a_dead_registry_alone() {
         "{calls:#?}"
     );
     assert_eq!(rig.get("running"), "sha256:a");
+}
+
+/// The one-off containers of `docker compose run app` (the import, `rematch-legacy`) carry the
+/// service's name but are not the app: only the service's own container is inspected, and a
+/// running one-off container next to a stopped app does not make the app count as running.
+#[cfg(unix)]
+#[test]
+fn update_ignores_one_off_containers() {
+    let only_label_lookups = |calls: &[String]| {
+        calls
+            .iter()
+            .filter(|call| call.contains("oneoff-1"))
+            .all(|call| call.contains("com.docker.compose.oneoff"))
+    };
+    let rig = UpdateRig::new("sha256:a");
+    rig.set("ps", "oneoff-1\napp-container");
+    let (output, calls) = rig.run();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(pings(&calls), ["0"], "{calls:#?}");
+    assert!(only_label_lookups(&calls), "{calls:#?}");
+
+    rig.set("tag", "sha256:b");
+    let (output, calls) = rig.run();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(pings(&calls), ["start", "0"], "{calls:#?}");
+    assert_eq!(rig.get("running"), "sha256:b");
+    assert!(only_label_lookups(&calls), "{calls:#?}");
+
+    rig.set("status", "exited none");
+    rig.set("tag", "sha256:c");
+    let (output, calls) = rig.run();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(
+        !calls
+            .iter()
+            .any(|call| call.starts_with("docker compose pull") || call.starts_with("ping")),
+        "{calls:#?}"
+    );
+    assert_eq!(rig.get("running"), "sha256:b");
+}
+
+/// While another run holds the lock, a run changes nothing and makes no call.
+#[cfg(unix)]
+#[test]
+fn update_runs_once_at_a_time() {
+    let rig = UpdateRig::new("sha256:b");
+    std::fs::create_dir_all(rig.backup_dir()).unwrap();
+    let lock = rig.backup_dir().join(".update.lock");
+    let (output, calls) = rig.run_with(&["flock".as_ref(), lock.as_os_str()]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(
+        printed(&output).contains("another update.sh is running"),
+        "{}",
+        printed(&output)
+    );
+    assert!(calls.is_empty(), "{calls:#?}");
+    assert_eq!(rig.get("running"), "sha256:a");
+}
+
+/// `UPDATE_WAIT_SECONDS` is checked by `update.sh` alone: a bad value stops the updates, before
+/// any pull or ping, but `load_config` (and so `backup.sh` and `restore-test.sh`) still runs.
+#[cfg(unix)]
+#[test]
+fn a_bad_update_setting_stops_only_the_updates() {
+    let rig = UpdateRig::new("sha256:b");
+    let env = rig.dir.path().join("opt/backup.env");
+    let mut text = std::fs::read_to_string(&env).unwrap();
+    text.push_str("UPDATE_WAIT_SECONDS=5m\n");
+    std::fs::write(&env, text).unwrap();
+
+    let (output, calls) = rig.run();
+    assert!(!output.status.success());
+    assert!(
+        printed(&output).contains("UPDATE_WAIT_SECONDS=5m is not a number of seconds"),
+        "{}",
+        printed(&output)
+    );
+    assert!(calls.is_empty(), "{calls:#?}");
+
+    let output = std::process::Command::new("bash")
+        .args([
+            "-c",
+            r#"set -euo pipefail; here=$1; . "$here/backup-lib.sh"; load_config; echo "loaded $BACKUP_DIR""#,
+            "bash",
+        ])
+        .arg(rig.dir.path().join("opt"))
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", printed(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stdout).starts_with("loaded "),
+        "{}",
+        printed(&output)
+    );
 }

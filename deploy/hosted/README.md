@@ -99,18 +99,25 @@ The admin page `/admin` holds the catalog requests and the picture reports, each
 
 1. `docker compose pull app`. While the tag has not moved, that is one request to the registry.
 2. If the app already runs the tag's image, nothing happens.
-3. Otherwise `backup.sh` runs first: the new version applies its database migrations when it starts, and migrations only go forward. If the backup fails, the app stays as it is, and the next run tries again.
+3. Otherwise `backup.sh` runs first: the new version applies its database migrations when it starts, and migrations only go forward. If the backup fails, the app stays as it is.
 4. `docker compose up -d --no-deps --wait app` replaces the app container, and nothing else, and waits up to `UPDATE_WAIT_SECONDS` (300) for it to turn healthy. `update.sh` then checks that the app runs the new image, and removes the old image once no tag names it.
 5. The heartbeat `UPDATE_HEARTBEAT_URL` of `backup.env`:
    - `<url>/0` after every check that finds the app up to date and healthy;
    - `<url>/start` before an update, and `<url>/<exit status>` with the end of its log after it;
    - `<url>/1` while the app runs the tag's image but is unhealthy or restarting, so a failed update keeps the check down until it is fixed;
+   - `<url>/1` while a failed update waits for its next try (below);
    - nothing when the registry does not answer (the run exits 1): only an outage that outlasts the check's grace time alerts.
 
-`update.sh` never starts an app that is not running. While the stack is down (a restore) or the app is stopped (`docker compose stop app`, the legacy import), it changes nothing and pings nothing. Stop the timer for such work anyway, so that no update starts in between, and start it again afterwards:
+A failed update of an image (the backup failed, or the app did not come up on it) is tried again an hour later, not every 3 minutes, because every try starts with a full backup. `/var/lib/bookclub-backup/update.failed` holds the image and the time; the runs in between log `the next try comes after …` and ping 1. A new image for the tag is tried at once.
+
+`update.sh` never starts an app that is not running. While the stack is down (a restore) or the app is stopped (`docker compose stop app`, the legacy import), it changes nothing and pings nothing. If the app is stopped while an update's backup runs, which can wait hours for the nightly backup or the restore test, the update stops before it touches the app, and pings 1.
+
+Stop the timer for such work anyway, so that no update starts in between, and wait for a run that is already busy: stopping the timer does not stop it, and its backup would dump the database in the middle of the work. The `flock` returns once no `update.sh` runs (it takes that lock); `systemctl is-active` does not help, because a running oneshot service is `activating`, not `active`. Afterwards, start the timer again:
 
 ```sh
 systemctl stop bookclub-update.timer
+flock /var/lib/bookclub-backup/.update.lock true
+# … the work …
 systemctl start bookclub-update.timer
 ```
 
@@ -144,6 +151,7 @@ After the backups (see "Backups", "Setting up"), because every update starts wit
 ### By hand
 
 - A check now, as the timer runs it: `systemctl start bookclub-update`. The runs: `journalctl -u bookclub-update`; the last update's log: `/var/lib/bookclub-backup/update.log`.
+- After fixing what failed an update, try it again now instead of after the hour: `rm /var/lib/bookclub-backup/update.failed`, then `systemctl start bookclub-update`.
 - The same steps without the script:
 
   ```sh
@@ -164,7 +172,7 @@ docker compose images app
 
 Later releases leave a pinned app alone. `BOOKCLUB_TAG=stable` follows the releases again, from the next run on.
 
-A version cannot run on a database that a newer version has migrated: it stops at startup with `cannot apply the database migrations: migration <N> was previously applied but is missing in the resolved migrations`, and `update.sh` reports a failed update. A rollback across a migration therefore needs the backup from before the update: stop the timer, and restore the snapshot that `update.sh` took right before the newer version started (see "Restoring for real"; `backup.sh restic snapshots` lists them with their times). Whatever was written since then is lost.
+A version cannot run on a database that a newer version has migrated: it stops at startup with `cannot apply the database migrations: migration <N> was previously applied but is missing in the resolved migrations`, and `update.sh` reports a failed update. A rollback across a migration therefore needs the backup from before the update: stop the timer and wait for a running update (see above), and restore the snapshot that `update.sh` took right before the newer version started (see "Restoring for real"; `backup.sh restic snapshots` lists them with their times). Whatever was written since then is lost.
 
 ## Releases
 
@@ -210,9 +218,10 @@ The app VM sits in a VLAN of its own, and the Caddy that serves git.tillhome.de 
 - **Inbound:** only Caddy may reach the published port (`BOOKCLUB_PORT`, 8080), plus SSH from the admin host. Put the rule into the Proxmox firewall of the VM, or the VLAN's router, not into nftables or ufw on the VM: Docker routes the packets of a published port before the host's `INPUT` chain, so such a rule never sees them. On the VM itself only a rule in Docker's `DOCKER-USER` chain would work.
 - **Outbound to git.tillhome.de:** the VM pulls the image from Forgejo's registry behind the same Caddy. It does not go out to the public address and back in (hairpin NAT), but takes the LAN path:
   - split DNS: on the VM, `git.tillhome.de` resolves to Caddy's LAN address, from the VLAN's DNS server or from one line in `/etc/hosts` (`<Caddy IP> git.tillhome.de`);
-  - one pinhole in the VLAN's firewall: from the VM to Caddy, TCP 443, and no other connection to a private (RFC 1918) address.
+  - one pinhole in the VLAN's firewall: from the VM to Caddy, TCP 443.
 
   The name stays the same, and so does Caddy's certificate for it.
+- **Every other private (RFC 1918) address** stays closed to the VM (work plan §5, item 10), with one exception: the VLAN's DNS resolver and time server, usually its gateway, on UDP and TCP 53 and UDP 123. Split DNS by the VLAN's resolver needs that exception. Without it, the VM uses public resolvers and time servers, and `/etc/hosts` for git.tillhome.de.
 
 Checks, once the VM and the rules exist:
 
@@ -305,10 +314,11 @@ The cutover (#52) imports the Python app's SQLite database once, into an empty d
    chmod 0600 /srv/bookclub/import/bookclub.db*
    ```
 
-2. Stop the update timer and the app, so that nobody signs up and no update starts while the import runs. The importer runs in a one-off container of the same image, which `docker compose run` starts (with Postgres, if it is not running). `-T` keeps the report free of terminal line endings. First a dry run, which rolls everything back:
+2. Stop the update timer, wait for an update that is already running (see "Updates and rollback"), and stop the app, so that nobody signs up and no update starts while the import runs. The importer runs in a one-off container of the same image, which `docker compose run` starts (with Postgres, if it is not running). `-T` keeps the report free of terminal line endings. First a dry run, which rolls everything back:
 
    ```sh
    systemctl stop bookclub-update.timer
+   flock /var/lib/bookclub-backup/.update.lock true
    docker compose stop app
    docker compose run --rm -T -v /srv/bookclub/import:/import:ro app \
        bookclub-server import-legacy /import/bookclub.db --owner <username> \
@@ -439,7 +449,12 @@ It removes the container and the restored files afterwards, and ends with a line
 
 ### Restoring for real
 
-When the database or the pictures are lost, on this VM or on a new one set up as in "First boot", with `.env`, `backup.env`, the SSH key and the restic password from the password manager. Stop the update timer first (`systemctl stop bookclub-update.timer`), so that no update starts in between; step 5 starts it again.
+When the database or the pictures are lost, on this VM or on a new one set up as in "First boot", with `.env`, `backup.env`, the SSH key and the restic password from the password manager. Stop the update timer first, and wait for an update that is already running (see "Updates and rollback"), so that no update backs up a half-restored database or starts the app in between; step 5 starts the timer again:
+
+```sh
+systemctl stop bookclub-update.timer
+flock /var/lib/bookclub-backup/.update.lock true
+```
 
 1. Restore the snapshot into the backup directory. `latest` is the newest; `snapshots` lists the others by ID:
 
@@ -485,27 +500,44 @@ When the database or the pictures are lost, on this VM or on a new one set up as
 
 ### Restoring from a Storage Box snapshot
 
-When the repository itself is gone or damaged, for example because someone deleted it from the VM. Treat that VM as compromised: restore onto a new VM set up as in "First boot", give it a new SSH key for the box, and remove the old key from the box.
+When the repository itself is gone or damaged, for example because someone deleted it from the VM. Treat that VM as compromised. Whoever deleted the repository could read everything on it: `.env` with the SMTP credentials, the package token of `docker login`, `backup.env`, the restic password and the box's SSH key. With that key they may also have added a key of their own to the box's `.ssh/authorized_keys`. The old restic password and everything in the old repository therefore count as known to them. Restore onto a new VM, set up as in "First boot", steps 1 to 5, with new SMTP credentials and a new read-only package token (revoke the old ones), and with the backup scripts and `backup.env` as in "Backups", "Setting up", step 2. The steps below make the box's key, the restic password and the repository; take the box back before anything else:
 
-1. Find a snapshot from before the damage, in the console or with `ssh bookclub-backup ls .zfs/snapshot`.
-
-2. Read the repository inside that snapshot, without changing anything on the box: a copy of `backup.env` points restic at it, and `--no-lock` keeps restic from writing its lock file into the read-only snapshot. `<snapshot>` is the name `ls` printed:
+1. Take the box back. In the Hetzner Console, reset the box's password. On the new VM, create a new key, root's SSH config and `known_hosts` with the commands of "Backups", "Setting up", step 1. Then, instead of the usual upload, replace the box's key file as a whole with one that holds only the new key (the first `scp` asks for the new password; if the box has no `.ssh` any more, `ssh bookclub-backup mkdir .ssh` first), and read it back. `diff` prints nothing when the new key is the only one:
 
    ```sh
-   (umask 077 && sed 's#^RESTIC_REPOSITORY=.*#RESTIC_REPOSITORY=sftp:bookclub-backup:.zfs/snapshot/<snapshot>/bookclub#' \
+   scp /root/.ssh/id_ed25519_backup.pub bookclub-backup:.ssh/authorized_keys
+   scp bookclub-backup:.ssh/authorized_keys /root/box-keys
+   diff /root/.ssh/id_ed25519_backup.pub /root/box-keys && rm /root/box-keys
+   ```
+
+2. Find a snapshot from before the damage, in the console or with `ssh bookclub-backup ls .zfs/snapshot`.
+
+3. Read the repository inside that snapshot with the old password, without changing anything on the box. Put the old restic password from the password manager into `/opt/bookclub/restic-password-old` (mode 0600). A copy of `backup.env` points restic at the snapshot and that password, and `--no-lock` keeps restic from writing its lock file into the read-only snapshot. `<snapshot>` is the name `ls` printed:
+
+   ```sh
+   (umask 077 && sed -e 's#^RESTIC_REPOSITORY=.*#RESTIC_REPOSITORY=sftp:bookclub-backup:.zfs/snapshot/<snapshot>/bookclub#' \
+       -e 's#^RESTIC_PASSWORD_FILE=.*#RESTIC_PASSWORD_FILE=/opt/bookclub/restic-password-old#' \
        /opt/bookclub/backup.env > /opt/bookclub/backup-snapshot.env)
    BACKUP_ENV=/opt/bookclub/backup-snapshot.env /opt/bookclub/backup.sh restic --no-lock snapshots
    BACKUP_ENV=/opt/bookclub/backup-snapshot.env /opt/bookclub/backup.sh restic --no-lock \
        restore latest --host bookclub --tag bookclub --target /var/lib/bookclub-backup/restore
    ```
 
-   Then go on with step 2 of "Restoring for real".
+4. Start a new repository, with a new password, in a new directory of the box, before anything backs up:
 
-3. Make the repository whole again for the next backups, in one of two ways:
-   - Roll the box back to that snapshot in the console ("Snapshots", the snapshot's menu). A rollback undoes every change on the box since the snapshot: the backups taken after it, and the newer snapshots, are gone.
-   - Or leave the box as it is, and start a new repository in a new directory: `RESTIC_REPOSITORY=sftp:bookclub-backup:bookclub-<date>` in `backup.env`, then `backup.sh restic init` and `backup.sh`.
+   ```sh
+   (umask 077 && openssl rand -base64 32 > /opt/bookclub/restic-password)
+   sed -i 's#^RESTIC_REPOSITORY=.*#RESTIC_REPOSITORY=sftp:bookclub-backup:bookclub-<date>#' /opt/bookclub/backup.env
+   /opt/bookclub/backup.sh restic init
+   ```
 
-4. Remove the copy: `rm /opt/bookclub/backup-snapshot.env`.
+   **Put the new password into the password manager**, next to the old one: the old one still reads the old repository in the box's snapshots, until the last of them is gone. Rolling the box back to the snapshot instead would bring back the old repository with the old password, and the `.ssh/authorized_keys` of that day, perhaps with the attacker's key in it.
+
+5. Go on with steps 2 to 5 of "Restoring for real": step 3 left the restore where they expect it, and step 4's `backup.sh` takes the first backup into the new repository.
+
+6. Remove the copies: `rm /opt/bookclub/backup-snapshot.env /opt/bookclub/restic-password-old`.
+
+Without a compromise, when a mistake or a bug on a VM you trust damaged the repository, roll the box back instead: in the console, "Snapshots", the snapshot's menu. A rollback undoes every change on the box since the snapshot: the backups taken after it, and the newer snapshots, are gone. The repository keeps its password and its history; restore from it as in "Restoring for real".
 
 ## Legal texts
 
