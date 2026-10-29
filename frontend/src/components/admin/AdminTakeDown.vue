@@ -141,7 +141,7 @@ function submit() {
   <details class="takedown panel">
     <summary>{{ t("admin.takeDownForm.toggle") }}</summary>
     <form class="stack takedown-form" @submit.prevent="submit">
-      <p class="fine muted">{{ t("admin.takeDownForm.intro") }}</p>
+      <p class="fine muted">{{ t("admin.takeDownForm.blurb") }}</p>
       <label class="field">
         <span>{{ t("admin.takeDownForm.url") }}</span>
         <input

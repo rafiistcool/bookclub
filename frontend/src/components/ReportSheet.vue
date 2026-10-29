@@ -56,13 +56,6 @@ const busy = ref(false);
 const error = ref("");
 
 const reasons = computed<readonly Reason[]>(() => (props.target.kind === "cover" ? COVER_REASONS : OTHER_REASONS));
-/**
- * The sheet's title per kind. A cover's, and the texts every kind shares, keep
- * their `cover.*` keys from before #54 added the other kinds.
- */
-const title = computed(() =>
-  props.target.kind === "cover" ? t("cover.reportTitle") : t(`report.title.${props.target.kind}`),
-);
 /** The line under the title: the book, or whose picture it is. */
 const subject = computed(() =>
   props.target.kind === "avatar" ? t("report.avatarOf", { name: props.target.username }) : props.target.title,
@@ -82,10 +75,10 @@ async function submit() {
   try {
     const created = await send({ reason: reason.value, details: details.value.trim() || null });
     // A repeat names the reader's open report; a picture taken down meanwhile needs nobody.
-    toast.show(created.status === "removed" ? t("cover.alreadyRemoved") : t("cover.reported"));
+    toast.show(created.status === "removed" ? t("cover.alreadyRemoved") : t("report.sent"));
     emit("close");
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : t("cover.reportFailed");
+    error.value = err instanceof ApiError ? err.message : t("report.failed");
   } finally {
     busy.value = false;
   }
@@ -93,24 +86,24 @@ async function submit() {
 </script>
 
 <template>
-  <BottomSheet :title="title" @close="emit('close')">
+  <BottomSheet :title="t(`report.title.${target.kind}`)" @close="emit('close')">
     <p class="muted report-subject">{{ subject }}</p>
     <form class="stack" @submit.prevent="submit">
       <fieldset class="report-reasons">
-        <legend class="fine">{{ t("cover.reportWhy") }}</legend>
+        <legend class="fine">{{ t("report.why") }}</legend>
         <label v-for="option in reasons" :key="option" class="report-reason">
           <input v-model="reason" type="radio" name="reason" :value="option" :disabled="busy" />
           {{ t(`cover.reasons.${option}`) }}
         </label>
       </fieldset>
       <label class="field">
-        <span>{{ t("cover.reportDetails") }}</span>
+        <span>{{ t("report.details") }}</span>
         <textarea v-model="details" rows="3" maxlength="2000" :placeholder="t('common.optional')" :disabled="busy" />
       </label>
       <p class="fine subtle report-note">{{ t("report.next") }}</p>
       <p v-if="error" class="error">{{ error }}</p>
       <button class="btn btn-primary btn-block" type="submit" :disabled="busy || !reason">
-        {{ busy ? t("cover.reporting") : t("cover.reportSend") }}
+        {{ busy ? t("report.sending") : t("report.send") }}
       </button>
       <button class="btn btn-ghost btn-block" type="button" :disabled="busy" @click="emit('close')">
         {{ t("common.cancel") }}

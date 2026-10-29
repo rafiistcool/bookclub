@@ -13,20 +13,13 @@
   "cover": {
     "alt": "Cover von {title}",
     "report": "Cover melden",
-    "reportTitle": "Dieses Cover melden",
-    "reportWhy": "Was stimmt damit nicht?",
     "reasons": {
       "wrong_book": "Es zeigt ein anderes Buch",
       "offensive": "Es ist anstößig",
       "copyright": "Es verletzt ein Urheberrecht",
       "other": "Etwas anderes"
     },
-    "reportDetails": "Details",
-    "reportSend": "Meldung senden",
-    "reporting": "Wird gesendet…",
-    "reported": "Danke. Jemand aus dem Admin-Team sieht es sich an.",
     "alreadyRemoved": "Dieses Bild wurde schon entfernt. Trotzdem danke.",
-    "reportFailed": "Die Meldung konnte nicht gesendet werden",
     "photoAdd": "Foto deines Exemplars hinzufügen",
     "photoSuggest": "Foto deines Exemplars vorschlagen",
     "photoUploading": "Wird hochgeladen …",
@@ -40,12 +33,19 @@
       "work": "Dieses Buch melden"
     },
     "title": {
+      "cover": "Dieses Cover melden",
       "avatar": "Dieses Profilbild melden",
       "work": "Dieses Buch melden",
       "edition": "Diese Ausgabe melden"
     },
     "avatarOf": "Profilbild von {name}",
+    "why": "Was stimmt damit nicht?",
+    "details": "Details",
     "next": "Ein Admin entscheidet. Ist deine E-Mail-Adresse bestätigt, erfährst du, was daraus wurde.",
+    "send": "Meldung senden",
+    "sending": "Wird gesendet…",
+    "sent": "Danke. Jemand aus dem Admin-Team sieht es sich an.",
+    "failed": "Die Meldung konnte nicht gesendet werden",
     "noAccount": "Kein Konto hier? Inhalte melden kann man auch per E-Mail an {email}.",
     "instead": "Kein Fehler, sondern anstößig oder rechtsverletzend?",
     "removedTitle": "[entfernt]",
@@ -620,7 +620,6 @@
     "termsChanged": "Die Nutzungsbedingungen haben sich geändert. Sieh sie dir an und versuch es nochmal.",
     "pictureRemoved": "Dieses Bild wurde entfernt",
     "receivedInFuture": "Die Meldung kann nicht in der Zukunft eingegangen sein.",
-    "noticeCoversOnly": "Bisher können nur Meldungen zu Buchcovern festgehalten werden.",
     "accountSuspended": "Dieses Konto ist gesperrt. Fragen? Schreib an die Adresse im Impressum.",
     "onlyReaderBooks": "Melden kannst du nur Bücher, die jemand selbst eingetragen hat.",
     "noAccount": "Kein Konto mit diesem Namen",
@@ -700,9 +699,9 @@
     "deleteOwnEntries": "Du kannst nur deine eigenen Einträge löschen",
     "requestDecided": "Über diese Anfrage wurde schon entschieden",
     "reportResolved": "Diese Meldung wurde schon geschlossen",
+    "invalidValueFor": "Dieser Wert für „{field}“ geht nicht",
     "reportedBookMerged": "Dieses Buch wurde seit der Meldung mit einem anderen zusammengeführt. Schließ die Meldung und korrigiere das andere Buch mit „Als Admin bearbeiten“, falls es den gemeldeten Text übernommen hat.",
-    "pictureGone": "Das gemeldete Bild ist nicht mehr online: Wer es hochgeladen hat, hat es ersetzt oder gelöscht. Schließ die Meldung.",
-    "invalidValueFor": "Dieser Wert für „{field}“ geht nicht"
+    "pictureGone": "Das gemeldete Bild ist nicht mehr online: Wer es hochgeladen hat, hat es ersetzt oder gelöscht. Schließ die Meldung."
   },
   "physicalShelf": {
     "title": "Dein Bücherregal",
@@ -1214,16 +1213,15 @@
   },
   "admin": {
     "title": "Verwaltung",
-    "lede": "Was Leser:innen ändern lassen oder gemeldet haben, und Einladungen für die geschlossene Beta.",
-    "intro": "Was Leser:innen ändern lassen oder gemeldet haben, Einladungen für die geschlossene Beta und gesperrte Konten.",
+    "lede": "Was Leser:innen ändern lassen oder gemeldet haben, Einladungen für die geschlossene Beta und gesperrte Konten.",
     "sections": "Bereiche der Verwaltung",
     "tabs": {
       "requests": "Anfragen",
       "reports": "Meldungen",
-      "users": "Konten",
-      "invites": "Einladungen"
+      "invites": "Einladungen",
+      "users": "Konten"
     },
-    "settingsBlurb": "Du betreibst diese Instanz: Korrekturen, Cover-Fotos, Zusammenführungen und gemeldete Cover warten auf dich.",
+    "settingsBlurb": "Du betreibst diese Instanz: Korrekturen, Cover-Fotos, Zusammenführungen und gemeldete Inhalte warten auf dich.",
     "open": "Verwaltung öffnen",
     "loadFailed": "Die Warteschlange konnte nicht geladen werden",
     "decideFailed": "Die Entscheidung konnte nicht gespeichert werden",
@@ -1256,9 +1254,8 @@
     "reject": "Ablehnen",
     "rejected": "Abgelehnt",
     "rejectNote": "Warum nicht? (Die Person sieht das noch nicht)",
-    "reports": "Gemeldete Cover",
-    "reportsBlurb": "Cover, die Leser:innen gemeldet haben. Entfernen nimmt das Bild überall und endgültig heraus; Behalten schließt die Meldung.",
-    "reportsIntro": "Gemeldete Cover, Profilbilder und Bücher, die Leser:innen angelegt haben. Entfernen nimmt ein Bild überall heraus oder löscht, was jemand eingetippt hat, endgültig; Behalten schließt die Meldung. Die Meldenden erfahren die Entscheidung per E-Mail, und wessen Inhalt entfernt wurde, erfährt den Grund.",
+    "reports": "Meldungen",
+    "reportsBlurb": "Gemeldete Cover, Profilbilder und Bücher, die Leser:innen angelegt haben. Entfernen nimmt ein Bild überall heraus oder löscht, was jemand eingetippt hat, endgültig; Behalten schließt die Meldung. Die Meldenden erfahren die Entscheidung per E-Mail, und wessen Inhalt entfernt wurde, erfährt den Grund.",
     "noReports": "Keine offenen Meldungen.",
     "alreadyRemoved": "Dieses Bild wurde schon entfernt.",
     "target": {
@@ -1283,8 +1280,7 @@
     "takeDownBlurb": "Das Bild verschwindet bei jedem Buch und jeder Ausgabe, die es zeigen, und keine Aktualisierung bringt es zurück.",
     "keep": "Behalten",
     "takenDown": "Bild entfernt",
-    "kept": "Meldung geschlossen, das Bild bleibt",
-    "reportClosed": "Meldung geschlossen, nichts wurde entfernt",
+    "kept": "Meldung geschlossen, nichts wurde entfernt",
     "invites": "Einladungen zur Anmeldung",
     "invitesBlurb": "Solange die Anmeldung eine Einladung braucht, kann man hiermit ein Konto anlegen, ohne einem Club beizutreten.",
     "maxUses": "Wie viele Personen",
@@ -1342,8 +1338,8 @@
       "removed": "Entfernt",
       "dismissed": "Behalten",
       "approved": "Freigegeben",
-      "withdrawn": "Entfernt",
-      "rejected": "Abgelehnt"
+      "rejected": "Abgelehnt",
+      "withdrawn": "Entfernt"
     },
     "takenDownBy": "Entfernt von {name} · {when}",
     "keptBy": "Behalten von {name} · {when}",
@@ -1357,16 +1353,9 @@
       "max": "Am längsten, in Stunden",
       "overTarget": "Länger als {hours} Stunden gedauert"
     },
-    "gone": {
-      "avatar": "Nicht mehr online: Das Bild wurde ersetzt oder gelöscht, es gibt nichts mehr zu entfernen.",
-      "work": "Seit der Meldung mit diesem Buch zusammengeführt, der gemeldete Text erscheint nicht mehr für sich. Hat dieses Buch etwas davon übernommen, korrigiere es mit „Als Admin bearbeiten“."
-    },
-    "closeReport": "Meldung schließen",
-    "closedBy": "Geschlossen von {name} · {when}",
     "takeDownForm": {
       "toggle": "Bild per Adresse entfernen",
-      "blurb": "Für eine Meldung, die per E-Mail kam: Füge die Adresse des Bildes ein oder die der Buchseite, die es zeigt. Die Entfernung wird als Meldung festgehalten, die zur Zeit der E-Mail eingegangen ist.",
-      "intro": "Für eine Meldung, die per E-Mail kam: Füge die Adresse des Bildes ein (ein Cover oder ein Profilbild) oder die der Buchseite, die das Cover zeigt. Die Entfernung wird als Meldung festgehalten, die zur Zeit der E-Mail eingegangen ist.",
+      "blurb": "Für eine Meldung, die per E-Mail kam: Füge die Adresse des Bildes ein (ein Cover oder ein Profilbild) oder die der Buchseite, die das Cover zeigt. Die Entfernung wird als Meldung festgehalten, die zur Zeit der E-Mail eingegangen ist.",
       "url": "Adresse des Bildes oder der Buchseite",
       "urlPlaceholder": "…/media/… oder …/book/…",
       "receivedAt": "Wann die Meldung kam",
@@ -1377,11 +1366,14 @@
       "noCover": "Dieses Buch zeigt kein Bild.",
       "future": "Die Meldung kann nicht in der Zukunft eingegangen sein.",
       "done": "Bild entfernt und die Meldung festgehalten",
-      "coversOnly": "Das ist kein Buchcover (etwa ein Profilbild). Eine Meldung dazu kann noch nicht festgehalten werden, deshalb wurde nichts entfernt. Du kannst das Bild ohne Eintrag entfernen.",
-      "withoutRecord": "Ohne Eintrag entfernen",
-      "doneWithoutRecord": "Bild entfernt. Die Meldung wurde nicht festgehalten.",
       "failed": "Das Bild konnte nicht entfernt werden"
-    }
+    },
+    "gone": {
+      "avatar": "Nicht mehr online: Das Bild wurde ersetzt oder gelöscht, es gibt nichts mehr zu entfernen.",
+      "work": "Seit der Meldung mit diesem Buch zusammengeführt, der gemeldete Text erscheint nicht mehr für sich. Hat dieses Buch etwas davon übernommen, korrigiere es mit „Als Admin bearbeiten“."
+    },
+    "closeReport": "Meldung schließen",
+    "closedBy": "Geschlossen von {name} · {when}"
   },
   "notFound": {
     "title": "Seite nicht gefunden",

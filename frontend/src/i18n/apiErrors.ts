@@ -38,7 +38,6 @@ const API_ERROR_KEYS: Record<string, string> = {
   "This picture was removed": "errors.pictureRemoved",
   "This report was already resolved": "errors.reportResolved",
   "Input should be in the past": "errors.receivedInFuture",
-  "Only notices about covers can be recorded": "errors.noticeCoversOnly",
   "Only books readers added can be reported": "errors.onlyReaderBooks",
   "No account with that name": "errors.noAccount",
   "You cannot suspend your own account": "errors.cannotSuspendSelf",
