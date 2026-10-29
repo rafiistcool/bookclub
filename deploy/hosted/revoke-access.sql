@@ -20,7 +20,8 @@
 --   docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 -U bookclub -d bookclub \
 --       < deploy/hosted/revoke-access.sql
 --
--- psql prints how many rows each statement changed. Admin flags, memberships and addresses
+-- psql prints how many rows each statement changed. Admin flags, memberships, accepted
+-- friendships (a planted one grants the same view as a planted membership) and addresses
 -- are reviewed by hand afterwards (README.md). server/tests/auth_sessions.rs runs this file.
 BEGIN;
 DELETE FROM sessions;

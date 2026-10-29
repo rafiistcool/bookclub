@@ -566,7 +566,7 @@ When the repository itself is gone or damaged, for example because someone delet
        < <checkout>/deploy/hosted/revoke-access.sql
    ```
 
-7. Check what they could have changed: the instance admins, the accounts created and the addresses verified or passwords changed since the intrusion may have begun, the club memberships since then, and the moderation decisions. `<date>` is that day; when in doubt, the day of the oldest snapshot of the old box:
+7. Check what they could have changed: the instance admins, the accounts created and the addresses verified or passwords changed since the intrusion may have begun, the club memberships and friendships since then (a planted friendship shows as much as a planted membership), and the moderation decisions. `<date>` is that day; when in doubt, the day of the oldest snapshot of the old box:
 
    ```sh
    docker compose exec -T postgres psql -X -U bookclub -d bookclub -v since="'<date>'" <<'SQL'
@@ -576,6 +576,9 @@ When the repository itself is gone or damaged, for example because someone delet
    SELECT c.name AS club, u.username, m.role, m.joined_at FROM club_memberships m
      JOIN clubs c ON c.id = m.club_id JOIN users u ON u.id = m.user_id
     WHERE m.joined_at >= :since ORDER BY m.joined_at;
+   SELECT r.username AS requester, a.username AS addressee, f.accepted_at FROM friendships f
+     JOIN users r ON r.id = f.requester_id JOIN users a ON a.id = f.addressee_id
+    WHERE f.accepted_at >= :since ORDER BY f.accepted_at;
    SELECT username, suspended_at, unsuspended_at FROM users
     WHERE suspended_at IS NOT NULL OR unsuspended_at IS NOT NULL ORDER BY username;
    SELECT public_id, kind, removed_at FROM media WHERE removed_at IS NOT NULL ORDER BY removed_at;

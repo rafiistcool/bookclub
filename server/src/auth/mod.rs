@@ -323,7 +323,12 @@ pub async fn delete_rejected_cover_photos(
 /// as in a password change and an account deletion, and a logout's trace
 /// (`users.last_seen_at`, migration 2201) never waits for the users row, so no lock order is
 /// reversed. Taking the account's lock before any club's breaks no lock order either
-/// (conventions §5.6): an empty account has no row in a club, so `delete_user` locks no club.
+/// (conventions §5.6). An empty account has no row in a club but, at most, a friend invite bound
+/// to it (`club_invites.invitee_id`, another account's act), whose club `delete_user` then locks
+/// after the account. No club write waits for the account's row while holding that club: the
+/// account's own redemption needs a session, which this purge holds locked (or, signing in,
+/// waits for the account), and a new invite bound to it needs an accepted friendship, which is
+/// data and which only the account itself can accept.
 pub async fn purge_empty_sign_ups(conn: &mut PgConnection) -> sqlx::Result<u64> {
     let candidates = empty_sign_ups(conn, None, PURGE_BATCH).await?;
     let mut deleted = 0;
@@ -397,13 +402,17 @@ pub async fn is_empty_sign_up(conn: &mut PgConnection, user_id: i64) -> sqlx::Re
 ///   (`unsuspended_at`, migration 2900: it could not sign in before) more than 30 days ago, and
 ///   no session of it was used and no mail link was sent to it since then.
 /// - **holds no data:** no profile picture, and no row behind any foreign key to `users` other
-///   than the traces of signing up and signing in: its sessions, its mail links and the use of
-///   a sign-up invite (`club_invites.club_id` NULL). The use of a club invite is data.
+///   than the traces of signing up and signing in (its sessions, its mail links and the use of
+///   a sign-up invite, `club_invites.club_id` NULL) and the acts of other accounts it never
+///   answered (a friend request it received and did not accept, another account's block of it,
+///   a friend invite bound to it). The use of a club invite is data, and so are a friend request
+///   it sent, a friendship and a block it made.
 ///
 /// One `NOT EXISTS` per foreign-key column. `tests/jobs.rs`
 /// (`every_reference_to_an_account_is_data_or_a_trace_of_signing_in`) reads every foreign key
 /// to `users` from `pg_constraint` and gives an account a row behind each: a new one fails there
-/// until it has a line here, or is named a trace in that test. A new column of `users` fails
+/// until it has a line here, or is named a trace (of signing in or of another account's act) in
+/// that test. `friendships.addressee_id` is both: data once accepted, a trace while pending. A new column of `users` fails
 /// `every_column_of_users_is_considered_by_the_purge` the same way.
 async fn empty_sign_ups(
     conn: &mut PgConnection,
@@ -456,6 +465,10 @@ async fn empty_sign_ups(
            AND NOT EXISTS (SELECT 1 FROM reports x WHERE x.created_by = u.id)
            AND NOT EXISTS (SELECT 1 FROM reports x WHERE x.resolved_by = u.id)
            AND NOT EXISTS (SELECT 1 FROM reports x WHERE x.target_user_id = u.id)
+           AND NOT EXISTS (SELECT 1 FROM friendships x WHERE x.requester_id = u.id)
+           AND NOT EXISTS (SELECT 1 FROM friendships x
+                           WHERE x.addressee_id = u.id AND x.accepted_at IS NOT NULL)
+           AND NOT EXISTS (SELECT 1 FROM user_blocks x WHERE x.user_id = u.id)
          ORDER BY u.id
          LIMIT $2",
         only,

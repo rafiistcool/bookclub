@@ -1009,6 +1009,11 @@ const CLUB_TRACES: &[(&str, &str)] = &[
          VALUES ({c}, 'CODE{c}', {a}, 5)",
     ),
     (
+        "friend invite bound to them",
+        "INSERT INTO club_invites (club_id, code, created_by, max_uses, expires_at, invitee_id)
+         VALUES ({c}, 'BOUND{c}', {o}, 1, now() + interval '30 days', {a})",
+    ),
+    (
         "invite use",
         "WITH i AS (INSERT INTO club_invites (club_id, code, max_uses) VALUES ({c}, 'USE{c}', 5)
                     RETURNING id)

@@ -30,6 +30,12 @@ const SOURCES: &[(&str, &[&str])] = &[
     ("clubs_created", &["clubs.created_by"]),
     ("invites_created", &["club_invites.created_by"]),
     ("invite_uses", &["club_invite_uses.user_id"]),
+    ("club_invites_received", &["club_invites.invitee_id"]),
+    (
+        "friends",
+        &["friendships.requester_id", "friendships.addressee_id"],
+    ),
+    ("blocks", &["user_blocks.user_id"]),
     ("picks_set", &["club_picks.set_by"]),
     ("milestones_created", &["milestones.created_by"]),
     ("nominations", &["next_up_nominations.nominated_by"]),
@@ -59,11 +65,18 @@ const SOURCES: &[(&str, &[&str])] = &[
 ];
 
 /// Foreign-key columns to `users(id)` the export leaves out on purpose, with the reason.
-const EXEMPT: &[(&str, &str)] = &[(
-    "email_tokens.user_id",
-    "one-time secrets that expire within 48 hours; their one personal datum, a pending \
-     address, is exported as profile.pending_email",
-)];
+const EXEMPT: &[(&str, &str)] = &[
+    (
+        "email_tokens.user_id",
+        "one-time secrets that expire within 48 hours; their one personal datum, a pending \
+         address, is exported as profile.pending_email",
+    ),
+    (
+        "user_blocks.blocked_user_id",
+        "who blocked the account; telling it would undo the block (Art. 15(4), like the \
+         reporter of a report)",
+    ),
+];
 
 async fn export(client: &TestClient) -> TestResponse {
     client.get("/api/auth/me/export").await
@@ -209,7 +222,7 @@ async fn the_export_covers_every_foreign_key_to_users(db: PgPool) {
         assert!(covered.insert(column.to_string()), "{column} twice");
     }
     assert_eq!(in_schema, covered);
-    assert_eq!(in_schema.len(), 29);
+    assert_eq!(in_schema.len(), 34);
 
     let ada = app.user("ada").await;
     let data = data_json(&export(&ada).await);
@@ -314,6 +327,8 @@ async fn every_section_holds_the_users_rows(db: PgPool) {
     let bob = app.user("bob").await;
     let cleo = app.user("cleo").await;
     let dan = app.user("dan").await;
+    let eve = app.user("eve").await;
+    let gus = app.user("gus").await;
     let (a, b) = (ada.id(), bob.id());
     let readers = app.club(&ada, "Readers").await;
     app.join(&readers, &bob, "member").await;
@@ -343,7 +358,15 @@ async fn every_section_holds_the_users_rows(db: PgPool) {
          UPDATE club_memberships SET invited_by = {a} WHERE club_id = {c} AND user_id = {b};
          UPDATE club_memberships SET invited_by = {b} WHERE club_id = {c} AND user_id = {dan};
          INSERT INTO club_removals (club_id, user_id) VALUES ({o}, {a}), ({t}, {b});
-         INSERT INTO club_invites (club_id, code, created_by, max_uses) VALUES ({c}, 'ADAS', {a}, 5);
+         INSERT INTO club_invites (club_id, code, created_by, max_uses, expires_at, invitee_id)
+             VALUES ({c}, 'ADAS', {a}, 1, now() + interval '30 days', {b});
+         INSERT INTO club_invites (club_id, code, created_by, max_uses, expires_at, invitee_id)
+             VALUES ({t}, 'FORADA', {cleo}, 1, now() + interval '30 days', {a});
+         INSERT INTO friendships (requester_id, addressee_id, accepted_at)
+             VALUES ({a}, {cleo}, now()), ({dan}, {b}, now()),
+                    ({a}, {dan}, NULL), ({b}, {eve}, NULL),
+                    ({eve}, {a}, NULL), ({cleo}, {b}, NULL);
+         INSERT INTO user_blocks (user_id, blocked_user_id) VALUES ({a}, {gus}), ({b}, {a});
          INSERT INTO club_invites (club_id, code, created_by, max_uses) VALUES ({o}, 'BOBS', {b}, 5);
          INSERT INTO club_invite_uses (invite_id, user_id)
              SELECT id, {a} FROM club_invites WHERE code = 'BOBS';
@@ -425,6 +448,8 @@ async fn every_section_holds_the_users_rows(db: PgPool) {
              SELECT id, {b}, '📚' FROM posts WHERE body = 'my diary';",
         cleo = cleo.id(),
         dan = dan.id(),
+        eve = eve.id(),
+        gus = gus.id(),
         e = edition.id,
         e2 = bobs_edition.id,
     ))
@@ -489,6 +514,26 @@ async fn every_section_holds_the_users_rows(db: PgPool) {
             json!("Old Club"),
             json!("Readers"),
         ),
+        (
+            "club_invites_received",
+            "club_name",
+            json!("Third Club"),
+            json!("Readers"),
+        ),
+        ("friends.friends", "username", json!("cleo"), json!("dan")),
+        (
+            "friends.requests_sent",
+            "username",
+            json!("dan"),
+            json!("eve"),
+        ),
+        (
+            "friends.requests_received",
+            "username",
+            json!("eve"),
+            json!("cleo"),
+        ),
+        ("blocks", "username", json!("gus"), json!("ada")),
         (
             "picks_set",
             "club_name",
@@ -622,8 +667,42 @@ async fn every_section_holds_the_users_rows(db: PgPool) {
     let event = one_row(&data, "events");
     assert_eq!(event["kind"], "member_joined");
     // Ada is the owner of Readers: its rows are whole. Bob is not in Old Club: its rows keep
-    // only what he wrote and nobody changed since.
-    assert_eq!(one_row(&data, "invites_created")["code"], "ADAS");
+    // only what he wrote and nobody changed since. Ada's invite is bound to Bob: it names him
+    // by username, not by id.
+    let invite = one_row(&data, "invites_created");
+    assert_eq!(invite["code"], "ADAS");
+    assert_eq!(invite["invitee"], "bob");
+    assert!(invite.get("invitee_id").is_none(), "another account's id");
+    // The invite bound to Ada names its club and sender, never its code.
+    let received = one_row(&data, "club_invites_received");
+    let mut fields: Vec<&String> = received.as_object().unwrap().keys().collect();
+    fields.sort();
+    assert_eq!(
+        fields,
+        [
+            "club_name",
+            "created_at",
+            "expires_at",
+            "invited_by",
+            "revoked",
+            "used"
+        ]
+    );
+    assert_eq!(
+        (
+            &received["invited_by"],
+            &received["used"],
+            &received["revoked"]
+        ),
+        (&json!("cleo"), &json!(false), &json!(false))
+    );
+    // Friendships carry when they began; Bob's block of Ada is not in her export (only her own
+    // block is), and a block names only the blocked account.
+    assert!(data["friends"]["friends"][0]["accepted_at"].is_string());
+    assert_eq!(
+        data["blocks"],
+        json!([{"username": "gus", "created_at": data["blocks"][0]["created_at"]}])
+    );
     assert_eq!(one_row(&data, "picks_set")["note"], "our pick");
     assert_eq!(one_row(&data, "milestones_created")["title"], "Part one");
     assert!(one_row(&data, "clubs_created").get("slug").is_some());

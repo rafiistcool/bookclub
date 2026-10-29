@@ -396,8 +396,9 @@ export interface paths {
          *     - Posts that others replied to become anonymous tombstones; every other post is deleted.
          *     - Every avatar the user uploaded is deleted with its bytes; cover photos stay as catalog
          *       contributions, without the uploader.
-         *     - Personal data, sessions, memberships and the user's activity events go with the account;
-         *       picks, nominations, invites and catalog rows keep existing without the name.
+         *     - Personal data, sessions, memberships, friendships and requests, blocks, the friend invites
+         *       bound to the user and the user's activity events go with the account; picks, nominations,
+         *       invites and catalog rows keep existing without the name.
          *
          *     The password is checked under the current-password limits (10 checks per session in ten
          *     minutes, 30 per account an hour; then 429).

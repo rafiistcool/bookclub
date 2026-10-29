@@ -106,6 +106,7 @@ pub async fn export_me(user: CurrentUser, State(state): State<AppState>) -> ApiR
     let mut data = Map::new();
     account_sections(&mut tx, user.id, &mut data).await?;
     club_sections(&mut tx, user.id, &mut data).await?;
+    friend_sections(&mut tx, user.id, &mut data).await?;
     catalog_sections(&mut tx, user.id, &mut data).await?;
     let media = uploaded_media(&mut tx, user.id).await?;
     tx.commit().await?;
@@ -281,7 +282,11 @@ async fn account_sections(
 /// note and meeting of a pick, a milestone's title and dates, an invite's code, counters and
 /// revocation, and the club's settings are club data a former member no longer sees
 /// (DSGVO Art. 15(4)). Invites keep their live state only while the user may list them (an
-/// admin of the club, or an instance admin for a sign-up invite).
+/// admin of the club, or an instance admin for a sign-up invite); a friend invite then names its
+/// invitee by username (`invitee`), never by id.
+///
+/// `club_invites_received` holds the friend invites bound to the user (`invitee_id`): the club,
+/// who sent it, when, until when, and whether it was used or revoked, never the code.
 async fn club_sections(
     conn: &mut PgConnection,
     user_id: i64,
@@ -351,15 +356,17 @@ async fn club_sections(
                                          WHERE m.club_id = i.club_id AND m.user_id = $1
                                            AND m.role IN ('owner', 'admin'))
                                 END
-                           THEN (to_jsonb(i) - 'created_by')
-                                || jsonb_build_object('club_name', c.name)
+                           THEN (to_jsonb(i) - 'created_by' - 'invitee_id')
+                                || jsonb_build_object('club_name', c.name, 'invitee', iu.username)
                            ELSE jsonb_build_object(
                                'id', i.id, 'club_id', i.club_id, 'club_name', c.name,
                                'created_at', i.created_at, 'expires_at', i.expires_at,
                                'max_uses', i.max_uses)
                       END
                   ORDER BY i.id), '[]') AS "rows!"
-           FROM club_invites i LEFT JOIN clubs c ON c.id = i.club_id
+           FROM club_invites i
+           LEFT JOIN clubs c ON c.id = i.club_id
+           LEFT JOIN users iu ON iu.id = i.invitee_id
            WHERE i.created_by = $1"#,
         user_id
     )
@@ -381,6 +388,23 @@ async fn club_sections(
     .fetch_one(&mut *conn)
     .await?;
     data.insert("invite_uses".into(), uses);
+
+    // Bound to the user (a friend invite); the code is a credential of the club.
+    let received = sqlx::query_scalar!(
+        r#"SELECT coalesce(jsonb_agg(jsonb_build_object(
+                      'club_name', c.name, 'invited_by', u.username,
+                      'created_at', i.created_at, 'expires_at', i.expires_at,
+                      'used', i.use_count > 0, 'revoked', i.revoked_at IS NOT NULL)
+                  ORDER BY i.created_at, i.id), '[]') AS "rows!"
+           FROM club_invites i
+           JOIN clubs c ON c.id = i.club_id
+           LEFT JOIN users u ON u.id = i.created_by
+           WHERE i.invitee_id = $1"#,
+        user_id
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    data.insert("club_invites_received".into(), received);
 
     let picks = sqlx::query_scalar!(
         r#"SELECT coalesce(jsonb_agg(
@@ -461,6 +485,56 @@ async fn club_sections(
     .fetch_one(&mut *conn)
     .await?;
     data.insert("events".into(), events);
+    Ok(())
+}
+
+/// Friendships and requests in both directions (`friends`), and the blocks the user made
+/// (`blocks`).
+///
+/// Every row is the user's own act or one addressed to the user, so both directions are listed,
+/// requests the user hid by blocking their sender included. Who blocked the user is withheld
+/// (`user_blocks.blocked_user_id`): telling them would undo the block (DSGVO Art. 15(4), like
+/// the reporter of a report). `friends.friends` carries `accepted_at`, when the friendship
+/// began.
+async fn friend_sections(
+    conn: &mut PgConnection,
+    user_id: i64,
+    data: &mut Map<String, Value>,
+) -> sqlx::Result<()> {
+    let friends = sqlx::query_scalar!(
+        r#"SELECT jsonb_build_object(
+               'friends', (SELECT coalesce(jsonb_agg(jsonb_build_object(
+                               'username', u.username, 'accepted_at', f.since)
+                           ORDER BY f.since, u.username), '[]')
+                           FROM bc_friends($1) f JOIN users u ON u.id = f.user_id),
+               'requests_sent', (SELECT coalesce(jsonb_agg(jsonb_build_object(
+                                     'username', u.username, 'created_at', f.created_at)
+                                 ORDER BY f.created_at, u.username), '[]')
+                                 FROM friendships f JOIN users u ON u.id = f.addressee_id
+                                 WHERE f.requester_id = $1 AND f.accepted_at IS NULL),
+               'requests_received', (SELECT coalesce(jsonb_agg(jsonb_build_object(
+                                         'username', u.username, 'created_at', f.created_at)
+                                     ORDER BY f.created_at, u.username), '[]')
+                                     FROM friendships f JOIN users u ON u.id = f.requester_id
+                                     WHERE f.addressee_id = $1 AND f.accepted_at IS NULL))
+               AS "rows!""#,
+        user_id
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    data.insert("friends".into(), friends);
+
+    let blocks = sqlx::query_scalar!(
+        r#"SELECT coalesce(jsonb_agg(jsonb_build_object(
+                      'username', u.username, 'created_at', b.created_at)
+                  ORDER BY b.created_at, u.username), '[]') AS "rows!"
+           FROM user_blocks b JOIN users u ON u.id = b.blocked_user_id
+           WHERE b.user_id = $1"#,
+        user_id
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    data.insert("blocks".into(), blocks);
     Ok(())
 }
 

@@ -245,6 +245,39 @@ const USER_COLUMNS: &[(&str, Class)] = &[
              (media_reports.rs); exported to that account without the reporter (auth_export.rs)",
         ),
     ),
+    // Friendships widen every kind above through the policy functions (the Friend case). The
+    // friend lists themselves get their kind with `GET /api/friends` (FRIENDS part 2).
+    (
+        "friendships.requester_id",
+        Not(
+            "friend data: no route serves it before FRIENDS part 2, which makes it \
+             Kind::Friends (docs/phase3/notes/friends.md)",
+        ),
+    ),
+    (
+        "friendships.addressee_id",
+        Not(
+            "friend data: no route serves it before FRIENDS part 2, which makes it \
+             Kind::Friends (docs/phase3/notes/friends.md)",
+        ),
+    ),
+    (
+        "user_blocks.user_id",
+        Not(
+            "friend data: no route serves it before FRIENDS part 2, which makes it \
+             Kind::Friends (docs/phase3/notes/friends.md)",
+        ),
+    ),
+    (
+        "user_blocks.blocked_user_id",
+        Not("never served: the blocked account is not told (friends_blocks.rs)"),
+    ),
+    (
+        "club_invites.invitee_id",
+        Not(
+            "invite data: the invite's creator and the invitee (clubs_invites.rs, friends_invites.rs)",
+        ),
+    ),
 ];
 
 /// Every operation with a `username` parameter, as `METHOD /path`.

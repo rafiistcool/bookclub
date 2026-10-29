@@ -555,7 +555,7 @@ async fn lifting_a_suspension_starts_the_30_days_of_an_empty_sign_up_again(db: P
 /// Every foreign key to `users` whose row means the account holds data, with SQL that gives the
 /// account `{u}` such a row. The other names are the fixture rows of
 /// [`every_reference_to_an_account_is_data_or_a_trace_of_signing_in`].
-const DATA: [(&str, &str); 27] = [
+const DATA: [(&str, &str); 30] = [
     (
         "shelf_entries.user_id",
         "INSERT INTO shelf_entries (user_id, work_id, status) VALUES ({u}, {work}, 'finished')",
@@ -675,12 +675,26 @@ const DATA: [(&str, &str); 27] = [
         "reports.target_user_id",
         "INSERT INTO reports (target_kind, reason, target_user_id) VALUES ('avatar', 'offensive', {u})",
     ),
+    (
+        "friendships.requester_id",
+        "INSERT INTO friendships (requester_id, addressee_id) VALUES ({u}, {keeper})",
+    ),
+    (
+        "friendships.addressee_id",
+        "INSERT INTO friendships (requester_id, addressee_id, accepted_at)
+         VALUES ({keeper}, {u}, now())",
+    ),
+    (
+        "user_blocks.user_id",
+        "INSERT INTO user_blocks (user_id, blocked_user_id) VALUES ({u}, {keeper})",
+    ),
 ];
 
-/// The foreign keys to `users` that only record signing up or signing in, why, and SQL that
-/// gives the account `{u}` such a row more than 30 days old: an account with nothing else is
-/// still an empty sign-up.
-const TRACES: [(&str, &str, &str); 3] = [
+/// The foreign keys to `users` that only record signing up or signing in, or another account's
+/// act the account never answered, why, and SQL that gives the account `{u}` such a row (more
+/// than 30 days old where the purge reads its date): an account with nothing else is still an
+/// empty sign-up. `friendships.addressee_id` is in [`DATA`] too: an accepted request is data.
+const TRACES: [(&str, &str, &str); 6] = [
     (
         "sessions.user_id",
         "signing in; the purge reads `last_used_at`",
@@ -702,12 +716,30 @@ const TRACES: [(&str, &str, &str); 3] = [
          of a club invite is data",
         "INSERT INTO club_invite_uses (invite_id, user_id) VALUES ({beta}, {u})",
     ),
+    (
+        "friendships.addressee_id",
+        "another account's act, never answered: a friend request the account received and did \
+         not accept",
+        "INSERT INTO friendships (requester_id, addressee_id) VALUES ({keeper}, {u})",
+    ),
+    (
+        "user_blocks.blocked_user_id",
+        "another account's block; it goes with the account",
+        "INSERT INTO user_blocks (user_id, blocked_user_id) VALUES ({keeper}, {u})",
+    ),
+    (
+        "club_invites.invitee_id",
+        "an invite another account sent",
+        "INSERT INTO club_invites (club_id, code, created_by, max_uses, expires_at, invitee_id)
+         VALUES ({club}, 'BOUND{u}', {keeper}, 1, now() + interval '30 days', {u})",
+    ),
 ];
 
 /// The purge of empty sign-ups (`auth::empty_sign_ups`) must consider every foreign key to
 /// `users`. The schema's list comes from `pg_constraint`, as in `auth_export.rs`: a new column
 /// fails here until it is in [`DATA`] (and the purge has a `NOT EXISTS` for it, or the account
-/// below is deleted) or in [`TRACES`] with a reason.
+/// below is deleted) or in [`TRACES`] (a trace of signing in or another account's act) with a
+/// reason.
 #[sqlx::test]
 async fn every_reference_to_an_account_is_data_or_a_trace_of_signing_in(db: PgPool) {
     let in_schema: BTreeSet<String> = sqlx::query_scalar(
