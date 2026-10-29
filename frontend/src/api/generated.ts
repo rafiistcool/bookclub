@@ -186,8 +186,9 @@ export interface paths {
          *     avatar's owner or the reader who added the record gets a statement of reasons. A profile
          *     picture its owner replaced or deleted while it was reported is held for the decision:
          *     "remove" takes it down, "dismiss" deletes it. A report of something gone (`ReportOut.gone`:
-         *     the profile picture of an account deleted since, a work merged away) is only dismissed, with
-         *     the other open reports of it; its reporters learn that it is no longer online.
+         *     the profile picture of an account deleted since, a work merged away) is only dismissed, a
+         *     merged work's with the other open reports of that work, a deleted account's picture's on its
+         *     own; its reporters learn that it is no longer online.
          */
         post: operations["media_admin_resolve_report"];
         delete?: never;
