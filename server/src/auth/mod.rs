@@ -314,26 +314,38 @@ pub async fn delete_rejected_cover_photos(
 /// Returns how many it deleted. An account whose deletion fails is logged without naming it and
 /// kept, and the others go on; a failure of the connection itself ends the run.
 ///
-/// Each account is locked first, then its sessions, and then it is looked at again in a new
-/// statement. A write that gives the account data or a new session references it, so it holds
-/// the users row `FOR KEY SHARE` until it commits; using an existing session updates only that
-/// session's row, which the second lock waits for. Once both locks are granted, such a write
-/// has either committed, and the second look sees it, or it waits for this transaction and
-/// fails or changes nothing when the account is gone. The users row comes before the sessions
-/// as in a password change and an account deletion, and a logout's trace
-/// (`users.last_seen_at`, migration 2201) never waits for the users row, so no lock order is
-/// reversed. Taking the account's lock before any club's breaks no lock order either
-/// (conventions §5.6). An empty account has no row in a club but, at most, a friend invite bound
-/// to it (`club_invites.invitee_id`, another account's act), whose club `delete_user` then locks
-/// after the account. No club write waits for the account's row while holding that club: the
-/// account's own redemption needs a session, which this purge holds locked (or, signing in,
-/// waits for the account), and a new invite bound to it needs an accepted friendship, which is
-/// data and which only the account itself can accept.
+/// Each account is locked, then its sessions, and then it is looked at again in a new statement.
+/// A write that gives the account data or a new session references it, so it holds the users
+/// row `FOR KEY SHARE` until it commits; using an existing session updates only that session's
+/// row, which the second lock waits for. Once both locks are granted, such a write has either
+/// committed, and the second look sees it, or it waits for this transaction and fails or changes
+/// nothing when the account is gone. The users row comes before the sessions as in a password
+/// change and an account deletion, and a logout's trace (`users.last_seen_at`, migration 2201)
+/// never waits for the users row, so no lock order is reversed.
+///
+/// Clubs come before the account, as in every club write and in `delete_user` (conventions
+/// §5.3, §5.6). An empty account has no row in a club but, at most, friend invites bound to it
+/// (`club_invites.invitee_id`, another account's act, revoked once their friendship ended), whose
+/// clubs `delete_user` locks; the purge locks them first. An admin of such a club who holds it
+/// and then reads the account (a new friend invite for it, `friends::locked_friend`) would
+/// otherwise deadlock with the purge. A bound invite in another club can appear only while the
+/// account's row is free, and it needs an accepted friendship, which is data; should one appear
+/// between the two locks and its friendship end again, the account is left to the next run, so
+/// no club is ever locked after the account.
 pub async fn purge_empty_sign_ups(conn: &mut PgConnection) -> sqlx::Result<u64> {
     let candidates = empty_sign_ups(conn, None, PURGE_BATCH).await?;
     let mut deleted = 0;
     for user_id in candidates {
         let mut tx = conn.begin().await?;
+        let clubs = sqlx::query_scalar!(
+            "SELECT id FROM clubs
+             WHERE id IN (SELECT club_id FROM club_invites WHERE invitee_id = $1)
+             ORDER BY id
+             FOR UPDATE",
+            user_id
+        )
+        .fetch_all(&mut *tx)
+        .await?;
         let hash = sqlx::query_scalar!(
             "SELECT password_hash FROM users WHERE id = $1 FOR UPDATE",
             user_id
@@ -351,6 +363,20 @@ pub async fn purge_empty_sign_ups(conn: &mut PgConnection) -> sqlx::Result<u64> 
         .fetch_all(&mut *tx)
         .await?;
         if !is_empty_sign_up(&mut tx, user_id).await? {
+            tx.rollback().await?;
+            continue;
+        }
+        // A new statement: no invite bound to the account can be added while its row is locked.
+        let invited_elsewhere = sqlx::query_scalar!(
+            r#"SELECT EXISTS (SELECT 1 FROM club_invites
+                              WHERE invitee_id = $1 AND club_id <> ALL($2))
+               AS "invited_elsewhere!""#,
+            user_id,
+            &clubs
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        if invited_elsewhere {
             tx.rollback().await?;
             continue;
         }

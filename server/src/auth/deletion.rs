@@ -88,8 +88,9 @@ pub async fn delete_account(
 ///
 /// The hourly purge of empty sign-ups (`super::purge_empty_sign_ups`, Q14) deletes through here
 /// too, with the hash it read under its own lock of the account. Such an account has no row in
-/// a club but, at most, a friend invite bound to it; its club is then locked after the account,
-/// which no club write can wait for (the purge's doc comment says why).
+/// a club but, at most, friend invites bound to it. The purge locks their clubs before the
+/// account and leaves the account to its next run when one appears in another club meanwhile,
+/// so [`lock_clubs`] then takes no new club after the account.
 ///
 /// Locks are taken in the order of every membership write (§5.3): every club the deletion writes
 /// in ([`lock_clubs`]), then the account, then the user's posts. A removal, a club delete or a

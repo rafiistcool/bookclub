@@ -938,6 +938,103 @@ async fn data_written_while_the_purge_waits_keeps_the_account(db: PgPool) {
     );
 }
 
+/// A friend invite bound to an empty sign-up (a trace: its friendship ended, which revoked it)
+/// puts its club in the purge's way. The purge locks that club before the account, as every
+/// club write does: an admin of the club who holds it and then reads the account (a new friend
+/// invite for it, `friends::locked_friend`) is waited for, not deadlocked with.
+#[sqlx::test]
+async fn the_purge_locks_a_bound_invites_club_before_the_account(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let club = app.club(&ada, "Readers").await;
+    let dan = sign_up(&app.db, "dan", 31).await;
+    exec(
+        &app.db,
+        "INSERT INTO club_invites
+             (club_id, code, created_by, max_uses, expires_at, invitee_id, revoked_at)
+         VALUES ({club}, 'BOUNDCODE1', {ada}, 1, now() + interval '20 days', {dan}, now())",
+        &[("club", club.id), ("ada", ada.id()), ("dan", dan)],
+    )
+    .await;
+
+    // What a friend invite for dan holds (`clubs::invites::create_invite`), then reads.
+    let mut admin = app.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM clubs WHERE id = $1 FOR UPDATE")
+        .bind(club.id)
+        .execute(&mut *admin)
+        .await
+        .unwrap();
+    let purge = tokio::spawn({
+        let db = app.db.clone();
+        async move {
+            let mut conn = db.acquire().await.unwrap();
+            auth::purge_empty_sign_ups(&mut conn).await.unwrap()
+        }
+    });
+    wait_for_a_lock_wait(&app.db).await;
+    sqlx::query("SELECT id FROM users WHERE id = $1 FOR KEY SHARE")
+        .bind(dan)
+        .execute(&mut *admin)
+        .await
+        .expect("the admin's read of the account deadlocked with the purge");
+    admin.commit().await.unwrap();
+
+    assert_eq!(purge.await.unwrap(), 1);
+    assert!(!user_ids(&app.db).await.contains(&dan));
+    assert!(ids(&app.db, "SELECT id FROM club_invites").await.is_empty());
+}
+
+/// A friend invite bound to the account in a club the purge did not lock first (made while the
+/// purge waited for the account, its friendship ended again since) leaves the account to the
+/// next run: the purge never locks a club after the account.
+#[sqlx::test]
+async fn a_bound_invite_made_while_the_purge_waits_defers_the_account(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let club = app.club(&ada, "Readers").await;
+    let dan = sign_up(&app.db, "dan", 31).await;
+
+    // A friend invite for dan in the making: the club, then dan's row, as
+    // `friends::locked_friend` takes it.
+    let mut admin = app.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM clubs WHERE id = $1 FOR UPDATE")
+        .bind(club.id)
+        .execute(&mut *admin)
+        .await
+        .unwrap();
+    sqlx::query("SELECT id FROM users WHERE id = $1 FOR KEY SHARE")
+        .bind(dan)
+        .execute(&mut *admin)
+        .await
+        .unwrap();
+    let purge = tokio::spawn({
+        let db = app.db.clone();
+        async move {
+            let mut conn = db.acquire().await.unwrap();
+            auth::purge_empty_sign_ups(&mut conn).await.unwrap()
+        }
+    });
+    wait_for_a_lock_wait(&app.db).await;
+    sqlx::query(
+        "INSERT INTO club_invites
+             (club_id, code, created_by, max_uses, expires_at, invitee_id, revoked_at)
+         VALUES ($1, 'BOUNDCODE2', $2, 1, now() + interval '20 days', $3, now())",
+    )
+    .bind(club.id)
+    .bind(ada.id())
+    .bind(dan)
+    .execute(&mut *admin)
+    .await
+    .unwrap();
+    admin.commit().await.unwrap();
+
+    assert_eq!(purge.await.unwrap(), 0);
+    assert!(user_ids(&app.db).await.contains(&dan));
+    let mut conn = app.db.acquire().await.unwrap();
+    assert_eq!(auth::purge_empty_sign_ups(&mut conn).await.unwrap(), 1);
+    assert!(!user_ids(&app.db).await.contains(&dan));
+}
+
 #[sqlx::test]
 async fn the_purge_deletes_a_batch_per_run(db: PgPool) {
     sqlx::query(

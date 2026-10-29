@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id FROM clubs\n             WHERE id IN (SELECT club_id FROM club_invites WHERE invitee_id = $1)\n             ORDER BY id\n             FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "clubs",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ff4dc1bd98a44ea4b25ba877c3aa049a56f16c9ab60b129b92da5420947ce38e"
+}
