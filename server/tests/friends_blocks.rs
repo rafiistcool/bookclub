@@ -4,6 +4,7 @@
 
 mod common;
 
+use bookclub_server::visibility::{Relation, relation};
 use common::*;
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -238,6 +239,112 @@ async fn blocking_twenty_five_requesters_in_a_day_works(db: PgPool) {
     block(&ada, "nobody_else")
         .await
         .assert_detail(429, "Slow down a little. Try again later.");
+}
+
+/// A block revokes the friend invites the pair made for each other, in both directions.
+#[sqlx::test]
+async fn a_block_revokes_the_pairs_friend_invites(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let cy = app.user("cy").await;
+    send(&ada, "bob").await.assert_status(200);
+    send(&bob, "ada").await.assert_status(200);
+    send(&ada, "cy").await.assert_status(200);
+    send(&cy, "ada").await.assert_status(200);
+    let ada_club = app.club(&ada, "Ada's").await;
+    let bob_club = app.club(&bob, "Bob's").await;
+    let invite = |admin: &TestClient, club: &TestClub, friend: &str| {
+        let (admin, path) = (admin.clone(), format!("/api/clubs/{}/invites", club.slug));
+        let body = json!({"kind": "friend", "username": friend});
+        async move {
+            let res = admin.post(&path, body).await;
+            res.assert_status(201);
+            res.json()["code"].as_str().unwrap().to_owned()
+        }
+    };
+    let for_bob = invite(&ada, &ada_club, "bob").await;
+    let for_ada = invite(&bob, &bob_club, "ada").await;
+    let for_cy = invite(&ada, &ada_club, "cy").await;
+
+    let res = block(&bob, "ada").await;
+    res.assert_status(200);
+    assert_eq!(res.json()["club_invites"], json!([]));
+    assert_eq!(friends_of(&ada).await["club_invites"], json!([]));
+    for (who, code) in [(&bob, &for_bob), (&ada, &for_ada)] {
+        who.post(&format!("/api/invites/{code}/accept"), json!({}))
+            .await
+            .assert_detail(400, "That invite code is not valid");
+    }
+    let listed = ada
+        .get(&format!("/api/clubs/{}/invites", ada_club.slug))
+        .await
+        .json();
+    let active: Vec<(String, bool)> = listed["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| (i["code"].as_str().unwrap().to_owned(), i["active"] == true))
+        .collect();
+    assert_eq!(active, [(for_cy, true), (for_bob, false)]);
+}
+
+/// §6 answer 21: a block does not hide anything in a club both are in, now or later. Joining
+/// one of the blocker's clubs later, through a third admin's friend invite, makes the blocked
+/// account audience again.
+#[sqlx::test]
+async fn a_block_leaves_the_clubs_alone(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let cy = app.user("cy").await;
+    let shared = app.club(&ada, "Shared").await;
+    app.join(&shared, &bob, "member").await;
+    block(&ada, "bob").await.assert_status(200);
+    let mut conn = app.db.acquire().await.unwrap();
+    assert_eq!(
+        relation(&mut conn, bob.id(), ada.id()).await.unwrap(),
+        Relation::Audience
+    );
+    bob.get("/api/shelf?username=ada").await.assert_status(200);
+
+    // Ada's second club, which Bob joins later through Cy, its admin and Bob's friend.
+    let later = app.club(&ada, "Later").await;
+    app.join(&later, &cy, "admin").await;
+    app.exec(&format!(
+        "DELETE FROM club_memberships WHERE club_id = {} AND user_id = {}",
+        shared.id,
+        bob.id()
+    ))
+    .await;
+    assert_eq!(
+        relation(&mut conn, bob.id(), ada.id()).await.unwrap(),
+        Relation::Stranger
+    );
+    send(&cy, "bob").await.assert_status(200);
+    send(&bob, "cy").await.assert_status(200);
+    let res = cy
+        .post(
+            &format!("/api/clubs/{}/invites", later.slug),
+            json!({"kind": "friend", "username": "bob"}),
+        )
+        .await;
+    res.assert_status(201);
+    let code = res.json()["code"].as_str().unwrap().to_owned();
+    bob.post(&format!("/api/invites/{code}/accept"), json!({}))
+        .await
+        .assert_status(200);
+    assert_eq!(
+        relation(&mut conn, bob.id(), ada.id()).await.unwrap(),
+        Relation::Audience
+    );
+    assert_eq!(
+        relation(&mut conn, ada.id(), bob.id()).await.unwrap(),
+        Relation::Audience
+    );
+    bob.get("/api/shelf?username=ada").await.assert_status(200);
+    // The block itself stands.
+    assert_eq!(names(&friends_of(&ada).await, "blocked"), ["bob"]);
 }
 
 /// A blocked account can block back (its own row); either must unblock before asking the other.

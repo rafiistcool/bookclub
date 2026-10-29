@@ -1252,10 +1252,18 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Every invite of the club, newest first (admins). */
+        /**
+         * Every invite of the club, newest first (admins). A personal invite (`personal`) names the
+         *     friend it is for (`invitee`) to its creator only.
+         */
         get: operations["clubs_list_invites"];
         put?: never;
-        /** Creates an invite to the club (admins): a single-use code or a shareable link. */
+        /**
+         * Creates an invite to the club (admins): a single-use code, a shareable link, or a personal
+         *     invite for one friend of the caller (`kind: "friend"`, `username`), which only that friend can
+         *     redeem through `/join/{code}`. A second friend invite for the same friend, while the caller's
+         *     first one is still open, answers with the first one.
+         */
         post: operations["clubs_create_invite"];
         delete?: never;
         options?: never;
@@ -1335,10 +1343,10 @@ export interface paths {
          *     removes the owner, and nobody removes themselves (that is `leave`). Invites created before
          *     the removal no longer work for that person; a newer invite does.
          * @description The removal also revokes every active invite of the club the person knows, so a second
-         *     account cannot walk back in with one: the invites they created or redeemed, and, when they
-         *     are an admin (admins list every invite), all of them; when they were one before a demotion,
-         *     every invite created up to the demotion. A link someone else forwarded to them is beyond
-         *     what the server knows; the admins revoke it.
+         *     account cannot walk back in with one: the invites they created or redeemed, the friend
+         *     invites made for them, and, when they are an admin (admins list every invite), all of them;
+         *     when they were one before a demotion, every invite created up to the demotion. A link someone
+         *     else forwarded to them is beyond what the server knows; the admins revoke it.
          */
         delete: operations["clubs_remove_member"];
         options?: never;
@@ -3116,15 +3124,17 @@ export interface components {
             kind: components["schemas"]["InviteKind"];
             /**
              * Format: int64
-             * @description 1 to 30; default 30 for `single_use`, 7 for `link`.
+             * @description 1 to 30; default 30 for `single_use` and `friend`, 7 for `link`.
              */
             expires_in_days?: number | null;
+            /** @description The friend a `friend` invite is for (required there, refused for the other kinds). */
+            username?: string | null;
         };
         /**
-         * @description The two invite presets.
+         * @description The invite presets.
          * @enum {string}
          */
-        InviteKind: "single_use" | "link";
+        InviteKind: "single_use" | "link" | "friend";
         /** @description Invites, newest first. */
         InviteList: {
             items: components["schemas"]["InviteOut"][];
@@ -3155,6 +3165,13 @@ export interface components {
             revoked: boolean;
             /** @description Not revoked, not expired and not used up: it can still be redeemed. */
             active: boolean;
+            /** @description A friend invite (`kind: "friend"`): only the friend it was made for can redeem it. */
+            personal: boolean;
+            /**
+             * @description The username of the friend a personal invite is for, shown only to the invite's creator
+             *     (another admin would learn whom the creator is friends with); null otherwise.
+             */
+            invitee: string | null;
         };
         /** @description The join page's view of a valid invite. */
         InvitePreview: {
@@ -8139,7 +8156,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The new invite */
+            /** @description The new invite (or the caller's open friend invite for that friend) */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -8148,7 +8165,7 @@ export interface operations {
                     "application/json": components["schemas"]["InviteOut"];
                 };
             };
-            /** @description An invalid kind or expiry */
+            /** @description An invalid kind or expiry, `Field required` (a friend invite without `username`), `Only a friend invite names a person` */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -8175,8 +8192,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description `No such club` */
+            /** @description `No such club`, `No friend with that name` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `That friend is already in this club` */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

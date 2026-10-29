@@ -101,6 +101,8 @@ async fn admins_create_single_use_codes_and_links(db: PgPool) {
             "used_by": [],
             "revoked": false,
             "active": true,
+            "personal": false,
+            "invitee": null,
         })
     );
     assert!((days_from_now(&single["expires_at"]) - 30.0).abs() < 0.01);

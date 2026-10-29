@@ -4,7 +4,8 @@
 //! - `requests`: send, accept, decline or cancel a request, and remove a friend (§4.2).
 //! - `blocks`: block and unblock (§4.3).
 //! - `out`: [`out::FriendsOut`], the answer of every route, and its loader.
-//! - here: the routes, `GET /api/friends`, declining a club invitation, and the shared helpers.
+//! - here: the routes, `GET /api/friends`, declining a club invitation, and the helpers the
+//!   friend invites of `clubs::invites` share (§4.6).
 //!
 //! A friend is the other's audience for personal data through the policy functions
 //! (`bc_can_see_user`, `bc_visible_owners`, `bc_friends`; migration 3100), and the home feed
@@ -28,7 +29,10 @@
 //!    hold one of them while it waits for the write;
 //! 3. the `user_blocks` row, then the pair's `friendships` row, then the pair's invite rows.
 //!
-//! No pair write locks a club.
+//! No pair write locks a club. A friend invite (`clubs::invites::create_invite`) holds the club
+//! and then takes the friend's account row `FOR KEY SHARE` and the pair's `friendships` row `FOR
+//! SHARE` ([`locked_friend`]), which conflicts with the `DELETE` of an unfriend or a block: an
+//! invite cannot slip past either, and neither waits for a club.
 
 pub mod blocks;
 pub mod out;
@@ -46,7 +50,7 @@ use crate::AppState;
 use crate::auth::extract::CurrentUser;
 use crate::auth::rules::normalize_username;
 use crate::clubs::invites::NO_SUCH_INVITE;
-use crate::error::{ApiResult, AppError, ErrorBody};
+use crate::error::{ApiResult, AppError, ErrorBody, msg};
 use crate::extract::ApiPath;
 use out::{FriendsOut, friends_out};
 
@@ -145,6 +149,37 @@ pub(crate) async fn revoke_pair_invites(
     .execute(conn)
     .await?;
     Ok(())
+}
+
+/// The id of the caller's friend with this normalised username, for a friend invite into a club
+/// (§4.6). Runs under the club's lock: it takes the friend's account row `FOR KEY SHARE` and the
+/// pair's accepted `friendships` row `FOR SHARE`, so a concurrent unfriend, block or deletion
+/// either finished before or waits for the invite. 404 `No friend with that name` for an
+/// unknown name, the caller themselves, a pending request and a block in either direction (a
+/// block ends the friendship), alike.
+pub async fn locked_friend(conn: &mut PgConnection, me: i64, username: &str) -> ApiResult<i64> {
+    let not_friends = || AppError::not_found(msg::NO_FRIEND);
+    let friend = account_id(conn, Some(username))
+        .await?
+        .filter(|id| *id != me)
+        .ok_or_else(not_friends)?;
+    sqlx::query_scalar!("SELECT id FROM users WHERE id = $1 FOR KEY SHARE", friend)
+        .fetch_optional(&mut *conn)
+        .await?
+        .ok_or_else(not_friends)?;
+    sqlx::query_scalar!(
+        r#"SELECT 1 AS "one!" FROM friendships
+           WHERE least(requester_id, addressee_id) = least($1::int8, $2::int8)
+             AND greatest(requester_id, addressee_id) = greatest($1::int8, $2::int8)
+             AND accepted_at IS NOT NULL
+           FOR SHARE"#,
+        me,
+        friend
+    )
+    .fetch_optional(conn)
+    .await?
+    .ok_or_else(not_friends)?;
+    Ok(friend)
 }
 
 /// The caller's friends (with up to three books each is currently reading), the requests to and

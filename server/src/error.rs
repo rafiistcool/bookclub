@@ -87,6 +87,10 @@ pub mod msg {
     pub const NO_FRIEND_REQUEST: &str = "No such friend request";
     /// 404 when the caller is not friends with that name: removal and friend invites.
     pub const NO_FRIEND: &str = "No friend with that name";
+    /// 409 when a friend invite names someone who is already in the club.
+    pub const FRIEND_IN_CLUB: &str = "That friend is already in this club";
+    /// 400 when a `single_use` or `link` invite names a person.
+    pub const ONLY_FRIEND_INVITE_NAMES: &str = "Only a friend invite names a person";
 }
 
 /// An error response. Every non-2xx answer of the API is one of these.
