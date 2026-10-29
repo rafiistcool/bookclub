@@ -358,6 +358,94 @@ async fn search_now_rechecks_a_failing_picture(db: PgPool) {
     );
 }
 
+/// The list names the edition readers use whose picture fails, not a lower-id edition nobody
+/// uses; a book under takedown says so.
+#[sqlx::test]
+async fn the_missing_list_names_the_failing_edition_readers_use(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let root = app.admin("root").await;
+    let work = app.ol_work("OL32W", "Circe", "Madeline Miller").await;
+    use_work(&app, work.id).await;
+    set_cover(
+        &app,
+        CoverTarget::Work(work.id),
+        upload_media(&app).await,
+        Source::User,
+    )
+    .await;
+    let unused = app.edition(&work, "9780000000026").await;
+    let used = app.edition(&work, "9780000000033").await;
+    assert!(unused.id < used.id);
+    for (edition, cover) in [(unused.id, 311), (used.id, 312)] {
+        let media = ol_media(&app, cover).await;
+        set_cover(
+            &app,
+            CoverTarget::Edition(edition),
+            media,
+            Source::OpenLibrary,
+        )
+        .await;
+        app.exec(&format!(
+            "UPDATE media SET fetch_failed_at = now() WHERE id = {media}"
+        ))
+        .await;
+    }
+    app.exec(&format!(
+        "INSERT INTO legacy_work_keys (legacy_key, legacy_book_id, work_id, edition_id, match)
+         VALUES ('/works/GBused', 777002, {}, {}, 'google_volume')",
+        work.id, used.id
+    ))
+    .await;
+    // A book whose cover a takedown cleared.
+    let taken = legacy_work(&app, "Apfel", "Anna Autorin").await;
+    app.exec(&format!(
+        "INSERT INTO cover_search (work_id, takedown_at) VALUES ({taken}, now())"
+    ))
+    .await;
+
+    let items = root.get("/api/admin/missing-covers").await.json()["items"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let row = |id: i64| {
+        items
+            .iter()
+            .find(|i| i["book"]["id"] == id)
+            .unwrap_or_else(|| panic!("{id} is listed"))
+            .clone()
+    };
+    assert_eq!(row(work.id)["state"], "failing");
+    assert_eq!(row(work.id)["failing_edition_id"], used.id);
+    assert_eq!(row(work.id)["after_takedown"], false);
+    assert_eq!(row(taken)["state"], "none");
+    assert_eq!(row(taken)["after_takedown"], true);
+    // The count beside the list is the list's.
+    let summary = root.get("/api/admin/summary").await.json();
+    assert_eq!(summary["covers"]["missing"], items.len());
+}
+
+/// The scans of the job, the list and the summary use the partial index on works without a
+/// cover, and call no function per work (`bc_cover_missing` is not inlined by Postgres).
+#[sqlx::test]
+async fn the_scans_use_the_index_of_works_without_a_cover(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let mut conn = app.db.acquire().await.unwrap();
+    sqlx::raw_sql("SET enable_seqscan = off")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    for sql in [
+        "EXPLAIN SELECT work_id FROM cover_missing",
+        "EXPLAIN SELECT count(*) FROM cover_gaps WHERE in_use",
+        "EXPLAIN SELECT work_id FROM cover_gaps ORDER BY in_use DESC, title, work_id",
+    ] {
+        let plan: Vec<String> = sqlx::query_scalar(sql).fetch_all(&mut *conn).await.unwrap();
+        let plan = plan.join("\n");
+        assert!(plan.contains("works_cover_missing_idx"), "{sql}:\n{plan}");
+        assert!(!plan.contains("bc_cover_"), "{sql}:\n{plan}");
+    }
+}
+
 #[sqlx::test]
 async fn an_admin_sets_any_cover_directly(db: PgPool) {
     let app = TestApp::new(db).await;
@@ -458,4 +546,19 @@ async fn the_summary_counts_suggestions_and_books_without_a_cover(db: PgPool) {
     suggested(&app, "Gregs Tagebuch").await;
     let summary = root.get("/api/admin/summary").await.json();
     assert_eq!(summary["covers"], json!({"suggestions": 1, "missing": 2}));
+    // A book readers use whose picture fails to load is on the list, so it is counted.
+    let failing = legacy_work(&app, "Mango", "Anna Autorin").await;
+    let media = ol_media(&app, 901).await;
+    set_cover(&app, CoverTarget::Work(failing), media, Source::OpenLibrary).await;
+    app.exec(&format!(
+        "UPDATE media SET fetch_failed_at = now() WHERE id = {media}"
+    ))
+    .await;
+    let summary = root.get("/api/admin/summary").await.json();
+    let listed = root.get("/api/admin/missing-covers").await.json()["items"]
+        .as_array()
+        .unwrap()
+        .len();
+    assert_eq!(summary["covers"]["missing"], 3);
+    assert_eq!(listed, 3);
 }

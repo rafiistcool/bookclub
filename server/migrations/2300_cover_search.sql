@@ -11,8 +11,12 @@
 ALTER TABLE media ADD COLUMN ol_gone_at timestamptz NULL;
 ALTER TABLE media ADD CONSTRAINT media_ol_gone CHECK (ol_gone_at IS NULL OR ol_cover_id IS NOT NULL);
 
--- The one definition of "no cover": NULL, or a picture that was taken down or is gone. A picture
--- whose last fetch failed still counts as a cover until the dead check confirms it gone.
+-- The one definition of "no cover" for one row: NULL, or a picture that was taken down or is
+-- gone. A picture whose last fetch failed still counts as a cover until the dead check confirms
+-- it gone. A takedown (ingest::clear_media) and the gone step (ingest::clear_gone_media) clear
+-- every reference to the row in the transaction that marks it, so outside that transaction this
+-- is the same as `cover_media_id IS NULL`; the views below scan with that, so the partial index
+-- works_cover_missing_idx applies (Postgres does not inline a function with a sub-select).
 CREATE FUNCTION bc_cover_missing(cover_media_id bigint) RETURNS boolean
     LANGUAGE sql STABLE PARALLEL SAFE
     RETURN cover_media_id IS NULL
@@ -20,17 +24,24 @@ CREATE FUNCTION bc_cover_missing(cover_media_id bigint) RETURNS boolean
                    WHERE m.id = cover_media_id
                      AND (m.removed_at IS NOT NULL OR m.ol_gone_at IS NOT NULL));
 
--- A work readers use: a shelf entry, a favourite, a quote, a club pick, a nomination, a post or
--- a legacy key names it. The cover search takes these first (tier 1).
+-- The works readers use: a shelf entry, a favourite, a quote, a club pick, a nomination, a post
+-- or a legacy key names them (a work once per row that names it). The cover search takes these
+-- first (tier 1). The scans below use it as a semi-join (`id IN (SELECT work_id FROM
+-- cover_in_use)`), so Postgres drives them from this set, which is small, rather than calling a
+-- function for every work.
+CREATE VIEW cover_in_use (work_id) AS
+    SELECT work_id FROM shelf_entries
+    UNION ALL SELECT work_id FROM user_favorites
+    UNION ALL SELECT work_id FROM quotes
+    UNION ALL SELECT work_id FROM club_picks
+    UNION ALL SELECT work_id FROM next_up_nominations
+    UNION ALL SELECT work_id FROM posts
+    UNION ALL SELECT work_id FROM legacy_work_keys;
+
+-- One work: readers use it (for a single row; the scans use the view).
 CREATE FUNCTION bc_cover_in_use(work_id bigint) RETURNS boolean
     LANGUAGE sql STABLE PARALLEL SAFE
-    RETURN EXISTS (SELECT 1 FROM shelf_entries t WHERE t.work_id = bc_cover_in_use.work_id)
-        OR EXISTS (SELECT 1 FROM user_favorites t WHERE t.work_id = bc_cover_in_use.work_id)
-        OR EXISTS (SELECT 1 FROM quotes t WHERE t.work_id = bc_cover_in_use.work_id)
-        OR EXISTS (SELECT 1 FROM club_picks t WHERE t.work_id = bc_cover_in_use.work_id)
-        OR EXISTS (SELECT 1 FROM next_up_nominations t WHERE t.work_id = bc_cover_in_use.work_id)
-        OR EXISTS (SELECT 1 FROM posts t WHERE t.work_id = bc_cover_in_use.work_id)
-        OR EXISTS (SELECT 1 FROM legacy_work_keys t WHERE t.work_id = bc_cover_in_use.work_id);
+    RETURN EXISTS (SELECT 1 FROM cover_in_use u WHERE u.work_id = bc_cover_in_use.work_id);
 
 -- One row per work the search has seen; no row = never searched (due).
 CREATE TABLE cover_search (
@@ -92,19 +103,61 @@ CREATE FUNCTION bc_cover_suggestion_moot(suggestion_id bigint) RETURNS boolean
                             AND d.status IN ('approved', 'rejected')
                             AND (dw.id = s.work_id OR dw.merged_into_id = s.work_id))));
 
--- The candidate scan of the job and the admin list.
+-- The candidate scan of the job, the admin list and the summary (cover_missing).
 CREATE INDEX works_cover_missing_idx ON works (id)
     WHERE cover_media_id IS NULL AND merged_into_id IS NULL AND source <> 'user';
--- The dead check: failing Open Library rows, oldest failure first.
+-- The dead check and cover_failing: failing Open Library rows, oldest failure first.
 CREATE INDEX media_failing_idx ON media (fetch_failed_at)
     WHERE storage_key IS NULL AND fetch_failed_at IS NOT NULL AND removed_at IS NULL AND ol_gone_at IS NULL;
+-- CAT's table, additive: the editions that show a picture (cover_failing_editions, and the
+-- takedown's and the gone step's clearing of edition covers, which scanned every edition).
+CREATE INDEX editions_cover_media_id_idx ON editions (cover_media_id) WHERE cover_media_id IS NOT NULL;
+
+-- The works the cover search may look at, or a reader's photo waits for (notes §1 rules 1-4):
+-- current, not a reader's own book, no cover, not left empty by an admin; `in_use` = tier 1.
+CREATE VIEW cover_missing (work_id, source, title, match_key, in_use) AS
+    SELECT w.id, w.source, w.title, w.match_key, w.id IN (SELECT u.work_id FROM cover_in_use u)
+    FROM works w
+    WHERE w.cover_media_id IS NULL AND w.merged_into_id IS NULL AND w.source <> 'user'
+      AND NOT COALESCE(w.field_sources ->> 'cover_media_id' = 'admin', false);
+
+-- Failing Open Library pictures: the last fetch ended without a picture (notes §1.1).
+CREATE VIEW cover_failing (media_id, failed_at) AS
+    SELECT m.id, m.fetch_failed_at FROM media m
+    WHERE m.storage_key IS NULL AND m.fetch_failed_at IS NOT NULL AND m.removed_at IS NULL
+      AND m.ol_gone_at IS NULL;
+
+-- The editions readers use (a shelf entry, a quote or a legacy key names the edition) whose
+-- picture is failing.
+CREATE VIEW cover_failing_editions (edition_id, work_id, failed_at) AS
+    SELECT e.id, e.work_id, f.failed_at
+    FROM cover_failing f JOIN editions e ON e.cover_media_id = f.media_id
+    WHERE EXISTS (SELECT 1 FROM shelf_entries se WHERE se.edition_id = e.id)
+       OR EXISTS (SELECT 1 FROM quotes q WHERE q.edition_id = e.id)
+       OR EXISTS (SELECT 1 FROM legacy_work_keys k WHERE k.edition_id = e.id);
+
+-- The admin's "Without a cover" list (notes §5.1) and its count in the summary: the works of
+-- cover_missing, and the works readers use whose own picture or the picture of an edition
+-- readers use is failing.
+CREATE VIEW cover_gaps (work_id, title, in_use) AS
+    SELECT c.work_id, c.title, c.in_use FROM cover_missing c
+    UNION ALL
+    SELECT w.id, w.title, true
+    FROM works w
+    WHERE w.id IN (SELECT fw.id FROM cover_failing f JOIN works fw ON fw.cover_media_id = f.media_id
+                   UNION ALL
+                   SELECT fe.work_id FROM cover_failing_editions fe)
+      AND w.id IN (SELECT u.work_id FROM cover_in_use u)
+      AND w.merged_into_id IS NULL AND w.source <> 'user'
+      AND NOT (w.cover_media_id IS NULL
+               AND NOT COALESCE(w.field_sources ->> 'cover_media_id' = 'admin', false));
 
 COMMENT ON COLUMN media.ol_gone_at IS
     'Open Library has no picture for this cover id: 404 or 410 again at least a day after the first failure, while its cover server served another picture (COVER dead check). The row is never attached again (ingest::ol_cover_media), and every works and editions reference to it was cleared.';
 COMMENT ON FUNCTION bc_cover_missing(bigint) IS
-    'True when a cover_media_id shows no cover: NULL, or a removed or gone media row. A failing Open Library picture still counts as a cover. The cover search, its admin list, the summary and the import report all use this.';
+    'True when a cover_media_id shows no cover: NULL, or a removed or gone media row. A failing Open Library picture still counts as a cover. For one row; the scans (cover_missing) test cover_media_id IS NULL, which is the same outside the transaction of a takedown or the gone step, since both clear every reference to the row.';
 COMMENT ON FUNCTION bc_cover_in_use(bigint) IS
-    'True when readers use the work: a shelf entry, favourite, quote, club pick, nomination, post or legacy key names it (tier 1 of the cover search).';
+    'True when readers use the work: a shelf entry, favourite, quote, club pick, nomination, post or legacy key names it (tier 1 of the cover search). For one row; the scans use the view cover_in_use.';
 COMMENT ON FUNCTION bc_cover_suggestion_moot(bigint) IS
     'True for a suggestion nobody needs to decide any more (its book has a cover or was merged away, its picture is removed or gone, or its Open Library work was decided for the book or a book merged into it).';
 COMMENT ON TABLE cover_search IS

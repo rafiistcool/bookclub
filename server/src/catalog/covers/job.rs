@@ -131,16 +131,17 @@ pub async fn close_moot(conn: &mut PgConnection) -> sqlx::Result<u64> {
     .rows_affected())
 }
 
-/// Never-fetched Open Library pictures of the works and editions readers use.
+/// Never-fetched Open Library pictures of the works and editions readers use (driven from the
+/// works readers use, not from every picture).
 async fn unfetched_in_use(conn: &mut PgConnection, limit: i64) -> sqlx::Result<Vec<i64>> {
     sqlx::query_scalar!(
         r#"SELECT m.id FROM media m
            WHERE m.source = 'openlibrary' AND m.storage_key IS NULL AND m.fetch_failed_at IS NULL
              AND m.removed_at IS NULL AND m.ol_gone_at IS NULL
-             AND (EXISTS (SELECT 1 FROM works w
-                          WHERE w.cover_media_id = m.id AND bc_cover_in_use(w.id))
-                  OR EXISTS (SELECT 1 FROM editions e
-                             WHERE e.cover_media_id = m.id AND bc_cover_in_use(e.work_id)))
+             AND (m.id IN (SELECT w.cover_media_id FROM works w
+                           WHERE w.id IN (SELECT u.work_id FROM cover_in_use u))
+                  OR m.id IN (SELECT e.cover_media_id FROM editions e
+                              WHERE e.work_id IN (SELECT u.work_id FROM cover_in_use u)))
            ORDER BY m.id
            LIMIT $1"#,
         limit
@@ -153,23 +154,21 @@ async fn unfetched_in_use(conn: &mut PgConnection, limit: i64) -> sqlx::Result<V
 /// nobody uses, not DNB works whose every edition is still to come), never searched first, then
 /// the due date, then the id. Due: never searched, `next_search_at` passed, the title or first
 /// author changed, or an `uncertain` book that is in use now; tier 2 only below 2 misses.
+/// The candidates come from the view `cover_missing`, which scans the partial index
+/// `works_cover_missing_idx` and tells tier 1 by a semi-join on `cover_in_use`.
 pub async fn due_works(conn: &mut PgConnection, limit: i64) -> sqlx::Result<Vec<i64>> {
     sqlx::query_scalar!(
         r#"WITH candidates AS (
-               SELECT w.id, w.source, w.match_key, bc_cover_in_use(w.id) AS in_use,
+               SELECT c.work_id AS id, c.source, c.match_key, c.in_use,
                       cs.work_id IS NULL AS never, cs.next_search_at, cs.misses, cs.searched_key,
                       cs.outcome
-               FROM works w
-               LEFT JOIN cover_search cs ON cs.work_id = w.id
-               WHERE w.merged_into_id IS NULL AND w.source <> 'user'
-                 AND bc_cover_missing(w.cover_media_id)
-                 AND NOT COALESCE(w.cover_media_id IS NULL
-                                  AND w.field_sources ->> 'cover_media_id' = 'admin', false)
-                 AND NOT EXISTS (SELECT 1 FROM catalog_edit_requests r
-                                 WHERE r.work_id = w.id AND r.edition_id IS NULL
+               FROM cover_missing c
+               LEFT JOIN cover_search cs ON cs.work_id = c.work_id
+               WHERE NOT EXISTS (SELECT 1 FROM catalog_edit_requests r
+                                 WHERE r.work_id = c.work_id AND r.edition_id IS NULL
                                    AND r.kind = 'cover_replace' AND r.status = 'open')
                  AND NOT EXISTS (SELECT 1 FROM cover_suggestions s
-                                 WHERE s.work_id = w.id AND s.status = 'open')
+                                 WHERE s.work_id = c.work_id AND s.status = 'open')
            ),
            keyed AS (
                SELECT c.*, (c.searched_key IS NOT NULL

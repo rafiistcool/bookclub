@@ -37,7 +37,9 @@ pub struct AdminSummary {
 pub struct AdminCoverSummary {
     /// Open cover suggestions an admin still needs to decide.
     pub suggestions: i64,
-    /// Catalog and imported books readers use that have no cover.
+    /// Catalog and imported books readers use that have no cover, or whose Open Library
+    /// picture (or that of an edition readers use) fails to load: the books of the "Without a
+    /// cover" list's default view.
     pub missing: i64,
 }
 

@@ -491,43 +491,31 @@ pub async fn list_missing_covers(
     ApiQuery(query): ApiQuery<MissingCoverQuery>,
 ) -> ApiResult<Json<MissingCoverList>> {
     let mut conn = state.db.acquire().await?;
-    let ids = sqlx::query_scalar!(
-        r#"WITH failing AS (
-               SELECT m.id, m.fetch_failed_at FROM media m
-               WHERE m.storage_key IS NULL AND m.fetch_failed_at IS NOT NULL
-                 AND m.removed_at IS NULL AND m.ol_gone_at IS NULL
-           ),
-           listed AS (
-               SELECT w.id, w.title, bc_cover_in_use(w.id) AS in_use
-               FROM works w
-               WHERE w.merged_into_id IS NULL AND w.source <> 'user'
-                 AND ((bc_cover_missing(w.cover_media_id)
-                       AND NOT COALESCE(w.cover_media_id IS NULL
-                                        AND w.field_sources ->> 'cover_media_id' = 'admin',
-                                        false))
-                      OR (bc_cover_in_use(w.id)
-                          AND (w.cover_media_id IN (SELECT id FROM failing)
-                               OR EXISTS (
-                                   SELECT 1 FROM editions e
-                                   WHERE e.work_id = w.id
-                                     AND e.cover_media_id IN (SELECT id FROM failing)
-                                     AND (EXISTS (SELECT 1 FROM shelf_entries se
-                                                  WHERE se.edition_id = e.id)
-                                          OR EXISTS (SELECT 1 FROM quotes q
-                                                     WHERE q.edition_id = e.id)
-                                          OR EXISTS (SELECT 1 FROM legacy_work_keys k
-                                                     WHERE k.edition_id = e.id))))))
-           )
-           SELECT id AS "id!" FROM listed
-           WHERE $1 = 'all' OR in_use
-           ORDER BY in_use DESC, lower(bc_unaccent(title)), id
-           LIMIT $2 OFFSET $3"#,
-        query.scope,
-        PAGE_SIZE + 1,
-        (query.page - 1) * PAGE_SIZE
-    )
-    .fetch_all(&mut *conn)
-    .await?;
+    // The view `cover_gaps` is the one definition of the list (and of the summary's count).
+    // Two statements rather than `$1 = 'all' OR in_use`, so the in-use one is planned as a
+    // semi-join driven by the works readers use.
+    let (limit, offset) = (PAGE_SIZE + 1, (query.page - 1) * PAGE_SIZE);
+    let ids = if query.scope == "all" {
+        sqlx::query_scalar!(
+            r#"SELECT work_id AS "id!" FROM cover_gaps
+               ORDER BY in_use DESC, lower(bc_unaccent(title)), work_id
+               LIMIT $1 OFFSET $2"#,
+            limit,
+            offset
+        )
+        .fetch_all(&mut *conn)
+        .await?
+    } else {
+        sqlx::query_scalar!(
+            r#"SELECT work_id AS "id!" FROM cover_gaps WHERE in_use
+               ORDER BY lower(bc_unaccent(title)), work_id
+               LIMIT $1 OFFSET $2"#,
+            limit,
+            offset
+        )
+        .fetch_all(&mut *conn)
+        .await?
+    };
     let has_more = ids.len() as i64 > PAGE_SIZE;
     let ids: Vec<i64> = ids.into_iter().take(PAGE_SIZE as usize).collect();
     let items = missing_cover_outs(&mut conn, &ids).await?;
@@ -551,10 +539,9 @@ async fn missing_cover_outs(
                           WHERE r.work_id = w.id AND r.edition_id IS NULL
                             AND r.kind = 'cover_replace' AND r.status = 'open')
                       AS "photo_waiting!",
-                  (SELECT m.fetch_failed_at FROM media m
-                   WHERE m.id = w.cover_media_id AND m.storage_key IS NULL
-                     AND m.removed_at IS NULL AND m.ol_gone_at IS NULL) AS work_failed_at,
-                  fe.id AS "failing_edition_id?", fe.fetch_failed_at AS "edition_failed_at?",
+                  (SELECT f.failed_at FROM cover_failing f WHERE f.media_id = w.cover_media_id)
+                      AS "work_failed_at?",
+                  fe.edition_id AS "failing_edition_id?", fe.failed_at AS "edition_failed_at?",
                   cs.searched_at AS "searched_at?", cs.outcome AS "outcome?",
                   cs.next_search_at AS "next_search_at?", COALESCE(cs.failures, 0) AS "failures!",
                   EXISTS (SELECT 1 FROM cover_search t JOIN works tw ON tw.id = t.work_id
@@ -565,10 +552,8 @@ async fn missing_cover_outs(
            FROM works w
            LEFT JOIN cover_search cs ON cs.work_id = w.id
            LEFT JOIN LATERAL (
-               SELECT e.id, m.fetch_failed_at FROM editions e JOIN media m ON m.id = e.cover_media_id
-               WHERE e.work_id = w.id AND m.storage_key IS NULL AND m.fetch_failed_at IS NOT NULL
-                 AND m.removed_at IS NULL AND m.ol_gone_at IS NULL
-               ORDER BY e.id LIMIT 1
+               SELECT f.edition_id, f.failed_at FROM cover_failing_editions f
+               WHERE f.work_id = w.id ORDER BY f.edition_id LIMIT 1
            ) fe ON true
            WHERE w.id = ANY($1)"#,
         ids
@@ -709,18 +694,14 @@ pub async fn search_cover(
 }
 
 /// The cover counts of the admin summary: open suggestions an admin still needs to decide, and
-/// books readers use that have no cover.
+/// the books of the "Without a cover" list's default view (books readers use without a cover,
+/// or whose picture fails to load): the same view, `cover_gaps`, so the count is the list's.
 pub async fn cover_counts(conn: &mut PgConnection) -> sqlx::Result<(i64, i64)> {
     let row = sqlx::query!(
         r#"SELECT
                (SELECT count(*) FROM cover_suggestions
                 WHERE status = 'open' AND NOT bc_cover_suggestion_moot(id)) AS "suggestions!",
-               (SELECT count(*) FROM works w
-                WHERE w.merged_into_id IS NULL AND w.source <> 'user'
-                  AND bc_cover_missing(w.cover_media_id)
-                  AND NOT COALESCE(w.cover_media_id IS NULL
-                                   AND w.field_sources ->> 'cover_media_id' = 'admin', false)
-                  AND bc_cover_in_use(w.id)) AS "missing!""#
+               (SELECT count(*) FROM cover_gaps WHERE in_use) AS "missing!""#
     )
     .fetch_one(conn)
     .await?;
