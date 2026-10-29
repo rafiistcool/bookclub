@@ -431,7 +431,7 @@ The importer reads a private copy of the database and its `-wal` in the containe
 
 ### Storage Box snapshots
 
-The VM's SSH key can write to the restic repository, so it can also delete it: whoever takes over the VM could delete the backups along with the data. The Storage Box's own snapshots close that gap (`docs/phase1/security-review.md`, Phase 2 Wave 1, finding 3, option A). Hetzner takes them on a schedule; the box's users, the VM's SFTP login among them, can read them but cannot write to or delete them; only the Hetzner Console and the Hetzner API can delete a snapshot or roll the box back to one.
+The VM's SSH key can write to the restic repository, so it can also delete it: whoever takes over the VM could delete the backups along with the data. The Storage Box's own snapshots narrow that gap (`docs/phase1/security-review.md`, Phase 2 Wave 1, finding 3, option A). Hetzner takes them on a schedule; the box's users, the VM's SFTP login among them, can read them but cannot write to or delete them; only the Hetzner Console and the Hetzner API can delete a snapshot or roll the box back to one. They do not close it on their own: the snapshots rotate, and only a check from outside the VM notices a damaged repository in time (see "How far back" and "A check from outside the VM").
 
 1. In the Hetzner Console, from the admin machine: "Storage Boxes", the box, "Snapshots", "Enable automatic snapshots".
    - Daily, at a time after the nightly backup. That starts at 03:30 on the VM's clock, plus up to 30 minutes, and takes minutes; 06:00 leaves room. Check which time zone the console uses.
@@ -445,8 +445,17 @@ The VM's SSH key can write to the restic repository, so it can also delete it: w
    ```
 
 - **How far back:** one snapshot a day, so 10 slots (BX11) reach back 10 days: a deleted or damaged repository has to be noticed within that time. Once the slots are full, Hetzner deletes the oldest snapshot as it takes a new one. The repository's own history (every backup of the last 14 days, then 7 daily, 4 weekly and 12 monthly ones) is unchanged; the snapshots protect it.
+- **Who notices:** everything on the VM that would notice a damaged repository (the nightly backup, the Sunday `restic check` and restore test, their heartbeats) is in the hands of whoever controls the VM. Root can replace the scripts and keep pinging the checks with the URLs in `backup.env`, or give the repository a password of their own (`restic key add`, then `key remove` of the old one), so that the backups and their checks go on while the password in the password manager no longer opens anything. Once the slots have turned over (10 days on a BX11), every snapshot holds the damaged repository, and dropping the database then leaves nothing to restore. Only a check the VM cannot fake catches that.
 - **Space:** snapshots cost nothing extra but count against the box's capacity. A new snapshot takes no space; it grows by what is changed or deleted on the box after it. `backup.sh` only adds files to the repository, and its `forget --prune` deletes the files that no backup needs any more: mostly the old database dumps, and pictures deleted in the app. Those stay in the snapshots until the last snapshot that holds them is deleted. So the snapshots take about 10 days' worth of dumps (each `backup.sh` run logs the dump's size) plus the pictures deleted in that time. The console shows the box's usage, snapshots included. A full box fails `backup.sh`, and its heartbeat alerts; fewer slots free space.
 - **Credentials:** never put the Hetzner Console login, a Hetzner API token or the box's password on the VM, or anywhere the VM can read them. Whoever holds the login or a token can delete the snapshots and the box. The VM needs only its SSH key for the box, which cannot touch the snapshots.
+
+### A check from outside the VM
+
+**Not set up yet** (work plan §5, item 13): it needs a machine outside the VM that runs every day. Until it runs, the snapshots protect against a repository deleted in one go, which the next backup's heartbeat reports, but not against an attacker who stays on the VM until the slots have turned over.
+
+- In the Hetzner Console, a sub-account of the box that can only read, with SSH support, whose directory is the repository's. Its password or key goes only onto that machine, never onto the VM.
+- On that machine, once a day, with restic and the restic password from the password manager: `restic --no-lock snapshots --latest 1 --json` and `restic --no-lock cat config` against the repository through the sub-account (`--no-lock`, because the sub-account cannot write).
+- A heartbeat check of its own, which alerts when the newest snapshot is older than 2 days, when the repository's `id` (from `cat config`) is not the one written down at setup, or when the password does not open the repository.
 
 ## Restore
 
