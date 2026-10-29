@@ -35,10 +35,22 @@ pub fn admin_routes() -> OpenApiRouter<AppState> {
 /// Makes the user an instance admin (`bookclub-server make-admin`). The name is normalised like
 /// every username lookup. Returns false when no such user exists.
 pub async fn make_admin(conn: &mut PgConnection, username: &str) -> sqlx::Result<bool> {
+    set_admin(conn, username, true).await
+}
+
+/// Ends the user's instance admin rights (`bookclub-server revoke-admin`), without the
+/// suspension that ends them too (`users::suspend`). The name is normalised like every username
+/// lookup. Returns false when no such user exists.
+pub async fn revoke_admin(conn: &mut PgConnection, username: &str) -> sqlx::Result<bool> {
+    set_admin(conn, username, false).await
+}
+
+async fn set_admin(conn: &mut PgConnection, username: &str, admin: bool) -> sqlx::Result<bool> {
     let username = username.trim().to_lowercase();
     let updated = sqlx::query!(
-        "UPDATE users SET is_admin = true WHERE username = $1",
-        username
+        "UPDATE users SET is_admin = $2 WHERE username = $1",
+        username,
+        admin
     )
     .execute(conn)
     .await?

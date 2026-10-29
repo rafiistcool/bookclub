@@ -7,6 +7,7 @@ use std::net::IpAddr;
 use std::time::Duration;
 
 use bookclub_server::admin::notify;
+use bookclub_server::admin::{self, users::lift_suspension};
 use common::*;
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -249,13 +250,16 @@ async fn the_admin_page_lists_suspended_accounts(db: PgPool) {
 }
 
 /// A suspended admin gets no admin notification mail (the job mails only admins who can act).
+/// A suspension through the API also ends the admin rights; this one is set in the database, as
+/// a suspension from before that or by hand would be.
 #[sqlx::test]
 async fn suspended_admins_are_not_notified(db: PgPool) {
     let app = TestApp::new(db).await;
-    let root = app.admin("root").await;
+    app.admin("root").await;
     let grace = app.admin("grace").await;
     let ada = app.user("ada").await;
-    suspend(&root, "grace").await.assert_status(200);
+    app.exec("UPDATE users SET suspended_at = now() WHERE username = 'grace'")
+        .await;
     app.exec(&format!(
         "INSERT INTO reports (target_kind, reason, created_by) VALUES ('cover', 'other', {})",
         ada.id()
@@ -338,4 +342,286 @@ async fn a_login_racing_a_suspension_creates_no_session(db: PgPool) {
     }
     assert!(browser.cookie().is_none());
     assert_eq!(sessions_of(&app, &ada).await, 0);
+}
+
+const INVALID: &str = "That invite code is not valid";
+
+/// A club invite of `club`, made by `admin` (a club admin): its code.
+async fn club_link(admin: &TestClient, club: &TestClub) -> String {
+    let res = admin
+        .post(
+            &format!("/api/clubs/{}/invites", club.slug),
+            json!({"kind": "link"}),
+        )
+        .await;
+    res.assert_status(201);
+    res.json()["code"].as_str().unwrap().to_owned()
+}
+
+/// A sign-up invite minted by the instance admin `admin`: its code.
+async fn signup_invite(admin: &TestClient, body: Value) -> String {
+    let res = admin.post("/api/admin/invites", body).await;
+    res.assert_status(201);
+    res.json()["code"].as_str().unwrap().to_owned()
+}
+
+async fn register(app: &TestApp, username: &str, code: &str) -> TestResponse {
+    app.anon()
+        .post(
+            "/api/auth/register",
+            json!({"username": username, "email": format!("{username}@example.test"),
+                   "password": PASSWORD, "invite_code": code}),
+        )
+        .await
+}
+
+async fn accept(client: &TestClient, code: &str) -> TestResponse {
+    client
+        .post(&format!("/api/invites/{code}/accept"), json!({}))
+        .await
+}
+
+async fn revoked(app: &TestApp, code: &str) -> bool {
+    app.scalar_i64(&format!(
+        "SELECT count(*) FROM club_invites WHERE code = '{code}' AND revoked_at IS NOT NULL"
+    ))
+    .await
+        == 1
+}
+
+/// A suspension revokes every active invite the account knows (security review, ADM2 merge),
+/// so a second account can neither sign up with one (`SIGNUP_MODE=invite`) nor rejoin the club
+/// with one: a suspended club owner's links, every invite of a club they administer, the link a
+/// plain member redeemed, and, for a suspended instance admin, every sign-up invite (they list
+/// them all). Invites they never knew keep working.
+#[sqlx::test]
+async fn a_suspension_revokes_the_invites_the_account_knows(db: PgPool) {
+    let app = TestApp::with_env(db, &[("SIGNUP_MODE", "invite")]).await;
+    let root = app.admin("root").await;
+    // Mallory owns the club Ada and Bob are in; Bob joined through a link that still works.
+    let mallory = app.user("mallory").await;
+    let club = app.club(&mallory, "Lesekreis").await;
+    let hers = club_link(&mallory, &club).await;
+    let ada = app.user("ada").await;
+    app.join(&club, &ada, "admin").await;
+    let adas = club_link(&ada, &club).await;
+    let bob = app.user("bob").await;
+    accept(&bob, &adas).await.assert_status(200);
+    // A club Mallory never belonged to.
+    let cleo = app.user("cleo").await;
+    let other = app.club(&cleo, "Elsewhere").await;
+    let elsewhere = club_link(&cleo, &other).await;
+
+    suspend(&root, "mallory").await.assert_status(200);
+    assert!(revoked(&app, &hers).await, "her own link");
+    assert!(
+        revoked(&app, &adas).await,
+        "she listed every invite of her club"
+    );
+    assert!(!revoked(&app, &elsewhere).await, "another club");
+    register(&app, "mallory2", &hers)
+        .await
+        .assert_detail(400, INVALID);
+    accept(&app.user("mallory3").await, &adas)
+        .await
+        .assert_detail(400, INVALID);
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM club_memberships WHERE club_id = {}",
+            club.id
+        ))
+        .await,
+        3,
+        "Mallory, Ada and Bob"
+    );
+    accept(&app.user("dan").await, &elsewhere)
+        .await
+        .assert_status(200);
+
+    // A plain member: the link he redeemed, not the ones he never saw.
+    let fresh = club_link(&ada, &club).await;
+    let bobs_way_in = club_link(&ada, &club).await;
+    app.exec(&format!(
+        "INSERT INTO club_invite_uses (invite_id, user_id)
+         SELECT id, {} FROM club_invites WHERE code = '{bobs_way_in}'",
+        bob.id()
+    ))
+    .await;
+    suspend(&root, "bob").await.assert_status(200);
+    assert!(revoked(&app, &bobs_way_in).await, "the link he used");
+    assert!(!revoked(&app, &fresh).await, "never his to see");
+
+    // An instance admin lists every sign-up invite: all of them go, and the one that would
+    // never expire too.
+    let eve = app.admin("eve").await;
+    let forever = signup_invite(&eve, json!({"max_uses": 100})).await;
+    let roots = signup_invite(&root, json!({})).await;
+    suspend(&root, "eve").await.assert_status(200);
+    assert!(revoked(&app, &forever).await);
+    assert!(revoked(&app, &roots).await);
+    register(&app, "eve2", &forever)
+        .await
+        .assert_detail(400, INVALID);
+    drop(eve);
+}
+
+/// A suspension ends the instance admin rights for good: lifting it (as `takedown.md` §7 does
+/// for an export or a deletion) gives back the sign-in, not the admin routes, so a suspended
+/// admin cannot turn around and suspend the operator (security review, ADM2 merge). The
+/// operator's commands lift a suspension and end admin rights without the admin page.
+#[sqlx::test]
+async fn a_suspension_ends_the_admin_rights_for_good(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let root = app.admin("root").await;
+    let eve = app.admin("eve").await;
+    let res = suspend(&root, "eve").await;
+    res.assert_status(200);
+    assert_eq!(res.json()["is_admin"], false);
+    let res = unsuspend(&root, "eve").await;
+    res.assert_status(200);
+    assert_eq!(res.json()["is_admin"], false);
+    let browser = app.anon();
+    browser
+        .post(
+            "/api/auth/login",
+            json!({"username": "eve", "password": PASSWORD}),
+        )
+        .await
+        .assert_status(204);
+    browser.get("/api/auth/me").await.assert_status(200);
+    browser
+        .post("/api/admin/users/root/suspend", json!({}))
+        .await
+        .assert_detail(404, "Not found");
+    root.get("/api/admin/summary").await.assert_status(200);
+
+    // From the host: `bookclub-server unsuspend` and `revoke-admin`.
+    let mut conn = app.db.acquire().await.unwrap();
+    suspend(&root, "eve").await.assert_status(200);
+    assert_eq!(
+        lift_suspension(&mut conn, " EVE ").await.unwrap(),
+        Some(eve.id())
+    );
+    assert_eq!(lift_suspension(&mut conn, "nobody").await.unwrap(), None);
+    login(&app, "eve", PASSWORD).await.assert_status(204);
+    assert!(admin::make_admin(&mut conn, "eve").await.unwrap());
+    assert!(admin::revoke_admin(&mut conn, "Eve").await.unwrap());
+    assert!(!admin::revoke_admin(&mut conn, "nobody").await.unwrap());
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM users WHERE is_admin")
+            .await,
+        1,
+        "root only"
+    );
+}
+
+/// The acting admin's row is read again under the lock: an admin whom another admin suspended
+/// while their own suspension request waited decides nothing. Two admins suspending each other
+/// at the same moment therefore cannot both succeed and leave no admin.
+#[sqlx::test]
+async fn an_admin_suspended_meanwhile_suspends_nobody(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let root = app.admin("root").await;
+    let eve = app.admin("eve").await;
+    // Eve's request locks root's row (the lower id), then waits for her own, which this
+    // transaction holds while it suspends her.
+    let mut other = app.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM users WHERE id = $1 FOR NO KEY UPDATE")
+        .bind(eve.id())
+        .execute(&mut *other)
+        .await
+        .unwrap();
+    let hers = tokio::spawn({
+        let eve = eve.clone();
+        async move { suspend(&eve, "root").await }
+    });
+    until_a_lock_wait(&app.db).await;
+    sqlx::query("UPDATE users SET suspended_at = now(), is_admin = false WHERE id = $1")
+        .bind(eve.id())
+        .execute(&mut *other)
+        .await
+        .unwrap();
+    other.commit().await.unwrap();
+    hers.await.unwrap().assert_detail(404, "Not found");
+    root.get("/api/admin/summary").await.assert_status(200);
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM users WHERE suspended_at IS NOT NULL")
+            .await,
+        1,
+        "eve only"
+    );
+}
+
+/// Waits up to 10 s until a session of this test's database waits for a lock.
+async fn until_a_lock_wait(db: &PgPool) {
+    for _ in 0..500 {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity
+             WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .fetch_one(db)
+        .await
+        .unwrap();
+        if waiting > 0 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("no session waited for a lock");
+}
+
+/// `bookclub-server unsuspend <name>` lifts a suspension and `revoke-admin <name>` ends admin
+/// rights from the host, for when no admin can use the admin page; an unknown name fails.
+#[sqlx::test]
+async fn the_operator_commands_lift_a_suspension_and_end_admin_rights(db: PgPool) {
+    let base = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let name = db.connect_options().get_database().unwrap().to_owned();
+    let mut url = url::Url::parse(&base).unwrap();
+    url.set_path(&name);
+    let run = |args: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_bookclub-server"))
+            .args(args)
+            .env_clear()
+            .env("DATABASE_URL", url.as_str())
+            .env("DEV_MODE", "true")
+            .env("RUST_LOG", "error")
+            .output()
+            .unwrap()
+    };
+    let app = TestApp::new(db).await;
+    app.admin("root").await;
+    app.admin("eve").await;
+    app.exec("UPDATE users SET suspended_at = now() WHERE username = 'root'")
+        .await;
+
+    let output = run(&["unsuspend", "ROOT"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "root can sign in again\n"
+    );
+    login(&app, "root", PASSWORD).await.assert_status(204);
+    let output = run(&["revoke-admin", "eve"]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "eve is no longer an instance admin\n"
+    );
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM users WHERE is_admin")
+            .await,
+        1
+    );
+    for command in ["unsuspend", "revoke-admin"] {
+        let output = run(&[command, "nobody"]);
+        assert!(!output.status.success(), "{command}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("no user named \"nobody\""),
+            "{command}"
+        );
+    }
 }
