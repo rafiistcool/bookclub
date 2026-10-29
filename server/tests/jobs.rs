@@ -1329,6 +1329,54 @@ async fn rejected_cover_photos_go_with_their_request(db: PgPool) {
     );
 }
 
+/// The hourly job runs `delete_rejected_cover_photos` after `cleanup`: its run at startup deletes
+/// a due photo with its request and its files.
+#[sqlx::test]
+async fn background_jobs_delete_the_photos_of_rejected_cover_requests(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let root = app.admin("root").await.id();
+    let ada = app.user("ada").await.id();
+    let work = app.work("Circe").await.id;
+    let (photo, prefix) = stored_photo(&app, ada, 'c').await;
+    cover_request(
+        &app,
+        (work, photo, ada, root),
+        "rejected",
+        "3 years 2 days",
+        Some("3 years 1 day"),
+    )
+    .await;
+
+    let shutdown = CancellationToken::new();
+    let mut background = jobs::spawn_all(app.state.clone(), shutdown.clone());
+
+    // The row goes first, the files after the commit.
+    let mut deleted = false;
+    for _ in 0..50 {
+        let files_left = app.media.keys().iter().any(|key| key.starts_with(&prefix));
+        if !files_left && ids(&app.db, "SELECT id FROM media").await.is_empty() {
+            deleted = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(deleted, "the rejected photo or its files are still there");
+    assert!(
+        ids(&app.db, "SELECT id FROM catalog_edit_requests")
+            .await
+            .is_empty()
+    );
+
+    shutdown.cancel();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(result) = background.join_next().await {
+            result.expect("a background job failed");
+        }
+    })
+    .await
+    .expect("background jobs did not stop within 5 s");
+}
+
 /// A report written while the deletion is at the photo keeps it: the deletion locks the photo
 /// and looks again once the report committed.
 #[sqlx::test]
