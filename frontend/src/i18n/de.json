@@ -1258,7 +1258,14 @@
     "editAsAdmin": "Als Admin bearbeiten",
     "editEditionAsAdmin": "Deine Ausgabe als Admin bearbeiten",
     "setCover": "Cover als Admin setzen",
-    "setEditionCover": "Cover deiner Ausgabe als Admin setzen",
+    "setEditionCover": "Cover einer Ausgabe als Admin setzen",
+    "editionCover": {
+      "title": "Cover einer Ausgabe",
+      "blurb": "Das Bild wird sofort für alle zum Cover dieser Ausgabe und ersetzt ein vorhandenes. Das Cover des Buchs selbst bleibt, wie es ist.",
+      "upload": "Hochladen",
+      "yours": "Deine Ausgabe",
+      "none": "Dieses Buch hat noch keine Ausgaben."
+    },
     "coverSet": "Das Cover gilt jetzt für alle",
     "mergeInto": "Zusammenführen mit:",
     "bookN": "Buch {id}",

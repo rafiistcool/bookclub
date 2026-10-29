@@ -1258,7 +1258,14 @@
     "editAsAdmin": "Edit as admin",
     "editEditionAsAdmin": "Edit your edition as admin",
     "setCover": "Set cover as admin",
-    "setEditionCover": "Set your edition's cover as admin",
+    "setEditionCover": "Set an edition's cover as admin",
+    "editionCover": {
+      "title": "An edition's cover",
+      "blurb": "The picture becomes that edition's cover for everyone at once, in place of any it has. The book's own cover stays as it is.",
+      "upload": "Upload",
+      "yours": "Your edition",
+      "none": "This book has no editions yet."
+    },
     "coverSet": "The cover is set for everyone",
     "mergeInto": "Merge into:",
     "bookN": "book {id}",

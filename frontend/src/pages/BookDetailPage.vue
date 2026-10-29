@@ -12,6 +12,7 @@ import ClubBookActions from "../components/ClubBookActions.vue";
 import ReportSheet, { isWithdrawn, type ReportTarget } from "../components/ReportSheet.vue";
 import EditionPicker from "../components/EditionPicker.vue";
 import CoverPhotoButton from "../components/CoverPhotoButton.vue";
+import AdminEditionCover from "../components/AdminEditionCover.vue";
 import CoverPrompt from "../components/CoverPrompt.vue";
 import MergeRequestSheet from "../components/MergeRequestSheet.vue";
 import EditRequestSheet from "../components/EditRequestSheet.vue";
@@ -346,6 +347,17 @@ async function editEditionAsAdmin() {
   }
 }
 
+/**
+ * The admin set the book's own cover. The answer is the work's cover, but a
+ * page in the viewer's edition shows the edition's cover when it has one, so
+ * then the page reads the book again rather than show a cover its readers
+ * do not see.
+ */
+function adminCoverSet(updated: BookOut) {
+  if (book.value?.edition_id == null) adoptCover(updated);
+  else void adminEditionSaved();
+}
+
 /** An edition changed: its title, pages or cover may be what the page shows. */
 async function adminEditionSaved() {
   editionsVersion.value += 1;
@@ -517,21 +529,16 @@ watch(param, load);
                 :work-id="book.id"
                 :edition-id="null"
                 :has-cover="Boolean(book.cover_url || book.cover_thumb_url)"
-                @covered="adoptCover"
+                @covered="adminCoverSet"
               />
-              <template v-if="book.edition_id != null">
-                <span class="subtle" aria-hidden="true"> · </span>
-                <CoverPhotoButton
-                  admin
-                  look="inline"
-                  class="admin-set-edition-cover"
-                  :label="t('admin.setEditionCover')"
-                  :work-id="book.id"
-                  :edition-id="book.edition_id"
-                  :has-cover="Boolean(book.cover_url || book.cover_thumb_url)"
-                  @covered="adminEditionSaved"
-                />
-              </template>
+              <span class="subtle" aria-hidden="true"> · </span>
+              <AdminEditionCover
+                class="admin-set-edition-cover"
+                :work-id="book.id"
+                :edition-id="book.edition_id"
+                :title="shownTitle"
+                @covered="adminEditionSaved"
+              />
             </p>
           </div>
 
