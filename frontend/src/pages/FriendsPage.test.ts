@@ -311,6 +311,41 @@ describe("FriendsPage", () => {
     expect(section(page, "club-invitations").text()).toContain("No invitations right now.");
   });
 
+  it("loads the lists again when the request, the friend or the invitation is gone", async () => {
+    const page = await mountPage();
+    expect(api.friends).toHaveBeenCalledTimes(1);
+
+    // Mia withdrew her request before the tap: the row goes with the next lists.
+    let now = { ...FULL, incoming: [] };
+    api.friends.mockResolvedValue(now);
+    api.acceptFriendRequest.mockRejectedValue(apiError(404, "No such friend request"));
+    await button(section(page, "friend-requests"), "Accept").trigger("click");
+    await flushPromises();
+    expect(toasts()).toContain("That request no longer exists");
+    expect(api.friends).toHaveBeenCalledTimes(2);
+    expect(section(page, "friend-requests").text()).toContain("No requests right now.");
+
+    // Grace ended the friendship first: the confirmation closes and she leaves the list.
+    now = { ...now, friends: [friendOut("hal")] };
+    api.friends.mockResolvedValue(now);
+    api.removeFriend.mockRejectedValue(apiError(404, "No friend with that name"));
+    await section(page, "your-friends").get(".options-btn").trigger("click");
+    await button(page.get(".sheet"), "Remove from friends").trigger("click");
+    await button(page.get(".sheet"), "Yes, remove").trigger("click");
+    await flushPromises();
+    expect(toasts()).toContain("None of your friends has that name");
+    expect(page.find(".sheet").exists()).toBe(false);
+    expect(section(page, "your-friends").findAll(".friend-card").map((card) => card.get(".person-meta strong").text())).toEqual(["hal"]);
+
+    // The unfriend revoked the invitation into Night owls.
+    api.friends.mockResolvedValue({ ...now, club_invites: [] });
+    api.declineClubInvite.mockRejectedValue(apiError(404, "No such invite"));
+    await button(section(page, "club-invitations"), "Decline").trigger("click");
+    await flushPromises();
+    expect(api.friends).toHaveBeenCalledTimes(4);
+    expect(section(page, "club-invitations").text()).toContain("No invitations right now.");
+  });
+
   it("says when the lists cannot be loaded, and tries again", async () => {
     const pinia = createPinia();
     setActivePinia(pinia);

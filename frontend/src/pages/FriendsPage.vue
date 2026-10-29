@@ -10,7 +10,7 @@ import InviteFriendSheet from "../components/InviteFriendSheet.vue";
 import { bookPath } from "../constants";
 import { formatDay } from "../i18n/dates";
 import { isClubAdmin, useClubs } from "../stores/clubs";
-import { useFriends } from "../stores/friends";
+import { isStale, useFriends } from "../stores/friends";
 import { useLocale } from "../stores/locale";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
@@ -50,17 +50,21 @@ function failure(err: unknown): string {
   return err instanceof ApiError ? err.message : t("friends.actionFailed");
 }
 
-/** Runs one action and toasts `done` (or the error); false when it failed or another one runs. */
-async function act(key: string, run: () => Promise<unknown>, done: string): Promise<boolean> {
-  if (busy.value) return false;
+/**
+ * Runs one action and toasts `done` (or the error). "stale": the other side
+ * changed the pair first (the store loads the lists again); "failed": any
+ * other error, or another action runs.
+ */
+async function act(key: string, run: () => Promise<unknown>, done: string): Promise<"done" | "stale" | "failed"> {
+  if (busy.value) return "failed";
   busy.value = key;
   try {
     await run();
     toast.show(done);
-    return true;
+    return "done";
   } catch (err) {
     toast.show(failure(err));
-    return false;
+    return isStale(err) ? "stale" : "failed";
   } finally {
     busy.value = null;
   }
@@ -129,11 +133,12 @@ async function confirm() {
   const open = sheet.value;
   if (!open || open.mode === "menu") return;
   const { username, mode } = open;
-  const ok =
+  const outcome =
     mode === "remove"
       ? await act(`remove:${username}`, () => friends.remove(username), t("friends.remove.done", { name: username }))
       : await act(`block:${username}`, () => friends.block(username), t("friends.block.done", { name: username }));
-  if (ok) sheet.value = null;
+  // A stale refusal closes it too: the friend or the account is gone, and the lists follow.
+  if (outcome !== "failed") sheet.value = null;
 }
 
 const sheetTitle = computed(() => {

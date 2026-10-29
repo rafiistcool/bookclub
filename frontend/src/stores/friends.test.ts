@@ -1,7 +1,8 @@
+import { flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { user } from "../test/fixtures";
-import { friendClubInvite, friendOut, friendRequest, friendsOut } from "../test/friends";
+import { blockedOut, friendClubInvite, friendOut, friendRequest, friendsOut } from "../test/friends";
 
 const api: Record<string, ReturnType<typeof vi.fn>> = {
   friends: vi.fn(),
@@ -14,11 +15,20 @@ const api: Record<string, ReturnType<typeof vi.fn>> = {
   declineClubInvite: vi.fn(),
 };
 
-vi.mock("../api/client", () => ({
-  ApiError: class ApiError extends Error {},
-  api: new Proxy({}, { get: (_target, key: string) => api[key] }),
-}));
+vi.mock("../api/client", () => {
+  class ApiError extends Error {
+    status: number;
+    detail: unknown;
+    constructor(message: string, status: number, detail: unknown) {
+      super(message);
+      this.status = status;
+      this.detail = detail;
+    }
+  }
+  return { ApiError, api: new Proxy({}, { get: (_target, key: string) => api[key] }) };
+});
 
+import { ApiError } from "../api/client";
 import { RELOAD_AFTER_MS, reloadWhenVisible, useFriends } from "./friends";
 import { useSession } from "./session";
 
@@ -95,6 +105,55 @@ describe("the friends store", () => {
       expect(call).toHaveBeenCalledWith(argument);
       expect(friends.lists).toEqual(answer);
     }
+  });
+
+  it("loads the lists again when a write finds the pair changed (404 or 409), and passes the error on", async () => {
+    const friends = useFriends();
+    api.friends.mockResolvedValue(friendsOut({ incoming: [friendRequest("grace")] }));
+    await friends.load();
+    expect(friends.badge).toBe(1);
+
+    // Grace withdrew her request before the tap.
+    api.friends.mockResolvedValue(friendsOut());
+    const gone = new ApiError("That request no longer exists", 404, "No such friend request");
+    api.acceptFriendRequest.mockRejectedValue(gone);
+    await expect(friends.accept("grace")).rejects.toBe(gone);
+    await flushPromises();
+    expect(api.friends).toHaveBeenCalledTimes(2);
+    expect(friends.badge).toBe(0);
+
+    // Mia was blocked from another tab.
+    api.friends.mockResolvedValue(friendsOut({ blocked: [blockedOut("mia")] }));
+    api.sendFriendRequest.mockRejectedValue(new ApiError("You blocked this account.", 409, "You blocked this account"));
+    await expect(friends.send("mia")).rejects.toBeInstanceOf(ApiError);
+    await flushPromises();
+    expect(api.friends).toHaveBeenCalledTimes(3);
+    expect(friends.lists?.blocked.map((row) => row.username)).toEqual(["mia"]);
+
+    // Any other failure leaves the lists alone.
+    api.removeFriend.mockRejectedValue(new ApiError("Slow down", 429, "Slow down a little. Try again later."));
+    await expect(friends.remove("hal")).rejects.toBeInstanceOf(ApiError);
+    api.blockAccount.mockRejectedValue(new Error("offline"));
+    await expect(friends.block("hal")).rejects.toThrow("offline");
+    await flushPromises();
+    expect(api.friends).toHaveBeenCalledTimes(3);
+  });
+
+  it("waits for a load already running before it loads the lists again", async () => {
+    const friends = useFriends();
+    const slow = deferred<ReturnType<typeof friendsOut>>();
+    api.friends.mockReturnValueOnce(slow.promise);
+    const running = friends.load();
+
+    api.friends.mockResolvedValueOnce(friendsOut());
+    api.deleteFriendRequest.mockRejectedValue(new ApiError("That request no longer exists", 404, "No such friend request"));
+    await expect(friends.deleteRequest("grace")).rejects.toBeInstanceOf(ApiError);
+    // The running load began before the refusal and may predate it: a second load follows.
+    slow.resolve(friendsOut({ incoming: [friendRequest("grace")] }));
+    await running;
+    await flushPromises();
+    expect(api.friends).toHaveBeenCalledTimes(2);
+    expect(friends.badge).toBe(0);
   });
 
   it("keeps the lists and shows no error when a load fails", async () => {

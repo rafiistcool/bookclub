@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
 import { isClubAdmin, useClubs } from "../stores/clubs";
+import { useFriends } from "../stores/friends";
 import BottomSheet from "./BottomSheet.vue";
 
 /**
@@ -17,6 +18,7 @@ const emit = defineEmits<{ close: [] }>();
 
 const { t } = useI18n();
 const clubs = useClubs();
+const friends = useFriends();
 
 const adminClubs = computed(() => clubs.items.filter((club) => isClubAdmin(club.role)));
 /** Per club slug: the request running, the invitation sent, or why it failed. */
@@ -33,6 +35,8 @@ async function invite(slug: string) {
     // 404 `No friend with that name`, 409 `That friend is already in this club`: translated by the client.
     const error = err instanceof ApiError ? err.message : t("friends.inviteSheet.failed");
     states.value = { ...states.value, [slug]: { error } };
+    // A 404: they are no longer a friend (or the club is gone), so the lists behind the sheet are stale.
+    if (err instanceof ApiError && err.status === 404) void friends.refresh();
   }
 }
 </script>

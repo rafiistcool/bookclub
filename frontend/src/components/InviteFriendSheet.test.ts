@@ -2,9 +2,10 @@ import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invite, user } from "../test/fixtures";
+import { friendsOut } from "../test/friends";
 import type { ClubSummary } from "../types";
 
-const api: Record<string, ReturnType<typeof vi.fn>> = { createInvite: vi.fn() };
+const api: Record<string, ReturnType<typeof vi.fn>> = { createInvite: vi.fn(), friends: vi.fn() };
 
 vi.mock("../api/client", () => {
   class ApiError extends Error {
@@ -58,6 +59,7 @@ function rowFor(sheet: VueWrapper, name: string) {
 describe("InviteFriendSheet", () => {
   beforeEach(() => {
     api.createInvite!.mockReset();
+    api.friends!.mockReset().mockResolvedValue(friendsOut());
     i18n.global.locale.value = "en";
   });
 
@@ -83,7 +85,7 @@ describe("InviteFriendSheet", () => {
     expect(rowFor(sheet, "Poets").get("button").text()).toBe("Invite");
   });
 
-  it("says why an invitation failed, by the club it was for", async () => {
+  it("says why an invitation failed, by the club it was for, and reloads the friends when the friend is gone", async () => {
     const sheet = mountSheet();
     api.createInvite!.mockRejectedValue(
       new ApiError(translateApiError("That friend is already in this club"), 409, "That friend is already in this club"),
@@ -92,6 +94,8 @@ describe("InviteFriendSheet", () => {
     await flushPromises();
     expect(rowFor(sheet, "Poets").get(".error").text()).toBe("That friend is already in this club");
     expect(rowFor(sheet, "Readers").find(".error").exists()).toBe(false);
+    // The friend is still a friend: the Friends page's lists stand.
+    expect(api.friends).not.toHaveBeenCalled();
 
     // The client translates the detail in the reader's language.
     i18n.global.locale.value = "de";
@@ -101,6 +105,8 @@ describe("InviteFriendSheet", () => {
     await rowFor(sheet, "Readers").get("button").trigger("click");
     await flushPromises();
     expect(rowFor(sheet, "Readers").get(".error").text()).toBe("Keiner deiner Freunde hat diesen Namen");
+    // No longer a friend: the lists behind the sheet load again without them.
+    expect(api.friends).toHaveBeenCalledTimes(1);
   });
 
   it("explains that only a club's admins invite, and closes", async () => {
