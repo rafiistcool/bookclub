@@ -174,7 +174,7 @@ docker compose images app
 
 Later releases leave a pinned app alone. `BOOKCLUB_TAG=stable` follows the releases again, from the next run on.
 
-A version cannot run on a database that a newer version has migrated: it stops at startup with `cannot apply the database migrations: migration <N> was previously applied but is missing in the resolved migrations`, and `update.sh` reports a failed update. A rollback across a migration therefore needs the backup from before the update: stop the timer and wait for a running update (see above), and restore the snapshot that `update.sh` took right before the newer version started (see "Restoring for real"; `backup.sh restic snapshots` lists them with their times). Whatever was written since then is lost.
+A version cannot run on a database that a newer version has migrated: it stops at startup with `cannot apply the database migrations: migration <N> was previously applied but is missing in the resolved migrations`, and `update.sh` reports a failed update. A rollback across a migration therefore needs the backup from before the update: stop the timer and wait for a running update (see above), and restore the snapshot that `update.sh` took right before the newer version started (see "Restoring for real"; `backup.sh restic snapshots` lists them with their times). `backup.sh` keeps every snapshot of the last 14 days, so that one is still there after later backups the same day, the rollback's own among them. Whatever was written since then is lost.
 
 ## Releases
 
@@ -356,7 +356,7 @@ The importer reads a private copy of the database and its `-wal` in the containe
 
 1. `pg_dump -Fc --no-owner` inside the postgres container, and in the same database snapshot the row count of every table and the newest migration (`counts.tsv`), into `/var/lib/bookclub-backup/db`. A dump and its counts therefore always agree.
 2. `restic backup` of that directory and of `/srv/bookclub/media`. The dump comes first: a picture is on disk before its row commits, so the dump never references a picture saved after restic read the media. A picture deleted in between (a replaced profile picture, a takedown, a deleted account) can be missing from the snapshot while the dump still references it. restic then saves the snapshot without it and names it as a file it could not read. `backup.sh` logs that as a warning and goes on when every such file is a picture that no longer exists, and fails otherwise.
-3. `restic forget --prune`, keeping 7 daily, 4 weekly and 12 monthly snapshots.
+3. `restic forget --prune`, keeping every snapshot of the last 14 days, and beyond them 7 daily, 4 weekly and 12 monthly snapshots. The 14 days keep the backup that `update.sh` takes before an update, which a later backup the same day would otherwise prune: `--keep-daily` keeps only the newest snapshot of each day.
 4. On Sundays, `restic check --read-data-subset=5%`, which reads back 5 % of the stored data.
 5. A heartbeat ping when it starts, and one with its exit status and the end of its log when it ends.
 
@@ -432,7 +432,7 @@ The VM's SSH key can write to the restic repository, so it can also delete it: w
    ssh bookclub-backup ls .zfs/snapshot
    ```
 
-- **How far back:** one snapshot a day, so 10 slots (BX11) reach back 10 days: a deleted or damaged repository has to be noticed within that time. Once the slots are full, Hetzner deletes the oldest snapshot as it takes a new one. The repository's own history (7 daily, 4 weekly, 12 monthly backups) is unchanged; the snapshots protect it.
+- **How far back:** one snapshot a day, so 10 slots (BX11) reach back 10 days: a deleted or damaged repository has to be noticed within that time. Once the slots are full, Hetzner deletes the oldest snapshot as it takes a new one. The repository's own history (every backup of the last 14 days, then 7 daily, 4 weekly and 12 monthly ones) is unchanged; the snapshots protect it.
 - **Space:** snapshots cost nothing extra but count against the box's capacity. A new snapshot takes no space; it grows by what is changed or deleted on the box after it. `backup.sh` only adds files to the repository, and its `forget --prune` deletes the files that no backup needs any more: mostly the old database dumps, and pictures deleted in the app. Those stay in the snapshots until the last snapshot that holds them is deleted. So the snapshots take about 10 days' worth of dumps (each `backup.sh` run logs the dump's size) plus the pictures deleted in that time. The console shows the box's usage, snapshots included. A full box fails `backup.sh`, and its heartbeat alerts; fewer slots free space.
 - **Credentials:** never put the Hetzner Console login, a Hetzner API token or the box's password on the VM, or anywhere the VM can read them. Whoever holds the login or a token can delete the snapshots and the box. The VM needs only its SSH key for the box, which cannot touch the snapshots.
 

@@ -197,7 +197,7 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 | Tables | all |
 | Recipients | Hetzner Online GmbH (Storage Box) as processor (Q9; DPA to sign; `processors.md`) |
 | Third countries | none, as long as the box is ordered in an EU location (to confirm when ordering) |
-| Retention | restic: 7 daily, 4 weekly, 12 monthly snapshots; the Storage Box's own snapshots on top, one a day in as many slots as the box's plan has (BX11: 10; the plan is to confirm), so a deleted item can stay up to about 12 months plus the age of the oldest Storage Box snapshot (`privacy-facts.md` §7) |
+| Retention | restic: every snapshot of the last 14 days, then 7 daily, 4 weekly, 12 monthly snapshots; the Storage Box's own snapshots on top, one a day in as many slots as the box's plan has (BX11: 10; the plan is to confirm), so a deleted item can stay up to about 12 months plus the age of the oldest Storage Box snapshot (`privacy-facts.md` §7) |
 | Source | `deploy/hosted/backup.sh`, `deploy/hosted/restore-test.sh`, `deploy/hosted/README.md` ("Backups") |
 
 ### 13. Availability monitoring

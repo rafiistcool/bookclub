@@ -16,6 +16,8 @@
 //!   stopped during the backup), waits an hour before it tries a failed image again, runs once at
 //!   a time, ignores one-off containers, and pings the heartbeat with the outcome without putting
 //!   the ping URL on a command line or into the log.
+//! - `deploy/hosted/backup.sh`, with `docker` stood in for, keeps every snapshot of the last 14
+//!   days, so the backup before an update survives later backups the same day.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -1340,4 +1342,92 @@ fn a_bad_update_setting_stops_only_the_updates() {
         "{}",
         printed(&output)
     );
+}
+
+/// `backup.sh` against a stand-in for `docker`, which logs every call to `calls.log` and answers
+/// as an empty stack would (no app container, a dump and its counts, restic that succeeds).
+/// Returns the output and the calls, in order.
+#[cfg(unix)]
+fn run_backup_sh() -> (Output, Vec<String>) {
+    const FAKE_DOCKER: &str = r#"() {
+        printf 'docker %s\n' "$*" >>"$RIG/calls.log"
+        case "$*" in
+            "compose ps -a -q app") ;;
+            "compose exec -T postgres psql "*) cat >/dev/null; printf 'PGDMP' ;;
+            "compose exec -T postgres cat "*) printf 'users\t1\n(migration)\t2201\n' ;;
+            "compose exec -T postgres rm -f "*) ;;
+            "compose exec -T postgres pg_restore --list") cat >/dev/null ;;
+            "run "*) ;;
+            *) echo "unexpected: docker $*" >&2; return 99 ;;
+        esac
+    }"#;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let opt = root.join("opt");
+    std::fs::create_dir_all(&opt).unwrap();
+    std::fs::create_dir_all(root.join("media")).unwrap();
+    for script in ["backup.sh", "backup-lib.sh"] {
+        std::fs::copy(repo().join("deploy/hosted").join(script), opt.join(script)).unwrap();
+    }
+    std::fs::write(opt.join("restic-password"), "x\n").unwrap();
+    let root_str = root.display();
+    std::fs::write(
+        opt.join("backup.env"),
+        format!(
+            "COMPOSE_DIR={root_str}/opt\nMEDIA_DIR={root_str}/media\n\
+             BACKUP_DIR={root_str}/backup\nRESTIC_REPOSITORY={root_str}/repo\n\
+             RESTIC_PASSWORD_FILE={root_str}/opt/restic-password\n"
+        ),
+    )
+    .unwrap();
+    let output = std::process::Command::new("bash")
+        .arg(opt.join("backup.sh"))
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("RIG", root)
+        .env("BASH_FUNC_docker%%", FAKE_DOCKER)
+        .output()
+        .unwrap();
+    let calls = std::fs::read_to_string(root.join("calls.log"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    (output, calls)
+}
+
+/// The backup `update.sh` takes before an update is the way back across a migration (README.md,
+/// "Rollback"), so a later backup the same day must not prune it. restic's `--keep-daily` keeps
+/// only the newest snapshot of each day: after an update at 10:00 and a hotfix at 15:00 (or the
+/// nightly backup after an update past midnight), the snapshot from before the migration was gone
+/// (security review, Phase 2 Wave 2). `backup.sh` therefore keeps every snapshot of the last 14
+/// days, and the daily, weekly and monthly ones beyond them.
+#[cfg(unix)]
+#[test]
+fn backups_keep_every_snapshot_of_the_last_two_weeks() {
+    let (output, calls) = run_backup_sh();
+    assert!(output.status.success(), "{}", printed(&output));
+    let restic: Vec<&str> = calls
+        .iter()
+        .filter_map(|call| call.split_once(" --retry-lock 10m ").map(|(_, args)| args))
+        .collect();
+    assert!(
+        restic
+            .first()
+            .is_some_and(|args| args.starts_with("backup ")),
+        "{calls:#?}"
+    );
+    let forget = restic
+        .iter()
+        .find(|args| args.starts_with("forget "))
+        .unwrap_or_else(|| panic!("no restic forget in {calls:#?}"));
+    for keep in [
+        "--keep-within 14d",
+        "--keep-daily 7",
+        "--keep-weekly 4",
+        "--keep-monthly 12",
+        "--prune",
+    ] {
+        assert!(forget.contains(keep), "{keep} missing in `{forget}`");
+    }
 }

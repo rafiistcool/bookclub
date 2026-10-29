@@ -32,7 +32,7 @@ Who outside the operator receives data from the hosted Bookclub service, and whe
 
 ### Backup target: Hetzner Storage Box (Q9)
 
-- **What it does:** holds the restic repository of the nightly backups: the database dump and the media files, encrypted by restic on the VM before they leave it, over SFTP (`deploy/hosted/backup.sh`; 7 daily, 4 weekly and 12 monthly snapshots, a weekly restore test with `deploy/hosted/restore-test.sh`).
+- **What it does:** holds the restic repository of the nightly backups: the database dump and the media files, encrypted by restic on the VM before they leave it, over SFTP (`deploy/hosted/backup.sh`; every snapshot of the last 14 days, then 7 daily, 4 weekly and 12 monthly snapshots, a weekly restore test with `deploy/hosted/restore-test.sh`).
 - **Storage Box snapshots:** Hetzner's automatic snapshots of the box, set up in Hetzner's console, which the VM's SFTP user cannot delete (the Phase 2 security review, `docs/phase1/security-review.md`, finding 3, option A, chosen on 2026-10-29; DEP2 documents the setup in `deploy/hosted/README.md`). They hold the same ciphertext as the box.
 - **Data:** every table and picture, only as ciphertext; the key stays with the operator (password manager, work plan §5 step 12). Hetzner cannot read it, but stores it on the operator's behalf, so it is a processor.
 - **Provider:** Hetzner Online GmbH, Germany.

@@ -7,7 +7,11 @@
 #      A picture deleted after the dump (a replaced avatar, a takedown, a deleted account) may
 #      be gone before restic reads it: restic then saves the snapshot without it and exits 3,
 #      which counts as a warning when every file it could not read was such a deletion;
-#   3. restic forget --prune: 7 daily, 4 weekly and 12 monthly snapshots;
+#   3. restic forget --prune: every snapshot of the last 14 days, and beyond them 7 daily, 4
+#      weekly and 12 monthly snapshots. --keep-daily alone keeps only the newest snapshot of a
+#      day, so a later backup the same day (the nightly one, a second update, one by hand)
+#      would prune the one update.sh takes before an update, which a rollback across a
+#      migration needs;
 #   4. on CHECK_WEEKDAY (or with --check), restic check reading back 5 % of the data;
 #   5. a heartbeat ping at the start, and with the exit status at the end.
 #
@@ -125,7 +129,7 @@ backup() {
 
     log "restic forget --prune"
     restic_ forget --host "$BACKUP_HOST" --tag bookclub \
-        --keep-daily 7 --keep-weekly 4 --keep-monthly 12 --prune
+        --keep-within 14d --keep-daily 7 --keep-weekly 4 --keep-monthly 12 --prune
 
     if [[ $check == 1 || $(date +%u) == "$CHECK_WEEKDAY" ]]; then
         log "restic check, reading back 5 % of the data"
