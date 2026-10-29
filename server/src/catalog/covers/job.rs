@@ -88,7 +88,10 @@ pub struct RunReport {
 }
 
 /// Pauses the search after unavailable runs (§4.4): after the k-th in a row, 10 minutes ×
-/// 2^(k − 1), at most 6 hours. Any answer closes it. It lives in the loop's memory.
+/// 2^(k − 1), at most 6 hours. Only a run that ended on an unavailable answer without any
+/// answer before it counts: a run that Open Library answered and that then hit one timeout or
+/// 5xx is no outage (that book backs off on its own). Any answer closes it. It lives in the
+/// loop's memory.
 #[derive(Debug, Clone, Default)]
 pub struct Breaker {
     outages: u32,
@@ -103,14 +106,14 @@ impl Breaker {
 
     /// Learns from a finished run.
     pub fn record(&mut self, run: &RunReport, now: Instant) {
-        if run.unavailable {
+        if run.answered {
+            self.outages = 0;
+            self.until = None;
+        } else if run.unavailable {
             self.outages += 1;
             let factor = 2u32.saturating_pow(self.outages.saturating_sub(1).min(16));
             let pause = BREAKER_FIRST.saturating_mul(factor).min(BREAKER_MAX);
             self.until = Some(now + pause);
-        } else if run.answered {
-            self.outages = 0;
-            self.until = None;
         }
     }
 
@@ -354,6 +357,33 @@ mod tests {
         };
         breaker.record(&answered, start);
         assert_eq!(breaker.outages(), 0);
+        assert!(breaker.allows(start));
+    }
+
+    /// A run that Open Library answered and that then hit one timeout or 5xx is no outage: the
+    /// breaker stays closed (or closes), so a few failing requests do not pause the search.
+    #[test]
+    fn a_run_answered_before_its_failure_is_no_outage() {
+        let start = Instant::now();
+        let mut breaker = Breaker::default();
+        let partly = RunReport {
+            answered: true,
+            unavailable: true,
+            ..RunReport::default()
+        };
+        breaker.record(&partly, start);
+        assert_eq!(breaker.outages(), 0);
+        assert!(breaker.allows(start));
+
+        let down = RunReport {
+            unavailable: true,
+            ..RunReport::default()
+        };
+        breaker.record(&down, start);
+        breaker.record(&down, start);
+        assert_eq!(breaker.outages(), 2);
+        breaker.record(&partly, start);
+        assert_eq!(breaker.outages(), 0, "an answer closes it");
         assert!(breaker.allows(start));
     }
 }
