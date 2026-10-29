@@ -285,3 +285,90 @@ The verifiers corrected two details:
 
 - [medium] The fork gate on CI's `image` job lets AGit pull requests through, and that job gets the host Docker socket: refuted by all three verifiers.
 - [low] The app port is published on all interfaces, and nothing enforces that only the proxy reaches it: refuted by all three verifiers.
+
+## Phase 2 Wave 2
+
+A security review of Wave 2, through the reports and operations lenses: `8ecc528..phase-2` (DEP2 and LEG2 merged, CUT2's record), and ADM2 on its branch `phase2/adm2` at `00fab8a`, which is not merged yet, because the reports on profile pictures exist only there. Three verifiers tried to refute each finding against the code; for finding 7, each ran restic 0.17.3. A finding counts as confirmed when at least two of the three did not refute it. Severity follows the rubric above. Rafael's answer for Wave 2 (2026-10-29) applies: take the recommended option, and leave what only matters at go-live until then. The two ADM2 fixes are commits on `phase2/adm2` and land with its merge; their notes (`docs/phase2/notes/adm2.md`, "Security review fixes") carry the contract changes for it.
+
+| # | Severity | Finding | Outcome |
+|---|---|---|---|
+| 1 | medium | The export's `reports.about_me` told the owner of open and dismissed reports of their profile picture, with the time; only club mates can file those, so in a club of 2 to 5 it named the reporter | Fixed in `b074148` (`phase2/adm2`) |
+| 2 | medium | The update timer deploys whatever the registry tag names within 3 minutes, unchecked, and a pinned version is no freeze | Documented in `ffcb314`, with a digest pin that freezes; signing and a narrower token are Rafael's, see below |
+| 3 | medium | The restore after a compromise brought back the attacker's access that lives in the database: plain-text invite codes, a planted session, an admin flag | Fixed in `b202a5f` |
+| 4 | low | Replacing or deleting a reported profile picture defeated the report: "remove" was refused, no hash was blocked, and the same file could come back | Fixed in `44a281f` (`phase2/adm2`) |
+| 5 | low | The restore after a compromise kept the heartbeat URLs the attacker knows, so they could keep the new VM's checks green | Fixed in `5c41954` |
+| 6 | low | The README said the Storage Box snapshots close the gap of Wave 1 finding 3, but everything that would notice a damaged repository runs on the VM | The limit is documented in `e56fd6f`; the check from outside the VM is Rafael's, see below |
+| 7 | low | A later backup the same day pruned the backup `update.sh` takes before an update, which a rollback across a migration needs | Fixed in `877be06` |
+
+### 1. [medium] The export named the reporter of a profile picture
+
+`reports.about_me` (`auth/export.rs`, ADM2) listed every report of the user's content, whatever its status, with `status`, `via` and the exact `created_at`. A profile picture can only be reported by someone who shares a club with its owner (`bc_can_see_user`), and a dismissal mails only the reporters. So an owner could export their data (5 times an hour) and learn that a club mate reported their picture, when, and while the report was still open; in a club of two that is one person. ADM2's own rule, that the reporter is never named to the other side (Q12), failed through the export. The verifiers noted that cover, book and edition reports identify much less (any signed-in reader can file them), and that the section was a deliberate Art. 15 choice.
+
+**Fix:** `about_me` holds only removals (`status = 'removed'`, not closed on arrival), one entry per decision (its target and `resolved_at`), as `{target_kind, media_id, work_id, edition_id, reason, status, resolved_at}`: the reason of the decision's oldest report and the decision's date, without `id`, `via` or `created_at`. The statement of reasons already told the owner of every removal. Open and dismissed reports, how many reports a decision closed, and when and how they came in are withheld to protect the reporters (Art. 15 (4) GDPR, § 29 (1) BDSG); `docs/legal/takedown.md` ("Export") says so. Dropping only `created_at` would not have helped in a club of two.
+
+**Tests** (`auth_export.rs`, both failing without the fix):
+- `about_me_holds_only_removals_never_who_reported_or_when`: the owner exports after an open report, after its dismissal, after two reports removed in one decision (one entry with exactly the fields above and the decision's time), and after a report closed on arrival (no new entry).
+- `every_section_holds_the_users_rows`: removals of four kinds side by side with an open and a dismissed report, which are absent; a second report of the same decision adds no entry.
+
+### 2. [medium] Whoever can push the image deploys it
+
+`update.sh` (DEP2, every 3 minutes) pulls the tag `BOOKCLUB_TAG` names, pinned or `stable`, and starts whatever image it names now, with `.env` (the database password, the SMTP credentials) and a route out. Nothing checks a digest or a signature, and the registry takes a second push under an exact version too. So the user `rafiistcool`, any token with `write:package` on that user (`REGISTRY_TOKEN`, which the publish job hands its job image and BuildKit, both pulled by tag), and whoever controls Forgejo deploy to production with nobody in the loop. The README and `env.example` presented a pinned version as a freeze. Two verifiers confirmed the mechanism and rated it low; the third rejected it as the chosen pull deploy (Q8 option A) whose trust Wave 1 finding 2 already lists under "Left for Rafael". What the timer adds is the unattended deploy and a pin that no longer protects.
+
+**Fix (`ffcb314`, documentation):** `deploy/hosted/README.md`, "Updates and rollback", says who can deploy and that a pinned version is no freeze. "Rollback" shows how to freeze the app: pin the running image's digest (`BOOKCLUB_TAG=0.11.0@sha256:…`), or stop the timer. The digest form was checked with Docker 29 and a throwaway local registry: `compose config --images`, `compose pull`, `image inspect` and `compose up` take it, so `update.sh` needs no change, and a `0.11.0` pushed again with other content left the pinned app on its old image. `env.example` says the same. No test: nothing in the code changed.
+
+**Left for Rafael** (with the open items of Wave 1 finding 2):
+- **Signed releases.** An unattended deploy that needs more than the token: sign each released digest with a key that is not on the runner (for example `cosign sign --key` from the admin machine after the release run), and have `update.sh` verify the pulled digest before `backup.sh` and `up`, an unverified image counting as a failed update. It adds a manual step to every release and a key to keep.
+- **A token for this image only, and the job and BuildKit images by digest**, as Wave 1 recorded: a bot account in an organisation that owns the image (which moves the image path), and digest pins that need updating by hand.
+
+### 3. [medium] The restore after a compromise kept the database's access paths
+
+"Restoring from a Storage Box snapshot" (DEP2) treats the VM as compromised and rotates every secret outside the database, then restored the database unchanged and started the app on it. Whoever had root could read the database and, while they were in, write it. Invite codes are stored as they are, and a link or sign-up invite admits anyone until it expires. A session is the SHA-256 of its token, with no server secret, so a `sessions` row planted for a token the attacker holds signs in on any server with this database, as does an admin flag, a membership or a changed address. The snapshot is from before the damage, not from before the intrusion.
+
+**Fix:**
+- `deploy/hosted/revoke-access.sql` deletes every session, revokes every open club and sign-up invite, and marks every unused email link used, in one transaction.
+- The runbook now stops after step 4 of "Restoring for real", runs the file, lists the instance admins and what changed since the intrusion may have begun (new accounts, verified addresses, password changes, memberships) with what to do about each, backs up again so that the newest snapshot holds the cleaned database, and only then starts the app.
+- A last step names the duties of a personal data breach: the authority within 72 hours unless it is unlikely to put anyone at risk (Art. 33 GDPR), the users when the risk is high (Art. 34), with a request to choose new passwords, and the record of Art. 33 (5). Whether to report is Rafael's call when it happens.
+- Not done: forcing new passwords. Accounts without a verified address could not reset theirs, so the runbook asks for new passwords instead.
+
+**Test:** `auth_sessions.rs::the_revocation_after_a_compromise_ends_every_reusable_access` runs the file against the current schema: a cookie session, an app token, a club link, a sign-up invite and a reset link work before it and fail after, and the password still signs in. Dropping any one of its three statements fails the test.
+
+### 4. [low] A reported profile picture could be replaced to dodge the decision
+
+`media/avatar.rs` (`delete_avatars`) deleted every avatar row of the owner on a replace or delete, the reported one too. Its reports lost their picture (`ON DELETE SET NULL`), "remove" answered 409 `The reported picture is no longer online`, no hash went into `media_removed_hashes`, and the same file could be uploaded again once the report was closed. The admin could not even see what had been reported. ADM2's notes listed this as an open integrator item. It applies only once ADM2 is merged: on `phase-2`, only covers can be reported.
+
+**Fix (`phase2/adm2`):**
+- A profile picture with an open report is **held** when its owner replaces or deletes it: it leaves the profile at once and keeps its row and files under a new public id, which only the admin queue shows. Its old URL answers 404 like a deleted picture's, and the owner's export leaves it out, so neither tells the owner of the report (finding 1). The avatar rows are locked before the open reports are read, so a report being filed is seen.
+- "Remove" takes a held picture down like any other and blocks its hashes. A takedown of a profile picture also takes down the owner's other live profile pictures with the same bytes as received: the same file uploaded again while the first was held. The owner gets one statement of reasons.
+- "Dismiss" deletes a held picture with its files, and its reporters learn that it is no longer online.
+- `gone` (409 on "remove") remains for a profile picture without its row: an account deleted since.
+- Limit: the hash block compares exact bytes, so a re-encoded copy still needs a new report.
+
+**Tests** (`media_reports.rs`, `auth_export.rs`):
+- `a_reported_avatar_its_owner_replaces_is_held_for_the_decision`, `an_avatar_uploaded_again_while_reported_comes_down_with_it`, `a_dismissed_report_of_a_replaced_avatar_deletes_it` and `auth_export.rs::a_held_avatar_is_left_out_of_the_export_until_it_is_decided` fail without the fix. Disabling the takedown of the copies, or the deletion of a dismissed held picture, fails one test each.
+- `reports_of_the_avatar_of_a_deleted_account_are_closed_as_gone` replaces `reports_of_an_avatar_replaced_meanwhile_are_closed_as_gone` for the gone path that remains.
+
+### 5. [low] The old heartbeat URLs survived a compromise
+
+The snapshot restore set `backup.env` up again "as in Backups, Setting up, step 2", which only fills in the heartbeat URLs, so the old ones came back. They were in the compromised VM's `backup.env`, and a ping URL is its check's only credential. The verifiers corrected the impact: a run that fails still alerts, because each failure ping is a flip to down that healthchecks.io reports whatever comes after. What forged `/0` pings hide is a run that never happens: a timer that is off, a VM that is down, a hung run.
+
+**Fix:** the section creates the three checks anew, puts only their URLs into the new `backup.env`, and deletes the old checks. It also copies `update.sh` with the backup scripts and, at the end, installs and enables the three timers, which a new VM never had: the step it pointed to started only the update timer, whose unit did not exist there. Documentation only.
+
+### 6. [low] The Storage Box snapshots narrow the gap, they do not close it
+
+"Storage Box snapshots" said the box's own snapshots close the gap of Wave 1 finding 3. They rotate (BX11: 10 daily slots), and everything that would notice a damaged repository runs on the VM: the backup, the Sunday `restic check` and restore test, and their heartbeats, whose URLs are in `backup.env`. Root on the VM can stub the scripts and keep pinging, or give the repository a password of their own so that the backups and checks really pass (one verifier's variant), wait until every slot holds the damaged repository, and then drop the database.
+
+**Fix (`e56fd6f`, documentation):** the README says the snapshots narrow the gap, says who notices and who does not, and describes the check that closes it ("A check from outside the VM"): a read-only sub-account of the box, used once a day from a machine outside the VM (`restic --no-lock snapshots --latest 1` and `cat config`), with a heartbeat of its own that alerts on a stale newest snapshot, a changed repository id, or a password that no longer opens it. Its credentials never reach the VM.
+
+**Left for Rafael:** the machine that runs the check, and the sub-account. The work plan's section 5, item 13, has the step.
+
+### 7. [low] A later backup pruned the pre-update backup
+
+`update.sh` (DEP2) backs up before every update, and the README's rollback across a migration restores that snapshot. `backup.sh` ran `forget --keep-daily 7 --keep-weekly 4 --keep-monthly 12`, and `--keep-daily` keeps only the newest snapshot of a day. A hotfix release the same day, the nightly backup after an update past midnight, a backup by hand, or the rollback's own backup pruned it, leaving the previous day's.
+
+**Fix:** `backup.sh` adds `--keep-within 14d`. With restic 0.17.3 on a local repository, an update at 10:00, a hotfix at 15:00, and an update at 00:30 before the 03:40 nightly backup kept all six snapshots, where the old policy kept three. The README, the `backup.sh` header and the retention lines of `docs/legal/` (privacy facts, VVT, processors) say so. The longest retention stays 12 months.
+
+**Test:** `deploy_env.rs::backups_keep_every_snapshot_of_the_last_two_weeks` runs `backup.sh` against a stand-in for `docker` and fails without the window.
+
+### Rejected
+
+None: every finding of this round was confirmed.
