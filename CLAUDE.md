@@ -10,6 +10,8 @@ Bookclub is a self-hosted, invite-only book club for 2–5 people. A FastAPI bac
 
 **Phase 2** (hosted launch, #50–#55): `docs/phase2/work-plan.md` holds the waves, packages, file ownership and migration number blocks. Each package records its contract changes in `docs/phase2/notes/<pkg>.md`; the integrator moves them into `conventions.md`, `endpoint-map.md`, this file and the READMEs, and keeps the notes as the record. `deploy/hosted/README.md` is the operator runbook (image, compose, releases, automatic updates (`update.sh`, `bookclub-update.timer`), the VM's network, Caddy, backups with Storage Box snapshots, restore, legacy import, legal texts, open sign-up); `docs/phase2/cutover.md` is the cutover runbook. The public name is still open (Q1, first pass in `docs/phase2/name-check.md`): keep "Bookclub" until BRAND puts the chosen one in.
 
+**Phase 3** (#56 scanning, #57 friends, then the private move): `docs/phase3/work-plan.md` holds the order, the packages, file ownership, migration blocks (SCAN 3000–3099, FRIENDS 3100–3199, MOVE 3200–3299, integrator 3900–3999) and ports (Postgres SCAN 5461, FRIENDS 5462, MOVE 5463; browser 8091–8096). Since 2026-10-29 the order is: COVER (#74), then Phase 3, then the private move (MOVE: the 2 current accounts onto the Rust server on the existing host and hostname, invite-only, with mail off through `EMAIL_TRANSPORT=none`, which MOVE adds; #52, the parts of #51 it needs, and CUT-R; runbook `docs/phase3/private-move.md`), then the public launch (#50, #53, #55 and the rest of #51, `docs/phase2/work-plan.md` §5), then Phase 4. Package notes go to `docs/phase3/notes/<pkg>.md`. Until the public launch, add no legal, mail-provider or branding work.
+
 ## Commands
 
 Setup:

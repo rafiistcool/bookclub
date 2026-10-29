@@ -74,6 +74,8 @@ A completeness review checked this plan against the code at 84006bd. Where this 
 
 ## 1. Status
 
+**Reordered on 2026-10-29.** Rafael put the app before the launch: COVER (#74), then Phase 3 (#56, #57), then a slim private move of the current users onto the Rust server on the existing host and hostname (#52, the parts of #51 it needs, CUT-R; mail off, no legal texts), then the public launch (#50, #53, #55, the rest of #51). `docs/phase3/work-plan.md` plans the move and replaces the cutover as written here (BRAND before it, `cutover.md`'s gate, redirect and new domain); §5 below says which of its items the move still needs and which moved to "later".
+
 Phase 1 is merged into `main` as 84006bd (PR #70). On Forgejo, #36, #37 and #39–#49 are closed. #38 stays open for one item: the dry run and the real run on a copy of the production database. Production still runs the Python v0.10.0 image.
 
 Phase 1 already delivered part of Phase 2:
@@ -750,6 +752,8 @@ Ordered by how much work each answer unblocks. "Take the recommendations" is a v
 ---
 
 ## 5. Actions only Rafael can take, in order
+
+**Reordered on 2026-10-29.** The cutover is now the slim private move in `docs/phase3/work-plan.md`, whose §8 is Rafael's short list for it. From this list, the move needs only slim versions of items 2, 3, 11 (`docker login`), 12 (a local or NAS restic repository), 15 (install, no staging), 16 (the restore test), 20, 21, 22 (CUT-R) and 27. Items 6–10, the Storage Box, DPA and snapshots of 12, 13, 14, the alert test of 16, 17–19, the beta invites of 22 and 23–26 move to the public launch, after the move (`docs/phase3/work-plan.md` §9).
 
 **Now: these unblock Wave 2 and the rehearsal**
 1. Answer Q1–Q10, or say "take the recommendations".
