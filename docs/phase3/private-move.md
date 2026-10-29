@@ -118,11 +118,18 @@ The facts go into the notes without secrets or usernames: OS, Docker and compose
 
 - **Layout.** `/opt/bookclub` and `/srv/bookclub` free: `NEW=/opt/bookclub`, `DATA=/srv/bookclub`. If the old app holds either (the script's note says so), the new stack goes to `/opt/bookclub-server` and `/srv/bookclub-server`: `BOOKCLUB_DATA_DIR` in `.env`, `COMPOSE_DIR`, `MEDIA_DIR` and `RESTIC_PASSWORD_FILE` in `backup.env`, and the three units' `ExecStart` (section 4).
 - **Project name.** `compose.yaml` says `name: bookclub`. If `docker compose ls` shows the old project under that name (a directory named `bookclub` is enough), the new `.env` sets `COMPOSE_PROJECT_NAME=bookclub-server`. Otherwise the stopped Python container becomes an orphan of the new project, and a `down` or `--remove-orphans` could remove it.
-- **The binding.** The old container's published binding and port (Python's default `0.0.0.0:8000`) become `BOOKCLUB_LISTEN` and `BOOKCLUB_PORT`: the port takeover. If the proxy runs on this host and reaches the app over loopback ("Listening on 80 and 443" names it, and the peer is a Docker gateway such as `172.17.0.1`), `BOOKCLUB_LISTEN=127.0.0.1`.
+- **The binding.** The old container's published binding and port (Python's default `0.0.0.0:8000`) become `BOOKCLUB_LISTEN` and `BOOKCLUB_PORT`: the port takeover. `BOOKCLUB_LISTEN=127.0.0.1` only when the proxy's upstream is `127.0.0.1:<old port>` or `localhost:<old port>`. That takes a proxy that runs as a process on this host: "Listening on 80 and 443" names nginx, caddy, haproxy, apache2 or traefik, not `docker-proxy` and not nothing. Its upstream, read as addresses only (or Rafael names it):
+
+  ```bash
+  grep -rhoE "[][A-Za-z0-9.:-]+:<old port>\b" /etc/nginx /etc/caddy /etc/haproxy /etc/apache2 2>/dev/null | sort -u
+  ```
+
+  Every other proxy keeps the old binding: a proxy container, and a proxy whose upstream is the host's LAN address, `172.17.0.1` or `host.docker.internal`. A `127.0.0.1` binding takes only connections to `127.0.0.1`, so such a proxy would get "connection refused" after the switch, and the members a 502. The peer cannot tell these apart: loopback through Docker's proxy and a proxy container's connection to a host address, which Docker masquerades, both show a Docker gateway. An upstream on `[::1]` reaches neither binding (the new app publishes IPv4 only): I send Rafael the one-line change to `127.0.0.1:<old port>`, and reverting it joins the rollback.
 - **No published port.** If the old container publishes nothing and the proxy, a container on a shared Docker network, reaches it by an alias (the facts' "networks" line), the app joins that network under that alias instead (section 3.1). If that does not fit the proxy, I send Rafael a one-line upstream change for the proxy; reverting it joins the rollback.
-- **`TRUSTED_PROXIES`.** The peer of the old container, as `/32`:
+- **`TRUSTED_PROXIES`.** From the peer of the old container (the facts' "peers"), as `/32`:
   - a proxy on another host: its LAN address, unchanged for the new app;
-  - a proxy on this host over loopback: the gateway of the **new** app's network, not the old one's (each compose network has its own), read after the first start in section 3.2. Fine only with `BOOKCLUB_LISTEN=127.0.0.1`;
+  - a Docker gateway, an address of a `docker0` or `br-…` interface (`ip -br addr`): a proxy on this host over loopback, or a proxy container that dials a host address. The value is the gateway of the **new** app's network, not the old one's (each compose network has its own), read after the first start in section 3.2. With `BOOKCLUB_LISTEN=127.0.0.1` only this host reaches the port. With the old binding kept, the host's other containers that dial the port show the same gateway; LAN clients keep their own address;
+  - another address of this host (a host proxy that dials the host's LAN address): unchanged;
   - a proxy container on a shared network: its address there as `/32`, or the network's subnet when the proxy container gets a new address on each re-creation (only containers on that network reach the app there).
 
   A wrong value puts everyone in the proxy's rate-limit bucket: one stranger's failed attempts lock both members out of sign-in for 10 minutes and out of reset and sign-up for an hour. A wide one lets LAN clients forge `X-Forwarded-For`. Move day checks it from two sides (section 7.5).
@@ -159,7 +166,7 @@ set_env() {
 }
 set_env POSTGRES_PASSWORD "$(openssl rand -hex 32)"
 set_env PUBLIC_URL "https://$HOST"
-set_env TRUSTED_PROXIES '<proxy address>/32'   # proxy on this host over loopback: none until section 3.2
+set_env TRUSTED_PROXIES '<proxy address>/32'   # a Docker gateway as the old peer: none until section 3.2
 set_env CONTACT_EMAIL '<the address of Q-M3>'
 set_env EMAIL_TRANSPORT none
 sed -i -e 's|^SMTP_URL=|#SMTP_URL=|' -e 's|^EMAIL_FROM=|#EMAIL_FROM=|' .env
@@ -194,6 +201,8 @@ networks:
 EOF
 ```
 
+A proxy that resolves the alias only when it starts, as nginx does with `proxy_pass http://<alias>:8000;` and no `resolver`, keeps dialing the stopped Python container's address: the new container gets another one on that network. It answers 502 after the switch (section 7.5 checks it) until it is reloaded, and again after a rollback. Then the reload is part of move day and of the rollback: `docker exec <proxy container> nginx -s reload` for an nginx container, Rafael's reload for another proxy.
+
 **Only when an auto-updater runs** (watchtower; another one by its own rule), in the same `compose.override.yaml` (create it with just this when there is no alias):
 
 ```yaml
@@ -227,7 +236,7 @@ docker compose ps -a
 
 If it does not come up: `docker compose logs --no-log-prefix app | grep '^error:' | tail -n 1` names the setting (README, "When it does not start").
 
-**Proxy on this host over loopback** (section 2.3): the app's network exists now, and its gateway is the address the app will see for the proxy:
+**When the old peer is a Docker gateway** (section 2.3): the app's network exists now, and its gateway is the address the app will see for the proxy:
 
 ```bash
 network=$(docker inspect -f '{{range $name, $net := .NetworkSettings.Networks}}{{$name}} {{end}}' \
@@ -403,7 +412,10 @@ cd "$NEW"
 docker compose up -d --wait app                          # on the old binding and port now
 docker compose exec app bookclub-server healthcheck      # … answered 200 OK
 docker compose exec app bookclub-server make-admin "$OWNER"
+curl -s -o /dev/null -w '%{http_code}\n' "https://$HOST/api/health"     # 200: the proxy reaches the new app
 ```
+
+A 502 or 504 means the proxy does not reach the new app. With the port takeover, the binding does not fit the proxy's upstream: back to the old binding in `.env` (section 2.3) and `docker compose up -d --wait app`. With the alias, the proxy still holds the Python container's address: reload it (section 3.1). Rafael signs in only after a 200.
 
 **[Rafael]**, in his browser on `https://$HOST`: sign in with the old password (everyone signs in again once: the cookie is new). The email prompt may be skipped. Then the club, the shelves, the physical shelf layouts, the pick and its notes, the votes, the quotes and the activity feed are there, and an old `/works/OL…W` link from a chat opens.
 
@@ -463,7 +475,7 @@ Then **[Rafael]** sends "done" (section 6). The rollback window closes when the 
 The window lasts until the other member writes to the new app. Until then the old app's data is untouched (stopped, and the importer read a copy), and the only writes on the new app are Rafael's checks, which a rollback discards.
 
 1. In `$NEW`: `docker compose stop app`.
-2. In `$OLD`: `docker compose start bookclub`, wait until `docker compose ps bookclub` says healthy, and sign in once. If section 2.3 needed a proxy change, **[Rafael]** reverts it.
+2. In `$OLD`: `docker compose start bookclub`, wait until `docker compose ps bookclub` says healthy, and sign in once. If section 2.3 needed a proxy change, **[Rafael]** reverts it. A proxy that needed a reload on move day (section 3.1) needs one now too.
 3. In `$NEW`: `docker compose down -v` and `find "$DATA/media" -mindepth 1 -delete`, so the next attempt starts from an empty target. Before the next attempt, section 3.2 again (`up -d --wait postgres`, the check on 18080).
 4. Rafael tells the other member the update is postponed, and I record why in #52.
 
