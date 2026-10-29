@@ -6138,6 +6138,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description `This account is suspended` (the password matched) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
             /** @description `Too many attempts. Wait a few minutes.` */
             429: {
                 headers: {
