@@ -604,7 +604,7 @@ pub async fn resolve_report(
             // A profile picture's owner first (conventions §7.2): the takedown below also locks
             // the owner's copies of the picture, which an avatar upload locks after the owner.
             lock_owner(&mut tx, report.target_user_id.filter(|_| avatar)).await?;
-            // The picture first, as a takedown and a report lock it: dismissals and takedowns
+            // Then the picture, as a takedown and a report lock it: dismissals and takedowns
             // of one picture take turns, and a report filed meanwhile is resolved too. The
             // profile picture of an account deleted since has no row any more.
             let present = match report.media_id {
