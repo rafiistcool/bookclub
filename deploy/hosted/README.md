@@ -587,7 +587,7 @@ When the repository itself is gone or damaged, for example because someone delet
    /opt/bookclub/backup.sh
    docker compose up -d --wait
    rm -rf /var/lib/bookclub-backup/restore
-   cp deploy/hosted/systemd/bookclub-* /etc/systemd/system/
+   cp <checkout>/deploy/hosted/systemd/bookclub-* /etc/systemd/system/
    systemctl daemon-reload
    systemctl enable --now bookclub-backup.timer bookclub-restore-test.timer bookclub-update.timer
    ```
