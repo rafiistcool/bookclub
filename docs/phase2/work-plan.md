@@ -539,7 +539,7 @@ All five run in parallel. They need no answer from Rafael. Where an answer is st
 - **Size:** L. **Dependencies:** Wave 2 merged (`phase-2` at 7793faf). Blocks #52.
 - **Scope:** #74: a cover search by title and author on Open Library for every work without a cover that is not a reader's own, suggestions for uncertain matches in a new admin tab, the photo prompt on the book page, the admin's direct cover, and the import report's count of books still without a cover. The design, the file list and the tests are in `docs/phase2/notes/cover.md`.
 - **Worktree:** `../bookclub-cover`, branch `phase2/cover`; Postgres 5458, browser 8087; migrations 2300–2399.
-- **Touches frozen interfaces additively** (recorded in its notes for the integrator): `CatalogLookup::cover_candidates` in `catalog/shared/lookup.rs`, and `ingest::clear_media`, which also records the takedown for the cover search.
+- **Touches frozen interfaces additively** (recorded in its notes for the integrator): `CatalogLookup::cover_candidates` and `cover_by_isbn` (with default bodies) in `catalog/shared/lookup.rs`; in `ingest`, `clear_media` (also records the takedown for the cover search), `ol_cover_medias` (skips pictures Open Library confirmed gone) and the new `clear_gone_media`. It also changes MED's `media/service.rs` (Open Library fetches refuse removed hashes; `recheck_cover`) and adds `media.ol_gone_at`, and edits the tests `admin_guard.rs`, `admin_summary.rs` and `parity_importer.rs`.
 
 ### 2.4 Cutover branch CUT-R (#52), merged only on cutover day
 
@@ -579,7 +579,7 @@ All five run in parallel. They need no answer from Rafael. Where an answer is st
 | LEG2 | LEG, ADM; Q14 | Wave 2 | |
 | DEP2 | DEP; Q5, Q7, Q8 | Wave 2 | |
 | CUT2 | CUT; A2, A4 | Wave 2 | Needs real data; touches no repo files |
-| COVER | Wave 2 merged | alone, before Wave 3 | Changes `lookup.rs` and `clear_media` additively; blocks #52 |
+| COVER | Wave 2 merged | alone, before Wave 3 | Changes `lookup.rs`, `ingest.rs` and `media/service.rs` additively; blocks #52 |
 | CUT-R | Wave 1 in `main` | rebased continuously | Merged on cutover day only |
 
 ---
