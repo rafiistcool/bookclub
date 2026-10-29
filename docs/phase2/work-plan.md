@@ -753,7 +753,7 @@ Ordered by how much work each answer unblocks. "Take the recommendations" is a v
 
 ## 5. Actions only Rafael can take, in order
 
-**Reordered on 2026-10-29.** The cutover is now the slim private move in `docs/phase3/work-plan.md`, whose §8 is Rafael's short list for it. From this list, the move needs only slim versions of items 2, 3, 11 (`docker login`), 12 (a local or NAS restic repository), 15 (install, no staging), 16 (the restore test), 20, 21, 22 (CUT-R) and 27. Items 6–10, the Storage Box, DPA and snapshots of 12, 13, 14, the alert test of 16, 17–19, the beta invites of 22 and 23–26 move to the public launch, after the move (`docs/phase3/work-plan.md` §9).
+**Reordered on 2026-10-29.** The cutover is now the slim private move in `docs/phase3/work-plan.md`. For the move, §8 there replaces this list; the rest of this list moves to the public launch (§9 there).
 
 **Now: these unblock Wave 2 and the rehearsal**
 1. Answer Q1–Q10, or say "take the recommendations".
