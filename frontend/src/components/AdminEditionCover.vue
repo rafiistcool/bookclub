@@ -75,7 +75,18 @@ function covered() {
 </template>
 
 <style scoped>
-/* The link sits in a line of small text links; the sheet reads at body size. */
+/* The link sits in a line of small text links and reads like them: the book page's rule for
+   its text buttons does not reach into this component, so the link would be bold, padded and
+   centred on a line of its own. The sheet reads at body size. */
+.admin-edition-cover > .text-btn {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent);
+}
+
 .admin-edition-cover :deep(.sheet) {
   font-size: var(--text-md);
   text-align: left;

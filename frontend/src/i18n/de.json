@@ -1261,7 +1261,7 @@
     "setEditionCover": "Cover einer Ausgabe als Admin setzen",
     "editionCover": {
       "title": "Cover einer Ausgabe",
-      "blurb": "Das Bild wird sofort für alle zum Cover dieser Ausgabe und ersetzt ein vorhandenes. Das Cover des Buchs selbst bleibt, wie es ist.",
+      "blurb": "Das Bild wird sofort für alle zum Cover dieser Ausgabe und ersetzt ein vorhandenes. Das Cover des Buchs selbst bleibt, wie es ist; hat das Buch noch keins, bekommt es dieses Bild auch.",
       "upload": "Hochladen",
       "yours": "Deine Ausgabe",
       "none": "Dieses Buch hat noch keine Ausgaben."

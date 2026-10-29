@@ -1261,7 +1261,7 @@
     "setEditionCover": "Set an edition's cover as admin",
     "editionCover": {
       "title": "An edition's cover",
-      "blurb": "The picture becomes that edition's cover for everyone at once, in place of any it has. The book's own cover stays as it is.",
+      "blurb": "The picture becomes that edition's cover for everyone at once, in place of any it has. The book's own cover stays as it is; a book without one takes this picture too.",
       "upload": "Upload",
       "yours": "Your edition",
       "none": "This book has no editions yet."
