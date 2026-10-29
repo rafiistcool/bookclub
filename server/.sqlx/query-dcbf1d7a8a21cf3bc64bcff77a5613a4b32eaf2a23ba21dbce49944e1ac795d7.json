@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, ol_cover_id AS \"ol_cover_id!\" FROM media\n           WHERE ol_cover_id = ANY($1) AND removed_at IS NULL AND ol_gone_at IS NULL\n           ORDER BY id\n           FOR SHARE",
+  "query": "SELECT id, ol_cover_id AS \"ol_cover_id!\" FROM media m\n           WHERE ol_cover_id = ANY($1) AND removed_at IS NULL AND ol_gone_at IS NULL\n             AND NOT EXISTS (SELECT 1 FROM media_removed_hashes h\n                             WHERE h.sha256 = m.sha256 AND h.blocks_covers)\n           ORDER BY id\n           FOR SHARE",
   "describe": {
     "columns": [
       {
@@ -36,5 +36,5 @@
       true
     ]
   },
-  "hash": "75c796c17555a88169707e9ba4d33665a0d6f760e968d467af63d079a8170837"
+  "hash": "dcbf1d7a8a21cf3bc64bcff77a5613a4b32eaf2a23ba21dbce49944e1ac795d7"
 }

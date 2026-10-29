@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, removed_at IS NOT NULL OR ol_gone_at IS NOT NULL AS \"unusable!\"\n           FROM media WHERE ol_cover_id = $1 FOR SHARE",
+  "query": "SELECT id,\n                  removed_at IS NOT NULL OR ol_gone_at IS NOT NULL\n                  OR EXISTS (SELECT 1 FROM media_removed_hashes h\n                             WHERE h.sha256 = m.sha256 AND h.blocks_covers) AS \"unusable!\"\n           FROM media m WHERE ol_cover_id = $1 FOR SHARE",
   "describe": {
     "columns": [
       {
@@ -31,5 +31,5 @@
       null
     ]
   },
-  "hash": "3ff71123a981da87f0b90525b100b5815777e645c3f5e61e14b0b6737bef2f11"
+  "hash": "c37b23c9ddce2a0d26adfc4be1e9b108e64c3e74b021e1312f59970cdf85e4ea"
 }

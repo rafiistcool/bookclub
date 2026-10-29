@@ -2800,7 +2800,8 @@ export interface components {
             /** @description The edition's language (MARC code), when the picture is an edition's. */
             language: string | null;
             /**
-             * @description Why it was not attached on its own: `title_differs`, `number_differs`, `several_works`,
+             * @description Why it was not attached on its own: `single_record` (the only title-equal Open Library
+             *     work, but a record with one edition), `title_differs`, `number_differs`, `several_works`,
              *     `generic_title`, `no_author` or `after_takedown`.
              */
             reason: string;
@@ -3365,7 +3366,10 @@ export interface components {
         /** @description A catalog or imported book without a usable cover. */
         MissingCoverOut: {
             book: components["schemas"]["BookOut"];
-            /** @description Readers use it (a shelf entry, favourite, quote, pick, nomination, post or legacy key). */
+            /**
+             * @description Readers use it (a shelf entry, favourite, quote, pick, nomination, post or legacy key;
+             *     `only_me` quotes and diary entries do not count).
+             */
             in_use: boolean;
             /** @description It came from the legacy import. */
             imported: boolean;
