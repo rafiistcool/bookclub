@@ -10,9 +10,14 @@
 //! work ids: legacy books map onto works through `legacy_work_keys`.
 //!
 //! [`rematch`] (`rematch-legacy`) re-resolves the legacy bare-facts editions by ISBN later.
+//!
+//! Both search a cover for every imported catalog book without one (#74, `covers`): the import
+//! right after the books, inside its transaction, each book in a savepoint; the rematch after
+//! its ISBN pass, each book in a transaction of its own.
 
 mod books;
 mod club;
+mod covers;
 mod events;
 mod layout;
 mod personal;
@@ -36,7 +41,7 @@ use sqlx::{PgPool, Postgres, Transaction};
 pub use self::books::{BookTarget, MatchKind};
 pub use self::rematch::rematch;
 use self::report::ReportBuilder;
-pub use self::report::{EntityLine, IsbnLine, IsbnOutcome};
+pub use self::report::{CoverSearchLine, EntityLine, IsbnLine, IsbnOutcome};
 pub use self::source::{LegacyDb, parse_timestamp, read_conn};
 use crate::catalog::shared::lookup::CatalogLookup;
 use crate::media::shared::MediaStore;
@@ -74,6 +79,9 @@ pub struct Args {
     /// Wait before retrying a throttled lookup, instead of the host cooldown (tests set 0).
     #[arg(long, hide = true)]
     pub retry_wait_ms: Option<u64>,
+    /// The cover search's time budget, instead of 5 minutes (tests).
+    #[arg(long, hide = true)]
+    pub cover_budget_ms: Option<u64>,
 }
 
 /// Flags of `rematch-legacy`.
@@ -85,6 +93,9 @@ pub struct RematchArgs {
     /// Wait before retrying a throttled lookup, instead of the host cooldown (tests set 0).
     #[arg(long, hide = true)]
     pub retry_wait_ms: Option<u64>,
+    /// The wait between two cover searches, instead of 2 seconds (tests set 0).
+    #[arg(long, hide = true)]
+    pub cover_pace_ms: Option<u64>,
 }
 
 /// What an import or rematch did, one line per entity. `main.rs` prints it with `Display`.
@@ -115,6 +126,10 @@ pub struct Report {
     /// Rows skipped or changed one by one (dropped references, skipped pick notes, layouts
     /// imported as the default, `quote_added` events without their quote, …).
     pub notes: Vec<String>,
+    /// The cover search's counts (#74), when it ran or was skipped with `--offline`.
+    pub covers: Option<CoverSearchLine>,
+    /// The imported books still without a cover, with titles (the `without a cover` section).
+    pub without_cover: Vec<String>,
 }
 
 impl Report {
@@ -144,6 +159,8 @@ impl Report {
             lookup_wait: b.lookup_wait,
             books,
             notes: b.notes,
+            covers: b.covers,
+            without_cover: b.without_cover,
         }
     }
 }
@@ -312,6 +329,7 @@ impl Importer {
         self.import_club().await?;
         self.import_invites().await?;
         self.import_books().await?;
+        self.search_covers().await?;
         self.import_shelf().await?;
         self.import_layouts().await?;
         self.import_favorites().await?;
