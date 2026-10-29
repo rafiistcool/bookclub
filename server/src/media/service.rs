@@ -19,6 +19,16 @@
 //!
 //! **Takedowns** always win: `removed_at` is read first, and the row is only filled while it is
 //! not removed. Bytes stored by a fetch that lost the race against a takedown are deleted again.
+//! Bytes whose SHA-256 is a taken-down picture's (`media_removed_hashes`, or a removed row's
+//! `sha256`) are never stored: Open Library keeps one picture under several cover ids, so the
+//! row is settled as taken down too, and its works get the takedown flag of the cover search
+//! (#74, docs/phase2/notes/cover.md §1.2).
+//!
+//! **Gone pictures** (#74, notes §1.1): a row Open Library confirmed gone (`ol_gone_at`) is never
+//! fetched again. [`MediaService::recheck_cover`] fetches a failing row at once, ignoring the
+//! 7-day window, and tells Open Library's 404 or 410 apart from the other "no cover" outcomes;
+//! [`MediaService::probe_covers`] checks that the cover server still serves a known picture
+//! before anything is marked gone.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -36,9 +46,10 @@ use url::Url;
 use super::color::dominant_color;
 use super::pipeline::{self, PictureError, PictureKind, Processed};
 use crate::AppState;
+use crate::catalog::shared::ingest;
 use crate::config::Config;
-use crate::media::shared::MediaStore;
 use crate::media::shared::urls::{object_key, storage_prefix};
+use crate::media::shared::{MediaStore, is_removed_hash};
 use crate::outbound::{Outbound, RetryPolicy, UpstreamError, get_bytes};
 
 /// Ids the prefetch queue holds at most; further ids are dropped until the worker catches up.
@@ -71,12 +82,35 @@ pub enum CoverOutcome {
     Failed,
 }
 
+/// What [`MediaService::recheck_cover`] found or did (#74).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecheckOutcome {
+    /// The bytes are in the store (they were, or the fetch stored them).
+    Stored,
+    /// The row was taken down, or its bytes are a taken-down picture's.
+    Removed,
+    /// Open Library answered 404 or 410. Nothing was recorded: the caller marks the row gone
+    /// once the probe passed.
+    Missing,
+    /// A refused redirect, a body over 1.5 MB or bytes that are no usable picture: the row stays
+    /// failing (`fetch_failed_at` = now).
+    Unusable,
+    /// Not an Open Library cover row, or one confirmed gone already.
+    NotFetchable,
+    /// Open Library is throttled or cooling down.
+    Busy,
+    /// A transport error, a timeout or an unexpected status; nothing was recorded.
+    Failed,
+}
+
 /// What one Open Library cover request gave.
 #[derive(Debug)]
 pub enum CoverFetch {
     /// The image bytes (at most 1.5 MB).
     Image(Bytes),
-    /// Settled: there is no usable cover (404, 410, a refused redirect, too large).
+    /// Open Library answered 404 or 410: it has no picture under this id (now).
+    Gone,
+    /// Settled: there is no usable cover (a refused redirect, too large).
     NoCover,
     /// Throttled or cooling down.
     Busy,
@@ -167,9 +201,9 @@ impl MediaService {
                     let inner = self.inner.clone();
                     let db = db.clone();
                     let task = tokio::spawn(async move {
-                        let outcome = inner.fetch_and_store(&db, media_id, &policy).await;
+                        let outcome = inner.fetch_and_store(&db, media_id, &policy, false).await;
                         inner.finished(media_id, generation);
-                        outcome
+                        outcome.into()
                     });
                     let fetch = async move {
                         task.await.unwrap_or_else(|error| {
@@ -185,6 +219,62 @@ impl MediaService {
             }
         };
         fetch.await
+    }
+
+    /// Fetches a failing Open Library cover row again at once, ignoring the 7-day window (the
+    /// dead check of the cover search and an admin's "Search now", #74). A 404 or 410 is
+    /// [`RecheckOutcome::Missing`] and records nothing; the caller decides whether the row is
+    /// gone. Not coalesced with [`MediaService::ensure_cover`]: the fill is guarded, so two
+    /// fetches of one row at once store it once.
+    pub async fn recheck_cover(
+        &self,
+        db: &PgPool,
+        media_id: i64,
+        policy: RetryPolicy,
+    ) -> RecheckOutcome {
+        self.inner
+            .fetch_and_store(db, media_id, &policy, true)
+            .await
+    }
+
+    /// Whether Open Library's cover server still serves the picture we stored most recently,
+    /// fetched without storing it. Anything but a picture (or no stored picture to try) means
+    /// the cover server is broken or has moved, and nothing may be marked gone (#74, notes
+    /// §1.1).
+    pub async fn probe_covers(&self, db: &PgPool, policy: RetryPolicy) -> bool {
+        let known = sqlx::query_scalar!(
+            r#"SELECT ol_cover_id AS "ol_cover_id!" FROM media
+               WHERE source = 'openlibrary' AND storage_key IS NOT NULL AND removed_at IS NULL
+               ORDER BY id DESC LIMIT 1"#
+        )
+        .fetch_optional(db)
+        .await;
+        let cover_id = match known {
+            Ok(Some(cover_id)) => cover_id,
+            Ok(None) => return false,
+            Err(error) => {
+                tracing::warn!(%error, "the cover probe cannot read the database");
+                return false;
+            }
+        };
+        match fetch_ol_cover(&self.inner.outbound, cover_id, &policy).await {
+            CoverFetch::Image(bytes) => image::guess_format(&bytes).is_ok(),
+            _ => false,
+        }
+    }
+}
+
+impl From<RecheckOutcome> for CoverOutcome {
+    fn from(outcome: RecheckOutcome) -> CoverOutcome {
+        match outcome {
+            RecheckOutcome::Stored => CoverOutcome::Stored,
+            RecheckOutcome::Removed => CoverOutcome::Removed,
+            RecheckOutcome::Missing | RecheckOutcome::Unusable | RecheckOutcome::NotFetchable => {
+                CoverOutcome::NoCover
+            }
+            RecheckOutcome::Busy => CoverOutcome::Busy,
+            RecheckOutcome::Failed => CoverOutcome::Failed,
+        }
     }
 }
 
@@ -205,17 +295,24 @@ impl Inner {
         }
     }
 
+    /// The fetch both [`MediaService::ensure_cover`] (`recheck` false) and
+    /// [`MediaService::recheck_cover`] (`recheck` true: the 7-day window is ignored, and a 404 or
+    /// 410 records nothing) run.
     async fn fetch_and_store(
         &self,
         db: &PgPool,
         media_id: i64,
         policy: &RetryPolicy,
-    ) -> CoverOutcome {
-        match self.try_fetch_and_store(db, media_id, policy).await {
+        recheck: bool,
+    ) -> RecheckOutcome {
+        match self
+            .try_fetch_and_store(db, media_id, policy, recheck)
+            .await
+        {
             Ok(outcome) => outcome,
             Err(error) => {
                 tracing::warn!(media_id, error = %error, "storing an Open Library cover failed");
-                CoverOutcome::Failed
+                RecheckOutcome::Failed
             }
         }
     }
@@ -225,9 +322,11 @@ impl Inner {
         db: &PgPool,
         media_id: i64,
         policy: &RetryPolicy,
-    ) -> anyhow::Result<CoverOutcome> {
+        recheck: bool,
+    ) -> anyhow::Result<RecheckOutcome> {
         let Some(row) = sqlx::query!(
             r#"SELECT public_id, ol_cover_id, storage_key, removed_at IS NOT NULL AS "removed!",
+                      ol_gone_at IS NOT NULL AS "gone!",
                       COALESCE(fetch_failed_at > now() - make_interval(days => $2), false)
                           AS "recently_failed!"
                FROM media WHERE id = $1 AND kind = 'cover'"#,
@@ -237,29 +336,46 @@ impl Inner {
         .fetch_optional(db)
         .await?
         else {
-            return Ok(CoverOutcome::NoCover);
+            return Ok(RecheckOutcome::NotFetchable);
         };
         if row.removed {
-            return Ok(CoverOutcome::Removed);
+            return Ok(RecheckOutcome::Removed);
         }
         if row.storage_key.is_some() {
-            return Ok(CoverOutcome::Stored);
+            return Ok(RecheckOutcome::Stored);
         }
-        let Some(ol_cover_id) = row.ol_cover_id else {
-            return Ok(CoverOutcome::NoCover);
+        let Some(ol_cover_id) = row.ol_cover_id.filter(|_| !row.gone) else {
+            return Ok(RecheckOutcome::NotFetchable);
         };
-        if row.recently_failed {
-            return Ok(CoverOutcome::NoCover);
+        if row.recently_failed && !recheck {
+            return Ok(RecheckOutcome::NotFetchable);
         }
         let bytes = match fetch_ol_cover(&self.outbound, ol_cover_id, policy).await {
             CoverFetch::Image(bytes) => bytes,
+            CoverFetch::Gone => {
+                if !recheck {
+                    settle_without_cover(db, media_id).await?;
+                }
+                return Ok(RecheckOutcome::Missing);
+            }
             CoverFetch::NoCover => {
                 settle_without_cover(db, media_id).await?;
-                return Ok(CoverOutcome::NoCover);
+                return Ok(RecheckOutcome::Unusable);
             }
-            CoverFetch::Busy => return Ok(CoverOutcome::Busy),
-            CoverFetch::Failed => return Ok(CoverOutcome::Failed),
+            CoverFetch::Busy => return Ok(RecheckOutcome::Busy),
+            CoverFetch::Failed => return Ok(RecheckOutcome::Failed),
         };
+        // The same picture under another cover id as one an admin took down: never stored.
+        let received = sha256_all(vec![bytes.clone()]).await?[0];
+        if self.taken_down_bytes(db, &received).await? {
+            settle_taken_down(db, media_id).await?;
+            tracing::info!(
+                media_id,
+                ol_cover_id,
+                "an Open Library cover is a taken-down picture; settled as removed"
+            );
+            return Ok(RecheckOutcome::Removed);
+        }
         let processed = match self.process(PictureKind::Cover, bytes).await {
             Ok(processed) => processed,
             Err(PictureError::Encode(error)) => anyhow::bail!("cannot encode a cover: {error}"),
@@ -271,7 +387,7 @@ impl Inner {
                     "Open Library sent no usable cover"
                 );
                 settle_without_cover(db, media_id).await?;
-                return Ok(CoverOutcome::NoCover);
+                return Ok(RecheckOutcome::Unusable);
             }
         };
         store_variants(
@@ -306,7 +422,7 @@ impl Inner {
         .rows_affected()
             == 1;
         if filled {
-            return Ok(CoverOutcome::Stored);
+            return Ok(RecheckOutcome::Stored);
         }
         let removed = sqlx::query_scalar!(
             r#"SELECT removed_at IS NOT NULL AS "removed!" FROM media WHERE id = $1"#,
@@ -320,11 +436,43 @@ impl Inner {
             if let Err(error) = self.store.delete_prefix(&prefix).await {
                 tracing::warn!(prefix, %error, "cannot delete the bytes of a removed cover");
             }
-            return Ok(CoverOutcome::Removed);
+            return Ok(RecheckOutcome::Removed);
         }
         // Stored meanwhile under the same keys (another server instance).
-        Ok(CoverOutcome::Stored)
+        Ok(RecheckOutcome::Stored)
     }
+
+    /// Whether bytes with this SHA-256 are a taken-down picture: one a takedown recorded
+    /// (`media_removed_hashes`) or a removed row's bytes as received.
+    async fn taken_down_bytes(&self, db: &PgPool, sha256: &[u8; 32]) -> sqlx::Result<bool> {
+        let mut conn = db.acquire().await?;
+        let recorded = sqlx::query_scalar!(
+            r#"SELECT EXISTS (SELECT 1 FROM media_removed_hashes WHERE sha256 = $1) AS "removed!""#,
+            &sha256[..]
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        Ok(recorded || is_removed_hash(&mut conn, sha256).await?)
+    }
+}
+
+/// Settles an Open Library row whose bytes are a taken-down picture's: `removed_at` (no bytes
+/// are stored), and every cover that shows it is cleared through `ingest::clear_media`, which
+/// gives those works the cover search's takedown flag. One transaction, the media row first.
+async fn settle_taken_down(db: &PgPool, media_id: i64) -> sqlx::Result<()> {
+    let mut tx = db.begin().await?;
+    let removed = sqlx::query_scalar!(
+        "UPDATE media SET removed_at = now()
+         WHERE id = $1 AND removed_at IS NULL AND storage_key IS NULL
+         RETURNING id",
+        media_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    if removed.is_some() {
+        ingest::clear_media(&mut tx, media_id).await?;
+    }
+    tx.commit().await
 }
 
 /// Puts every variant under `object_key(kind, public_id, variant)`.
@@ -394,7 +542,7 @@ pub async fn fetch_ol_cover(
     match get_bytes(outbound, &outbound.ol_covers, url, policy).await {
         Ok(upstream) => CoverFetch::Image(upstream.body),
         Err(UpstreamError::Redirect(_) | UpstreamError::TooLarge(_)) => CoverFetch::NoCover,
-        Err(UpstreamError::Status(404 | 410)) => CoverFetch::NoCover,
+        Err(UpstreamError::Status(404 | 410)) => CoverFetch::Gone,
         Err(UpstreamError::Throttled) => CoverFetch::Busy,
         Err(UpstreamError::Status(_) | UpstreamError::Transport(_) | UpstreamError::Decode(_)) => {
             CoverFetch::Failed

@@ -976,7 +976,8 @@ async fn replace_contributors(
 // ---------------------------------------------------------------------------------------------
 
 /// The media row for an Open Library cover id (insert-only). `None` when that row was removed by
-/// a takedown, so no caller can attach it again, and for ids ≤ 0.
+/// a takedown or Open Library confirmed it gone (`media.ol_gone_at`, the cover search's dead
+/// check), so no caller can attach it again, and for ids ≤ 0.
 pub async fn ol_cover_media(
     conn: &mut PgConnection,
     ol_cover_id: i64,
@@ -989,7 +990,8 @@ pub async fn ol_cover_media(
         .remove(&ol_cover_id))
 }
 
-/// [`ol_cover_media`] for many cover ids at once: the usable (not removed) media id per cover id.
+/// [`ol_cover_media`] for many cover ids at once: the usable (not removed, not gone) media id per
+/// cover id.
 /// The rows are locked `FOR SHARE` until the transaction ends, so a takedown's
 /// `UPDATE media SET removed_at` waits for this ingest to commit and its `clear_media` then sees
 /// the reference.
@@ -1031,7 +1033,7 @@ async fn ol_cover_medias(
     }
     let rows = sqlx::query!(
         r#"SELECT id, ol_cover_id AS "ol_cover_id!" FROM media
-           WHERE ol_cover_id = ANY($1) AND removed_at IS NULL
+           WHERE ol_cover_id = ANY($1) AND removed_at IS NULL AND ol_gone_at IS NULL
            ORDER BY id
            FOR SHARE"#,
         &wanted
@@ -2120,17 +2122,43 @@ pub async fn set_cover(
 }
 
 /// Takedown: clears every works/editions `cover_media_id` that points at the media row (and its
-/// provenance). Returns the number of rows cleared.
+/// provenance). Returns the number of rows cleared. Every work it cleared gets the cover
+/// search's takedown flag (`cover_search.takedown_at`, #74): from then on the search only
+/// suggests a cover for it, a person decides.
 pub async fn clear_media(conn: &mut PgConnection, media_id: i64) -> sqlx::Result<u64> {
-    let works = sqlx::query!(
+    let (works, editions) = clear_references(conn, media_id).await?;
+    if !works.is_empty() {
+        sqlx::query!(
+            "INSERT INTO cover_search (work_id, takedown_at)
+             SELECT id, now() FROM unnest($1::int8[]) AS t (id)
+             ON CONFLICT (work_id) DO UPDATE SET takedown_at = now()",
+            &works
+        )
+        .execute(conn)
+        .await?;
+    }
+    Ok(works.len() as u64 + editions)
+}
+
+/// An Open Library picture confirmed gone (#74, the cover search's dead check): clears every
+/// works/editions reference to the media row and its provenance, like [`clear_media`] but
+/// without the takedown flag. The caller locked the media row `FOR UPDATE` first. Returns the
+/// works it cleared, which the cover search then takes up.
+pub async fn clear_gone_media(conn: &mut PgConnection, media_id: i64) -> sqlx::Result<Vec<i64>> {
+    Ok(clear_references(conn, media_id).await?.0)
+}
+
+/// The works and the number of editions whose cover was `media_id`, cleared (works first).
+async fn clear_references(conn: &mut PgConnection, media_id: i64) -> sqlx::Result<(Vec<i64>, u64)> {
+    let works = sqlx::query_scalar!(
         "UPDATE works SET cover_media_id = NULL, field_sources = field_sources - 'cover_media_id',
                 updated_at = now()
-         WHERE cover_media_id = $1",
+         WHERE cover_media_id = $1
+         RETURNING id",
         media_id
     )
-    .execute(&mut *conn)
-    .await?
-    .rows_affected();
+    .fetch_all(&mut *conn)
+    .await?;
     let editions = sqlx::query!(
         "UPDATE editions SET cover_media_id = NULL,
                 field_sources = field_sources - 'cover_media_id', updated_at = now()
@@ -2140,7 +2168,7 @@ pub async fn clear_media(conn: &mut PgConnection, media_id: i64) -> sqlx::Result
     .execute(conn)
     .await?
     .rows_affected();
-    Ok(works + editions)
+    Ok((works, editions))
 }
 
 fn invalid(key: &str) -> AppError {
