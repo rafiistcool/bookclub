@@ -288,7 +288,7 @@ The verifiers corrected two details:
 
 ## Phase 2 Wave 2
 
-A security review of Wave 2, through the reports and operations lenses: `8ecc528..phase-2` (DEP2 and LEG2 merged, CUT2's record), and ADM2 on its branch `phase2/adm2` at `00fab8a`, which is not merged yet, because the reports on profile pictures exist only there. Three verifiers tried to refute each finding against the code; for finding 7, each ran restic 0.17.3. A finding counts as confirmed when at least two of the three did not refute it. Severity follows the rubric above. Rafael's answer for Wave 2 (2026-10-29) applies: take the recommended option, and leave what only matters at go-live until then. The two ADM2 fixes were commits on `phase2/adm2` and landed with its merge (f6e28e8); their notes (`docs/phase2/notes/adm2.md`, "Security review fixes") carry the contract changes, which `conventions.md` §5.6, §5.7 and §7.2 and `endpoint-map.md` §6 now describe.
+A security review of Wave 2, through the reports and operations lenses: `8ecc528..phase-2` (DEP2 and LEG2 merged, CUT2's record), and ADM2 on its branch `phase2/adm2` at `00fab8a`, which was not merged then, because the reports on profile pictures existed only there. Three verifiers tried to refute each finding against the code; for finding 7, each ran restic 0.17.3. A finding counts as confirmed when at least two of the three did not refute it. Severity follows the rubric above. Rafael's answer for Wave 2 (2026-10-29) applies: take the recommended option, and leave what only matters at go-live until then. The two ADM2 fixes were commits on `phase2/adm2` and landed with its merge (f6e28e8); their notes (`docs/phase2/notes/adm2.md`, "Security review fixes") carry the contract changes, which `conventions.md` §5.6, §5.7 and §7.2 and `endpoint-map.md` §6 now describe.
 
 | # | Severity | Finding | Outcome |
 |---|---|---|---|
@@ -334,14 +334,15 @@ A security review of Wave 2, through the reports and operations lenses: `8ecc528
 
 ### 4. [low] A reported profile picture could be replaced to dodge the decision
 
-`media/avatar.rs` (`delete_avatars`) deleted every avatar row of the owner on a replace or delete, the reported one too. Its reports lost their picture (`ON DELETE SET NULL`), "remove" answered 409 `The reported picture is no longer online`, no hash went into `media_removed_hashes`, and the same file could be uploaded again once the report was closed. The admin could not even see what had been reported. ADM2's notes listed this as an open integrator item. It applies only once ADM2 is merged: on `phase-2`, only covers can be reported.
+`media/avatar.rs` (`delete_avatars`) deleted every avatar row of the owner on a replace or delete, the reported one too. Its reports lost their picture (`ON DELETE SET NULL`), "remove" answered 409 `The reported picture is no longer online`, no hash went into `media_removed_hashes`, and the same file could be uploaded again once the report was closed. The admin could not even see what had been reported. ADM2's notes listed this as an open integrator item. It applied only to ADM2's branch: before the merge, only covers could be reported on `phase-2`.
 
-**Fix (`phase2/adm2`):**
+**Fix (44a281f, merged with ADM2 in f6e28e8):**
 - A profile picture with an open report is **held** when its owner replaces or deletes it: it leaves the profile at once and keeps its row and files under a new public id, which only the admin queue shows. Its old URL answers 404 like a deleted picture's, and the owner's export leaves it out, so neither tells the owner of the report (finding 1). The avatar rows are locked before the open reports are read, so a report being filed is seen.
 - "Remove" takes a held picture down like any other and blocks its hashes. A takedown of a profile picture also takes down the owner's other live profile pictures with the same bytes as received: the same file uploaded again while the first was held. The owner gets one statement of reasons.
 - "Dismiss" deletes a held picture with its files, and its reporters learn that it is no longer online.
 - `gone` (409 on "remove") remains for a profile picture without its row: an account deleted since.
 - Limit: the hash block compares exact bytes, so a re-encoded copy still needs a new report.
+- Later (the review of the ADM2 merge, 8c9f45e): a report being filed while the owner replaced the picture could deadlock with the replace instead of being seen, because the report's foreign key to the owner locked the owner's row after the picture. Every report, takedown and dismissal of a profile picture now locks the owner's row first (`conventions.md` §7.2).
 
 **Tests** (`media_reports.rs`, `auth_export.rs`):
 - `a_reported_avatar_its_owner_replaces_is_held_for_the_decision`, `an_avatar_uploaded_again_while_reported_comes_down_with_it`, `a_dismissed_report_of_a_replaced_avatar_deletes_it` and `auth_export.rs::a_held_avatar_is_left_out_of_the_export_until_it_is_decided` fail without the fix. Disabling the takedown of the copies, or the deletion of a dismissed held picture, fails one test each.
