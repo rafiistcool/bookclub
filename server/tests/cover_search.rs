@@ -814,6 +814,55 @@ async fn misses_back_off_and_a_corrected_title_is_due_at_once(db: PgPool) {
     assert_eq!((row.misses, row.next_hours), (1, Some(30 * 24)));
 }
 
+/// A book that loses its cover (a takedown, or the gone step) is due for the search at once,
+/// whatever miss backoff it had before it got that cover; also a book nobody uses that had
+/// stopped after two misses.
+#[sqlx::test]
+async fn a_book_that_loses_its_cover_is_due_at_once(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let used = legacy_work(&app, "Momo", "Michael Ende").await;
+    let (unused, _) = app
+        .dnb_work("Der Schwarm", "Frank Schätzing", "9783161484100")
+        .await;
+    app.exec(&format!(
+        "UPDATE works SET details_fetched_at = now() WHERE id = {}",
+        unused.id
+    ))
+    .await;
+    run_job(&app).await;
+    app.exec(&format!(
+        "UPDATE cover_search SET misses = 2, next_search_at = now() + interval '60 days'
+         WHERE work_id = {}",
+        unused.id
+    ))
+    .await;
+    assert_eq!(search_row(&app, used).await.unwrap().misses, 1);
+    let mut conn = app.db.acquire().await.unwrap();
+    assert!(job::due_works(&mut conn, 30).await.unwrap().is_empty());
+
+    // A reader's photo, taken down; an Open Library picture, gone.
+    let photo = upload_media(&app).await;
+    set_cover(&app, CoverTarget::Work(used), photo, Source::User).await;
+    let picture = ol_media(&app, 321).await;
+    set_cover(
+        &app,
+        CoverTarget::Work(unused.id),
+        picture,
+        Source::OpenLibrary,
+    )
+    .await;
+    ingest::clear_media(&mut conn, photo).await.unwrap();
+    assert!(dead::mark_gone(&app.db, picture).await.unwrap());
+
+    let mut due = job::due_works(&mut conn, 30).await.unwrap();
+    due.sort_unstable();
+    assert_eq!(due, [used, unused.id]);
+    let row = search_row(&app, used).await.unwrap();
+    assert_eq!((row.misses, row.next_hours, row.takedown), (0, None, true));
+    let row = search_row(&app, unused.id).await.unwrap();
+    assert_eq!((row.misses, row.next_hours, row.takedown), (0, None, false));
+}
+
 /// Tier 1 (books in use) before tier 2; tier 2 never suggests, stops after two misses and is
 /// due again once readers use it. DNB works still to come and Open Library works nobody uses
 /// are not searched.

@@ -2124,14 +2124,16 @@ pub async fn set_cover(
 /// Takedown: clears every works/editions `cover_media_id` that points at the media row (and its
 /// provenance). Returns the number of rows cleared. Every work it cleared gets the cover
 /// search's takedown flag (`cover_search.takedown_at`, #74): from then on the search only
-/// suggests a cover for it, a person decides.
+/// suggests a cover for it, a person decides. It is due for the search at once (an earlier
+/// miss backoff is dropped: the book had a cover since).
 pub async fn clear_media(conn: &mut PgConnection, media_id: i64) -> sqlx::Result<u64> {
     let (works, editions) = clear_references(conn, media_id).await?;
     if !works.is_empty() {
         sqlx::query!(
             "INSERT INTO cover_search (work_id, takedown_at)
              SELECT id, now() FROM unnest($1::int8[]) AS t (id)
-             ON CONFLICT (work_id) DO UPDATE SET takedown_at = now()",
+             ON CONFLICT (work_id) DO UPDATE SET
+                 takedown_at = now(), next_search_at = NULL, misses = 0",
             &works
         )
         .execute(conn)
@@ -2143,9 +2145,19 @@ pub async fn clear_media(conn: &mut PgConnection, media_id: i64) -> sqlx::Result
 /// An Open Library picture confirmed gone (#74, the cover search's dead check): clears every
 /// works/editions reference to the media row and its provenance, like [`clear_media`] but
 /// without the takedown flag. The caller locked the media row `FOR UPDATE` first. Returns the
-/// works it cleared, which the cover search then takes up.
+/// works it cleared, which are due for the cover search at once (an earlier miss backoff is
+/// dropped: the book had a cover since).
 pub async fn clear_gone_media(conn: &mut PgConnection, media_id: i64) -> sqlx::Result<Vec<i64>> {
-    Ok(clear_references(conn, media_id).await?.0)
+    let works = clear_references(conn, media_id).await?.0;
+    if !works.is_empty() {
+        sqlx::query!(
+            "UPDATE cover_search SET next_search_at = NULL, misses = 0 WHERE work_id = ANY($1)",
+            &works
+        )
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(works)
 }
 
 /// The works and the number of editions whose cover was `media_id`, cleared (works first).
