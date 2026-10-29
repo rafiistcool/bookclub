@@ -85,6 +85,10 @@ pub async fn delete_account(
 /// `verified_hash` is the hash the password was checked against: a password change or reset
 /// that committed since then wins (400 `Current password is wrong`).
 ///
+/// The hourly purge of empty sign-ups (`super::purge_empty_sign_ups`, Q14) deletes through here
+/// too, with the hash it read under its own lock of the account. Such an account has no row in
+/// a club, so taking its lock first locks no club out of order.
+///
 /// Locks are taken in the order of every membership write (§5.3): every club the deletion writes
 /// in ([`lock_clubs`]), then the account, then the user's posts. A removal, a club delete or a
 /// join holds its club and then needs rows of that club the deletion writes (or the account's

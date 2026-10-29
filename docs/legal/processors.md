@@ -1,6 +1,6 @@
 # Processors and other recipients
 
-Who outside the operator receives data from the hosted Bookclub service, and whether each one is a processor (Art. 28 DSGVO) that needs a data processing agreement (DPA, Auftragsverarbeitungsvertrag). Rafael files every DPA (work plan §5 step 18). Entries marked "to confirm" wait for a decision (`privacy-facts.md` §0).
+Who outside the operator receives data from the hosted Bookclub service, and whether each one is a processor (Art. 28 DSGVO) that needs a data processing agreement (DPA, Auftragsverarbeitungsvertrag). Rafael files every DPA (work plan §5 step 18). The providers are the ones Rafael chose on 2026-10-29 (`privacy-facts.md` §0). "To sign" marks a DPA that is not signed yet, because the account only comes once the service goes live; "to confirm" marks a value that follows then, or a point for the legal source.
 
 `server/tests/legal_docs.rs` checks that every outbound host in `server/src/config.rs` and `server/src/outbound.rs` appears here with a verdict.
 
@@ -8,9 +8,10 @@ Who outside the operator receives data from the hosted Bookclub service, and whe
 
 | Recipient | Host | Verdict | DPA |
 |---|---|---|---|
-| Mail provider | to confirm (Q4: Brevo recommended) | processor | needed |
-| Backup target | to confirm (Q9: Hetzner Storage Box recommended) | processor | needed |
-| Uptime monitor and heartbeats | to confirm (Q10: Better Stack or UptimeRobot, healthchecks.io) | no personal data of users; processor only if the provider says so | to confirm |
+| Mail provider | Brevo (Q4); the SMTP host and account follow with the domain | processor | needed: to sign |
+| Backup target | Hetzner Storage Box (Hetzner Online GmbH), with the box's own snapshots (Q9) | processor (stores only ciphertext) | needed: to sign |
+| Uptime check | Better Stack or UptimeRobot (Q10 A; which one is to confirm) | not a processor of users' data: it receives `{"status":"ok"}` | none for users' data |
+| Heartbeats | healthchecks.io (Q10 A) | not a processor of users' data once picture ids are blanked out of the pings (chosen; to do in DEP2's scripts); to confirm with the lawyer | none for users' data (below) |
 | Open Library | `openlibrary.org`, `covers.openlibrary.org`, redirects to `archive.org` | not a processor: an independent public catalog that receives no personal data | none |
 | Deutsche Nationalbibliothek | `services.dnb.de` | not a processor: an independent public catalog that receives no personal data | none |
 | Hosting, reverse proxy, registry | the operator's own hardware | not a recipient: the operator runs them | none |
@@ -19,32 +20,44 @@ Who outside the operator receives data from the hosted Bookclub service, and whe
 
 ## Processors
 
-### Mail provider (to confirm, Q4)
+### Mail provider: Brevo (Q4)
 
-- **What it does:** delivers the service's mails over SMTP (`SMTP_URL`, `EMAIL_FROM`; `server/src/email/`).
-- **Data:** recipient address, username, the text in the user's language, verification and reset links; later admin notifications (ADM) and takedown decisions (ADM2). The provider also sees delivery metadata (time, status, bounces).
-- **Recommendation:** Brevo (Sendinblue SAS, France): SMTPS or STARTTLS, DKIM on the service's domain, a standard DPA, a free tier for beta volume. Alternatives: Scaleway Transactional Email (FR), Mailjet (FR); a mailbox provider's SMTP (mailbox.org, Posteo) is not meant for transactional mail.
-- **Third countries:** none with an EU provider (to confirm the provider's sub-processors).
-- **To fill in:** provider, DPA date, sub-processor list, retention of sending logs.
-- **Until Q4 is answered:** staging needs an interim SMTP account, which is a processor too and needs a DPA if real addresses go through it (work plan §0 item 9).
+- **What it does:** delivers the service's mails over SMTP (`SMTP_URL`, `EMAIL_FROM`; `server/src/email/`). The server sends only over TLS: `smtps://`, or STARTTLS that must succeed (`server/src/config.rs`, `check_smtp_tls`).
+- **Data:** the recipient address, the username, the text in the user's language: verification and reset links, the "email changed" and "address in use" notices, the admin notifications to instance admins (counts and ages only, no reporter; ADM), and with ADM2 the decision to a reporter and the statement of reasons to an uploader (Q12 A). The provider also sees delivery metadata (time, status, bounces).
+- **Provider:** Brevo, France (the legal entity as its DPA names it; Sendinblue SAS before the rename, to confirm). SMTPS or STARTTLS, DKIM on the service's domain, a standard DPA, a free tier for beta volume.
+- **Third countries:** none planned; to confirm from the DPA's sub-processor list.
+- **To sign:** the DPA, once the account exists. The account, the domain verification and the SMTP credentials come with the domain (work plan §5 step 8).
+- **To fill in then:** the DPA date, the sub-processor list, the retention of sending logs.
+- **Until then:** staging needs an interim SMTP account, which is a processor too and needs a DPA if real addresses go through it (work plan §0 item 9).
 
-### Backup target (to confirm, Q9)
+### Backup target: Hetzner Storage Box (Q9)
 
-- **What it does:** stores the nightly backups: a database dump and the media files, encrypted with restic before they leave the VM (DEP, #51).
-- **Data:** every table and picture, but only as ciphertext; the key stays with the operator (password manager, work plan §5 step 12).
-- **Recommendation:** Hetzner Storage Box (Hetzner Online GmbH, Germany) with restic: 7 daily, 4 weekly, 12 monthly snapshots, a weekly restore test.
-- **Third countries:** none with Hetzner (to confirm).
-- **To fill in:** provider, DPA date, location, retention.
+- **What it does:** holds the restic repository of the nightly backups: the database dump and the media files, encrypted by restic on the VM before they leave it, over SFTP (`deploy/hosted/backup.sh`; 7 daily, 4 weekly and 12 monthly snapshots, a weekly restore test with `deploy/hosted/restore-test.sh`).
+- **Storage Box snapshots:** Hetzner's automatic snapshots of the box, set up in Hetzner's console, which the VM's SFTP user cannot delete (the Phase 2 security review, `docs/phase1/security-review.md`, finding 3, option A, chosen on 2026-10-29; DEP2 documents the setup in `deploy/hosted/README.md`). They hold the same ciphertext as the box.
+- **Data:** every table and picture, only as ciphertext; the key stays with the operator (password manager, work plan §5 step 12). Hetzner cannot read it, but stores it on the operator's behalf, so it is a processor.
+- **Provider:** Hetzner Online GmbH, Germany.
+- **Third countries:** none, as long as the box is ordered in an EU location (to confirm when ordering).
+- **To sign:** Hetzner's DPA, when the box is ordered.
+- **Snapshots kept:** one a day, in as many slots as the box's plan has (BX11: 10, so about 10 days back; `deploy/hosted/README.md`, "Storage Box snapshots", DEP2).
+- **To fill in then:** the DPA date, the box's plan and location.
 
-## Probably not processors
+## Monitoring (Q10 A)
 
-### Uptime monitor and heartbeats (to confirm, Q10)
+The operator gets alerts when the service or one of its timers stops. Both services hold the operator's own account (address, phone number for alerts), which is not users' data.
 
-- **What it does:** calls `GET /api/health` (answer `{"status":"ok"}`, `server/src/health.rs`) and receives heartbeat pings from the backup, update and restore-test timers on the VM.
-- **Data:** no personal data of users. The pings come from the VM's address; the alerts go to the operator.
-- **Verdict:** no processing of users' personal data, so no DPA is required for them. If the provider offers a DPA anyway (for the operator's own account data), file it.
-- **Recommendation:** a hosted HTTP keyword check (Better Stack or UptimeRobot, free tier) plus healthchecks.io heartbeats.
-- **To fill in:** provider, location.
+### Uptime check: Better Stack or UptimeRobot (which one is to confirm)
+
+- **What it does:** calls `GET /api/health` every few minutes and alerts the operator when the answer is not `{"status":"ok"}` (`server/src/health.rs`).
+- **Data:** none of users. The answer is `{"status":"ok"}`, or `{"status":"unavailable"}` while the database does not answer.
+- **Verdict:** not a processor of users' data, so no DPA is needed for them. If the provider offers a DPA anyway (for the operator's account), file it.
+- **To fill in:** the provider, its location.
+
+### Heartbeats: healthchecks.io
+
+- **What it does:** receives pings from the backup, update and restore-test timers on the VM, from the VM's address: one when a run starts, one with the exit status when it ends, and alerts the operator when a ping is missing or reports a failure.
+- **Data:** the end ping of the backup, the restore test and an update carries the last 50 lines of the run's log (`deploy/hosted/backup-lib.sh` (`heartbeat`, `supervise`), `deploy/hosted/update.sh`): row counts per table, restic's summary, durations, and for an update the image and the backup before it. No username, address or content. Rarely, a line names the storage key of a picture the run could not read, for example `avatars/ab/<public id>/a`: a picture deleted while the backup ran, or one a restore test missed. A public id is the secret part of the picture's URL (`privacy-facts.md` §2), so with the service's host it loads that picture.
+- **Chosen for now (2026-10-29, as Rafael asked: take the recommended option, decide what matters at go-live):** the pings keep the log, which tells the operator why a run failed, but every public id (26 characters of `a-z` and `0-9`) is blanked out of it before it is sent. They then carry no personal data, so healthchecks.io is not a processor of users' data and needs no DPA for them. The change is in DEP2's scripts and still to do (`docs/phase2/notes/leg2.md`); until it is made, a ping can carry such a key. The other option, signing healthchecks.io's DPA, stays open if the lawyer prefers it.
+- **To fill in:** the location, and the lawyer's confirmation of the verdict.
 
 ## Not processors
 
@@ -65,7 +78,7 @@ Who outside the operator receives data from the hosted Bookclub service, and whe
 
 ### Hosting, reverse proxy and registry
 
-- **Verdict:** not recipients. The service runs on the operator's own hardware: the app VM, the Caddy reverse proxy that terminates TLS (and keeps a 7-day access log with IP addresses, to confirm), and the Forgejo registry that holds the image. Nobody else operates them.
+- **Verdict:** not recipients. The service runs on the operator's own hardware: the app VM, the Caddy reverse proxy that terminates TLS (and keeps an access log with IP addresses for at most 7 days, `privacy-facts.md` §4), and the Forgejo registry that holds the image. Nobody else operates them.
 - **Domain and DNS:** the registrar and the DNS provider see no data of users (to confirm once the domain is registered, Q1).
 
 ## Later (Phase 4, #60)

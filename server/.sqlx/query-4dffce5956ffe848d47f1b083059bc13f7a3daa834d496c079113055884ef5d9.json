@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM reports WHERE status <> 'open' AND resolved_at < now() - interval '3 years'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "4dffce5956ffe848d47f1b083059bc13f7a3daa834d496c079113055884ef5d9"
+}

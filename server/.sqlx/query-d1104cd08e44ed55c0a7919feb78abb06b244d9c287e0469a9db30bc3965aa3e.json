@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT r.media_id AS \"media_id!\"\n           FROM catalog_edit_requests r\n           JOIN media m ON m.id = r.media_id\n           WHERE r.kind = 'cover_replace' AND r.status = 'rejected'\n             AND r.decided_at < now() - interval '3 years' AND m.removed_at IS NULL\n           ORDER BY 1\n           LIMIT $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "media_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "catalog_edit_requests",
+            "name": "media_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "d1104cd08e44ed55c0a7919feb78abb06b244d9c287e0469a9db30bc3965aa3e"
+}
