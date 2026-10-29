@@ -13,7 +13,8 @@ export interface paths {
         };
         /**
          * The caller's home feed: events of every club they are in, the personal events of their
-         *     co-members from the moment each joined the shared club, and their own personal events.
+         *     co-members from the moment each joined the shared club and of their friends from the moment
+         *     the friendship began, and their own personal events.
          */
         get: operations["activity_home_feed"];
         put?: never;
@@ -1800,8 +1801,8 @@ export interface paths {
         /**
          * Reports a cover (`cover_public_id` of a book or edition) or a profile picture (the public id
          *     in an `avatar_url`): copyright, the wrong book, offensive, or something else. A profile
-         *     picture can be reported by whoever can see its owner (they share a club), else it is 404
-         *     like an unknown picture. 20 new reports per day, and 30 requests per minute, repeats
+         *     picture can be reported by whoever can see its owner (they share a club or are friends), else
+         *     it is 404 like an unknown picture. 20 new reports per day, and 30 requests per minute, repeats
          *     included. Idempotent per reader and picture: a repeat answers with the reader's open report,
          *     and a picture already taken down gets a closed record (`status` `removed`); neither counts
          *     against the daily limit again.

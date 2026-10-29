@@ -222,10 +222,11 @@ async fn feed_item(viewer: &TestClient, path: &str, id: i64) -> Option<Value> {
 }
 
 /// `shelf_finished` payloads lose `rating` and `take` for everyone but the actor while the
-/// actor's entry is "only me" or gone; viewers who do not share a club with the actor never see
-/// the event (conventions §6.4). This is the read-time backstop: the events and visibilities
-/// here are written with SQL, past the write paths that keep an only-me rating out of every
-/// stored payload (the tests below).
+/// actor's entry is "only me" or gone; viewers who neither share a club with the actor nor are
+/// their friend never see the event (conventions §6.4). The friend sees it in the home feed
+/// only: the club feed is the club's members'. This is the read-time backstop: the events and
+/// visibilities here are written with SQL, past the write paths that keep an only-me rating out
+/// of every stored payload (the tests below).
 #[sqlx::test]
 async fn finished_ratings_in_the_feeds_follow_the_entry(db: PgPool) {
     let app = TestApp::new(db).await;
@@ -255,12 +256,21 @@ async fn finished_ratings_in_the_feeds_follow_the_entry(db: PgPool) {
         let own = feed_item(&v.owner, path, id).await.unwrap();
         assert_eq!(own["payload"], full, "{path}");
         assert_eq!(own["mine"], true);
-        for viewer in v.audience() {
+        let viewers = if path == club_feed {
+            vec![&v.co_member]
+        } else {
+            v.audience()
+        };
+        for viewer in viewers {
             let seen = feed_item(viewer, path, id).await.unwrap();
             assert_eq!(seen["payload"], json!({}), "{path}");
             assert_eq!(seen["actor"], "owner");
         }
     }
+    v.friend
+        .get(&club_feed)
+        .await
+        .assert_detail(404, "No such club");
     for viewer in v.strangers() {
         viewer
             .get(&club_feed)

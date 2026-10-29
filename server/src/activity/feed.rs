@@ -4,8 +4,9 @@
 //!
 //! - **Club feed:** the club's events, plus the personal events (`club_id IS NULL`) of its
 //!   current members created at or after their `joined_at`.
-//! - **Home feed:** the union of the caller's club feeds plus the caller's own personal events,
-//!   each event once.
+//! - **Home feed:** the union of the caller's club feeds plus the caller's own personal events
+//!   and the personal events of the caller's friends created at or after the friendship began
+//!   (`bc_friends`, `since`), each event once. A friend's club events stay in their club.
 //! - **Redaction** for everyone but the actor: `shelf_finished` loses `rating` and `take` when
 //!   the actor's current shelf entry for the work is "only me" or gone; `quote_added` is left out
 //!   when its quote is gone, "only me", or not named (`quote_id`).
@@ -162,7 +163,8 @@ struct Page {
 }
 
 /// The caller's home feed: events of every club they are in, the personal events of their
-/// co-members from the moment each joined the shared club, and their own personal events.
+/// co-members from the moment each joined the shared club and of their friends from the moment
+/// the friendship began, and their own personal events.
 #[utoipa::path(
     get,
     path = "/api/activity",
@@ -222,10 +224,12 @@ pub async fn home_feed(
                                 THEN (e.payload ->> 'quote_id')::int8 END
            WHERE (e.club_id IN (SELECT mc.club_id FROM bc_member_clubs($1) mc)
                   OR (e.club_id IS NULL
-                      AND (e.actor_id = $1 OR EXISTS (
-                          SELECT 1 FROM bc_member_clubs($1) mc
-                          JOIN club_memberships m ON m.club_id = mc.club_id
-                          WHERE m.user_id = e.actor_id AND m.joined_at <= e.created_at))))
+                      AND (e.actor_id = $1
+                           OR EXISTS (SELECT 1 FROM bc_member_clubs($1) mc
+                                      JOIN club_memberships m ON m.club_id = mc.club_id
+                                      WHERE m.user_id = e.actor_id AND m.joined_at <= e.created_at)
+                           OR EXISTS (SELECT 1 FROM bc_friends($1) f
+                                      WHERE f.user_id = e.actor_id AND f.since <= e.created_at))))
              AND ($2::int8 IS NULL OR e.id < $2)
              AND ($3::int8 IS NULL OR e.actor_id = $3)
              AND (e.kind <> 'quote_added' OR e.actor_id = $1 OR EXISTS (

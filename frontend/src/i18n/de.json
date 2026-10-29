@@ -639,7 +639,7 @@
     "clubNameRequired": "Gib dem Club einen Namen",
     "clubNameTooLong": "Der Clubname darf höchstens 80 Zeichen haben",
     "noSuchInvite": "Diese Einladung gibt es nicht mehr",
-    "noMember": "Niemand mit diesem Namen ist mit dir in einem Club",
+    "noMember": "Niemand mit diesem Namen in deinen Clubs oder unter deinen Freunden",
     "percentMax": "Prozent-Etappen gehen höchstens bis 100",
     "rangeNeedsUnit": "Ein Bereich braucht eine Einheit",
     "repliesNotPrivate": "Antworten und Club-Beiträge können nicht privat sein",

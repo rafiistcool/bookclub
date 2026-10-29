@@ -639,7 +639,7 @@
     "clubNameRequired": "Give the club a name",
     "clubNameTooLong": "Keep the club name to 80 characters",
     "noSuchInvite": "That invite no longer exists",
-    "noMember": "Nobody with that name shares a club with you",
+    "noMember": "Nobody by that name in your clubs or among your friends",
     "percentMax": "Percent milestones go up to 100",
     "rangeNeedsUnit": "A range needs a unit",
     "repliesNotPrivate": "Replies and club posts cannot be private",
