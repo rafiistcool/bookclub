@@ -26,12 +26,9 @@ const SEND_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// What a decision removed, for the statement of reasons.
 #[derive(Debug, Clone, Copy)]
-pub struct Removal<'a> {
+pub struct Removal {
     /// Who uploaded or added it (`media.uploaded_by`, `works.created_by`, …), if anyone.
     pub owner: Option<i64>,
-    /// `reports.reason` of the report the admin decided (or of the recorded notice); `None`
-    /// when an admin removed it without one.
-    pub reason: Option<&'a str>,
 }
 
 /// The mails of one decision, sent after its transaction commits.
@@ -65,12 +62,15 @@ impl Account {
 /// also the owner gets the statement only. With `gone` (what was reported no longer shows as
 /// reported: a profile picture its owner replaced or deleted, a work merged away) the reporters
 /// learn that instead of a decision on it.
+///
+/// The statement's ground is [`decision_reason`], the reason the owner's export gives for the
+/// same decision (`auth::export`, `reports.about_me`).
 pub async fn decided(
     conn: &mut PgConnection,
     config: &Config,
     admin_id: i64,
     what: Reported<'_>,
-    removal: Option<Removal<'_>>,
+    removal: Option<Removal>,
     gone: bool,
 ) -> sqlx::Result<Notices> {
     let site = site(config);
@@ -121,16 +121,39 @@ pub async fn decided(
             contact,
         ));
     }
-    if let (Some(owner), Some(removal)) = (&owner, removal) {
+    if let Some(owner) = &owner {
+        let reason = decision_reason(conn, admin_id).await?;
         mails.push(templates::statement_of_reasons(
             site,
             owner.recipient(),
             what,
-            removal.reason,
+            reason.as_deref(),
             contact,
         ));
     }
     Ok(Notices(mails))
+}
+
+/// The ground of a removal that `admin_id` decided in this transaction: the reason of the
+/// notice it recorded (a direct takedown with a body), else of the oldest report it removed;
+/// `None` when it removed something no report or notice named (the admin's own finding). One
+/// rule for one decision, which the owner's export applies too (`auth::export`,
+/// `reports.about_me`, ordered the same way), so the statement of reasons and the export never
+/// give two reasons for one decision: two reasons would tell the owner that more than one
+/// report came in, and in a small club who sent them (security review, ADM2 merge).
+pub async fn decision_reason(
+    conn: &mut PgConnection,
+    admin_id: i64,
+) -> sqlx::Result<Option<String>> {
+    sqlx::query_scalar!(
+        "SELECT reason FROM reports
+         WHERE resolved_by = $1 AND resolved_at = now() AND status = 'removed'
+         ORDER BY via = 'notice' DESC, created_at, id
+         LIMIT 1",
+        admin_id
+    )
+    .fetch_optional(conn)
+    .await
 }
 
 impl Notices {

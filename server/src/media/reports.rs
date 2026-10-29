@@ -557,7 +557,7 @@ pub async fn resolve_report(
 ) -> ApiResult<Json<ReportOut>> {
     let report = sqlx::query!(
         "SELECT target_kind, media_id, work_id, edition_id, target_work_id, target_user_id,
-                reason, status
+                status
          FROM reports WHERE id = $1",
         report_id
     )
@@ -690,7 +690,6 @@ pub async fn resolve_report(
         (Some(decision), Some(what)) => {
             let removal = decision.removed.then_some(Removal {
                 owner: decision.owner,
-                reason: Some(&report.reason),
             });
             // A held picture that stays dismissed is no longer online either.
             notices::decided(
@@ -919,21 +918,6 @@ pub async fn take_down(
         };
         record_notice(&mut tx, target, notice, picture.removed_at, admin.id).await?;
     }
-    // The ground of the statement: the notice's, else the oldest report this takedown resolved.
-    let reason = match &notice {
-        Some(notice) => Some(notice.reason.clone().unwrap_or_else(|| "other".to_owned())),
-        None => {
-            sqlx::query_scalar!(
-                "SELECT reason FROM reports
-             WHERE media_id = $1 AND resolved_by = $2 AND resolved_at = now()
-             ORDER BY created_at, id LIMIT 1",
-                media_id,
-                admin.id
-            )
-            .fetch_optional(&mut *tx)
-            .await?
-        }
-    };
     let what = if avatar {
         Reported::Avatar
     } else {
@@ -942,7 +926,6 @@ pub async fn take_down(
     // Only a picture that was up gets a statement: a removed one lost nothing now.
     let removal = (!prefixes.is_empty()).then_some(Removal {
         owner: picture.uploaded_by,
-        reason: reason.as_deref(),
     });
     let notices = notices::decided(&mut tx, &state.config, admin.id, what, removal, false).await?;
     tx.commit().await?;

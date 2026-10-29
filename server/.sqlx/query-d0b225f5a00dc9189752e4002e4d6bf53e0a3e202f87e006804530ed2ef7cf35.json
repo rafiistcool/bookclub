@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT target_kind, media_id, work_id, edition_id, target_work_id, target_user_id,\n                reason, status\n         FROM reports WHERE id = $1",
+  "query": "SELECT target_kind, media_id, work_id, edition_id, target_work_id, target_user_id,\n                status\n         FROM reports WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -71,17 +71,6 @@
       },
       {
         "ordinal": 6,
-        "name": "reason",
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "reports",
-            "name": "reason"
-          }
-        }
-      },
-      {
-        "ordinal": 7,
         "name": "status",
         "type_info": "Text",
         "origin": {
@@ -104,9 +93,8 @@
       true,
       true,
       true,
-      false,
       false
     ]
   },
-  "hash": "c337042b14eeb98d376b6829bdb086e2178f51a55ea08e9e084c7e27850af4fa"
+  "hash": "d0b225f5a00dc9189752e4002e4d6bf53e0a3e202f87e006804530ed2ef7cf35"
 }

@@ -515,8 +515,13 @@ async fn catalog_sections(
     // report's existence, number or time names them: only club mates can report a profile
     // picture. So open and dismissed reports, reports closed on arrival, how many reports a
     // decision closed, how they came in and when are withheld to protect the reporters
-    // (Art. 15 (4) GDPR, § 29 (1) BDSG; security review, Phase 2 Wave 2). The reason is the
-    // decision's oldest report's; the date is the decision's.
+    // (Art. 15 (4) GDPR, § 29 (1) BDSG; security review, Phase 2 Wave 2). A decision is what one
+    // admin resolved in one transaction (`resolved_by`, `resolved_at`), whatever pictures it took
+    // down (a held profile picture with the owner's copy of it) and whichever book showed a
+    // cover when each report came in. Its reason is the one the statement of reasons gave
+    // (`admin::notices::decision_reason`: the recorded notice's, else the oldest report's), so
+    // the two never disagree and tell the owner that several reports came in (security review,
+    // ADM2 merge); its date is the decision's.
     let reports = sqlx::query_scalar!(
         r#"SELECT jsonb_build_object(
                'filed', (SELECT coalesce(jsonb_agg(to_jsonb(r) - 'created_by' - 'resolved_by'
@@ -535,9 +540,7 @@ async fn catalog_sections(
                                 'reason', d.reason, 'status', d.status,
                                 'resolved_at', d.resolved_at)
                             ORDER BY d.resolved_at, d.first), '[]')
-                            FROM (SELECT DISTINCT ON (r.target_kind, r.media_id,
-                                                      r.target_work_id, r.edition_id,
-                                                      r.resolved_at)
+                            FROM (SELECT DISTINCT ON (r.resolved_by, r.resolved_at)
                                          r.target_kind, r.media_id, r.work_id, r.edition_id,
                                          r.reason, r.status, r.resolved_at, r.id AS first
                                   FROM reports r
@@ -549,8 +552,8 @@ async fn catalog_sections(
                                   WHERE r.status = 'removed' AND NOT r.closed_on_arrival
                                     AND (r.target_user_id = $1 OR m.uploaded_by = $1
                                          OR w.created_by = $1 OR e.created_by = $1)
-                                  ORDER BY r.target_kind, r.media_id, r.target_work_id,
-                                           r.edition_id, r.resolved_at, r.created_at, r.id) d))
+                                  ORDER BY r.resolved_by, r.resolved_at,
+                                           r.via = 'notice' DESC, r.created_at, r.id) d))
                AS "rows!""#,
         user_id
     )

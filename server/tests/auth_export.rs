@@ -383,22 +383,27 @@ async fn every_section_holds_the_users_rows(db: PgPool) {
          INSERT INTO reports
              (target_kind, media_id, target_user_id, reason, details, status, created_by,
               resolved_by, resolved_at)
-             SELECT 'avatar', id, {a}, 'other', 'bobs report', 'removed', {b}, {a}, now()
+             SELECT 'avatar', id, {a}, 'other', 'bobs report', 'removed', {b}, {a},
+                    now() - interval '4 minutes'
              FROM media WHERE public_id = '{avatar}';
          INSERT INTO reports (target_kind, media_id, reason, created_by, status, resolved_by,
                               resolved_at)
-             SELECT 'cover', id, 'copyright', {cleo}, 'removed', {cleo}, now()
+             SELECT 'cover', id, 'copyright', {cleo}, 'removed', {cleo},
+                    now() - interval '3 minutes'
              FROM media WHERE public_id = '{cover}';
          INSERT INTO reports (target_kind, work_id, target_work_id, reason, created_by, status,
                               resolved_by, resolved_at)
-             VALUES ('work', {w2}, {w}, 'offensive', {cleo}, 'removed', {cleo}, now());
+             VALUES ('work', {w2}, {w}, 'offensive', {cleo}, 'removed', {cleo},
+                     now() - interval '2 minutes');
          INSERT INTO reports (target_kind, work_id, edition_id, reason, created_by, status,
                               resolved_by, resolved_at)
-             VALUES ('edition', {w}, {e}, 'other', {cleo}, 'removed', {cleo}, now());
+             VALUES ('edition', {w}, {e}, 'other', {cleo}, 'removed', {cleo},
+                     now() - interval '1 minute');
          INSERT INTO reports
              (target_kind, media_id, target_user_id, reason, status, created_by, resolved_by,
               resolved_at)
-             SELECT 'avatar', id, {a}, 'offensive', 'removed', {dan}, {cleo}, now()
+             SELECT 'avatar', id, {a}, 'offensive', 'removed', {dan}, {a},
+                    now() - interval '4 minutes'
              FROM media WHERE public_id = '{avatar}';
          INSERT INTO reports (target_kind, media_id, reason, created_by)
              SELECT 'cover', id, 'other', {dan} FROM media WHERE public_id = '{cover}';
@@ -432,7 +437,12 @@ async fn every_section_holds_the_users_rows(db: PgPool) {
     assert_utc_timestamps(&data, "data");
     assert_section_sizes(
         &data,
-        &[("posts", 2), ("uploaded_media", 2), ("reports.about_me", 4)],
+        &[
+            ("posts", 2),
+            ("uploaded_media", 2),
+            ("reports.resolved", 2),
+            ("reports.about_me", 4),
+        ],
     );
     assert_section_sizes(&bobs, &[("reports.about_me", 0)]);
 
@@ -1041,6 +1051,112 @@ async fn about_me_holds_only_removals_never_who_reported_or_when(db: PgPool) {
         1
     );
     assert_eq!(about_me(&bob).await, entries, "a report closed on arrival");
+}
+
+/// Security review, ADM2 merge: one decision gives one reason, the same in the statement of
+/// reasons and in the owner's export, and is one entry of `about_me`. Two reasons for one
+/// decision, or two entries, would tell the owner that more than one report came in, and in a
+/// club of three who sent them. The cases: an admin decides the newer of two reports with
+/// different reasons (both give the oldest report's reason); a direct takedown records an emailed
+/// notice that came after a reader's report (both give the notice's reason); a held profile
+/// picture and the owner's copy of it come down in one decision (one entry).
+#[sqlx::test]
+async fn the_statement_and_the_export_give_one_reason_per_decision(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ola = app.user("ola").await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let root = app.admin("root").await;
+    let club = app.club(&ola, "Trio").await;
+    app.join(&club, &ada, "member").await;
+    app.join(&club, &bob, "member").await;
+    let show = |public_id: &str| {
+        format!(
+            "UPDATE users SET avatar_media_id = (SELECT id FROM media WHERE public_id = '{public_id}')
+             WHERE id = {}",
+            ola.id()
+        )
+    };
+    let report = |who: &TestClient, public_id: &str, reason: &str| {
+        let who = who.clone();
+        let path = format!("/api/media/{public_id}/reports");
+        let body = json!({"reason": reason, "details": "who wrote this"});
+        async move {
+            let res = who.post(&path, body).await;
+            res.assert_status(201);
+            res.json()["id"].as_i64().unwrap()
+        }
+    };
+    let remove = |id: i64| {
+        let root = root.clone();
+        async move {
+            root.post(
+                &format!("/api/admin/reports/{id}/resolve"),
+                json!({"action": "remove"}),
+            )
+            .await
+            .assert_status(200);
+        }
+    };
+    let grounds = |app: &TestApp| -> Vec<String> {
+        app.email
+            .sent_to("ola@example.test")
+            .iter()
+            .map(|mail| {
+                let why = mail.text.split("Why: ").nth(1).unwrap_or_default();
+                why.split(" A person").next().unwrap_or_default().to_owned()
+            })
+            .collect()
+    };
+
+    // The newer of two reports decided.
+    let first = upload(&app, ola.id(), "avatar", 7).await;
+    app.exec(&show(&first)).await;
+    report(&ada, &first, "offensive").await;
+    let newer = report(&bob, &first, "other").await;
+    remove(newer).await;
+
+    // A notice recorded with a direct takedown, after a reader's report.
+    let second = upload(&app, ola.id(), "avatar", 8).await;
+    app.exec(&show(&second)).await;
+    report(&ada, &second, "offensive").await;
+    root.delete_json(
+        &format!("/api/admin/media/{second}"),
+        json!({"reason": "copyright", "details": "By mail."}),
+    )
+    .await
+    .assert_status(204);
+
+    // A held picture (no longer Ola's) and her copy of the same file, each reported.
+    let held = upload(&app, ola.id(), "avatar", 9).await;
+    app.exec(&show(&held)).await;
+    let oldest = report(&ada, &held, "offensive").await;
+    let copy = upload(&app, ola.id(), "avatar", 9).await;
+    app.exec(&show(&copy)).await;
+    report(&bob, &copy, "other").await;
+    remove(oldest).await;
+
+    assert_eq!(
+        grounds(&app),
+        [
+            "it was reported because it is offensive, and the admin who reviewed the report agreed.",
+            "it was reported because it infringes someone else's copyright, and the admin who \
+             reviewed the report agreed.",
+            "it was reported because it is offensive, and the admin who reviewed the report agreed.",
+        ]
+    );
+    let about_me = data_json(&export(&ola).await)["reports"]["about_me"].clone();
+    let reasons: Vec<&str> = about_me
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["reason"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        reasons,
+        ["offensive", "copyright", "offensive"],
+        "{about_me:#}"
+    );
 }
 
 /// Security review, Phase 2 Wave 2: a profile picture its owner deletes while it is reported is
