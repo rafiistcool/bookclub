@@ -134,12 +134,13 @@ export interface paths {
         /**
          * Takes a picture down directly, without a report: same effect as resolving one with
          *     `remove`. Taking down a removed picture changes nothing. With a body (a notice that arrived
-         *     by email, D2), the takedown is recorded as a resolved `removed` report of the picture:
-         *     `created_at` is when the notice arrived, `created_by` is null (the sender has no account
-         *     here), `resolved_by` the admin. A picture that was down already gets the record too, closed
-         *     when it came down (or on arrival, with no `resolved_by`, when it was down before the notice
-         *     arrived). A notice about an avatar is refused before anything changes (400, as
-         *     `reports.target_kind` knows only covers until ADM2); without a body an avatar is taken down.
+         *     by email, D2), the takedown is recorded as a resolved `removed` report of the picture (a
+         *     cover or a profile picture, `via` `notice`): `created_at` is when the notice arrived,
+         *     `created_by` is null (the sender has no account here), `resolved_by` the admin. A picture
+         *     that was down already gets the record too, closed when it came down (or on arrival, with no
+         *     `resolved_by`, when it was down before the notice arrived). After the commit the reporters
+         *     of the open reports it resolved are mailed the decision, and the uploader or the avatar's
+         *     owner a statement of reasons.
          */
         delete: operations["media_admin_take_down"];
         options?: never;
@@ -178,8 +179,15 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Removes the reported picture (everywhere it is shown, for good) or dismisses the report.
-         *     Either way every open report of the picture is resolved with it.
+         * Decides a report: `remove` takes the reported picture down (everywhere it is shown, for
+         *     good) or withdraws the text of a reported work or edition a reader added; `dismiss` keeps
+         *     it. Either way every open report of the same picture, work or edition is resolved with it.
+         *     After the commit each reporter is mailed the decision, and on a removal the uploader, the
+         *     avatar's owner or the reader who added the record gets a statement of reasons. A profile
+         *     picture its owner replaced or deleted while it was reported is held for the decision:
+         *     "remove" takes it down, "dismiss" deletes it. A report of something gone (`ReportOut.gone`:
+         *     the profile picture of an account deleted since, a work merged away) is only dismissed, with
+         *     the other open reports of it; its reporters learn that it is no longer online.
          */
         post: operations["media_admin_resolve_report"];
         delete?: never;
@@ -202,6 +210,63 @@ export interface paths {
         get: operations["admin_summary"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/users/suspended": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every suspended account, the latest suspension first. */
+        get: operations["admin_list_suspended_users"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/users/{username}/suspend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Suspends an account: it can no longer sign in, and every session and bearer token it has is
+         *     deleted. Its content stays. Suspending a suspended account keeps the first time.
+         */
+        post: operations["admin_suspend_user"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/users/{username}/unsuspend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Lifts a suspension: the account signs in again. An account that is not suspended stays as
+         *     it is.
+         */
+        post: operations["admin_unsuspend_user"];
         delete?: never;
         options?: never;
         head?: never;
@@ -262,7 +327,8 @@ export interface paths {
         /**
          * Signs in with a cookie session. Ten failures per account and identifier kind (or per unknown
          *     name) in ten minutes, and thirty attempts per IP address, answer 429 before any password is
-         *     checked.
+         *     checked. A suspended account gets 403 `This account is suspended`, only once its password
+         *     matched.
          */
         post: operations["auth_login"];
         delete?: never;
@@ -798,6 +864,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/books/editions/{edition_id}/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reports an edition a reader added (its title, subtitle or publisher). Same limits and
+         *     queue as book reports.
+         */
+        post: operations["catalog_report_edition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/books/isbn/{isbn}": {
         parameters: {
             query?: never;
@@ -1044,6 +1130,28 @@ export interface paths {
          *     the legacy import cannot be refreshed. 10 per hour per user.
          */
         post: operations["catalog_refresh_work"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/books/works/{work_id}/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reports a book a reader added: its title, authors or description break the law or the
+         *     terms (`copyright`, `offensive`, `other`), or it is the wrong book (`wrong_book`). 20 new
+         *     reports per day and 30 requests per minute, shared with cover reports. Idempotent per
+         *     reader and book.
+         */
+        post: operations["catalog_report_work"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1667,8 +1775,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Reports a cover (`cover_public_id` of a book or edition): copyright, the wrong book,
-         *     offensive, or something else. 20 new reports per day, and 30 requests per minute, repeats
+         * Reports a cover (`cover_public_id` of a book or edition) or a profile picture (the public id
+         *     in an `avatar_url`): copyright, the wrong book, offensive, or something else. A profile
+         *     picture can be reported by whoever can see its owner (they share a club), else it is 404
+         *     like an unknown picture. 20 new reports per day, and 30 requests per minute, repeats
          *     included. Idempotent per reader and picture: a repeat answers with the reader's open report,
          *     and a picture already taken down gets a closed record (`status` `removed`); neither counts
          *     against the daily limit again.
@@ -2112,6 +2222,27 @@ export interface components {
             edit_requests: components["schemas"]["AdminQueueSummary"];
             /** @description How reports were decided in the last 90 days. */
             report_stats: components["schemas"]["AdminReportStats"];
+        };
+        /** @description The suspended accounts, the latest suspension first. */
+        AdminUserList: {
+            items: components["schemas"]["AdminUserOut"][];
+        };
+        /** @description An account as the admin page shows it: no address, no personal data beyond the name. */
+        AdminUserOut: {
+            /** Format: int64 */
+            id: number;
+            username: string;
+            /** @description `/media/{public_id}/a`; null without a picture or once it was taken down. */
+            avatar_url: string | null;
+            /** @description An instance admin. */
+            is_admin: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description When the account was suspended; null while it may sign in.
+             */
+            suspended_at: string | null;
         };
         /** @description One work with the viewer's shelf state, their audience's readers and the catalog facts. */
         BookDetailOut: {
@@ -3401,7 +3532,7 @@ export interface components {
              */
             status: string;
         };
-        /** @description A reader's report of a cover. */
+        /** @description A reader's report of a cover, a profile picture, or a work or edition a reader added. */
         ReportIn: {
             /** @description `copyright`, `wrong_book`, `offensive` or `other`. */
             reason: string;
@@ -3426,18 +3557,31 @@ export interface components {
         ReportOut: {
             /** Format: int64 */
             id: number;
+            /**
+             * @description What was reported: `cover`, `avatar` (a profile picture), `work` or `edition` (one a
+             *     reader added).
+             */
+            target_kind: string;
             /** @description `copyright`, `wrong_book`, `offensive` or `other`. */
             reason: string;
             details: string;
             /** @description `open`, `removed` or `dismissed`. */
             status: string;
-            /** @description The reported picture. */
+            /**
+             * @description `app` (a reader's report) or `notice` (an emailed notice an admin recorded with a
+             *     takedown; no `created_by`).
+             */
+            via: string;
+            /** @description The reported picture (covers and avatars). */
             media_public_id: string | null;
             /** @description The picture was taken down (by this report or otherwise). */
             removed: boolean;
-            /** @description The picture, null once it was taken down. */
+            /** @description A reported cover, null once it was taken down. */
             cover_url: string | null;
             cover_thumb_url: string | null;
+            /** @description A reported profile picture (`/media/{public_id}/a`), null once it was taken down. */
+            avatar_url: string | null;
+            target_user: components["schemas"]["UserSummary"] | null;
             book: components["schemas"]["BookOut"] | null;
             created_by: components["schemas"]["UserSummary"] | null;
             /** Format: date-time */
@@ -3447,14 +3591,25 @@ export interface components {
             resolved_at: string | null;
             /**
              * @description The picture was down already when the report arrived, so it was closed at once and no
-             *     admin decided it. A decided report whose admin deleted the account has no `resolved_by`
-             *     either, but is not closed on arrival.
+             *     admin decided it (`reports.closed_on_arrival`). A decided report whose admin deleted the
+             *     account has no `resolved_by` either, but is not closed on arrival.
              */
             closed_on_arrival: boolean;
+            /**
+             * @description What was reported no longer shows as reported, as it is now: a profile picture without
+             *     its row (the account was deleted, or the picture was held for a report and dismissed),
+             *     or a book merged into another one (`book` is that one). Only `dismiss` decides such a
+             *     report; `remove` answers 409. A picture its owner replaced or deleted while it was
+             *     reported is held for the decision, and not gone.
+             */
+            gone: boolean;
         };
         /** @description What the admin decided. */
         ReportResolveIn: {
-            /** @description `remove` takes the picture down; `dismiss` keeps it. */
+            /**
+             * @description `remove` takes the picture down, or withdraws the text of a reader's work or edition;
+             *     `dismiss` keeps it.
+             */
             action: string;
         };
         /** @description The token from a `/reset-password#token=…` link and the new password. */
@@ -4000,6 +4155,8 @@ export type AdminOldestItem = components['schemas']['AdminOldestItem'];
 export type AdminQueueSummary = components['schemas']['AdminQueueSummary'];
 export type AdminReportStats = components['schemas']['AdminReportStats'];
 export type AdminSummary = components['schemas']['AdminSummary'];
+export type AdminUserList = components['schemas']['AdminUserList'];
+export type AdminUserOut = components['schemas']['AdminUserOut'];
 export type BookDetailOut = components['schemas']['BookDetailOut'];
 export type BookOut = components['schemas']['BookOut'];
 export type BookReader = components['schemas']['BookReader'];
@@ -4534,7 +4691,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description `Input should be 'copyright', 'wrong_book', 'offensive' or 'other'`, `Input should be in the past` (`received_at`), `Invalid value`; `Only notices about covers can be recorded` (a notice about an avatar: nothing is taken down) */
+            /** @description `Input should be 'copyright', 'wrong_book', 'offensive' or 'other'`, `Input should be in the past` (`received_at`), `Invalid value` */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -4643,7 +4800,7 @@ export interface operations {
                     "application/json": components["schemas"]["ReportOut"];
                 };
             };
-            /** @description `Input should be 'remove' or 'dismiss'` */
+            /** @description `Input should be 'remove' or 'dismiss'`; on `remove`, `Only books readers added can be reported` (a work or edition from another source) */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -4670,7 +4827,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description `This report was already resolved` */
+            /** @description `This report was already resolved`; on `remove`, `The reported picture is no longer online` (the profile picture of an account deleted since) or `The reported book was merged into another one` */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -4709,6 +4866,135 @@ export interface operations {
                 };
             };
             /** @description `Not found` for everyone but instance admins */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_list_suspended_users: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The suspended accounts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUserList"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not found` for everyone but instance admins */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_suspend_user: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The account's username */
+                username: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account, suspended */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUserOut"];
+                };
+            };
+            /** @description `You cannot suspend your own account` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No account with that name`; `Not found` for everyone but instance admins */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_unsuspend_user: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The account's username */
+                username: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account, no longer suspended */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUserOut"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No account with that name`; `Not found` for everyone but instance admins */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -4858,6 +5144,15 @@ export interface operations {
             };
             /** @description `Wrong username or password` */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `This account is suspended` (the password matched) */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6163,6 +6458,69 @@ export interface operations {
             };
         };
     };
+    catalog_report_edition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The edition id */
+                edition_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportIn"];
+            };
+        };
+        responses: {
+            /** @description The report is in the admin queue (`open`); a repeat names the same report */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportCreated"];
+                };
+            };
+            /** @description `Only books readers added can be reported`, `Input should be 'copyright', 'wrong_book', 'offensive' or 'other'` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such book.` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Slow down a little. Try again later.` (20 new reports per day; 30 requests per minute, repeats included) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     catalog_lookup_isbn: {
         parameters: {
             query?: never;
@@ -7020,6 +7378,69 @@ export interface operations {
             };
             /** @description `Could not load the library right now. Try again.` */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    catalog_report_work: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A work id, `OL…W`, or a legacy key */
+                work_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportIn"];
+            };
+        };
+        responses: {
+            /** @description The report is in the admin queue (`open`); a repeat names the same report */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportCreated"];
+                };
+            };
+            /** @description `Only books readers added can be reported`, `Input should be 'copyright', 'wrong_book', 'offensive' or 'other'` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such book.` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Slow down a little. Try again later.` (20 new reports per day; 30 requests per minute, repeats included) */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9211,7 +9632,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description The cover's `cover_public_id` */
+                /** @description The picture's public id: a cover's `cover_public_id`, or the id in an `avatar_url` */
                 public_id: string;
             };
             cookie?: never;
@@ -9249,7 +9670,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description `Not found`: no such cover */
+            /** @description `Not found`: no such picture, or the profile picture of someone the reader cannot see */
             404: {
                 headers: {
                     [name: string]: unknown;

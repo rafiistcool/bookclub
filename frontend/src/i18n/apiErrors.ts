@@ -28,6 +28,7 @@ const API_ERROR_KEYS: Record<string, string> = {
   "Transfer or delete your clubs first": "errors.transferClubsFirst",
   "No such session": "errors.noSuchSession",
   "The terms of use have changed. Reload the page and try again.": "errors.termsChanged",
+  "This account is suspended": "errors.accountSuspended",
 
   // Pictures
   "That picture is too large (50 MB max)": "errors.pictureTooLarge",
@@ -37,7 +38,11 @@ const API_ERROR_KEYS: Record<string, string> = {
   "This picture was removed": "errors.pictureRemoved",
   "This report was already resolved": "errors.reportResolved",
   "Input should be in the past": "errors.receivedInFuture",
-  "Only notices about covers can be recorded": "errors.noticeCoversOnly",
+  "Only books readers added can be reported": "errors.onlyReaderBooks",
+  "No account with that name": "errors.noAccount",
+  "You cannot suspend your own account": "errors.cannotSuspendSelf",
+  "The reported picture is no longer online": "errors.pictureGone",
+  "The reported book was merged into another one": "errors.reportedBookMerged",
 
   // Clubs
   "No such club": "errors.noSuchClub",

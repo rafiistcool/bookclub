@@ -118,11 +118,8 @@ pub async fn admin_summary(conn: &mut PgConnection) -> sqlx::Result<AdminSummary
         r#"WITH decided AS (
                SELECT extract(epoch FROM resolved_at - created_at)::float8 / 3600 AS hours
                FROM reports
-               -- Not closed on arrival (see `media::reports::report_outs`). `resolved_by` alone
-               -- cannot tell: account deletion sets it to null on an admin's decisions too.
-               WHERE status <> 'open'
-                 AND NOT (status = 'removed' AND resolved_by IS NULL
-                          AND resolved_at = created_at)
+               -- Not closed on arrival (`reports.closed_on_arrival`): no admin decided those.
+               WHERE status <> 'open' AND NOT closed_on_arrival
                  AND resolved_at >= now() - make_interval(days => $1)
            )
            SELECT count(*) AS "resolved!",

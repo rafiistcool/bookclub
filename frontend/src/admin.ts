@@ -138,14 +138,17 @@ export function isOverdue(createdAt: string, targetHours: number, now: number = 
 /** A picture's public id: 26 lowercase letters and digits. */
 const PUBLIC_ID_RE = /^[a-z0-9]{26}$/;
 
-/** What the "take down by URL" form names. */
-export type PictureRef = { kind: "media"; publicId: string } | { kind: "book"; book: number | string };
+/**
+ * What the "take down by URL" form names: a picture (`avatar` when its
+ * address is a profile picture's, `/media/{public_id}/a`), or a book page.
+ */
+export type PictureRef = { kind: "media"; publicId: string; avatar?: true } | { kind: "book"; book: number | string };
 
 /**
  * Reads the "take down by URL" form: a picture's address
- * (`…/media/{public_id}/l`), a bare public id, or a book page
- * (`…/book/{id}`), which means that book's cover. Null when the text names
- * none of these.
+ * (`…/media/{public_id}/l` for a cover, `…/a` for a profile picture), a bare
+ * public id, or a book page (`…/book/{id}`), which means that book's cover.
+ * Null when the text names none of these.
  */
 export function pictureRef(input: string): PictureRef | null {
   const text = input.trim();
@@ -157,8 +160,8 @@ export function pictureRef(input: string): PictureRef | null {
   } catch {
     return null;
   }
-  const media = /^\/media\/([a-z0-9]{26})(?:\/|$)/.exec(path);
-  if (media) return { kind: "media", publicId: media[1] };
+  const media = /^\/media\/([a-z0-9]{26})(?:\/([^/]*)|$)/.exec(path);
+  if (media) return media[2] === "a" ? { kind: "media", publicId: media[1], avatar: true } : { kind: "media", publicId: media[1] };
   const book = /^\/book\/([^/]+)\/?$/.exec(path);
   if (!book) return null;
   let raw: string;
@@ -183,16 +186,15 @@ export function toLocalInput(date: Date): string {
 }
 
 /**
- * Two 400s of `DELETE /api/admin/media/{public_id}` with a notice, byte for
- * byte as `media::reports` sends them. The takedown form answers them with
- * its own copy, which says what to do next; `apiErrors.ts` maps both too
- * (`errors.receivedInFuture`, `errors.noticeCoversOnly`) for any other caller.
+ * The 400 of `DELETE /api/admin/media/{public_id}` with a notice, byte for
+ * byte as `media::reports` sends it. The takedown form answers it with its
+ * own copy; `apiErrors.ts` maps it too (`errors.receivedInFuture`) for any
+ * other caller. A notice about a profile picture is recorded like one about a
+ * cover (#54), so there is no second refusal any more.
  */
 export const TAKEDOWN_DETAILS = {
   /** `received_at` is more than 5 minutes ahead of the server's clock. */
   receivedInFuture: "Input should be in the past",
-  /** The picture is not a cover: the notice cannot be recorded, and nothing was taken down. */
-  coversOnly: "Only notices about covers can be recorded",
 } as const;
 
 /** A `datetime-local` value as an RFC 3339 instant; null when empty or invalid. */

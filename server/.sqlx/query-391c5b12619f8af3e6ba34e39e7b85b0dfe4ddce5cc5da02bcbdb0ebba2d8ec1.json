@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT public_id, kind, source, content_type, variants, width, height, byte_size,\n                storage_key, created_at, removed_at\n         FROM media\n         WHERE uploaded_by = $1 OR id = (SELECT avatar_media_id FROM users WHERE id = $1)\n         ORDER BY id",
+  "query": "SELECT public_id, kind, source, content_type, variants, width, height, byte_size,\n                storage_key, created_at, removed_at\n         FROM media\n         WHERE (uploaded_by = $1 OR id = (SELECT avatar_media_id FROM users WHERE id = $1))\n           AND NOT (kind = 'avatar' AND removed_at IS NULL\n                    AND id IS DISTINCT FROM (SELECT avatar_media_id FROM users WHERE id = $1))\n         ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -144,5 +144,5 @@
       true
     ]
   },
-  "hash": "0d6b4bfe7e940dcc00285e1349ce93296a96a558022c547f8985c5f80894426d"
+  "hash": "391c5b12619f8af3e6ba34e39e7b85b0dfe4ddce5cc5da02bcbdb0ebba2d8ec1"
 }

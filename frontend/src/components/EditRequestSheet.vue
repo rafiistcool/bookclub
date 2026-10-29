@@ -18,6 +18,7 @@ import { languageOptions } from "../languages";
 import { useLocale } from "../stores/locale";
 import { useToast } from "../stores/toast";
 import BottomSheet from "./BottomSheet.vue";
+import ReportSheet, { type ReportTarget } from "./ReportSheet.vue";
 
 /**
  * "Suggest a correction": the catalog's facts of a book, or of one edition,
@@ -27,6 +28,11 @@ import BottomSheet from "./BottomSheet.vue";
  * With `admin` (an instance admin's "Edit as admin"), the same form writes the
  * changed fields at once (`PATCH /api/admin/works/…` or `/editions/…`) and
  * emits `saved` with the book or edition as it is now.
+ *
+ * A book or edition a reader added can also be reported from here (#54), for
+ * text that is not a mistake but offensive or someone else's: the sheet turns
+ * into the report sheet. This is where an edition's report starts, as the
+ * edition list itself offers none.
  */
 const props = defineProps<{ book?: BookDetailOut; edition?: EditionOut; admin?: boolean }>();
 const emit = defineEmits<{ close: []; saved: [value: BookDetailOut | EditionOut] }>();
@@ -93,6 +99,16 @@ async function save(fields: Parameters<typeof api.adminEditWork>[1]) {
   toast.show(t("admin.edit.saved"));
 }
 
+/** What a reader reports instead of correcting: a record a reader added. */
+const reportTarget = computed<ReportTarget | null>(() => {
+  if (props.admin) return null;
+  if (props.edition) {
+    return props.edition.source === "user" ? { kind: "edition", editionId: props.edition.id, title: subject.value } : null;
+  }
+  return props.book?.custom ? { kind: "work", workId: props.book.id, title: props.book.title } : null;
+});
+const reporting = ref(false);
+
 const title = computed(() => {
   if (props.admin) return props.edition ? t("admin.edit.editionTitle") : t("admin.edit.title");
   return props.edition ? t("editRequest.editionTitle") : t("editRequest.title");
@@ -100,8 +116,13 @@ const title = computed(() => {
 </script>
 
 <template>
-  <BottomSheet :title="title" @close="emit('close')">
+  <ReportSheet v-if="reporting && reportTarget" :target="reportTarget" @close="emit('close')" />
+  <BottomSheet v-else :title="title" @close="emit('close')">
     <p class="fine muted">{{ admin ? t("admin.edit.blurb", { title: subject }) : t("editRequest.blurb", { title: subject }) }}</p>
+    <p v-if="reportTarget" class="fine report-instead">
+      {{ t("report.instead") }}
+      <button class="text-btn" type="button" @click="reporting = true">{{ t(`report.title.${reportTarget.kind}`) }}</button>
+    </p>
     <form class="stack edit-request" @submit.prevent="send">
       <label v-for="def in defs" :key="def.key" class="field" :class="{ invalid: invalid.includes(def.key) }">
         <span>{{ label(def) }}</span>
@@ -163,6 +184,10 @@ const title = computed(() => {
 <style scoped>
 .edit-request {
   margin-top: var(--space-3);
+}
+
+.report-instead {
+  margin: var(--space-2) 0 0;
 }
 
 .field.invalid input,

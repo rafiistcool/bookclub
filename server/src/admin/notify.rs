@@ -1,7 +1,7 @@
 //! The admin notification job (#54, D1; `jobs::lock_ids::ADMIN_NOTIFY`): mails every instance
-//! admin with a verified address, in their locale, when new items wait in a queue. Reports are
-//! mailed at most once an hour, catalog requests as a digest at most once a day. A mail names
-//! counts and the oldest item's age only, never a reporter or what they wrote.
+//! admin with a verified address who is not suspended, in their locale, when new items wait in
+//! a queue. Reports are mailed at most once an hour, catalog requests as a digest at most once a
+//! day. A mail names counts and the oldest item's age only, never a reporter or what they wrote.
 //!
 //! The state lives on the items (migration 2100): `reports.notified_at` and
 //! `catalog_edit_requests.notified_at` say when a mail first counted the item, and the newest of
@@ -64,7 +64,7 @@ pub async fn run(state: &AppState, conn: &mut PgConnection) -> anyhow::Result<No
     let admins = sqlx::query_as!(
         Admin,
         r#"SELECT username, email AS "email!", locale FROM users
-           WHERE is_admin AND email_verified_at IS NOT NULL
+           WHERE is_admin AND email_verified_at IS NOT NULL AND suspended_at IS NULL
            ORDER BY id"#
     )
     .fetch_all(&mut *conn)

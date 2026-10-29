@@ -1,10 +1,12 @@
 //! Plain-text email templates in English and German, by `users.locale`
 //! (docs/phase1/conventions.md §9, §5.5): the verification link, the reset link, the notice to
 //! the old address when the address changes, the "someone tried to use your address" notice,
-//! and the instance admins' notices of new reports and catalog requests (#54).
+//! the instance admins' notices of new reports and catalog requests (#54), and the decision
+//! notices of a report: the decision to the reporter and the statement of reasons to whoever
+//! uploaded or added what was removed (#54, Q12). Every mail ends with the legal footer (#53).
 //!
 //! Token links carry the token in the URL fragment; the notices contain no link that changes
-//! anything, only the login and forgot-password pages and the admin page.
+//! anything, only the login and forgot-password pages, the admin page and the legal pages.
 
 use super::Email;
 
@@ -67,7 +69,7 @@ pub fn verify_email(site: Site, to: Recipient, link: &str) -> Email {
             ),
         )
     };
-    mail(to, subject, text)
+    mail(site, to, subject, text)
 }
 
 /// The password reset link (valid one hour, once).
@@ -103,7 +105,7 @@ pub fn reset_password(site: Site, to: Recipient, link: &str) -> Email {
             ),
         )
     };
-    mail(to, subject, text)
+    mail(site, to, subject, text)
 }
 
 /// To the old, verified address when the account asks to change it to `new_address`. The old
@@ -146,7 +148,7 @@ pub fn email_changed(site: Site, to: Recipient, new_address: &str) -> Email {
             ),
         )
     };
-    mail(to, subject, text)
+    mail(site, to, subject, text)
 }
 
 /// To a verified address instead of a verification link, when a sign-up or another account's
@@ -203,7 +205,7 @@ pub fn address_in_use(site: Site, to: Recipient, attempt: Attempt) -> Email {
             ),
         )
     };
-    mail(to, subject, text)
+    mail(site, to, subject, text)
 }
 
 /// What waits in an admin queue, for [`admin_reports`] and [`admin_requests_digest`].
@@ -261,7 +263,7 @@ pub fn admin_reports(site: Site, to: Recipient, news: QueueNews) -> Email {
             ),
         )
     };
-    mail(to, subject, text)
+    mail(site, to, subject, text)
 }
 
 /// To an instance admin: the daily digest of new catalog requests (corrections, cover photos,
@@ -310,7 +312,7 @@ pub fn admin_requests_digest(site: Site, to: Recipient, news: QueueNews) -> Emai
             ),
         )
     };
-    mail(to, subject, text)
+    mail(site, to, subject, text)
 }
 
 /// "1 new report", "3 new reports".
@@ -344,15 +346,361 @@ fn age_de(hours: i64) -> String {
     }
 }
 
+/// What a decision notice ([`report_decision`], [`statement_of_reasons`]) is about, named as
+/// it was when it was reported (a removed book's title is gone from the catalog by then).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reported<'a> {
+    /// A cover picture, with the title of the book that showed it when known.
+    Cover(Option<&'a str>),
+    /// A profile picture.
+    Avatar,
+    /// A book a reader added, by its title.
+    Work(&'a str),
+    /// An edition a reader added, by its book's title.
+    Edition(&'a str),
+}
+
+/// What came of a report, for its reporter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    /// An admin removed it.
+    Removed,
+    /// An admin kept it: no breach found.
+    Kept,
+    /// It no longer shows as reported, so there was nothing left to decide: a picture its owner
+    /// replaced or deleted, or a book merged into another entry of the same book.
+    Gone,
+}
+
+/// To the reporter, after an admin decided their report (DSA Art. 16 (5)): removed, kept, or no
+/// longer online. Names neither the uploader nor what the report said. `contact` is
+/// `CONTACT_EMAIL`.
+pub fn report_decision(
+    site: Site,
+    to: Recipient,
+    what: Reported,
+    outcome: Outcome,
+    contact: Option<&str>,
+) -> Email {
+    let book = matches!(what, Reported::Work(_) | Reported::Edition(_));
+    // German: "es" for das Coverbild, das Profilbild, das Buch; "sie" for die Ausgabe.
+    let (it, it_upper) = if matches!(what, Reported::Edition(_)) {
+        ("sie", "Sie")
+    } else {
+        ("es", "Es")
+    };
+    let (subject, text) = if german(to) {
+        let what = match what {
+            Reported::Cover(Some(title)) => {
+                format!("das Coverbild von „{title}“, das du gemeldet hast,")
+            }
+            Reported::Cover(None) => "das Coverbild, das du gemeldet hast,".to_owned(),
+            Reported::Avatar => "das Profilbild, das du gemeldet hast,".to_owned(),
+            Reported::Work(title) => format!("das Buch „{title}“, das du gemeldet hast,"),
+            Reported::Edition(title) => {
+                format!("die Ausgabe von „{title}“, die du gemeldet hast,")
+            }
+        };
+        let (outcome, decision, next) = match outcome {
+            Outcome::Removed => (
+                "entfernt",
+                format!(
+                    "Ein Admin von {} hat {what} geprüft und entfernt.",
+                    site.service
+                ),
+                "Wer den Inhalt hochgeladen oder eingetragen hat, erfährt, dass und warum er \
+                 entfernt wurde, aber nicht, von wem die Meldung kam."
+                    .to_owned(),
+            ),
+            Outcome::Kept => (
+                "nicht entfernt",
+                format!(
+                    "Ein Admin von {} hat {what} geprüft und nicht entfernt: Ein Verstoß gegen \
+                     Gesetze oder die Nutzungsbedingungen wurde nicht festgestellt.",
+                    site.service
+                ),
+                format!(
+                    "Wenn du anderer Meinung bist, schreib an {}.",
+                    contact_de(site, contact)
+                ),
+            ),
+            Outcome::Gone if book => (
+                "zusammengeführt",
+                format!(
+                    "Ein Admin von {} hat {what} geprüft: {it_upper} wird nicht mehr eigenständig \
+                     angezeigt, weil {it} mit einem anderen Eintrag desselben Buchs \
+                     zusammengeführt wurde.",
+                    site.service
+                ),
+                format!(
+                    "Wenn du dort noch ein Problem siehst, schreib an {}.",
+                    contact_de(site, contact)
+                ),
+            ),
+            Outcome::Gone => (
+                "nicht mehr online",
+                format!(
+                    "Ein Admin von {} hat {what} geprüft: {it_upper} ist nicht mehr online, weil {it} \
+                     ersetzt oder gelöscht wurde.",
+                    site.service
+                ),
+                format!("Wenn {it} wieder auftaucht, kannst du {it} erneut melden."),
+            ),
+        };
+        (
+            format!("Deine Meldung bei {}: {outcome}", site.service),
+            format!(
+                "Hallo {user},\n\n\
+                 danke für deine Meldung. {decision}\n\n\
+                 {next}\n\n\
+                 – {service}\n",
+                user = to.username,
+                service = site.service,
+            ),
+        )
+    } else {
+        let what = match what {
+            Reported::Cover(Some(title)) => {
+                format!("the cover picture of \"{title}\" you reported")
+            }
+            Reported::Cover(None) => "the cover picture you reported".to_owned(),
+            Reported::Avatar => "the profile picture you reported".to_owned(),
+            Reported::Work(title) => format!("the book \"{title}\" you reported"),
+            Reported::Edition(title) => format!("the edition of \"{title}\" you reported"),
+        };
+        let (outcome, decision, next) = match outcome {
+            Outcome::Removed => (
+                "removed",
+                format!(
+                    "An admin of {} reviewed {what} and removed it.",
+                    site.service
+                ),
+                "Whoever uploaded or added it is told that it was removed and why, but not who \
+                 reported it."
+                    .to_owned(),
+            ),
+            Outcome::Kept => (
+                "not removed",
+                format!(
+                    "An admin of {} reviewed {what} and did not remove it: the admin found no \
+                     breach of the law or of the terms of use.",
+                    site.service
+                ),
+                format!("If you disagree, write to {}.", contact_en(site, contact)),
+            ),
+            Outcome::Gone if book => (
+                "merged",
+                format!(
+                    "An admin of {} reviewed {what}: it no longer shows on its own, because it \
+                     was merged with another entry of the same book.",
+                    site.service
+                ),
+                format!(
+                    "If you still see a problem there, write to {}.",
+                    contact_en(site, contact)
+                ),
+            ),
+            Outcome::Gone => (
+                "no longer online",
+                format!(
+                    "An admin of {} reviewed {what}: it is no longer online, because it was \
+                     replaced or deleted.",
+                    site.service
+                ),
+                "If it shows up again, you can report it again.".to_owned(),
+            ),
+        };
+        (
+            format!("Your report on {}: {outcome}", site.service),
+            format!(
+                "Hi {user},\n\n\
+                 thank you for your report. {decision}\n\n\
+                 {next}\n\n\
+                 – {service}\n",
+                user = to.username,
+                service = site.service,
+            ),
+        )
+    };
+    mail(site, to, subject, text)
+}
+
+/// To whoever uploaded or added content an admin removed: the statement of reasons of DSA
+/// Art. 17 (what was removed, the ground, that a person decided, and how to object). `reason`
+/// is the `reports.reason` of the report or notice it was removed on, `None` when an admin
+/// removed it without one. Never names the reporter or repeats what the report said. `contact`
+/// is `CONTACT_EMAIL`.
+pub fn statement_of_reasons(
+    site: Site,
+    to: Recipient,
+    what: Reported,
+    reason: Option<&str>,
+    contact: Option<&str>,
+) -> Email {
+    let terms = format!("{}/terms", site.public_url);
+    let (subject, text) = if german(to) {
+        let (subject, what, effect) = match what {
+            Reported::Cover(title) => (
+                format!("Dein Cover-Foto bei {} wurde entfernt", site.service),
+                match title {
+                    Some(title) => {
+                        format!("das Cover-Foto, das du für „{title}“ hochgeladen hast,")
+                    }
+                    None => "ein Cover-Foto, das du hochgeladen hast,".to_owned(),
+                },
+                "Das Bild erscheint bei keinem Buch mehr, und dasselbe Bild kann nicht noch \
+                 einmal hochgeladen werden.",
+            ),
+            Reported::Avatar => (
+                format!("Dein Profilbild bei {} wurde entfernt", site.service),
+                "dein Profilbild".to_owned(),
+                "Das Bild erscheint nicht mehr in deinem Profil, und dasselbe Bild kann nicht \
+                 noch einmal hochgeladen werden. In den Einstellungen kannst du ein anderes \
+                 wählen.",
+            ),
+            Reported::Work(title) => (
+                format!(
+                    "Ein Buch, das du bei {} eingetragen hast, wurde entfernt",
+                    site.service
+                ),
+                format!("das Buch „{title}“, das du eingetragen hast,"),
+                "Titel, Untertitel, Autorin / Autor, Beschreibung und Themen wurden entfernt. \
+                 Das Buch bleibt in den Regalen, mit dem Titel „[removed]“, damit niemandem \
+                 seine Lesehistorie verloren geht.",
+            ),
+            Reported::Edition(title) => (
+                format!(
+                    "Eine Ausgabe, die du bei {} eingetragen hast, wurde entfernt",
+                    site.service
+                ),
+                format!("die Ausgabe von „{title}“, die du eingetragen hast,"),
+                "Titel, Untertitel und Verlag wurden entfernt. Die Ausgabe bleibt, unter dem \
+                 Titel des Buchs.",
+            ),
+        };
+        let why = match reason {
+            Some(reason) => format!(
+                "Der Inhalt wurde gemeldet, weil {}, und der Admin, der die Meldung geprüft hat, \
+                 hat zugestimmt.",
+                match reason {
+                    "copyright" => "er die Urheberrechte anderer verletzt",
+                    "wrong_book" => "er zu einem anderen Buch gehört",
+                    "offensive" => "er anstößig oder beleidigend ist",
+                    _ => "er gegen Gesetze oder die Nutzungsbedingungen verstößt",
+                }
+            ),
+            None => "Ein Admin hat festgestellt, dass der Inhalt gegen Gesetze oder die \
+                     Nutzungsbedingungen verstößt."
+                .to_owned(),
+        };
+        (
+            subject,
+            format!(
+                "Hallo {user},\n\n\
+                 ein Admin von {service} hat {what} entfernt.\n\n\
+                 Warum: {why} Die Entscheidung hat ein Mensch getroffen, kein automatisches \
+                 System.\n\n\
+                 Was sich ändert: {effect}\n\n\
+                 Wenn du die Entscheidung für falsch hältst, schreib an {contact}; sie wird dann \
+                 noch einmal geprüft. Die Nutzungsbedingungen: {terms}\n\n\
+                 – {service}\n",
+                user = to.username,
+                service = site.service,
+                contact = contact_de(site, contact),
+            ),
+        )
+    } else {
+        let (subject, what, effect) = match what {
+            Reported::Cover(title) => (
+                format!("Your cover photo on {} was removed", site.service),
+                match title {
+                    Some(title) => format!("the cover photo you uploaded for \"{title}\""),
+                    None => "a cover photo you uploaded".to_owned(),
+                },
+                "The picture no longer shows on any book, and the same picture cannot be \
+                 uploaded again.",
+            ),
+            Reported::Avatar => (
+                format!("Your profile picture on {} was removed", site.service),
+                "your profile picture".to_owned(),
+                "The picture no longer shows on your profile, and the same picture cannot be \
+                 uploaded again. You can choose another one in Settings.",
+            ),
+            Reported::Work(title) => (
+                format!("A book you added on {} was removed", site.service),
+                format!("the book \"{title}\" you added"),
+                "Its title, subtitle, authors, description and subjects were removed. The book \
+                 stays on shelves, titled \"[removed]\", so nobody loses their reading history.",
+            ),
+            Reported::Edition(title) => (
+                format!("An edition you added on {} was removed", site.service),
+                format!("the edition of \"{title}\" you added"),
+                "Its title, subtitle and publisher were removed. The edition stays, under the \
+                 book's own title.",
+            ),
+        };
+        let why = match reason {
+            Some(reason) => format!(
+                "it was reported because {}, and the admin who reviewed the report agreed.",
+                match reason {
+                    "copyright" => "it infringes someone else's copyright",
+                    "wrong_book" => "it belongs to a different book",
+                    "offensive" => "it is offensive",
+                    _ => "it breaks the law or the terms of use",
+                }
+            ),
+            None => "an admin found that it breaks the law or the terms of use.".to_owned(),
+        };
+        (
+            subject,
+            format!(
+                "Hi {user},\n\n\
+                 an admin of {service} removed {what}.\n\n\
+                 Why: {why} A person made this decision, not an automated system.\n\n\
+                 What changed: {effect}\n\n\
+                 If you think the decision is wrong, write to {contact}; it will be reviewed \
+                 again. The terms of use: {terms}\n\n\
+                 – {service}\n",
+                user = to.username,
+                service = site.service,
+                contact = contact_en(site, contact),
+            ),
+        )
+    };
+    mail(site, to, subject, text)
+}
+
+/// Where to object: `CONTACT_EMAIL`, else the admins.
+fn contact_en(site: Site, contact: Option<&str>) -> String {
+    contact.map_or_else(|| format!("the admins of {}", site.service), str::to_owned)
+}
+
+/// The same after "schreib an".
+fn contact_de(site: Site, contact: Option<&str>) -> String {
+    contact.map_or_else(|| format!("die Admins von {}", site.service), str::to_owned)
+}
+
 fn german(to: Recipient) -> bool {
     to.locale == "de"
 }
 
-fn mail(to: Recipient, subject: String, text: String) -> Email {
+/// The legal footer every mail ends with (#53): links to the imprint and the privacy policy, in
+/// the recipient's language, after a signature separator.
+fn footer(site: Site, to: Recipient) -> String {
+    let url = site.public_url;
+    if german(to) {
+        format!("\n-- \nImpressum: {url}/imprint · Datenschutz: {url}/privacy\n")
+    } else {
+        format!("\n-- \nImprint: {url}/imprint · Privacy: {url}/privacy\n")
+    }
+}
+
+/// A template's mail: `text`, then the legal footer.
+fn mail(site: Site, to: Recipient, subject: String, text: String) -> Email {
     Email {
         to: to.to.to_owned(),
         subject,
-        text,
+        text: text + &footer(site, to),
     }
 }
 
@@ -520,5 +868,314 @@ mod tests {
         assert_eq!(age_de(1), "einer Stunde");
         assert_eq!(age_de(5), "5 Stunden");
         assert_eq!(age_de(80), "3 Tagen");
+    }
+
+    const REPORTED: [Reported<'static>; 5] = [
+        Reported::Cover(Some("Circe")),
+        Reported::Cover(None),
+        Reported::Avatar,
+        Reported::Work("Circe"),
+        Reported::Edition("Circe"),
+    ];
+
+    /// One mail of every template in `locale`, by template name.
+    fn every_template(locale: &'static str) -> Vec<(&'static str, Email)> {
+        let to = to(locale);
+        let mut mails = vec![
+            ("verify_email", verify_email(SITE, to, LINK)),
+            ("reset_password", reset_password(SITE, to, LINK)),
+            ("email_changed", email_changed(SITE, to, "new@example.test")),
+            ("address_in_use", address_in_use(SITE, to, Attempt::SignUp)),
+            (
+                "address_in_use",
+                address_in_use(SITE, to, Attempt::EmailChange),
+            ),
+            ("admin_reports", admin_reports(SITE, to, NEWS)),
+            (
+                "admin_requests_digest",
+                admin_requests_digest(SITE, to, NEWS),
+            ),
+        ];
+        for what in REPORTED {
+            for outcome in [Outcome::Removed, Outcome::Kept, Outcome::Gone] {
+                let mail = report_decision(SITE, to, what, outcome, Some(CONTACT));
+                mails.push(("report_decision", mail));
+            }
+            for reason in [Some("copyright"), None] {
+                let mail = statement_of_reasons(SITE, to, what, reason, Some(CONTACT));
+                mails.push(("statement_of_reasons", mail));
+            }
+        }
+        mails
+    }
+
+    const CONTACT: &str = "abuse@books.example.com";
+
+    /// #53: every template ends with one line linking the imprint and the privacy policy, in the
+    /// recipient's language, after a signature separator. The list covers every `pub fn … ->
+    /// Email` of this file, so a new template fails here until it is added.
+    #[test]
+    fn every_template_ends_with_the_legal_footer() {
+        let declared: std::collections::BTreeSet<String> =
+            regex::Regex::new(r"(?s)pub fn (\w+)\([^{]*?\) -> Email \{")
+                .unwrap()
+                .captures_iter(include_str!("templates.rs"))
+                .map(|captures| captures[1].to_owned())
+                .collect();
+        let covered: std::collections::BTreeSet<String> = every_template("en")
+            .into_iter()
+            .map(|(name, _)| name.to_owned())
+            .collect();
+        assert_eq!(declared, covered);
+        assert!(declared.len() >= 8, "{declared:?}");
+        for (locale, line) in [
+            (
+                "en",
+                "\n\n-- \nImprint: https://books.example.com/imprint · Privacy: \
+                 https://books.example.com/privacy\n",
+            ),
+            (
+                "de",
+                "\n\n-- \nImpressum: https://books.example.com/imprint · Datenschutz: \
+                 https://books.example.com/privacy\n",
+            ),
+        ] {
+            for (name, mail) in every_template(locale) {
+                assert!(
+                    mail.text.ends_with(line),
+                    "{name} ({locale}): {}",
+                    mail.text
+                );
+                assert_eq!(mail.text.matches("-- \n").count(), 1, "{name} ({locale})");
+            }
+        }
+    }
+
+    /// Q12 (DSA Art. 16 (5)): the reporter learns the decision in their language, and where to
+    /// object to a kept report; nothing names the uploader.
+    #[test]
+    fn the_reporter_learns_the_decision() {
+        let removed = report_decision(
+            SITE,
+            to("en"),
+            Reported::Work("Circe"),
+            Outcome::Removed,
+            None,
+        );
+        assert_eq!(removed.subject, "Your report on Bookclub: removed");
+        assert!(
+            removed
+                .text
+                .starts_with("Hi ada,\n\nthank you for your report.")
+        );
+        assert!(removed.text.contains(
+            "An admin of Bookclub reviewed the book \"Circe\" you reported and removed it."
+        ));
+        assert!(removed.text.contains("but not who reported it"));
+        let kept = report_decision(
+            SITE,
+            to("en"),
+            Reported::Avatar,
+            Outcome::Kept,
+            Some(CONTACT),
+        );
+        assert_eq!(kept.subject, "Your report on Bookclub: not removed");
+        assert!(
+            kept.text
+                .contains("reviewed the profile picture you reported and did not")
+        );
+        assert!(
+            kept.text
+                .contains("If you disagree, write to abuse@books.example.com.")
+        );
+        let kept = report_decision(SITE, to("en"), Reported::Cover(None), Outcome::Kept, None);
+        assert!(kept.text.contains("write to the admins of Bookclub."));
+
+        let removed = report_decision(
+            SITE,
+            to("de"),
+            Reported::Edition("Circe"),
+            Outcome::Removed,
+            None,
+        );
+        assert_eq!(removed.subject, "Deine Meldung bei Bookclub: entfernt");
+        assert!(
+            removed
+                .text
+                .starts_with("Hallo ada,\n\ndanke für deine Meldung.")
+        );
+        assert!(removed.text.contains(
+            "Ein Admin von Bookclub hat die Ausgabe von „Circe“, die du gemeldet hast, geprüft \
+             und entfernt."
+        ));
+        let kept = report_decision(
+            SITE,
+            to("de"),
+            Reported::Cover(Some("Circe")),
+            Outcome::Kept,
+            None,
+        );
+        assert_eq!(kept.subject, "Deine Meldung bei Bookclub: nicht entfernt");
+        assert!(
+            kept.text
+                .contains("hat das Coverbild von „Circe“, das du gemeldet hast, geprüft und nicht")
+        );
+        assert!(kept.text.contains("schreib an die Admins von Bookclub."));
+
+        // Nothing left to decide: a profile picture its owner replaced, a book merged away.
+        let gone = report_decision(
+            SITE,
+            to("en"),
+            Reported::Avatar,
+            Outcome::Gone,
+            Some(CONTACT),
+        );
+        assert_eq!(gone.subject, "Your report on Bookclub: no longer online");
+        assert!(gone.text.contains(
+            "reviewed the profile picture you reported: it is no longer online, because it was \
+             replaced or deleted."
+        ));
+        assert!(
+            gone.text
+                .contains("If it shows up again, you can report it again.")
+        );
+        let merged = report_decision(SITE, to("en"), Reported::Work("Zine"), Outcome::Gone, None);
+        assert_eq!(merged.subject, "Your report on Bookclub: merged");
+        assert!(merged.text.contains(
+            "reviewed the book \"Zine\" you reported: it no longer shows on its own, because it \
+             was merged with another entry of the same book."
+        ));
+        assert!(merged.text.contains("write to the admins of Bookclub."));
+        let gone = report_decision(SITE, to("de"), Reported::Avatar, Outcome::Gone, None);
+        assert_eq!(
+            gone.subject,
+            "Deine Meldung bei Bookclub: nicht mehr online"
+        );
+        assert!(gone.text.contains(
+            "hat das Profilbild, das du gemeldet hast, geprüft: Es ist nicht mehr online, weil \
+             es ersetzt oder gelöscht wurde."
+        ));
+        assert!(
+            gone.text
+                .contains("Wenn es wieder auftaucht, kannst du es erneut melden.")
+        );
+        let merged = report_decision(
+            SITE,
+            to("de"),
+            Reported::Edition("Zine"),
+            Outcome::Gone,
+            None,
+        );
+        assert_eq!(
+            merged.subject,
+            "Deine Meldung bei Bookclub: zusammengeführt"
+        );
+        assert!(merged.text.contains(
+            "die du gemeldet hast, geprüft: Sie wird nicht mehr eigenständig angezeigt, weil sie \
+             mit einem anderen Eintrag desselben Buchs zusammengeführt wurde."
+        ));
+        for mail in [&gone, &merged] {
+            assert!(!mail.text.contains("Verstoß"), "{}", mail.text);
+        }
+    }
+
+    /// Q12 (DSA Art. 17): the uploader learns what was removed, the reported ground, that a
+    /// person decided and how to object, with the terms linked. The reporter's words never
+    /// appear: the template does not take them.
+    #[test]
+    fn the_uploader_gets_a_statement_of_reasons() {
+        let cases = [
+            (
+                Reported::Cover(Some("Circe")),
+                "Your cover photo on Bookclub was removed",
+                "an admin of Bookclub removed the cover photo you uploaded for \"Circe\".",
+            ),
+            (
+                Reported::Avatar,
+                "Your profile picture on Bookclub was removed",
+                "an admin of Bookclub removed your profile picture.",
+            ),
+            (
+                Reported::Work("Circe"),
+                "A book you added on Bookclub was removed",
+                "titled \"[removed]\"",
+            ),
+            (
+                Reported::Edition("Circe"),
+                "An edition you added on Bookclub was removed",
+                "the edition of \"Circe\" you added",
+            ),
+        ];
+        for (what, subject, line) in cases {
+            let mail = statement_of_reasons(SITE, to("en"), what, Some("offensive"), Some(CONTACT));
+            assert_eq!(mail.subject, subject);
+            assert!(mail.text.contains(line), "{}", mail.text);
+            assert!(mail.text.contains("because it is offensive"));
+            assert!(
+                mail.text
+                    .contains("A person made this decision, not an automated system.")
+            );
+            assert!(mail.text.contains("write to abuse@books.example.com;"));
+            assert!(
+                mail.text
+                    .contains("The terms of use: https://books.example.com/terms")
+            );
+        }
+        for (reason, en, de) in [
+            (
+                "copyright",
+                "it infringes someone else's copyright",
+                "er die Urheberrechte anderer verletzt",
+            ),
+            (
+                "wrong_book",
+                "it belongs to a different book",
+                "er zu einem anderen Buch gehört",
+            ),
+            (
+                "other",
+                "it breaks the law or the terms of use",
+                "er gegen Gesetze oder die Nutzungsbedingungen verstößt",
+            ),
+        ] {
+            let mail = statement_of_reasons(SITE, to("en"), Reported::Avatar, Some(reason), None);
+            assert!(mail.text.contains(&format!("because {en},")), "{reason}");
+            assert!(mail.text.contains("write to the admins of Bookclub;"));
+            let mail = statement_of_reasons(SITE, to("de"), Reported::Avatar, Some(reason), None);
+            assert!(mail.text.contains(&format!("weil {de},")), "{reason}");
+        }
+        // Removed without a report or notice: the admin's own finding, not "it was reported".
+        let own = statement_of_reasons(SITE, to("en"), Reported::Avatar, None, None);
+        assert!(own.text.contains(
+            "Why: an admin found that it breaks the law or the terms of use. A person made this \
+             decision, not an automated system."
+        ));
+        assert!(!own.text.contains("reported"));
+        let own = statement_of_reasons(SITE, to("de"), Reported::Avatar, None, None);
+        assert!(own.text.contains(
+            "Warum: Ein Admin hat festgestellt, dass der Inhalt gegen Gesetze oder die \
+             Nutzungsbedingungen verstößt. Die Entscheidung hat ein Mensch getroffen"
+        ));
+        assert!(!own.text.contains("gemeldet"));
+        let de = statement_of_reasons(
+            SITE,
+            to("de"),
+            Reported::Work("Circe"),
+            Some("copyright"),
+            Some(CONTACT),
+        );
+        assert_eq!(
+            de.subject,
+            "Ein Buch, das du bei Bookclub eingetragen hast, wurde entfernt"
+        );
+        assert!(de.text.starts_with(
+            "Hallo ada,\n\nein Admin von Bookclub hat das Buch „Circe“, das du eingetragen \
+             hast, entfernt."
+        ));
+        assert!(
+            de.text
+                .contains("Die Nutzungsbedingungen: https://books.example.com/terms")
+        );
+        assert!(de.text.contains("schreib an abuse@books.example.com;"));
     }
 }

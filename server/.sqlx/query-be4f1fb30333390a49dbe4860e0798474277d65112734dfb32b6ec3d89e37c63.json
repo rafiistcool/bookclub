@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id FROM media\n             WHERE kind = 'avatar' AND removed_at IS NULL AND uploaded_by = $1 AND sha256 = $2\n               AND id <> $3\n             ORDER BY id\n             FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bytea",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "be4f1fb30333390a49dbe4860e0798474277d65112734dfb32b6ec3d89e37c63"
+}

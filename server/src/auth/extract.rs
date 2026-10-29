@@ -43,6 +43,9 @@ impl FromRequestParts<AppState> for CurrentUser {
     /// One query joins `sessions` and `users`. A session idle for over an hour slides: its
     /// `expires_at` moves to 30 days (cookie) or 90 days (bearer) from now. A cookie that names
     /// no live session gets a clearing `Set-Cookie` with the 401 (`session::maintain_cookie`).
+    /// A suspended account (`users.suspended_at`, #55) has no live session: its sessions are
+    /// deleted when it is suspended, and one that slipped through is refused here like a dead
+    /// one.
     async fn from_request_parts(
         parts: &mut Parts,
         state: &AppState,
@@ -79,7 +82,8 @@ async fn resolve(
                   u.locale, u.timezone
            FROM sessions s
            JOIN users u ON u.id = s.user_id
-           WHERE s.token_hash = $1 AND s.kind = $2 AND s.expires_at > now()"#,
+           WHERE s.token_hash = $1 AND s.kind = $2 AND s.expires_at > now()
+             AND u.suspended_at IS NULL"#,
         session::token_hash(secret),
         kind as SessionKind
     )

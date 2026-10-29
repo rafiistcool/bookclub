@@ -4,9 +4,10 @@
 //! is covered as soon as it is merged.
 //!
 //! The walk uses real ids and valid bodies: an open edit request, an open report, a live
-//! picture, a work and an edition. With dummy ids an unguarded approve, resolve or takedown would
-//! answer 404 too (nothing to find), so only real targets tell a guarded route from an unguarded
-//! one; the rows are compared before and after the walk.
+//! picture, a work and an edition, an account to suspend and a suspended one. With dummy ids an
+//! unguarded approve, resolve, takedown or suspension would answer 404 too (nothing to find), so
+//! only real targets tell a guarded route from an unguarded one; the rows are compared before
+//! and after the walk.
 
 mod common;
 
@@ -20,23 +21,26 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 
 /// Every admin operation. A new one is added here, with its seeded ids and a valid body below.
-const ADMIN_OPERATIONS: [&str; 12] = [
+const ADMIN_OPERATIONS: [&str; 15] = [
     "DELETE /api/admin/media/{public_id}",
     "GET /api/admin/edit-requests",
     "GET /api/admin/invites",
     "GET /api/admin/reports",
     "GET /api/admin/summary",
+    "GET /api/admin/users/suspended",
     "PATCH /api/admin/editions/{edition_id}",
     "PATCH /api/admin/works/{work_id}",
     "POST /api/admin/edit-requests/{request_id}/approve",
     "POST /api/admin/edit-requests/{request_id}/reject",
     "POST /api/admin/invites",
     "POST /api/admin/reports/{report_id}/resolve",
+    "POST /api/admin/users/{username}/suspend",
+    "POST /api/admin/users/{username}/unsuspend",
     "POST /api/admin/works/{work_id}/merge",
 ];
 
 /// The tables an admin operation writes; the walk must leave every row as it was.
-const WATCHED_TABLES: [&str; 8] = [
+const WATCHED_TABLES: [&str; 10] = [
     "works",
     "editions",
     "media",
@@ -45,6 +49,8 @@ const WATCHED_TABLES: [&str; 8] = [
     "reports",
     "club_invites",
     "legacy_work_keys",
+    "users",
+    "sessions",
 ];
 
 /// Every row of the watched tables, as JSON.
@@ -63,19 +69,25 @@ async fn snapshot(app: &TestApp) -> Vec<(&'static str, Value)> {
     rows
 }
 
-/// The seeded targets: path values by parameter name, and a valid body per operation.
+/// The seeded targets: path values by parameter name (`op_ids` first, for one operation),
+/// and a valid body per operation.
 struct Seeded {
     ids: HashMap<&'static str, String>,
+    op_ids: HashMap<(&'static str, &'static str), String>,
     bodies: HashMap<&'static str, Value>,
 }
 
 impl Seeded {
     fn path(&self, op: &Operation) -> String {
+        let label = op.label();
         op.fill(|name, _| {
-            self.ids
-                .get(name)
+            self.op_ids
+                .iter()
+                .find(|((op_label, op_name), _)| *op_label == label && *op_name == name)
+                .map(|(_, value)| value)
+                .or_else(|| self.ids.get(name))
                 .cloned()
-                .unwrap_or_else(|| panic!("{}: no seeded value for {{{name}}}", op.label()))
+                .unwrap_or_else(|| panic!("{label}: no seeded value for {{{name}}}"))
         })
     }
 
@@ -89,8 +101,9 @@ impl Seeded {
     }
 }
 
-/// An open edit request, an open report of a live picture, a work with an edition, and a second
-/// work to merge into, all made the way readers make them.
+/// An open edit request, an open report of a live picture, a work with an edition, a second
+/// work to merge into, all made the way readers make them, plus a signed-in account to suspend
+/// (`mallory`) and a suspended one to unsuspend (`sleeper`).
 async fn seed(app: &TestApp, reader: &TestClient, club: &TestClub) -> Seeded {
     let work = app.work("Circe").await;
     let edition = app.edition(&work, "9780316556347").await;
@@ -123,7 +136,25 @@ async fn seed(app: &TestApp, reader: &TestClient, club: &TestClub) -> Seeded {
         .await;
     res.assert_status(201);
     let report_id = res.json()["id"].as_i64().unwrap();
+    app.user("mallory").await;
+    let sleeper = app.user("sleeper").await;
+    app.exec(&format!(
+        "UPDATE users SET suspended_at = now() - interval '1 day' WHERE id = {};
+         DELETE FROM sessions WHERE user_id = {0}",
+        sleeper.id()
+    ))
+    .await;
 
+    let op_ids = HashMap::from([
+        (
+            ("POST /api/admin/users/{username}/suspend", "username"),
+            "mallory".to_owned(),
+        ),
+        (
+            ("POST /api/admin/users/{username}/unsuspend", "username"),
+            "sleeper".to_owned(),
+        ),
+    ]);
     let ids = HashMap::from([
         ("slug", club.slug.clone()),
         ("request_id", request_id.to_string()),
@@ -164,7 +195,11 @@ async fn seed(app: &TestApp, reader: &TestClient, club: &TestClub) -> Seeded {
             json!({"fields": {"pages": 999}}),
         ),
     ]);
-    Seeded { ids, bodies }
+    Seeded {
+        ids,
+        op_ids,
+        bodies,
+    }
 }
 
 /// Acceptance (#54): every admin operation, called on real rows with a valid body by a signed-in
@@ -217,6 +252,8 @@ async fn non_admins_get_404_on_every_admin_operation(db: PgPool) {
     );
     let report_id = &seeded.ids["report_id"];
     assert_eq!(app.scalar_i64(&open("reports", report_id)).await, 1);
+    let suspended = "SELECT count(*) FROM users WHERE suspended_at IS NOT NULL";
+    assert_eq!(app.scalar_i64(suspended).await, 1, "only sleeper");
     assert_eq!(
         app.scalar_i64(&format!(
             "SELECT count(*) FROM media WHERE public_id = '{}' AND removed_at IS NULL",
@@ -241,8 +278,8 @@ async fn instance_admins_pass_the_guard(db: PgPool) {
     res.assert_detail(401, "Not signed in");
 }
 
-/// The seeded requests are not vacuous: sent by an instance admin, the approval, the takedown
-/// and the edition edit change the rows the walk watches.
+/// The seeded requests are not vacuous: sent by an instance admin, the approval, the takedown,
+/// the edition edit and the suspension change the rows the walk watches.
 #[sqlx::test]
 async fn the_seeded_requests_act_for_an_admin(db: PgPool) {
     let app = TestApp::new(db).await;
@@ -258,6 +295,7 @@ async fn the_seeded_requests_act_for_an_admin(db: PgPool) {
             "/api/admin/edit-requests/{request_id}/approve",
         ),
         (Method::POST, "/api/admin/reports/{report_id}/resolve"),
+        (Method::POST, "/api/admin/users/{username}/suspend"),
     ] {
         let op = find(&method, path).expect("documented");
         let res = op.send(&root, &seeded.path(&op), &seeded.body(&op)).await;
@@ -277,7 +315,9 @@ async fn the_seeded_requests_act_for_an_admin(db: PgPool) {
             "editions",
             "media",
             "catalog_edit_requests",
-            "reports"
+            "reports",
+            "users",
+            "sessions"
         ]
     );
 }

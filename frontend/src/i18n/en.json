@@ -13,26 +13,43 @@
   "cover": {
     "alt": "Cover of {title}",
     "report": "Report cover",
-    "reportTitle": "Report this cover",
-    "reportWhy": "What is wrong with it?",
     "reasons": {
       "wrong_book": "It shows a different book",
       "offensive": "It is offensive",
       "copyright": "It infringes copyright",
       "other": "Something else"
     },
-    "reportDetails": "Details",
-    "reportSend": "Send report",
-    "reporting": "Sending…",
-    "reported": "Thanks. An admin will look at it.",
     "alreadyRemoved": "This picture was already taken down. Thanks anyway.",
-    "reportFailed": "Could not send that report",
     "photoAdd": "Add a photo of your copy",
     "photoSuggest": "Suggest a photo of your copy",
     "photoUploading": "Uploading…",
     "photoSet": "Your photo is the cover now",
     "photoQueued": "Thanks. An admin will look at your photo.",
     "photoFailed": "Could not upload the photo"
+  },
+  "report": {
+    "action": {
+      "avatar": "Report profile picture",
+      "work": "Report this book"
+    },
+    "title": {
+      "cover": "Report this cover",
+      "avatar": "Report this profile picture",
+      "work": "Report this book",
+      "edition": "Report this edition"
+    },
+    "avatarOf": "Profile picture of {name}",
+    "why": "What is wrong with it?",
+    "details": "Details",
+    "next": "An admin decides. If your email address is verified, you hear what came of it.",
+    "send": "Send report",
+    "sending": "Sending…",
+    "sent": "Thanks. An admin will look at it.",
+    "failed": "Could not send that report",
+    "noAccount": "No account here? Anyone can report content by writing to {email}.",
+    "instead": "Not a mistake, but offensive or infringing someone’s rights?",
+    "removedTitle": "[removed]",
+    "removedNote": "An admin removed what a reader had entered for this book, after a report."
   },
   "common": {
     "cancel": "Cancel",
@@ -603,7 +620,10 @@
     "termsChanged": "The terms of use have changed. Have a look at them and try again.",
     "pictureRemoved": "This picture was removed",
     "receivedInFuture": "The notice cannot have arrived in the future.",
-    "noticeCoversOnly": "Only notices about book covers can be recorded for now.",
+    "accountSuspended": "This account is suspended. Questions? Write to the address in the imprint.",
+    "onlyReaderBooks": "Only books that readers added themselves can be reported.",
+    "noAccount": "No account with that name",
+    "cannotSuspendSelf": "You cannot suspend your own account",
     "noSuchClub": "That club does not exist, or you are not a member",
     "adminsOnly": "Only club admins can do that",
     "ownerOnly": "Only the club owner can do that",
@@ -679,7 +699,9 @@
     "deleteOwnEntries": "You can only delete your own entries",
     "requestDecided": "Someone already decided this request",
     "reportResolved": "Someone already closed this report",
-    "invalidValueFor": "That value of “{field}” cannot be used"
+    "invalidValueFor": "That value of “{field}” cannot be used",
+    "reportedBookMerged": "This book was merged into another one since it was reported. Close the report, and correct the other book with “Edit as admin” if it took over the reported text.",
+    "pictureGone": "The reported picture is no longer online: its owner replaced or deleted it. Close the report."
   },
   "physicalShelf": {
     "title": "Your real bookshelf",
@@ -1191,14 +1213,15 @@
   },
   "admin": {
     "title": "Admin",
-    "lede": "What readers asked to change or reported, and invites for the closed beta.",
+    "lede": "What readers asked to change or reported, invites for the closed beta, and suspended accounts.",
     "sections": "Admin sections",
     "tabs": {
       "requests": "Requests",
       "reports": "Reports",
-      "invites": "Invites"
+      "invites": "Invites",
+      "users": "Accounts"
     },
-    "settingsBlurb": "You run this instance: corrections, cover photos, merges and reported covers wait for you.",
+    "settingsBlurb": "You run this instance: corrections, cover photos, merges and reported content wait for you.",
     "open": "Open the admin page",
     "loadFailed": "Could not load the queue",
     "decideFailed": "Could not save the decision",
@@ -1231,16 +1254,33 @@
     "reject": "Reject",
     "rejected": "Rejected",
     "rejectNote": "Why not? (the reader does not see this yet)",
-    "reports": "Cover reports",
-    "reportsBlurb": "Covers readers reported. Taking one down removes the picture everywhere, for good; keeping it closes the report.",
+    "reports": "Reports",
+    "reportsBlurb": "Covers, profile pictures and books readers added, as readers reported them. Removing takes a picture down everywhere, or withdraws what a reader typed, for good; keeping closes the report. The reporters hear the decision by mail, and whoever's content was removed hears why.",
     "noReports": "No open reports.",
     "alreadyRemoved": "This picture was already taken down.",
+    "target": {
+      "cover": "Cover",
+      "avatar": "Profile picture",
+      "work": "Book added by a reader",
+      "edition": "Edition added by a reader"
+    },
+    "avatarOf": "Profile picture of {name}",
+    "notice": "Emailed notice · received {when}",
+    "removeText": "Remove the text",
+    "removeTextConfirm": "Remove for good",
+    "removeBlurb": {
+      "avatar": "The picture disappears from the profile and everywhere else, and the same file cannot be uploaded again.",
+      "work": "The title becomes “[removed]”, and the authors, description and subjects go, for good. Shelves, posts and picks keep the book.",
+      "edition": "The edition loses its own title, subtitle and publisher for good, and shows its book's title."
+    },
+    "textRemoved": "Text removed",
+    "removedBy": "Removed by {name} · {when}",
     "takeDown": "Take down",
     "takeDownConfirm": "Take down for good",
     "takeDownBlurb": "The picture disappears from every book and edition that shows it, and no refresh brings it back.",
     "keep": "Keep it",
     "takenDown": "Picture taken down",
-    "kept": "Report closed, the picture stays",
+    "kept": "Report closed, nothing was removed",
     "invites": "Sign-up invites",
     "invitesBlurb": "While sign-up needs an invite, these let someone create an account without joining a club.",
     "maxUses": "How many people",
@@ -1253,6 +1293,22 @@
     "forPeople": "For one person | For {n} people",
     "noExpiry": "does not expire",
     "pastInvites": "{n} used or ended invite | {n} used or ended invites",
+    "users": {
+      "title": "Suspended accounts",
+      "blurb": "A suspended account cannot sign in, and every session and app token it had ends at once. What it wrote stays. Lifting the suspension lets it sign in again.",
+      "manual": "It can no longer export or delete its data itself: its owner writes to the contact address, and the operator follows §7 of docs/legal/takedown.md.",
+      "name": "Username",
+      "suspend": "Suspend",
+      "suspendConfirm": "Suspend {name}",
+      "confirmBlurb": "{name} is signed out everywhere and cannot sign in until you lift the suspension.",
+      "suspended": "{name} is suspended",
+      "since": "suspended {when}",
+      "admin": "Admin",
+      "unsuspend": "Lift suspension",
+      "unsuspended": "{name} can sign in again",
+      "none": "No account is suspended.",
+      "failed": "Could not save that"
+    },
     "edit": {
       "title": "Edit this book as admin",
       "editionTitle": "Edit this edition as admin",
@@ -1282,7 +1338,8 @@
       "removed": "Taken down",
       "dismissed": "Kept",
       "approved": "Approved",
-      "rejected": "Rejected"
+      "rejected": "Rejected",
+      "withdrawn": "Removed"
     },
     "takenDownBy": "Taken down by {name} · {when}",
     "keptBy": "Kept by {name} · {when}",
@@ -1298,7 +1355,7 @@
     },
     "takeDownForm": {
       "toggle": "Take down a picture by URL",
-      "blurb": "For a notice that arrived by email: paste the address of the picture, or of the book page that shows it. The takedown is recorded as a report that arrived when the notice did.",
+      "blurb": "For a notice that arrived by email: paste the address of the picture (a cover or a profile picture), or of the book page that shows the cover. The takedown is recorded as a report that arrived when the notice did.",
       "url": "Address of the picture or book page",
       "urlPlaceholder": "…/media/… or …/book/…",
       "receivedAt": "When the notice arrived",
@@ -1309,11 +1366,14 @@
       "noCover": "That book shows no picture.",
       "future": "The notice cannot have arrived in the future.",
       "done": "Picture taken down and the notice recorded",
-      "coversOnly": "This is not a book cover (a profile picture, say). A notice about it cannot be recorded yet, so nothing was taken down. You can take it down without a record.",
-      "withoutRecord": "Take down without a record",
-      "doneWithoutRecord": "Picture taken down. The notice was not recorded.",
       "failed": "Could not take the picture down"
-    }
+    },
+    "gone": {
+      "avatar": "No longer online: its owner replaced or deleted the picture, so there is nothing left to take down.",
+      "work": "Merged into this book since it was reported, so the reported text no longer shows on its own. If this book took some of it over, correct it with “Edit as admin”."
+    },
+    "closeReport": "Close the report",
+    "closedBy": "Closed by {name} · {when}"
   },
   "notFound": {
     "title": "Page not found",

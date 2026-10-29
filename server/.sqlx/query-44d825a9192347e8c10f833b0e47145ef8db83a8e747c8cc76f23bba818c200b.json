@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT s.id AS session_id, s.last_used_at < now() - interval '1 hour' AS \"stale!\",\n                  u.id, u.username, u.is_admin, u.email_verified_at IS NOT NULL AS \"email_verified!\",\n                  u.locale, u.timezone\n           FROM sessions s\n           JOIN users u ON u.id = s.user_id\n           WHERE s.token_hash = $1 AND s.kind = $2 AND s.expires_at > now()",
+  "query": "SELECT s.id AS session_id, s.last_used_at < now() - interval '1 hour' AS \"stale!\",\n                  u.id, u.username, u.is_admin, u.email_verified_at IS NOT NULL AS \"email_verified!\",\n                  u.locale, u.timezone\n           FROM sessions s\n           JOIN users u ON u.id = s.user_id\n           WHERE s.token_hash = $1 AND s.kind = $2 AND s.expires_at > now()\n             AND u.suspended_at IS NULL",
   "describe": {
     "columns": [
       {
@@ -99,5 +99,5 @@
       false
     ]
   },
-  "hash": "629ed41af96f3b73f936546a84ba352a578bf759df08e1c1f3f8c717c661aca0"
+  "hash": "44d825a9192347e8c10f833b0e47145ef8db83a8e747c8cc76f23bba818c200b"
 }

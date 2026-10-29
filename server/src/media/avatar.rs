@@ -6,6 +6,12 @@
 //! `users.avatar_media_id` at it; the old bytes are deleted after the commit. A picture taken
 //! down by an admin keeps its row (and hash), and the takedown records the hash of the served
 //! `a` variant too, so neither the uploaded file nor the one readers saved can come back.
+//!
+//! A picture with an open report is held instead of deleted, until an admin decides it
+//! (security review, Phase 2 Wave 2): otherwise replacing or deleting it would leave nothing to
+//! take down, and the same file could be uploaded again once the report was closed. It leaves
+//! the profile at once, and gets a new public id that only the admin queue shows, so its old URL
+//! answers 404 like a deleted picture's and tells the owner nothing (`media::reports`, "Held").
 
 use axum::Json;
 use axum::extract::State;
@@ -179,24 +185,48 @@ async fn lock_user(conn: &mut PgConnection, user_id: i64) -> ApiResult<()> {
     Ok(())
 }
 
-/// Deletes every avatar row of the user that was not taken down (the current one and any a
-/// crash left behind) and returns their storage prefixes.
+/// Takes every avatar row of the user that was not taken down (the current one and any a crash
+/// left behind or a report holds) off the account. A row with an open report is held for the
+/// admin's decision under a new public id (see the module docs); every other row is deleted, and
+/// its storage prefixes are returned, to delete after the commit.
 async fn delete_avatars(conn: &mut PgConnection, user_id: i64) -> sqlx::Result<Vec<String>> {
+    // Locked first: a report being filed holds its picture `FOR SHARE` until it commits, so the
+    // next statement, on a new snapshot, sees it.
     let rows = sqlx::query!(
-        "DELETE FROM media
+        "SELECT id, public_id, storage_key FROM media
          WHERE kind = 'avatar' AND removed_at IS NULL
            AND (uploaded_by = $1 OR id = (SELECT avatar_media_id FROM users WHERE id = $1))
-         RETURNING public_id, storage_key",
+         ORDER BY id
+         FOR UPDATE",
         user_id
     )
-    .fetch_all(conn)
+    .fetch_all(&mut *conn)
     .await?;
-    Ok(rows
-        .into_iter()
-        .flat_map(|row| {
-            let mut prefixes = vec![storage_prefix(PictureKind::Avatar.as_str(), &row.public_id)];
+    let ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
+    let reported = sqlx::query_scalar!(
+        r#"SELECT DISTINCT media_id AS "id!" FROM reports
+           WHERE media_id = ANY($1) AND status = 'open'"#,
+        &ids
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut prefixes = Vec::new();
+    for row in rows {
+        if reported.contains(&row.id) {
+            sqlx::query!(
+                "UPDATE media SET public_id = $2 WHERE id = $1",
+                row.id,
+                new_public_id()
+            )
+            .execute(&mut *conn)
+            .await?;
+        } else {
+            sqlx::query!("DELETE FROM media WHERE id = $1", row.id)
+                .execute(&mut *conn)
+                .await?;
+            prefixes.push(storage_prefix(PictureKind::Avatar.as_str(), &row.public_id));
             prefixes.extend(row.storage_key);
-            prefixes
-        })
-        .collect())
+        }
+    }
+    Ok(prefixes)
 }
