@@ -21,7 +21,8 @@ import type { Favorite, ShelfItem } from "../types";
  * club (solo mode) it is a personal page that makes no club call, with a way
  * to create or join a club. A compact Friends row leads to `/friends` (the
  * phone's way there) with the requests and invitations waiting; the shell
- * loads them.
+ * loads them. The activity feed also carries friends' personal events
+ * (§4.4), so it shows for a viewer with friends and no club too.
  */
 const { t } = useI18n();
 const session = useSession();
@@ -39,6 +40,8 @@ const progress = ref<Record<number, number>>({});
 const savingId = ref<number | null>(null);
 
 const hasClubs = computed(() => clubs.hasClubs);
+/** The home feed has something to show besides one's own events: club mates' or friends'. */
+const showActivity = computed(() => hasClubs.value || (friends.lists?.friends.length ?? 0) > 0);
 
 async function loadClubs() {
   if (!clubs.hasClubs) {
@@ -184,10 +187,10 @@ onMounted(() => {
           </template>
         </DiaryFeed>
       </section>
-      <section v-if="hasClubs" class="section">
+      <section v-if="showActivity" class="section">
         <ActivityFeed :heading="t('activity.heading')" />
       </section>
-      <section v-else-if="favorites.length" class="section" aria-labelledby="favourites">
+      <section v-if="!hasClubs && favorites.length" class="section" aria-labelledby="favourites">
         <div class="section-head">
           <h2 id="favourites">{{ t("home.favourites") }}</h2>
         </div>

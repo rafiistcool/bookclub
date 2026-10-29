@@ -86,6 +86,22 @@ describe("HomePage", () => {
     expect(wrapper.find(".solo-prompt").exists()).toBe(false);
   });
 
+  it("shows friends' events to a viewer with friends and no club", async () => {
+    api.activity.mockResolvedValue({
+      items: [activityItem({ kind: "shelf_finished", actor: "grace", book: bookOut({ title: "The Hobbit" }), club: null })],
+      has_more: false,
+      timezone: "UTC",
+    });
+    const wrapper = await mountHome([], friendsOut({ friends: [friendOut("grace")] }));
+    expect(api.clubs).not.toHaveBeenCalled();
+    expect(api.activity).toHaveBeenCalledWith({ before: undefined, limit: 15, club: undefined });
+    expect(wrapper.get(".activity-row").text()).toContain("grace finished The Hobbit");
+    expect(wrapper.find(".activity-club").exists()).toBe(false);
+    // Still solo: the prompt to start or join a club, and the favourites.
+    expect(wrapper.find(".solo-prompt").exists()).toBe(true);
+    expect(wrapper.text()).toContain("Middlemarch");
+  });
+
   it("leads to the friends page with what waits there, or the way to add friends", async () => {
     // Before the shell's lists arrive (or when they failed): the plain row.
     let wrapper = await mountHome([]);
