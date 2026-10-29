@@ -436,8 +436,10 @@ export interface paths {
         /**
          * Searches this book now: ignores the schedule, the misses and the stop for books nobody
          *     uses, respects rejections, approvals and takedowns. A failing Open Library picture of the
-         *     book is fetched again first; an open suggestion is returned as it is. For catalog and
-         *     imported books only: a reader's own book is never sent to Open Library.
+         *     book is fetched again first: when it (or that of an edition readers use) still cannot be
+         *     loaded, the outcome is `failing` and nothing is searched (the search never replaces a
+         *     picture the book has; an upload does). An open suggestion is returned as it is. For catalog
+         *     and imported books only: a reader's own book is never sent to Open Library.
          */
         post: operations["catalog_admin_search_cover"];
         delete?: never;
@@ -2302,7 +2304,9 @@ export interface components {
             suggestions: number;
             /**
              * Format: int64
-             * @description Catalog and imported books readers use that have no cover.
+             * @description Catalog and imported books readers use that have no cover, or whose Open Library
+             *     picture (or that of an edition readers use) fails to load: the books of the "Without a
+             *     cover" list's default view.
              */
             missing: number;
         };
@@ -2725,11 +2729,26 @@ export interface components {
         };
         /** @description What "Search now" came to. */
         CoverSearchOut: {
-            /** @description `attached`, `inherited`, `isbn`, `suggested` or `no_match`. */
+            /**
+             * @description `attached`, `inherited`, `isbn`, `suggested`, `no_match`, or `failing`: the book's own
+             *     Open Library picture, or that of an edition readers use, was fetched again and still
+             *     cannot be loaded. The search never replaces a picture the book has; an uploaded picture
+             *     does.
+             */
             outcome: string;
             /** @description The book as it is now. */
             book: components["schemas"]["BookOut"];
             suggestion: components["schemas"]["CoverSuggestionOut"] | null;
+            /**
+             * Format: date-time
+             * @description `failing`: when the picture failed to load this time.
+             */
+            failed_at: string | null;
+            /**
+             * Format: int64
+             * @description `failing`: the edition whose picture fails, when it is not the book's own.
+             */
+            failing_edition_id: number | null;
         };
         /** @description The photo became the cover. */
         CoverSet: {
@@ -5704,7 +5723,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description What the search came to */
+            /** @description What the search came to, or `failing` when the book's picture still cannot be loaded */
             200: {
                 headers: {
                     [name: string]: unknown;

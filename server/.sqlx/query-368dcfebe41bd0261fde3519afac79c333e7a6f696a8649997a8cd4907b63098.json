@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT ol_cover_id AS \"ol_cover_id!\" FROM media\n               WHERE source = 'openlibrary' AND storage_key IS NOT NULL AND removed_at IS NULL\n               ORDER BY id DESC LIMIT 1",
+  "query": "SELECT ol_cover_id AS \"ol_cover_id!\" FROM media\n               WHERE source = 'openlibrary' AND storage_key IS NOT NULL AND removed_at IS NULL\n               ORDER BY id DESC LIMIT $1",
   "describe": {
     "columns": [
       {
@@ -16,11 +16,13 @@
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Int8"
+      ]
     },
     "nullable": [
       true
     ]
   },
-  "hash": "96a4c8707341b63a1f0eed5d8fcc5921dce4cbc8da9a810d36455d3677cf8649"
+  "hash": "368dcfebe41bd0261fde3519afac79c333e7a6f696a8649997a8cd4907b63098"
 }
