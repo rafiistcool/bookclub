@@ -28,10 +28,9 @@
 //!
 //! Amended by FRIENDS (Phase 3, #57; docs/phase3/notes/friends.md): a friend of the owner joins
 //! the audience, and the strangers gain the accounts a pending request, an ended friendship or
-//! a block leaves behind. The friendships and the block are written with SQL until the friend
-//! routes exist.
+//! a block leaves behind. The friendships and the block are made through the friend routes.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::{TestApp, TestClient, TestClub};
 
@@ -92,26 +91,22 @@ impl Viewers {
         .await;
         let other = app.club(&other_club, "Other").await;
         app.join(&other, &co_member, "member").await;
-        // The friendships as the friend routes leave them: an accepted row per friendship, a
-        // pending one per request in its direction, none after a removal, and a block row
-        // instead of the friendship it ended.
-        let o = owner.id();
-        app.exec(&format!(
-            "INSERT INTO friendships (requester_id, addressee_id, accepted_at)
-                 VALUES ({o}, {friend}, now()), ({friend}, {stranger}, now()),
-                        ({asked}, {o}, NULL), ({o}, {requested}, NULL),
-                        ({o}, {exfriend}, now()), ({blocked}, {o}, now());
-             DELETE FROM friendships
-                 WHERE (requester_id, addressee_id) IN (({o}, {exfriend}), ({blocked}, {o}));
-             INSERT INTO user_blocks (user_id, blocked_user_id) VALUES ({o}, {blocked});",
-            friend = friend.id(),
-            stranger = stranger.id(),
-            asked = asked.id(),
-            requested = requested.id(),
-            exfriend = exfriend.id(),
-            blocked = blocked.id(),
-        ))
-        .await;
+        // Through the friend routes: a request and its acceptance per friendship, a pending
+        // request per direction, an unfriend, and a block that ends a friendship.
+        befriend(&owner, &friend).await;
+        befriend(&friend, &stranger).await;
+        ask(&asked, &owner).await;
+        ask(&owner, &requested).await;
+        befriend(&owner, &exfriend).await;
+        owner
+            .delete("/api/friends/list/exfriend")
+            .await
+            .assert_status(200);
+        befriend(&blocked, &owner).await;
+        owner
+            .put("/api/friends/blocks/blocked", json!({}))
+            .await
+            .assert_status(200);
         Viewers {
             owner,
             co_member,
@@ -148,6 +143,29 @@ impl Viewers {
             &self.blocked,
         ]
     }
+}
+
+/// `requester` asks `addressee` to be friends (`POST /api/friends/requests`).
+async fn ask(requester: &TestClient, addressee: &TestClient) {
+    requester
+        .post(
+            "/api/friends/requests",
+            json!({ "username": addressee.username() }),
+        )
+        .await
+        .assert_status(200);
+}
+
+/// `requester` asks and `addressee` accepts: they are friends from now on.
+async fn befriend(requester: &TestClient, addressee: &TestClient) {
+    ask(requester, addressee).await;
+    addressee
+        .post(
+            &format!("/api/friends/requests/{}/accept", requester.username()),
+            json!({}),
+        )
+        .await
+        .assert_status(200);
 }
 
 /// Asserts that `viewer` gets the same answer (status and body) for the owner as for an

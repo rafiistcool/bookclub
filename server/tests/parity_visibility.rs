@@ -69,6 +69,10 @@ enum Kind {
     SearchHistory,
     /// Goodreads import jobs: their owner's alone.
     ImportJobs,
+    /// Friends, requests and blocks (FRIENDS, #57): `GET /api/friends` and the `{username}`
+    /// routes under `/api/friends`. Their owner's alone: a friend sees the owner in their own
+    /// list, never the owner's other friends, requests or blocks.
+    Friends,
 }
 
 impl Kind {
@@ -87,6 +91,7 @@ impl Kind {
             Kind::ClubShelves => "Club shelves",
             Kind::SearchHistory => "Search history",
             Kind::ImportJobs => "Import jobs",
+            Kind::Friends => "Friends",
         }
     }
 }
@@ -251,29 +256,11 @@ const USER_COLUMNS: &[(&str, Class)] = &[
              (media_reports.rs); exported to that account without the reporter (auth_export.rs)",
         ),
     ),
-    // Friendships widen every kind above through the policy functions (the Friend case). The
-    // friend lists themselves get their kind with `GET /api/friends` (FRIENDS part 2).
-    (
-        "friendships.requester_id",
-        Not(
-            "friend data: no route serves it before FRIENDS part 2, which makes it \
-             Kind::Friends (docs/phase3/notes/friends.md)",
-        ),
-    ),
-    (
-        "friendships.addressee_id",
-        Not(
-            "friend data: no route serves it before FRIENDS part 2, which makes it \
-             Kind::Friends (docs/phase3/notes/friends.md)",
-        ),
-    ),
-    (
-        "user_blocks.user_id",
-        Not(
-            "friend data: no route serves it before FRIENDS part 2, which makes it \
-             Kind::Friends (docs/phase3/notes/friends.md)",
-        ),
-    ),
+    // Friendships widen every kind above through the policy functions (the Friend case); the
+    // friend lists themselves are their owner's (`GET /api/friends`).
+    ("friendships.requester_id", Kinds(&[Kind::Friends])),
+    ("friendships.addressee_id", Kinds(&[Kind::Friends])),
+    ("user_blocks.user_id", Kinds(&[Kind::Friends])),
     (
         "user_blocks.blocked_user_id",
         Not("never served: the blocked account is not told (friends_blocks.rs)"),
@@ -310,6 +297,26 @@ const USERNAME_ROUTES: &[(&str, Class)] = &[
     (
         "POST /api/admin/users/{username}/unsuspend",
         Not("instance administration: instance admins only (admin_guard.rs, admin_users.rs)"),
+    ),
+    (
+        "POST /api/friends/requests/{username}/accept",
+        Kinds(&[Kind::Friends]),
+    ),
+    (
+        "DELETE /api/friends/requests/{username}",
+        Kinds(&[Kind::Friends]),
+    ),
+    (
+        "DELETE /api/friends/list/{username}",
+        Kinds(&[Kind::Friends]),
+    ),
+    (
+        "PUT /api/friends/blocks/{username}",
+        Kinds(&[Kind::Friends]),
+    ),
+    (
+        "DELETE /api/friends/blocks/{username}",
+        Kinds(&[Kind::Friends]),
     ),
 ];
 
@@ -713,6 +720,7 @@ async fn check(w: &World, kind: Kind, case: Case) -> Covered {
         Kind::ClubShelves => club_shelves(w, case).await,
         Kind::SearchHistory => search_history(w, case).await,
         Kind::ImportJobs => import_jobs(w, case).await,
+        Kind::Friends => friends(w, case).await,
     }
 }
 
@@ -1508,6 +1516,138 @@ async fn import_jobs(w: &World, case: Case) -> Covered {
                 (hidden.status, hidden.json()),
                 (unknown.status, unknown.json())
             );
+        }
+    }
+    Covered::Checked
+}
+
+/// Every username of a list of `GET /api/friends`, as (list, username).
+fn friend_lists(out: &Value) -> BTreeSet<(String, String)> {
+    ["friends", "incoming", "outgoing", "blocked"]
+        .into_iter()
+        .flat_map(|list| {
+            out[list]
+                .as_array()
+                .unwrap_or_else(|| panic!("no list {list} in {out}"))
+                .iter()
+                .map(move |item| {
+                    let name = item["user"]["username"]
+                        .as_str()
+                        .or(item["username"].as_str());
+                    (list.to_owned(), name.unwrap().to_owned())
+                })
+        })
+        .collect()
+}
+
+fn lists(entries: &[(&str, &str)]) -> BTreeSet<(String, String)> {
+    entries
+        .iter()
+        .map(|(list, name)| (list.to_string(), name.to_string()))
+        .collect()
+}
+
+/// The `{username}` routes that act on the caller's own rows (all but the block, which tells an
+/// unknown name apart, §4.9), as (method, path) for a name.
+fn own_row_routes(name: &str) -> [(&'static str, String); 4] {
+    [
+        ("POST", format!("/api/friends/requests/{name}/accept")),
+        ("DELETE", format!("/api/friends/requests/{name}")),
+        ("DELETE", format!("/api/friends/list/{name}")),
+        ("DELETE", format!("/api/friends/blocks/{name}")),
+    ]
+}
+
+async fn call(viewer: &TestClient, method: &str, path: &str) -> TestResponse {
+    match method {
+        "POST" => viewer.post(path, json!({})).await,
+        _ => viewer.delete(path).await,
+    }
+}
+
+async fn friends(w: &World, case: Case) -> Covered {
+    match case {
+        Case::Myself => {
+            let mine = ok(&w.v.owner, "/api/friends").await;
+            assert_eq!(
+                friend_lists(&mine),
+                lists(&[
+                    ("friends", "friend"),
+                    ("incoming", "asked"),
+                    ("outgoing", "requested"),
+                    ("blocked", "blocked"),
+                ])
+            );
+        }
+        Case::CoMember | Case::Friend | Case::Stranger => {
+            // Each viewer's list holds only their own rows: the friend sees the owner as their
+            // friend, the two sides of a pending request see their request; nobody sees the
+            // owner's other friends, requests or blocks, and the blocked account is not told.
+            let expected: Vec<(&TestClient, BTreeSet<(String, String)>)> = match case {
+                Case::CoMember => vec![(&w.v.co_member, lists(&[]))],
+                Case::Friend => vec![(
+                    &w.v.friend,
+                    lists(&[("friends", "owner"), ("friends", "stranger")]),
+                )],
+                _ => vec![
+                    (&w.v.other_club, lists(&[])),
+                    (&w.v.stranger, lists(&[("friends", "friend")])),
+                    (&w.v.former, lists(&[])),
+                    (&w.v.asked, lists(&[("outgoing", "owner")])),
+                    (&w.v.requested, lists(&[("incoming", "owner")])),
+                    (&w.v.exfriend, lists(&[])),
+                    (&w.v.blocked, lists(&[])),
+                ],
+            };
+            for (viewer, rows) in expected {
+                let theirs = ok(viewer, "/api/friends").await;
+                assert_eq!(friend_lists(&theirs), rows, "{}", viewer.username());
+                // The routes about the owner act on the viewer's own rows only. A viewer without
+                // a row with the owner (the blocked account too) has nothing to accept, decline,
+                // cancel or remove, and unblocking is a no-op. (The others would change the
+                // world: the friend could unfriend, the requested account accept.)
+                if rows.iter().any(|(_, name)| name == "owner") {
+                    continue;
+                }
+                for (method, path) in own_row_routes("owner") {
+                    let res = call(viewer, method, &path).await;
+                    let status = if path.contains("/blocks/") { 200 } else { 404 };
+                    assert_eq!(
+                        res.status.as_u16(),
+                        status,
+                        "{} {method} {path}",
+                        viewer.username()
+                    );
+                }
+            }
+            assert_eq!(
+                friend_lists(&ok(&w.v.owner, "/api/friends").await).len(),
+                4,
+                "no viewer changed the owner's lists"
+            );
+        }
+        Case::UnknownName => {
+            // An unknown name answers like a name the caller has nothing with; only the block
+            // tells them apart (404 `No account with that name`, counted against the limit).
+            for viewer in [&w.v.co_member, &w.v.stranger] {
+                for ((method, owner_path), (_, unknown_path)) in own_row_routes("owner")
+                    .into_iter()
+                    .zip(own_row_routes(UNKNOWN))
+                {
+                    let hidden = call(viewer, method, &owner_path).await;
+                    let unknown = call(viewer, method, &unknown_path).await;
+                    assert_eq!(
+                        (hidden.status, hidden.json()),
+                        (unknown.status, unknown.json()),
+                        "{} {method} {owner_path}",
+                        viewer.username()
+                    );
+                }
+                viewer
+                    .put(&format!("/api/friends/blocks/{UNKNOWN}"), json!({}))
+                    .await
+                    .assert_detail(404, "No account with that name");
+            }
         }
     }
     Covered::Checked

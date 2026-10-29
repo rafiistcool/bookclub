@@ -13,6 +13,7 @@ pub mod dto;
 pub mod email;
 pub mod error;
 pub mod extract;
+pub mod friends;
 pub mod harvest;
 mod health;
 pub mod importer;
@@ -133,6 +134,7 @@ fn api_router() -> OpenApiRouter<AppState> {
         .merge(overlap::routes())
         .merge(activity::routes())
         .merge(legal::routes())
+        .merge(friends::routes())
 }
 
 /// Every `/api/admin/*` route.

@@ -272,6 +272,13 @@ pub struct RateLimits {
     pub exports: Arc<Semaphore>,
     /// One export per account at a time.
     pub export_gate: KeyedGate,
+    /// Friend requests and blocks per account (`u:<id>`, FRIENDS #57): every
+    /// `POST /api/friends/requests`, unknown names and repeats included, and every
+    /// `PUT /api/friends/blocks/{username}` unless the caller already has a `friendships` row
+    /// with that account (a request or a friendship disclosed the name already, so blocking any
+    /// number of requesters stays free). It bounds probing for names: only these two routes tell
+    /// an unknown name from an existing one.
+    pub friend_request_user: SlidingWindow,
 }
 
 impl RateLimits {
@@ -304,6 +311,7 @@ impl RateLimits {
             catalog_gate: KeyedGate::new(2),
             exports: Arc::new(Semaphore::new(EXPORTS_AT_ONCE)),
             export_gate: KeyedGate::new(1),
+            friend_request_user: SlidingWindow::new(20, DAY),
         }
     }
 }
@@ -489,6 +497,7 @@ mod tests {
             (&limits.notice_target, 6, 86_400),
             (&limits.avatar_user, 10, 3600),
             (&limits.catalog_user, 60, 60),
+            (&limits.friend_request_user, 20, 86_400),
         ];
         for (limit, count, seconds) in cases {
             assert_eq!(limit.limit, count);

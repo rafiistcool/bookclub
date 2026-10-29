@@ -74,6 +74,19 @@ pub mod msg {
     /// 403 when a suspended account signs in or creates a bearer token, after its password
     /// matched (`auth::login::confirm`).
     pub const ACCOUNT_SUSPENDED: &str = "This account is suspended";
+
+    // FRIENDS (#57).
+    /// 404 for a username no account has: the admin's suspension routes, a friend request and a
+    /// block (docs/phase3/work-plan.md §4.9).
+    pub const NO_ACCOUNT: &str = "No account with that name";
+    /// 400 when a friend request or a block names the caller.
+    pub const SELF_ACCOUNT: &str = "That is your own account";
+    /// 409 when the caller sends a friend request to an account they blocked.
+    pub const YOU_BLOCKED: &str = "You blocked this account";
+    /// 404 when there is no pending request the caller may accept, decline or cancel.
+    pub const NO_FRIEND_REQUEST: &str = "No such friend request";
+    /// 404 when the caller is not friends with that name: removal and friend invites.
+    pub const NO_FRIEND: &str = "No friend with that name";
 }
 
 /// An error response. Every non-2xx answer of the API is one of these.

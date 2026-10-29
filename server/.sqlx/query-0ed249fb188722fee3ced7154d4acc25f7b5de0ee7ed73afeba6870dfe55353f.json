@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n               SELECT 1 FROM friendships\n               WHERE least(requester_id, addressee_id) = least($1::int8, $2::int8)\n                 AND greatest(requester_id, addressee_id) = greatest($1::int8, $2::int8)\n           ) AS \"disclosed!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "disclosed!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "0ed249fb188722fee3ced7154d4acc25f7b5de0ee7ed73afeba6870dfe55353f"
+}

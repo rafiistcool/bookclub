@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM friendships\n         WHERE least(requester_id, addressee_id) = least($1::int8, $2::int8)\n           AND greatest(requester_id, addressee_id) = greatest($1::int8, $2::int8)\n           AND accepted_at IS NOT NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dc5cbfbbbffccb85997130a1f2fada7fc9cb829a543e334174548009fe3b0b6e"
+}

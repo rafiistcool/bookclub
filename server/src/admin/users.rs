@@ -44,8 +44,6 @@ use crate::error::{ApiResult, AppError, ErrorBody, msg};
 use crate::extract::ApiPath;
 use crate::media::shared::urls::avatar_url;
 
-/// 404 for a username no account has (admin only).
-pub const NO_ACCOUNT: &str = "No account with that name";
 /// 400 when an admin tries to suspend their own account.
 pub const CANNOT_SUSPEND_SELF: &str = "You cannot suspend your own account";
 
@@ -106,7 +104,7 @@ pub async fn suspend(
     let user_id = sqlx::query_scalar!("SELECT id FROM users WHERE username = $1", username)
         .fetch_optional(&mut *tx)
         .await?
-        .ok_or_else(|| AppError::not_found(NO_ACCOUNT))?;
+        .ok_or_else(|| AppError::not_found(msg::NO_ACCOUNT))?;
     if user_id == admin.id {
         return Err(AppError::bad_request(CANNOT_SUSPEND_SELF));
     }
@@ -133,7 +131,7 @@ pub async fn suspend(
     if !acting.is_some_and(|row| row.is_admin && !row.suspended) {
         return Err(AppError::not_found(msg::NOT_FOUND));
     }
-    let target = target.ok_or_else(|| AppError::not_found(NO_ACCOUNT))?;
+    let target = target.ok_or_else(|| AppError::not_found(msg::NO_ACCOUNT))?;
     sqlx::query!(
         "UPDATE users SET suspended_at = coalesce(suspended_at, now()), is_admin = false
          WHERE id = $1",
@@ -218,7 +216,7 @@ pub async fn unsuspend(
     let mut conn = state.db.acquire().await?;
     let user_id = lift_suspension(&mut conn, &username)
         .await?
-        .ok_or_else(|| AppError::not_found(NO_ACCOUNT))?;
+        .ok_or_else(|| AppError::not_found(msg::NO_ACCOUNT))?;
     tracing::info!(admin = admin.id, user = user_id, "account unsuspended");
     Ok(Json(admin_user_out(&mut conn, user_id).await?))
 }
