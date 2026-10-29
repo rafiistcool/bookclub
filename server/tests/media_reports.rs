@@ -2103,3 +2103,207 @@ async fn a_report_of_an_avatar_deleted_meanwhile_is_404(db: PgPool) {
     filing.await.unwrap().assert_detail(404, "Not found");
     assert_eq!(app.scalar_i64("SELECT count(*) FROM reports").await, 0);
 }
+
+/// Holds the picture `media` `FOR SHARE` on a transaction of its own, as a report being filed
+/// holds it. Another share lock gets past it while a writer waits for it: that is how a report
+/// can lock a picture that an avatar upload or an account deletion is already waiting for.
+async fn share_picture(app: &TestApp, media: i64) -> sqlx::Transaction<'static, Postgres> {
+    let mut sharer = app.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM media WHERE id = $1 FOR SHARE")
+        .bind(media)
+        .execute(&mut *sharer)
+        .await
+        .unwrap();
+    sharer
+}
+
+/// The lock order (conventions §7.2): a report of a profile picture locks the owner's row
+/// (`FOR KEY SHARE`) before the picture, as the owner's avatar upload does (the user row
+/// `FOR UPDATE`, then the avatar rows). The report's row names the owner (`target_user_id`), so
+/// its foreign key takes that lock anyway; taken only there, after the picture, a report that
+/// held the picture waited for the upload's user row while the upload waited for the picture,
+/// and Postgres aborted one of them (40P01, a 500). Here the upload holds Ada's row and waits
+/// for the picture, which another transaction shares, when Bob's report starts. The report now
+/// waits for the upload, which deletes the unreported picture, and is 404 like the report of a
+/// picture deleted meanwhile.
+#[sqlx::test]
+async fn a_report_racing_the_owners_avatar_upload_does_not_deadlock(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let club = app.club(&ada, "Readers").await;
+    app.join(&club, &bob, "member").await;
+    let old = upload_avatar(&ada, [10, 120, 200]).await;
+    let media = media_id(&app, &old).await;
+
+    let sharer = share_picture(&app, media).await;
+    let uploading = ada.put_multipart(
+        "/api/auth/me/avatar",
+        vec![Part::file("me.jpg", "image/jpeg", jpeg([200, 30, 30]))],
+    );
+    let filing = async {
+        until_lock_waits(&app.db, 1).await;
+        report(&bob, &old, json!({"reason": "offensive"})).await
+    };
+    let release = async {
+        until_lock_waits(&app.db, 2).await;
+        sharer.commit().await.unwrap();
+    };
+    let (uploaded, filed, ()) = tokio::join!(uploading, filing, release);
+    uploaded.assert_status(200);
+    filed.assert_detail(404, "Not found");
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM reports").await, 0);
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM media WHERE kind = 'avatar'")
+            .await,
+        1,
+        "only the new picture"
+    );
+}
+
+/// The same lock order against the owner's account deletion, which locks the user row
+/// `FOR UPDATE` and then deletes the avatar rows (`auth::deletion::delete_user`): the report
+/// waits for the deletion and is 404, and the deletion goes through.
+#[sqlx::test]
+async fn a_report_racing_the_owners_account_deletion_does_not_deadlock(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let club = app.club(&bob, "Readers").await;
+    app.join(&club, &ada, "member").await;
+    let avatar = upload_avatar(&ada, [10, 120, 200]).await;
+    let media = media_id(&app, &avatar).await;
+
+    let sharer = share_picture(&app, media).await;
+    let deleting = ada.delete_json("/api/auth/me", json!({"password": PASSWORD}));
+    let filing = async {
+        until_lock_waits(&app.db, 1).await;
+        report(&bob, &avatar, json!({"reason": "offensive"})).await
+    };
+    let release = async {
+        until_lock_waits(&app.db, 2).await;
+        sharer.commit().await.unwrap();
+    };
+    let (deleted, filed, ()) = tokio::join!(deleting, filing, release);
+    deleted.assert_status(204);
+    filed.assert_detail(404, "Not found");
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM reports").await, 0);
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM users WHERE username = 'ada'")
+            .await,
+        0
+    );
+}
+
+/// The lock order (conventions §7.2): a direct takedown of a profile picture locks the owner's
+/// row before the picture too. The notice it records names the owner (`target_user_id`); taken
+/// only through that foreign key, after the picture, the takedown waited for an avatar upload
+/// that held the owner's row and waited for the picture. Here the upload is half done by hand:
+/// it holds Ada's row, and locks her picture once the takedown waits.
+#[sqlx::test]
+async fn a_takedown_with_a_notice_waits_for_the_owners_avatar_upload(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let root = app.admin("root").await;
+    let avatar = upload_avatar(&ada, [10, 120, 200]).await;
+    let media = media_id(&app, &avatar).await;
+
+    // `media::avatar::lock_user`, then (below) `delete_avatars`' lock of the avatar rows.
+    let mut upload = app.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+        .bind(ada.id())
+        .execute(&mut *upload)
+        .await
+        .unwrap();
+    let path = format!("/api/admin/media/{avatar}");
+    let taking_down = root.delete_json(&path, json!({"reason": "offensive"}));
+    let finish_upload = async {
+        until_a_lock_wait(&app.db).await;
+        let locked = sqlx::query("SELECT id FROM media WHERE id = $1 FOR UPDATE")
+            .bind(media)
+            .execute(&mut *upload)
+            .await
+            .map(|_| ());
+        upload.rollback().await.unwrap();
+        locked
+    };
+    let (res, locked) = tokio::join!(taking_down, finish_upload);
+    locked.expect("the upload's lock of the picture");
+    res.assert_status(204);
+    app.anon()
+        .get(&format!("/media/{avatar}/a"))
+        .await
+        .assert_status(410);
+    assert_eq!(
+        app.scalar_i64(
+            "SELECT count(*) FROM reports WHERE via = 'notice' AND target_kind = 'avatar'"
+        )
+        .await,
+        1
+    );
+}
+
+/// The lock order (conventions §7.2): "remove" on a profile picture locks the owner's row before
+/// the picture, so it never meets the owner's avatar upload halfway. The takedown also locks the
+/// owner's copies of the same file, after the reported picture; the upload locks the avatar rows
+/// in id order. With a copy whose id is lower than the reported picture's, the two locked those
+/// rows in opposite orders and Postgres aborted one of them. Here Ada's first picture is held for
+/// Bob's report, she uploads the same file again, Bob reports that one too, and "remove" on the
+/// second report meets an upload that holds Ada's row and the first picture.
+#[sqlx::test]
+async fn removing_an_avatar_with_an_older_copy_waits_for_the_owners_upload(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let root = app.admin("root").await;
+    let club = app.club(&ada, "Readers").await;
+    app.join(&club, &bob, "member").await;
+    let first = upload_avatar(&ada, [10, 120, 200]).await;
+    let held = media_id(&app, &first).await;
+    report(&bob, &first, json!({"reason": "offensive"}))
+        .await
+        .assert_status(201);
+    upload_avatar(&ada, [200, 30, 30]).await;
+    let again = upload_avatar(&ada, [10, 120, 200]).await;
+    let copy = media_id(&app, &again).await;
+    assert!(held < copy);
+    let report_id = report(&bob, &again, json!({"reason": "offensive"}))
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+
+    // An avatar upload of Ada's, half done: her row, then her avatar rows in id order.
+    let mut upload = app.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+        .bind(ada.id())
+        .execute(&mut *upload)
+        .await
+        .unwrap();
+    sqlx::query("SELECT id FROM media WHERE id = $1 FOR UPDATE")
+        .bind(held)
+        .execute(&mut *upload)
+        .await
+        .unwrap();
+    let path = format!("/api/admin/reports/{report_id}/resolve");
+    let removing = root.post(&path, json!({"action": "remove"}));
+    let finish_upload = async {
+        until_a_lock_wait(&app.db).await;
+        let locked = sqlx::query("SELECT id FROM media WHERE id = $1 FOR UPDATE")
+            .bind(copy)
+            .execute(&mut *upload)
+            .await
+            .map(|_| ());
+        upload.rollback().await.unwrap();
+        locked
+    };
+    let (res, locked) = tokio::join!(removing, finish_upload);
+    locked.expect("the upload's lock of the second picture");
+    res.assert_status(200);
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM media WHERE kind = 'avatar' AND removed_at IS NULL")
+            .await,
+        0,
+        "both copies are down"
+    );
+}

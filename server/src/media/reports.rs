@@ -20,7 +20,8 @@
 //! reports, requests) is the one ingest, `set_cover` and `merge_works` lock in, so a takedown
 //! waits for an ingest that is attaching the picture and then clears it too. Dismissals and
 //! cover approvals lock the media row first as well; a new report locks it after its reader's
-//! turn (the advisory lock) and before the reports row. The bytes are deleted after the
+//! turn (the advisory lock) and before the reports row. For a profile picture, each of them
+//! locks the owner's row before the picture ([`lock_owner`]). The bytes are deleted after the
 //! commit. The row stays, with its hash: `ingest::ol_cover_media` never hands
 //! it out again, no fetch or backfill downloads it again, `/media/…` answers 410, and an upload
 //! of the same file, or of a variant a reader saved from `/media/…`, is refused.
@@ -365,6 +366,9 @@ pub async fn report(
     )
     .execute(&mut *tx)
     .await?;
+    // A profile picture's owner before the picture, as the owner's avatar writes and account
+    // deletion lock them (conventions §7.2).
+    lock_owner(&mut tx, target_user).await?;
     // Then the picture (conventions §7.2), FOR SHARE: a takedown or a dismissal that is under
     // way finishes first and this report sees it; a later one waits and then resolves it.
     // A profile picture its owner replaced or deleted since the plain read, while no report of
@@ -595,6 +599,9 @@ pub async fn resolve_report(
         }
         _ => {
             let title = book_title(&mut tx, report.work_id, report.edition_id).await?;
+            // A profile picture's owner first (conventions §7.2): the takedown below also locks
+            // the owner's copies of the picture, which an avatar upload locks after the owner.
+            lock_owner(&mut tx, report.target_user_id.filter(|_| avatar)).await?;
             // The picture first, as a takedown and a report lock it: dismissals and takedowns
             // of one picture take turns, and a report filed meanwhile is resolved too. The
             // profile picture of an account deleted since has no row any more.
@@ -726,6 +733,23 @@ struct Decision {
     held: bool,
 }
 
+/// Locks the owner of a profile picture (`FOR KEY SHARE`) before the picture, as every path that
+/// touches a profile picture does (conventions §7.2). The owner's avatar upload or deletion and
+/// the account's deletion lock the users row `FOR UPDATE` and then the avatar rows; a reports
+/// row that names the owner (`target_user_id`) takes this lock anyway through its foreign key,
+/// and a profile picture's takedown locks the owner's copies of it. Taken only after the picture,
+/// either could wait for the owner's row while the owner's transaction waited for the picture,
+/// and Postgres would abort one of them. An account deleted meanwhile has no row: its pictures
+/// are gone too, which the caller's read of the picture finds.
+async fn lock_owner(conn: &mut PgConnection, owner: Option<i64>) -> sqlx::Result<()> {
+    if let Some(owner) = owner {
+        sqlx::query!("SELECT id FROM users WHERE id = $1 FOR KEY SHARE", owner)
+            .fetch_optional(conn)
+            .await?;
+    }
+    Ok(())
+}
+
 /// True when the profile picture `media_id` is no account's profile picture any more: its owner
 /// replaced or deleted it while it was reported, and `media/avatar.rs` kept it for the decision.
 async fn held_avatar(conn: &mut PgConnection, media_id: i64) -> sqlx::Result<bool> {
@@ -853,12 +877,23 @@ pub async fn take_down(
     ApiPath(public_id): ApiPath<String>,
     OptionalJson(notice): OptionalJson<TakeDownIn>,
 ) -> ApiResult<StatusCode> {
-    let media_id = sqlx::query_scalar!("SELECT id FROM media WHERE public_id = $1", public_id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| AppError::not_found(msg::NOT_FOUND))?;
+    let found = sqlx::query!(
+        "SELECT id, kind, uploaded_by FROM media WHERE public_id = $1",
+        public_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::not_found(msg::NOT_FOUND))?;
+    let media_id = found.id;
     let mut tx = state.db.begin().await?;
-    // The picture first (conventions §7.2), and the book that shows it before the takedown
+    // A profile picture's owner first (conventions §7.2): the notice names the owner, and the
+    // takedown locks the owner's copies of the picture.
+    lock_owner(
+        &mut tx,
+        found.uploaded_by.filter(|_| found.kind == "avatar"),
+    )
+    .await?;
+    // Then the picture (conventions §7.2), and the book that shows it before the takedown
     // clears its covers.
     let picture = sqlx::query!(
         "SELECT kind, removed_at, uploaded_by FROM media WHERE id = $1 FOR UPDATE",

@@ -190,8 +190,10 @@ async fn lock_user(conn: &mut PgConnection, user_id: i64) -> ApiResult<()> {
 /// admin's decision under a new public id (see the module docs); every other row is deleted, and
 /// its storage prefixes are returned, to delete after the commit.
 async fn delete_avatars(conn: &mut PgConnection, user_id: i64) -> sqlx::Result<Vec<String>> {
-    // Locked first: a report being filed holds its picture `FOR SHARE` until it commits, so the
-    // next statement, on a new snapshot, sees it.
+    // Every report, takedown and dismissal of a profile picture locks its owner's row
+    // (`FOR KEY SHARE`) before the picture, and the caller holds that row `FOR UPDATE`: one that
+    // started first has committed, so the next statement, on a new snapshot, sees its report,
+    // and a later one waits for this transaction. The rows are locked first all the same.
     let rows = sqlx::query!(
         "SELECT id, public_id, storage_key FROM media
          WHERE kind = 'avatar' AND removed_at IS NULL
