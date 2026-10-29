@@ -30,7 +30,8 @@
   "report": {
     "action": {
       "avatar": "Profilbild melden",
-      "work": "Dieses Buch melden"
+      "work": "Dieses Buch melden",
+      "edition": "Melden"
     },
     "title": {
       "cover": "Dieses Cover melden",
@@ -39,6 +40,7 @@
       "edition": "Diese Ausgabe melden"
     },
     "avatarOf": "Profilbild von {name}",
+    "editionOf": "Die Ausgabe {edition} melden",
     "why": "Was stimmt damit nicht?",
     "details": "Details",
     "next": "Ein Admin entscheidet. Ist deine E-Mail-Adresse bestätigt, erfährst du, was daraus wurde.",

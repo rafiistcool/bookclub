@@ -30,7 +30,8 @@
   "report": {
     "action": {
       "avatar": "Report profile picture",
-      "work": "Report this book"
+      "work": "Report this book",
+      "edition": "Report"
     },
     "title": {
       "cover": "Report this cover",
@@ -39,6 +40,7 @@
       "edition": "Report this edition"
     },
     "avatarOf": "Profile picture of {name}",
+    "editionOf": "Report the edition {edition}",
     "why": "What is wrong with it?",
     "details": "Details",
     "next": "An admin decides. If your email address is verified, you hear what came of it.",

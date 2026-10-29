@@ -31,8 +31,8 @@ import ReportSheet, { type ReportTarget } from "./ReportSheet.vue";
  *
  * A book or edition a reader added can also be reported from here (#54), for
  * text that is not a mistake but offensive or someone else's: the sheet turns
- * into the report sheet. This is where an edition's report starts, as the
- * edition list itself offers none.
+ * into the report sheet. The edition list (`EditionPicker.vue`) offers the
+ * same report for every edition a reader added.
  */
 const props = defineProps<{ book?: BookDetailOut; edition?: EditionOut; admin?: boolean }>();
 const emit = defineEmits<{ close: []; saved: [value: BookDetailOut | EditionOut] }>();
