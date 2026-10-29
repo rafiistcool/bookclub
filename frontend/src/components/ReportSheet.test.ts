@@ -128,6 +128,15 @@ describe("ReportSheet", () => {
     expect(api.reportCover).not.toHaveBeenCalled();
   });
 
+  it("says so when an admin already removed a book's text", async () => {
+    api.reportWork.mockResolvedValue({ id: 8, status: "removed" });
+    const wrapper = mountSheet({ kind: "work", workId: 4, title: "Manual Zine" });
+    await wrapper.get('input[value="offensive"]').setValue(true);
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(useToast().items[0]?.message).toBe("An admin already removed this text. Thanks anyway.");
+  });
+
   it("names the contact address for people without an account, when the server has one", async () => {
     expect(mountSheet(COVER).find(".report-contact").exists()).toBe(false);
     useService().$patch({ contact_email: "abuse@bookclub.test" });
@@ -233,11 +242,48 @@ describe("the report actions", () => {
     expect(removed.get("h1").text()).toBe("[entfernt]");
     expect(removed.text()).toContain("Ein Admin hat nach einer Meldung entfernt, was jemand für dieses Buch eingetragen hatte.");
 
+    // The cover's alt text and its cloth title too (E2E check of the ADM2 merge), and nothing
+    // is left to report (the server would close the report on arrival).
+    expect(removed.get(".cover .binding-title").text()).toBe("[entfernt]");
+    expect(removed.text()).not.toContain("[removed]");
+    expect(removed.find("button.report-book").exists()).toBe(false);
+    await removed.get(".catalog-requests button").trigger("click");
+    expect(removed.get(".sheet").text()).toContain("„[entfernt]“");
+    expect(removed.find(".report-instead").exists()).toBe(false);
+
     i18n.global.locale.value = "en";
     // Only a book a reader added: a catalog book with that title is shown as it is.
     const catalog = await bookPage(false, REMOVED_TITLE);
     expect(catalog.get("h1").text()).toBe("[removed]");
     expect(catalog.text()).not.toContain("after a report");
+  });
+
+  it("names a withdrawn book's cover in the reader's language when it is reported", async () => {
+    i18n.global.locale.value = "de";
+    api.book.mockResolvedValue(
+      bookDetail({
+        id: 4,
+        ol_work_key: null,
+        title: REMOVED_TITLE,
+        source: "user",
+        custom: true,
+        cover_public_id: "cov3r1d",
+        cover_url: "/media/cov3r1d/l",
+      }),
+    );
+    api.editions.mockResolvedValue({ items: [] });
+    api.diary.mockResolvedValue({ work_id: 4, my_progress: null, my_status: null, items: [], timezone: "UTC" });
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/book/:id", component: BookDetailPage }] });
+    await router.push("/book/4");
+    await router.isReady();
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    useSession().user = user({ clubs: [] });
+    const wrapper = mount(BookDetailPage, { global: { plugins: [pinia, router] } });
+    await flushPromises();
+    expect(wrapper.get(".cover img").attributes("alt")).toBe("Cover von [entfernt]");
+    await wrapper.get("button.report-cover").trigger("click");
+    expect(wrapper.get(".sheet .report-subject").text()).toBe("[entfernt]");
   });
 
   function correctionSheet(props: InstanceType<typeof EditRequestSheet>["$props"]) {

@@ -6553,7 +6553,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The report is in the admin queue (`open`); a repeat names the same report */
+            /** @description The report is in the admin queue (`open`), or an admin already removed the record's text (`removed`, closed on arrival); a repeat names the same report */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -7482,7 +7482,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The report is in the admin queue (`open`); a repeat names the same report */
+            /** @description The report is in the admin queue (`open`), or an admin already removed the record's text (`removed`, closed on arrival); a repeat names the same report */
             201: {
                 headers: {
                     [name: string]: unknown;

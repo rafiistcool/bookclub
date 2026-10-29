@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT title IS NULL AND subtitle IS NULL AND publisher = '' AS \"bare!\"\n                       FROM editions WHERE id = $1 FOR SHARE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "bare!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "3026bd254df18d878ff3d3b9f03fc15f413eec39f4eaabbd7f851262f67b3a62"
+}

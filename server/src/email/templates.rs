@@ -584,8 +584,8 @@ pub fn statement_of_reasons(
                 ),
                 format!("das Buch „{title}“, das du eingetragen hast,"),
                 "Titel, Untertitel, Autorin / Autor, Beschreibung und Themen wurden entfernt. \
-                 Das Buch bleibt in den Regalen, mit dem Titel „[removed]“, damit niemandem \
-                 seine Lesehistorie verloren geht.",
+                 Das Buch bleibt in den Regalen, mit dem Titel „[entfernt]“ (in manchen Listen \
+                 „[removed]“), damit niemandem seine Lesehistorie verloren geht.",
             ),
             Reported::Edition(title) => (
                 format!(
@@ -1205,6 +1205,12 @@ mod tests {
                 .contains("Die Nutzungsbedingungen: https://books.example.com/terms")
         );
         assert!(de.text.contains("schreib an abuse@books.example.com;"));
+        // The title the book page shows in German (`report.removedTitle`), and the stored one
+        // that lists still show.
+        assert!(
+            de.text
+                .contains("mit dem Titel „[entfernt]“ (in manchen Listen „[removed]“)")
+        );
     }
 
     /// A held profile picture (its owner had replaced or deleted it while it was reported) is

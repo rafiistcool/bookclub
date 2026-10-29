@@ -47,6 +47,7 @@
     "send": "Send report",
     "sending": "Sending…",
     "sent": "Thanks. An admin will look at it.",
+    "alreadyRemoved": "An admin already removed this text. Thanks anyway.",
     "failed": "Could not send that report",
     "noAccount": "No account here? Anyone can report content by writing to {email}.",
     "instead": "Not a mistake, but offensive or infringing someone’s rights?",

@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT title = $2 AND subtitle = '' AND author_names = '' AND description = ''\n                              AND cardinality(subjects) = 0 AS \"bare!\"\n                       FROM works WHERE id = $1 FOR SHARE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "bare!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "c4e199495f8833e8644fb3e89faf829e221d9a3c632e41f56d5a8a04d504215e"
+}

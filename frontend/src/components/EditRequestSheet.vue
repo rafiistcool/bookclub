@@ -18,7 +18,7 @@ import { languageOptions } from "../languages";
 import { useLocale } from "../stores/locale";
 import { useToast } from "../stores/toast";
 import BottomSheet from "./BottomSheet.vue";
-import ReportSheet, { type ReportTarget } from "./ReportSheet.vue";
+import ReportSheet, { isWithdrawn, type ReportTarget } from "./ReportSheet.vue";
 
 /**
  * "Suggest a correction": the catalog's facts of a book, or of one edition,
@@ -50,8 +50,12 @@ const error = ref("");
 const invalid = ref<string[]>([]);
 
 const languages = computed(() => languageOptions(locale.locale, before.language ? String(before.language) : null));
-/** What the sheet is about: an edition by its title and line, a book by its title. */
-const subject = computed(() => (props.edition ? editionName(props.edition) : props.book?.title ?? ""));
+/** What the sheet is about: an edition by its title and line, a book by its title (a withdrawn book's placeholder translated). */
+const subject = computed(() => {
+  if (props.edition) return editionName(props.edition);
+  if (!props.book) return "";
+  return isWithdrawn(props.book) ? t("report.removedTitle") : props.book.title;
+});
 
 function label(def: FieldDef): string {
   return t(`editRequest.fields.${def.key}`);
@@ -106,7 +110,8 @@ const reportTarget = computed<ReportTarget | null>(() => {
   if (props.edition) {
     return props.edition.source === "user" ? { kind: "edition", editionId: props.edition.id, title: subject.value } : null;
   }
-  return props.book?.custom ? { kind: "work", workId: props.book.id, title: props.book.title } : null;
+  // A withdrawn book has nothing left to report.
+  return props.book?.custom && !isWithdrawn(props.book) ? { kind: "work", workId: props.book.id, title: props.book.title } : null;
 });
 const reporting = ref(false);
 

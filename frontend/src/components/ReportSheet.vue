@@ -17,6 +17,15 @@ export type ReportTarget =
  */
 export const REMOVED_TITLE = "[removed]";
 
+/**
+ * A book a reader added whose text an admin removed on a report: it shows
+ * the placeholder translated, and offers no report (nothing is left to
+ * remove; the server would close one on arrival).
+ */
+export function isWithdrawn(book: { custom: boolean; title: string } | null | undefined): boolean {
+  return Boolean(book?.custom && book.title === REMOVED_TITLE);
+}
+
 /** The public id in a picture's address (`/media/{public_id}/a`); null for anything else. */
 export function picturePublicId(url: string | null | undefined): string | null {
   const match = /^\/media\/([a-z0-9]{26})\//.exec(url ?? "");
@@ -74,8 +83,11 @@ async function submit() {
   error.value = "";
   try {
     const created = await send({ reason: reason.value, details: details.value.trim() || null });
-    // A repeat names the reader's open report; a picture taken down meanwhile needs nobody.
-    toast.show(created.status === "removed" ? t("cover.alreadyRemoved") : t("report.sent"));
+    // A repeat names the reader's open report; a picture taken down or a text removed
+    // meanwhile needs nobody.
+    const picture = props.target.kind === "cover" || props.target.kind === "avatar";
+    const done = picture ? t("cover.alreadyRemoved") : t("report.alreadyRemoved");
+    toast.show(created.status === "removed" ? done : t("report.sent"));
     emit("close");
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : t("report.failed");

@@ -47,6 +47,7 @@
     "send": "Meldung senden",
     "sending": "Wird gesendet…",
     "sent": "Danke. Jemand aus dem Admin-Team sieht es sich an.",
+    "alreadyRemoved": "Ein Admin hat diesen Text schon entfernt. Trotzdem danke.",
     "failed": "Die Meldung konnte nicht gesendet werden",
     "noAccount": "Kein Konto hier? Inhalte melden kann man auch per E-Mail an {email}.",
     "instead": "Kein Fehler, sondern anstößig oder rechtsverletzend?",

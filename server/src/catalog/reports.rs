@@ -8,7 +8,9 @@
 //! through an edit request or an admin's direct edit instead (Q18). A report follows merges to
 //! the work a reader sees now. Like a cover report it is idempotent per reader and target (a
 //! repeat answers with the reader's open report), and it shares the cover reports' limits: 20
-//! new reports a day and 30 requests a minute per account.
+//! new reports a day and 30 requests a minute per account. A report of a record whose text an
+//! admin already withdrew ([`withdrawn`]) is recorded closed on arrival (`removed`), like a
+//! report of a picture already taken down, so it never puts the record back in the queue.
 //!
 //! **The reported record.** A work report keeps the work as reported in
 //! `reports.target_work_id`. A later merge re-points `reports.work_id` to the surviving work
@@ -107,7 +109,7 @@ impl CatalogTarget {
     params(("work_id" = String, Path, description = "A work id, `OL…W`, or a legacy key")),
     request_body = ReportIn,
     responses(
-        (status = 201, body = ReportCreated, description = "The report is in the admin queue (`open`); a repeat names the same report"),
+        (status = 201, body = ReportCreated, description = "The report is in the admin queue (`open`), or an admin already removed the record's text (`removed`, closed on arrival); a repeat names the same report"),
         (status = 400, body = ErrorBody, description = "`Only books readers added can be reported`, `Input should be 'copyright', 'wrong_book', 'offensive' or 'other'`"),
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
         (status = 404, body = ErrorBody, description = "`No such book.`"),
@@ -154,7 +156,7 @@ pub async fn report_work(
     params(("edition_id" = i64, Path, description = "The edition id")),
     request_body = ReportIn,
     responses(
-        (status = 201, body = ReportCreated, description = "The report is in the admin queue (`open`); a repeat names the same report"),
+        (status = 201, body = ReportCreated, description = "The report is in the admin queue (`open`), or an admin already removed the record's text (`removed`, closed on arrival); a repeat names the same report"),
         (status = 400, body = ErrorBody, description = "`Only books readers added can be reported`, `Input should be 'copyright', 'wrong_book', 'offensive' or 'other'`"),
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
         (status = 404, body = ErrorBody, description = "`No such book.`"),
@@ -195,30 +197,113 @@ fn hit_request_limit(state: &AppState, user_id: i64) -> ApiResult<()> {
         .map_err(|wait| wait.into_error(msg::SLOW_DOWN))
 }
 
-/// The reader's open report of `target`, if any.
-async fn open_report(
+/// The reader's report of `target` with this status (`open`, or `removed` for a record whose
+/// text was withdrawn), if any.
+async fn earlier_report(
     conn: &mut PgConnection,
     user_id: i64,
     target: CatalogTarget,
+    status: &str,
 ) -> sqlx::Result<Option<i64>> {
     let (_, edition_id, target_work_id) = target.columns();
     sqlx::query_scalar!(
         "SELECT id FROM reports
-         WHERE created_by = $1 AND target_kind = $2 AND status = 'open'
+         WHERE created_by = $1 AND target_kind = $2 AND status = $5
            AND CASE $2 WHEN 'work' THEN target_work_id = $3 ELSE edition_id = $4 END
          ORDER BY id DESC LIMIT 1",
         user_id,
         target.kind(),
         target_work_id,
-        edition_id
+        edition_id,
+        status
     )
     .fetch_optional(conn)
     .await
 }
 
-/// Files the report, or answers with the reader's open one. The reader's reports of one target
-/// take turns (the advisory lock), so two at once are one report; only a new row counts
-/// against the daily limit.
+/// Whether an admin already withdrew the text of `target` on a report ([`decide`]): it was
+/// removed once and has nothing left to withdraw (an admin's direct edit since that gave it
+/// text again makes it reportable again). With `lock`, the record is read under the lock a
+/// decision waits for, the work row first (conventions §7.2): `FOR SHARE` for a work, and for
+/// an edition its work `FOR KEY SHARE` (the report's foreign key takes that lock anyway) and the
+/// edition `FOR SHARE`. A decision under way then finishes first and this report sees it; a
+/// later one waits and resolves the report.
+async fn withdrawn(
+    conn: &mut PgConnection,
+    target: CatalogTarget,
+    lock: bool,
+) -> sqlx::Result<bool> {
+    let withdrawn = match target {
+        CatalogTarget::Work(id) => {
+            let read = if lock {
+                sqlx::query_scalar!(
+                    r#"SELECT title = $2 AND subtitle = '' AND author_names = '' AND description = ''
+                              AND cardinality(subjects) = 0 AS "bare!"
+                       FROM works WHERE id = $1 FOR SHARE"#,
+                    id,
+                    REMOVED_TITLE
+                )
+                .fetch_optional(&mut *conn)
+                .await?
+            } else {
+                sqlx::query_scalar!(
+                    r#"SELECT title = $2 AND subtitle = '' AND author_names = '' AND description = ''
+                              AND cardinality(subjects) = 0 AS "bare!"
+                       FROM works WHERE id = $1"#,
+                    id,
+                    REMOVED_TITLE
+                )
+                .fetch_optional(&mut *conn)
+                .await?
+            };
+            read.unwrap_or(false)
+        }
+        CatalogTarget::Edition { id, work_id } => {
+            let read = if lock {
+                sqlx::query!("SELECT id FROM works WHERE id = $1 FOR KEY SHARE", work_id)
+                    .fetch_optional(&mut *conn)
+                    .await?;
+                sqlx::query_scalar!(
+                    r#"SELECT title IS NULL AND subtitle IS NULL AND publisher = '' AS "bare!"
+                       FROM editions WHERE id = $1 FOR SHARE"#,
+                    id
+                )
+                .fetch_optional(&mut *conn)
+                .await?
+            } else {
+                sqlx::query_scalar!(
+                    r#"SELECT title IS NULL AND subtitle IS NULL AND publisher = '' AS "bare!"
+                       FROM editions WHERE id = $1"#,
+                    id
+                )
+                .fetch_optional(&mut *conn)
+                .await?
+            };
+            read.unwrap_or(false)
+        }
+    };
+    if !withdrawn {
+        return Ok(false);
+    }
+    let (_, edition_id, target_work_id) = target.columns();
+    sqlx::query_scalar!(
+        r#"SELECT EXISTS (SELECT 1 FROM reports
+                          WHERE target_kind = $1 AND status = 'removed' AND NOT closed_on_arrival
+                            AND CASE $1 WHEN 'work' THEN target_work_id = $2
+                                        ELSE edition_id = $3 END) AS "removed!""#,
+        target.kind(),
+        target_work_id,
+        edition_id
+    )
+    .fetch_one(conn)
+    .await
+}
+
+/// Files the report, or answers with the reader's earlier one. The reader's reports of one
+/// target take turns (the advisory lock), so two at once are one report; only a new row counts
+/// against the daily limit. A record whose text was withdrawn gets a report closed on arrival
+/// (`removed`, no `resolved_by`), which never enters the open queue. A repeat is answered from a
+/// plain read before any lock, as for picture reports (security review, Phase 2 Wave 1 #1).
 async fn file(
     state: &AppState,
     conn: &mut PgConnection,
@@ -226,8 +311,10 @@ async fn file(
     target: CatalogTarget,
     body: ReportIn,
 ) -> ApiResult<(StatusCode, Json<ReportCreated>)> {
-    if let Some(id) = open_report(conn, user_id, target).await? {
-        return Ok(created(id, "open"));
+    let status = |withdrawn: bool| if withdrawn { "removed" } else { "open" };
+    let removed = withdrawn(conn, target, false).await?;
+    if let Some(id) = earlier_report(conn, user_id, target, status(removed)).await? {
+        return Ok(created(id, status(removed)));
     }
     let mut tx = conn.begin().await?;
     sqlx::query!(
@@ -237,9 +324,10 @@ async fn file(
     )
     .execute(&mut *tx)
     .await?;
-    if let Some(id) = open_report(&mut tx, user_id, target).await? {
+    let removed = withdrawn(&mut tx, target, true).await?;
+    if let Some(id) = earlier_report(&mut tx, user_id, target, status(removed)).await? {
         tx.rollback().await?;
-        return Ok(created(id, "open"));
+        return Ok(created(id, status(removed)));
     }
     state
         .limits
@@ -249,8 +337,8 @@ async fn file(
     let (work_id, edition_id, target_work_id) = target.columns();
     let id = sqlx::query_scalar!(
         "INSERT INTO reports (target_kind, work_id, edition_id, target_work_id, reason, details,
-                              created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+                              created_by, status, resolved_at, closed_on_arrival)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CASE WHEN $9 THEN now() END, $9)
          RETURNING id",
         target.kind(),
         work_id,
@@ -258,12 +346,14 @@ async fn file(
         target_work_id,
         body.reason,
         body.details.unwrap_or_default(),
-        user_id
+        user_id,
+        status(removed),
+        removed
     )
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
-    Ok(created(id, "open"))
+    Ok(created(id, status(removed)))
 }
 
 /// What a decision on a catalog report found, for its notices.

@@ -9,7 +9,7 @@ import BookCover from "../components/BookCover.vue";
 import BookDiary from "../components/BookDiary.vue";
 import QuoteList from "../components/QuoteList.vue";
 import ClubBookActions from "../components/ClubBookActions.vue";
-import ReportSheet, { REMOVED_TITLE, type ReportTarget } from "../components/ReportSheet.vue";
+import ReportSheet, { isWithdrawn, type ReportTarget } from "../components/ReportSheet.vue";
 import EditionPicker from "../components/EditionPicker.vue";
 import CoverPhotoButton from "../components/CoverPhotoButton.vue";
 import MergeRequestSheet from "../components/MergeRequestSheet.vue";
@@ -51,7 +51,9 @@ const expanded = ref(false);
 /** What the reader is reporting: the cover, or a book a reader added (#54). */
 const reporting = ref<ReportTarget | null>(null);
 /** A book a reader added whose text an admin removed on a report: its stored placeholder title is shown translated. */
-const withdrawn = computed(() => Boolean(book.value?.custom && book.value.title === REMOVED_TITLE));
+const withdrawn = computed(() => isWithdrawn(book.value));
+/** The title as this page shows it: the placeholder of a withdrawn book in the reader's language. */
+const shownTitle = computed(() => (withdrawn.value ? t("report.removedTitle") : (book.value?.title ?? "")));
 const requestingMerge = ref(false);
 const requestingEdit = ref(false);
 /** An instance admin's direct edit: of the book, or of the viewer's edition (read fresh). */
@@ -352,13 +354,13 @@ async function adminEditionSaved() {
 
 function reportCover() {
   const detail = book.value;
-  if (detail?.cover_public_id) reporting.value = { kind: "cover", publicId: detail.cover_public_id, title: detail.title };
+  if (detail?.cover_public_id) reporting.value = { kind: "cover", publicId: detail.cover_public_id, title: shownTitle.value };
 }
 
-/** Only a book a reader added (`custom`) can be reported; the others are corrected instead. */
+/** Only a book a reader added (`custom`) can be reported, until its text is withdrawn; the others are corrected instead. */
 function reportBook() {
   const detail = book.value;
-  if (detail?.custom) reporting.value = { kind: "work", workId: detail.id, title: detail.title };
+  if (detail?.custom && !withdrawn.value) reporting.value = { kind: "work", workId: detail.id, title: detail.title };
 }
 
 async function toggleFavorite() {
@@ -428,7 +430,7 @@ watch(param, load);
     <template v-else-if="book">
       <div class="detail-hero">
         <div class="hero-cover">
-          <BookCover :book="book" eager />
+          <BookCover :book="withdrawn ? { ...book, title: shownTitle } : book" eager />
           <button
             v-if="book.cover_public_id"
             class="text-btn finer report-cover"
@@ -447,7 +449,7 @@ watch(param, load);
         <div class="detail-side">
           <div class="detail-intro">
             <p v-if="book.club_picks.length" class="kicker">{{ t("book.currentPickIn", { clubs: pickNames }) }}</p>
-            <h1 class="display">{{ withdrawn ? t("report.removedTitle") : book.title }}</h1>
+            <h1 class="display">{{ shownTitle }}</h1>
             <p v-if="withdrawn" class="fine subtle">{{ t("report.removedNote") }}</p>
             <p v-if="book.subtitle" class="detail-subtitle">{{ book.subtitle }}</p>
             <p v-if="book.authors" class="detail-authors">{{ book.authors }}</p>
@@ -461,8 +463,10 @@ watch(param, load);
             <p v-if="book.year" class="fine subtle nums">{{ t("book.firstPublished", { year: book.year }) }}</p>
             <p v-if="book.custom" class="fine subtle">
               {{ t("book.addedByReader") }}
-              <span aria-hidden="true"> · </span>
-              <button class="text-btn report-book" type="button" @click="reportBook">{{ t("report.action.work") }}</button>
+              <template v-if="!withdrawn">
+                <span aria-hidden="true"> · </span>
+                <button class="text-btn report-book" type="button" @click="reportBook">{{ t("report.action.work") }}</button>
+              </template>
             </p>
             <p v-else-if="catalogUrl || book.can_refresh" class="fine">
               <a
@@ -724,7 +728,7 @@ watch(param, load);
     <MergeRequestSheet
       v-if="requestingMerge && book"
       :work-id="book.id"
-      :title="book.title"
+      :title="shownTitle"
       @close="requestingMerge = false"
     />
     <EditRequestSheet v-if="requestingEdit && book" :book="book" @close="requestingEdit = false" />

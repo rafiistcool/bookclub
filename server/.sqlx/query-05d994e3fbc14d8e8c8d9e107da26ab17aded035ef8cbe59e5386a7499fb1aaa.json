@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id FROM reports\n         WHERE created_by = $1 AND target_kind = $2 AND status = 'open'\n           AND CASE $2 WHEN 'work' THEN target_work_id = $3 ELSE edition_id = $4 END\n         ORDER BY id DESC LIMIT 1",
+  "query": "SELECT id FROM reports\n         WHERE created_by = $1 AND target_kind = $2 AND status = $5\n           AND CASE $2 WHEN 'work' THEN target_work_id = $3 ELSE edition_id = $4 END\n         ORDER BY id DESC LIMIT 1",
   "describe": {
     "columns": [
       {
@@ -20,12 +20,13 @@
         "Int8",
         "Text",
         "Int8",
-        "Int8"
+        "Int8",
+        "Text"
       ]
     },
     "nullable": [
       false
     ]
   },
-  "hash": "482b9e23fdebf29bc9649288015bd24eebd5978bdc3008329982caa80c88d380"
+  "hash": "05d994e3fbc14d8e8c8d9e107da26ab17aded035ef8cbe59e5386a7499fb1aaa"
 }

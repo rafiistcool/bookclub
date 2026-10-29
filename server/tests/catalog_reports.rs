@@ -191,17 +191,60 @@ async fn remove_withdraws_the_text_of_a_work(db: PgPool) {
     }
     assert!(!to_ada[0].text.contains("carl"));
 
-    // A later report of the removed book is a new open report; removing again changes nothing
-    // and sends no second statement.
-    let later = report_work(&ada, work, json!({"reason": "other"}))
-        .await
-        .json()["id"]
-        .as_i64()
-        .unwrap();
-    assert_ne!(later, first);
-    resolve(&root, later, "remove").await.assert_status(200);
-    assert_eq!(mails_to(&app, "ada").len(), 2);
+    // A later report of the removed book is closed on arrival, like a report of a picture taken
+    // down already: it never puts the book back in the queue (E2E check of the ADM2 merge), a
+    // repeat names it again, and nobody is mailed.
+    let dan = app.user("dan").await;
+    let later = report_work(&dan, work, json!({"reason": "other"})).await;
+    later.assert_status(201);
+    assert_eq!(later.json()["status"], "removed");
+    let later = later.json()["id"].as_i64().unwrap();
+    let again = report_work(&dan, work, json!({"reason": "offensive"})).await;
+    assert_eq!(again.json(), json!({"id": later, "status": "removed"}));
+    // Ada's own report was decided: a repeat names it, as for a picture taken down.
+    let hers = report_work(&ada, work, json!({"reason": "other"})).await;
+    assert_eq!(hers.json(), json!({"id": first, "status": "removed"}));
+    assert_eq!(
+        root.get("/api/admin/reports?status=open").await.json()["items"],
+        json!([])
+    );
+    assert_eq!(
+        root.get("/api/admin/summary").await.json()["reports"]["open"],
+        0
+    );
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM reports WHERE id = {later} AND closed_on_arrival
+               AND resolved_by IS NULL"
+        ))
+        .await,
+        1
+    );
+    assert_eq!(mails_to(&app, "ada").len(), 1);
+    assert!(mails_to(&app, "dan").is_empty());
+
+    // A report that reaches it anyway (open since before): removing again changes nothing and
+    // sends no second statement.
+    let stray = app
+        .scalar_i64(&format!(
+            "INSERT INTO reports (target_kind, work_id, target_work_id, reason, created_by)
+             VALUES ('work', {work}, {work}, 'other', {}) RETURNING id",
+            bob.id()
+        ))
+        .await;
+    resolve(&root, stray, "remove").await.assert_status(200);
+    assert_eq!(mails_to(&app, "bob").len(), 2);
     assert_eq!(mails_to(&app, "carl").len(), 1);
+
+    // An admin who gives it text again makes it reportable again.
+    root.patch(
+        &format!("/api/admin/works/{work}"),
+        json!({"fields": {"title": "My Zine, cleaned"}}),
+    )
+    .await
+    .assert_status(200);
+    let open = report_work(&bob, work, json!({"reason": "other"})).await;
+    assert_eq!(open.json()["status"], "open");
 }
 
 /// An edition a reader added: "remove" drops its own title, subtitle and publisher (it shows its
@@ -294,6 +337,15 @@ async fn editions_are_reported_and_decided(db: PgPool) {
         to_carl[0]
             .text
             .contains("weil er die Urheberrechte anderer verletzt")
+    );
+
+    // Its text withdrawn, a new report of the edition is closed on arrival.
+    let later = report_edition(&app.user("bob").await, edition, json!({"reason": "other"})).await;
+    later.assert_status(201);
+    assert_eq!(later.json()["status"], "removed");
+    assert_eq!(
+        root.get("/api/admin/reports").await.json()["items"],
+        json!([])
     );
 }
 
