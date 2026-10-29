@@ -8,9 +8,11 @@ import BackLink from "../components/BackLink.vue";
 import ShelfBoard from "../components/ShelfBoard.vue";
 import ShelfViewSwitch from "../components/ShelfViewSwitch.vue";
 import FavoritePortrait from "../components/FavoritePortrait.vue";
+import ReportSheet, { picturePublicId } from "../components/ReportSheet.vue";
 import TileSkeleton from "../components/TileSkeleton.vue";
 import { STATUSES, statusShort, type Status } from "../constants";
 import { tp } from "../i18n";
+import { useSession } from "../stores/session";
 import type { Favorite, ShelfItem } from "../types";
 
 type Filter = "all" | Status;
@@ -25,6 +27,14 @@ const error = ref("");
 const loaded = ref(false);
 const timezone = ref("UTC");
 const filter = ref<Filter>("all");
+const session = useSession();
+/** The report sheet for the member's profile picture is open (#54). */
+const reporting = ref(false);
+
+/** Another member's profile picture, which a reader can report: its public id. */
+const reportable = computed(() =>
+  loaded.value && !error.value && username.value !== session.user?.username ? picturePublicId(avatarUrl.value) : null,
+);
 
 const counts = computed(() => {
   const tally: Record<Filter, number> = {
@@ -41,6 +51,7 @@ const counts = computed(() => {
 async function load() {
   loaded.value = false;
   filter.value = "all";
+  reporting.value = false;
   username.value = String(route.params.username || "");
   try {
     const shelf = await api.friendShelf(username.value);
@@ -73,6 +84,9 @@ watch(() => route.params.username, load);
         <p v-if="loaded && !error" class="lede nums">
           {{ t("memberShelf.lede", { books: tp("shelf.books", counts.all), reading: counts.currently_reading }) }}
         </p>
+        <button v-if="reportable" class="text-btn finer report-avatar" type="button" @click="reporting = true">
+          {{ t("report.action.avatar") }}
+        </button>
       </div>
     </div>
     <FavoritePortrait v-if="loaded && !error" :items="favorites" />
@@ -111,6 +125,12 @@ watch(() => route.params.username, load);
 
       <ShelfBoard :items="items" :filter="filter" :timezone="timezone" readonly />
     </template>
+
+    <ReportSheet
+      v-if="reporting && reportable"
+      :target="{ kind: 'avatar', publicId: reportable, username }"
+      @close="reporting = false"
+    />
   </section>
 </template>
 
@@ -123,6 +143,10 @@ watch(() => route.params.username, load);
   display: flex;
   align-items: center;
   gap: var(--space-4);
+}
+
+.report-avatar {
+  color: var(--text-subtle);
 }
 
 .member-shelf-switch {

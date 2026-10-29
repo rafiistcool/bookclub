@@ -2,7 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
-import type { AdminSummary, EditRequestOut, ReportOut } from "../api/generated";
+import type { AdminSummary, AdminUserOut, EditRequestOut, ReportOut } from "../api/generated";
 import { bookDetail, bookOut, edition, invite, user } from "../test/fixtures";
 
 const api: Record<string, ReturnType<typeof vi.fn>> = {
@@ -19,6 +19,9 @@ const api: Record<string, ReturnType<typeof vi.fn>> = {
   adminTakeDown: vi.fn(),
   adminInvites: vi.fn(),
   createSignupInvite: vi.fn(),
+  adminSuspendedUsers: vi.fn(),
+  adminSuspendUser: vi.fn(),
+  adminUnsuspendUser: vi.fn(),
 };
 
 vi.mock("../api/client", () => {
@@ -41,6 +44,7 @@ import { useToast } from "../stores/toast";
 import AdminPage from "./AdminPage.vue";
 
 const ADA = { id: 2, username: "ada", avatar_url: null };
+const GRACE = { id: 3, username: "grace", avatar_url: "/media/gracegracegracegracegrace/a" };
 
 function editRequest(overrides: Partial<EditRequestOut> = {}): EditRequestOut {
   return {
@@ -345,7 +349,7 @@ describe("AdminPage", () => {
     api.adminSummary.mockResolvedValue(summary({ edit_requests: queueSummary(2), reports: queueSummary(3, 1) }));
     const { wrapper } = await mountAdmin();
     const tabs = wrapper.findAll(".admin-tabs button");
-    expect(tabs.map((node) => node.text())).toEqual(["Requests 2", "Reports 3", "Invites"]);
+    expect(tabs.map((node) => node.text())).toEqual(["Requests 2", "Reports 3", "Invites", "Accounts"]);
     expect(tabs[0]!.get(".seg-count").classes()).not.toContain("overdue");
     expect(tabs[1]!.get(".seg-count").classes()).toContain("overdue");
     expect(tabs[1]!.get(".seg-count").attributes("title")).toBe("1 overdue");
@@ -597,29 +601,170 @@ describe("AdminPage", () => {
     expect(new Set(shown).size).toBe(50);
   });
 
-  it("offers the takedown without a record when the server cannot record the notice", async () => {
+  it("records a notice about a profile picture like one about a cover", async () => {
     const { wrapper } = await mountAdmin("/admin?tab=reports");
     const form = wrapper.get("details.takedown form");
+    expect(form.text()).toContain("a cover or a profile picture");
     const id = "avataravataravataravatar22";
-    await form.get("input[name=takedown-url]").setValue(`/media/${id}/a`);
+    await form.get("input[name=takedown-url]").setValue(`https://books.example.com/media/${id}/a`);
     await form.trigger("submit");
     await flushPromises();
-    const refusal = "Only notices about covers can be recorded";
-    api.adminTakeDown.mockRejectedValueOnce(new ApiError(refusal, 400, refusal));
+    const target = form.get(".takedown-target");
+    expect(target.get(".avatar img").attributes("src")).toBe(`/media/${id}/a`);
+    expect(target.text()).toContain("The picture disappears from the profile");
+
+    api.adminTakeDown.mockResolvedValueOnce(undefined);
+    expect(buttonIn(form, "Take down for good").attributes("type")).toBe("submit");
     await form.trigger("submit");
     await flushPromises();
     expect(api.adminTakeDown).toHaveBeenCalledTimes(1);
-    expect(api.adminTakeDown.mock.calls[0]![1]).toMatchObject({ reason: "copyright" });
-    expect(form.get("[role=alert]").text()).toContain("A notice about it cannot be recorded yet, so nothing was taken down.");
-    expect(useToast().items.map((item) => item.message)).not.toContain("Picture taken down and the notice recorded");
+    expect(api.adminTakeDown).toHaveBeenCalledWith(id, expect.objectContaining({ reason: "copyright", details: "" }));
+    expect(useToast().items.at(-1)?.message).toBe("Picture taken down and the notice recorded");
+    expect(form.findAll("button").map((node) => node.text())).not.toContain("Take down without a record");
+  });
 
-    api.adminTakeDown.mockResolvedValueOnce(undefined);
-    expect(buttonIn(form, "Take down without a record").attributes("type")).toBe("submit");
+  it("shows what each kind of report is about, and words the removal for it", async () => {
+    const custom = bookOut({ id: 21, title: "Manual Zine", source: "user", custom: true });
+    api.adminReportPage.mockResolvedValue(
+      page([
+        report({
+          id: 31,
+          target_kind: "avatar",
+          reason: "offensive",
+          details: "",
+          media_public_id: "gracegracegracegracegrace",
+          cover_url: null,
+          cover_thumb_url: null,
+          avatar_url: GRACE.avatar_url,
+          target_user: GRACE,
+          book: null,
+        }),
+        report({ id: 32, target_kind: "work", reason: "copyright", media_public_id: null, cover_url: null, cover_thumb_url: null, book: custom }),
+        report({ id: 33, target_kind: "edition", reason: "other", media_public_id: null, cover_url: null, cover_thumb_url: null, book: custom }),
+      ]),
+    );
+    const { wrapper } = await mountAdmin("/admin?tab=reports");
+    expect(wrapper.get("#admin-reports").text()).toBe("Reports");
+    const [avatar, work, edition] = wrapper.findAll(".report-item");
+    expect(avatar!.get(".kind-badge").text()).toBe("Profile picture");
+    expect(avatar!.text()).toContain("Profile picture of grace");
+    expect(avatar!.get(".avatar img").attributes("src")).toBe(GRACE.avatar_url);
+    expect(work!.get(".kind-badge").text()).toBe("Book added by a reader");
+    expect(work!.get("a").text()).toBe("Manual Zine");
+    expect(edition!.get(".kind-badge").text()).toBe("Edition added by a reader");
+
+    await buttonIn(avatar!, "Take down").trigger("click");
+    expect(avatar!.text()).toContain("The picture disappears from the profile and everywhere else");
+    await buttonIn(avatar!, "Cancel").trigger("click");
+
+    await buttonIn(work!, "Remove the text").trigger("click");
+    expect(api.resolveReport).not.toHaveBeenCalled();
+    expect(work!.text()).toContain("The title becomes “[removed]”");
+    api.resolveReport.mockResolvedValue(report({ id: 32, target_kind: "work", status: "removed" }));
+    // The other reports of the book are not told apart by the list: the queue is read again.
+    api.adminReportPage.mockResolvedValue(page([report({ id: 31, target_kind: "avatar", target_user: GRACE, book: null })]));
+    await buttonIn(work!, "Remove for good").trigger("click");
+    await flushPromises();
+    expect(api.resolveReport).toHaveBeenCalledWith(32, "remove");
+    expect(useToast().items.at(-1)?.message).toBe("Text removed");
+    expect(api.adminReportPage).toHaveBeenLastCalledWith("open", 1);
+    expect(wrapper.findAll(".report-item")).toHaveLength(1);
+
+    i18n.global.locale.value = "de";
+    await flushPromises();
+    expect(wrapper.get(".report-item .kind-badge").text()).toBe("Profilbild");
+  });
+
+  it("names an emailed notice and a removed book's text in the history", async () => {
+    const root = { id: 1, username: "root", avatar_url: null };
+    const decided = [
+      report({
+        id: 40,
+        via: "notice",
+        created_by: null,
+        status: "removed",
+        removed: true,
+        cover_url: null,
+        cover_thumb_url: null,
+        created_at: "2026-10-26T10:00:00Z",
+        resolved_by: root,
+        resolved_at: "2026-10-26T12:00:00Z",
+      }),
+      report({
+        id: 41,
+        target_kind: "work",
+        status: "removed",
+        media_public_id: null,
+        cover_url: null,
+        cover_thumb_url: null,
+        book: bookOut({ id: 21, title: "[removed]", source: "user", custom: true }),
+        created_at: "2026-10-26T10:00:00Z",
+        resolved_by: root,
+        resolved_at: "2026-10-26T13:00:00Z",
+      }),
+    ];
+    const { wrapper } = await mountAdmin("/admin?tab=reports");
+    api.adminReportPage.mockResolvedValueOnce(page(decided));
+    await buttonIn(wrapper.get(".queue-views"), "Decided").trigger("click");
+    await flushPromises();
+    const [notice, work] = wrapper.findAll(".report-item");
+    expect(notice!.get(".admin-item-head").text()).toMatch(/Emailed notice · received .+/);
+    expect(notice!.get(".admin-item-head").text()).not.toContain("someone");
+    expect(notice!.get(".decision").text()).toMatch(/^Taken down by root · .+ · after 2 hours$/);
+    expect(work!.get(".status-removed").text()).toBe("Removed");
+    expect(work!.get(".decision").text()).toMatch(/^Removed by root · .+ · after 3 hours$/);
+  });
+
+  it("suspends an account by name with a second tap, and lifts a suspension", async () => {
+    const suspended = (overrides: Partial<AdminUserOut>): AdminUserOut => ({
+      id: 5,
+      username: "mallory",
+      avatar_url: null,
+      is_admin: false,
+      created_at: "2026-10-01T10:00:00Z",
+      suspended_at: "2026-10-28T09:00:00Z",
+      ...overrides,
+    });
+    api.adminSuspendedUsers.mockResolvedValue({ items: [suspended({})] });
+    const { wrapper, router } = await mountAdmin();
+    await wrapper.findAll(".admin-tabs button").find((node) => node.text() === "Accounts")!.trigger("click");
+    await flushPromises();
+    expect(router.currentRoute.value.query).toEqual({ tab: "users" });
+    expect(api.adminSuspendedUsers).toHaveBeenCalledTimes(1);
+    expect(wrapper.get(".user-row").text()).toContain("mallory");
+    expect(wrapper.get(".user-row").text()).toContain("suspended");
+
+    const form = wrapper.get("form.suspend-form");
+    await form.get("input[name=suspend-username]").setValue("  root ");
+    await form.trigger("submit");
+    expect(api.adminSuspendUser).not.toHaveBeenCalled();
+    expect(form.text()).toContain("root is signed out everywhere");
+    const refusal = "You cannot suspend your own account";
+    api.adminSuspendUser.mockRejectedValueOnce(new ApiError(refusal, 400, refusal));
+    expect(buttonIn(form, "Suspend root").attributes("type")).toBe("submit");
     await form.trigger("submit");
     await flushPromises();
-    expect(api.adminTakeDown).toHaveBeenLastCalledWith(id);
-    expect(useToast().items.at(-1)?.message).toBe("Picture taken down. The notice was not recorded.");
-    expect((form.get("input[name=takedown-url]").element as HTMLInputElement).value).toBe("");
+    expect(api.adminSuspendUser).toHaveBeenCalledWith("root");
+    expect(form.get("[role=alert]").text()).toBe(refusal);
+
+    await form.get("input[name=suspend-username]").setValue("eve");
+    await form.get("input[name=suspend-username]").trigger("input");
+    await form.trigger("submit");
+    api.adminSuspendUser.mockResolvedValueOnce(suspended({ id: 6, username: "eve", is_admin: true }));
+    await form.trigger("submit");
+    await flushPromises();
+    expect(api.adminSuspendUser).toHaveBeenLastCalledWith("eve");
+    expect(useToast().items.at(-1)?.message).toBe("eve is suspended");
+    expect(wrapper.findAll(".user-row").map((row) => row.get("strong").text())).toEqual(["eve", "mallory"]);
+    expect(wrapper.findAll(".user-row")[0]!.text()).toContain("Admin");
+    expect((form.get("input[name=suspend-username]").element as HTMLInputElement).value).toBe("");
+
+    api.adminUnsuspendUser.mockResolvedValueOnce(suspended({ suspended_at: null }));
+    await buttonIn(wrapper.findAll(".user-row")[1]!, "Lift suspension").trigger("click");
+    await flushPromises();
+    expect(api.adminUnsuspendUser).toHaveBeenCalledWith("mallory");
+    expect(useToast().items.at(-1)?.message).toBe("mallory can sign in again");
+    expect(wrapper.findAll(".user-row")).toHaveLength(1);
   });
 
   it("words the server's refusal of an arrival time ahead of its clock", async () => {

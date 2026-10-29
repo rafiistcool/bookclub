@@ -9,7 +9,7 @@ import BookCover from "../components/BookCover.vue";
 import BookDiary from "../components/BookDiary.vue";
 import QuoteList from "../components/QuoteList.vue";
 import ClubBookActions from "../components/ClubBookActions.vue";
-import ReportCoverSheet from "../components/ReportCoverSheet.vue";
+import ReportSheet, { type ReportTarget } from "../components/ReportSheet.vue";
 import EditionPicker from "../components/EditionPicker.vue";
 import CoverPhotoButton from "../components/CoverPhotoButton.vue";
 import MergeRequestSheet from "../components/MergeRequestSheet.vue";
@@ -48,7 +48,8 @@ const loadWaitSec = ref(0);
 const busy = ref(false);
 const refreshing = ref(false);
 const expanded = ref(false);
-const reportingCover = ref(false);
+/** What the reader is reporting: the cover, or a book a reader added (#54). */
+const reporting = ref<ReportTarget | null>(null);
 const requestingMerge = ref(false);
 const requestingEdit = ref(false);
 /** An instance admin's direct edit: of the book, or of the viewer's edition (read fresh). */
@@ -129,6 +130,7 @@ async function load() {
   error.value = "";
   retryable.value = false;
   expanded.value = false;
+  reporting.value = null;
   loadAbort?.abort();
   if (target.kind === "invalid") {
     book.value = null;
@@ -346,6 +348,17 @@ async function adminEditionSaved() {
   }
 }
 
+function reportCover() {
+  const detail = book.value;
+  if (detail?.cover_public_id) reporting.value = { kind: "cover", publicId: detail.cover_public_id, title: detail.title };
+}
+
+/** Only a book a reader added (`custom`) can be reported; the others are corrected instead. */
+function reportBook() {
+  const detail = book.value;
+  if (detail?.custom) reporting.value = { kind: "work", workId: detail.id, title: detail.title };
+}
+
 async function toggleFavorite() {
   const detail = book.value;
   if (!detail || busy.value) return;
@@ -418,7 +431,7 @@ watch(param, load);
             v-if="book.cover_public_id"
             class="text-btn finer report-cover"
             type="button"
-            @click="reportingCover = true"
+            @click="reportCover"
           >
             {{ t("cover.report") }}
           </button>
@@ -445,6 +458,8 @@ watch(param, load);
             <p v-if="book.year" class="fine subtle nums">{{ t("book.firstPublished", { year: book.year }) }}</p>
             <p v-if="book.custom" class="fine subtle">
               {{ t("book.addedByReader") }}
+              <span aria-hidden="true"> · </span>
+              <button class="text-btn report-book" type="button" @click="reportBook">{{ t("report.action.work") }}</button>
             </p>
             <p v-else-if="catalogUrl || book.can_refresh" class="fine">
               <a
@@ -724,12 +739,7 @@ watch(param, load);
       @saved="adminEditionSaved"
       @close="adminEditing = null"
     />
-    <ReportCoverSheet
-      v-if="reportingCover && book?.cover_public_id"
-      :public-id="book.cover_public_id"
-      :title="book.title"
-      @close="reportingCover = false"
-    />
+    <ReportSheet v-if="reporting" :target="reporting" @close="reporting = null" />
   </section>
 </template>
 

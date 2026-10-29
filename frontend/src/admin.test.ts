@@ -86,6 +86,8 @@ describe("the admin queue", () => {
     expect(pictureRef(`https://books.example.com/media/${id}/l`)).toEqual({ kind: "media", publicId: id });
     expect(pictureRef(`/media/${id}/s?v=2`)).toEqual({ kind: "media", publicId: id });
     expect(pictureRef(`  ${id}  `)).toEqual({ kind: "media", publicId: id });
+    expect(pictureRef(`https://books.example.com/media/${id}/a`)).toEqual({ kind: "media", publicId: id, avatar: true });
+    expect(pictureRef(`/media/${id}`)).toEqual({ kind: "media", publicId: id });
     expect(pictureRef("https://books.example.com/book/42")).toEqual({ kind: "book", book: 42 });
     expect(pictureRef("https://books.example.com/book/OL1W/")).toEqual({ kind: "book", book: "OL1W" });
     expect(pictureRef("https://books.example.com/book/42/notes")).toBeNull();
