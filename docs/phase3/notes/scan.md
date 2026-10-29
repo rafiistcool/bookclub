@@ -158,7 +158,7 @@ Results:
 
 | Asset | Before SCAN's SPA code | After |
 |---|---|---|
-| Main entry `index-<hash>.js` | 325.16 kB (115.20 kB gzip) | 329.44 kB (116.55 kB gzip) |
+| Main entry `index-<hash>.js` | 325.16 kB (115.20 kB gzip) | 329.44 kB (116.54 kB gzip) |
 | `ScanPage-<hash>.js` / `.css` | – | 15.37 kB (5.70 kB gzip) / 2.96 kB (0.92 kB gzip) |
 | `zxing-<hash>.js` (glue, only on the zxing path) | – | 36.20 kB (13.07 kB gzip) |
 | `zxing_reader-<hash>.wasm` (only on the zxing path) | – | 946.86 kB (411.57 kB gzip) |
@@ -166,6 +166,14 @@ Results:
 - The main entry grows by 4.3 kB: the new copy in both catalogues (the i18n JSON is in the entry) and the route. It contains no `zxing` (`grep -c -i zxing` is 0).
 - `dist/assets/` holds exactly one `zxing_reader-<hash>.wasm`; only `zxing-<hash>.js` names it, and only `ScanPage-<hash>.js` imports that chunk.
 - The server answers the wasm with `Content-Type: application/wasm` and `Cache-Control: public, max-age=31536000, immutable`, so a phone downloads it once per release. On Android with Play Services the native detector is used and neither file is loaded.
+
+### The gate (2026-10-30, on 6bba1fd)
+
+All green in the worktree, against `bookclub-pg-scan` on 5461:
+- `cargo sqlx database reset -y`, `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked` (94 test binaries, 1494 passed, 0 failed), `cargo sqlx prepare --check -- --all-targets` (no `query!` changed; `server/.sqlx/` untouched).
+- `npm run typecheck`, `npm test` (80 files, 577 tests; Part 1 had 73 and 503), `npm run build`, `npm run check:api` (`generated.ts` unchanged by Part 2).
+- shellcheck on `deploy/hosted/*.sh deploy/cutover/*.sh`, and `caddy validate` on `Caddyfile.example`.
+- The plan's acceptance set (`npx vitest run src/isbn.test.ts src/scan src/components/BarcodeScanner.test.ts src/pages/ScanPage.test.ts src/pages/DiscoverPage.test.ts src/components/AddBookSheet.test.ts src/components/AddEditionForm.test.ts src/i18n/messages.test.ts src/thirdParty.test.ts`): 11 files, 115 tests passed.
 
 ### For the integrator (Part 2)
 
