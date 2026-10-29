@@ -86,7 +86,8 @@ pub struct CoverSuggestionList {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct MissingCoverOut {
     pub book: BookOut,
-    /// Readers use it (a shelf entry, favourite, quote, pick, nomination, post or legacy key).
+    /// Readers use it (a shelf entry, favourite, quote, pick, nomination, post or legacy key;
+    /// `only_me` quotes and diary entries do not count).
     pub in_use: bool,
     /// It came from the legacy import.
     pub imported: bool,

@@ -611,6 +611,56 @@ async fn an_admin_sets_any_cover_directly(db: PgPool) {
     .assert_detail(400, "That edition belongs to another book");
 }
 
+/// A private quote or diary entry (`only_me`) does not make a book "in use": an instance admin
+/// sees that flag, and it must not tell them that someone reads the book (conventions §6.2).
+/// The same items with `audience` do count.
+#[sqlx::test]
+async fn private_quotes_and_diary_entries_do_not_mark_a_book_in_use(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let root = app.admin("root").await;
+    app.user("bea").await;
+    let bea = app
+        .scalar_i64("SELECT id FROM users WHERE username = 'bea'")
+        .await;
+    let (quoted, _) = app.dnb_work("Birne", "Anna Autorin", "9783161484100").await;
+    let (noted, _) = app.dnb_work("Apfel", "Anna Autorin", "9780306406157").await;
+    let (shared, _) = app.dnb_work("Quitte", "Anna Autorin", "9781861972712").await;
+    app.exec(&format!(
+        "INSERT INTO quotes (user_id, work_id, body, visibility)
+         VALUES ({bea}, {}, 'Nur für mich', 'only_me'), ({bea}, {}, 'Für alle', 'audience')",
+        quoted.id, shared.id
+    ))
+    .await;
+    let root_post = app
+        .scalar_i64(&format!(
+            "INSERT INTO posts (work_id, author_id, body, visibility)
+             VALUES ({}, {bea}, 'Tagebuch', 'only_me') RETURNING id",
+            noted.id
+        ))
+        .await;
+    app.exec(&format!(
+        "INSERT INTO posts (work_id, author_id, parent_id, body)
+         VALUES ({}, {bea}, {root_post}, 'Nachtrag')",
+        noted.id
+    ))
+    .await;
+
+    let in_use: Vec<i64> = root.get("/api/admin/missing-covers").await.json()["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["book"]["id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(in_use, [shared.id]);
+    let all = root.get("/api/admin/missing-covers?scope=all").await.json();
+    for item in all["items"].as_array().unwrap() {
+        let id = item["book"]["id"].as_i64().unwrap();
+        assert_eq!(item["in_use"], id == shared.id, "{item}");
+    }
+    let summary = root.get("/api/admin/summary").await.json();
+    assert_eq!(summary["covers"]["missing"], 1);
+}
+
 #[sqlx::test]
 async fn the_summary_counts_suggestions_and_books_without_a_cover(db: PgPool) {
     let app = TestApp::new(db).await;

@@ -39,13 +39,18 @@ CREATE FUNCTION bc_cover_missing(cover_media_id bigint) RETURNS boolean
 -- first (tier 1). The scans below use it as a semi-join (`id IN (SELECT work_id FROM
 -- cover_in_use)`), so Postgres drives them from this set, which is small, rather than calling a
 -- function for every work.
+--
+-- `only_me` items do not count (conventions §6.2: aggregates leave out other users' `only_me`
+-- items): an instance admin sees this flag on the Covers tab, and a private quote or diary entry
+-- must not tell them that someone reads a book. A diary entry counts by its root, which is
+-- `only_me` or `audience` (replies are always `audience`, also under an `only_me` root).
 CREATE VIEW cover_in_use (work_id) AS
     SELECT work_id FROM shelf_entries
     UNION ALL SELECT work_id FROM user_favorites
-    UNION ALL SELECT work_id FROM quotes
+    UNION ALL SELECT work_id FROM quotes WHERE visibility = 'audience'
     UNION ALL SELECT work_id FROM club_picks
     UNION ALL SELECT work_id FROM next_up_nominations
-    UNION ALL SELECT work_id FROM posts
+    UNION ALL SELECT work_id FROM posts WHERE parent_id IS NULL AND visibility = 'audience'
     UNION ALL SELECT work_id FROM legacy_work_keys;
 
 -- One work: readers use it (for a single row; the scans use the view).
@@ -140,13 +145,13 @@ CREATE VIEW cover_failing (media_id, failed_at) AS
     WHERE m.storage_key IS NULL AND m.fetch_failed_at IS NOT NULL AND m.removed_at IS NULL
       AND m.ol_gone_at IS NULL;
 
--- The editions readers use (a shelf entry, a quote or a legacy key names the edition) whose
--- picture is failing.
+-- The editions readers use (a shelf entry, an `audience` quote or a legacy key names the
+-- edition) whose picture is failing. `only_me` quotes do not count, as in cover_in_use.
 CREATE VIEW cover_failing_editions (edition_id, work_id, failed_at) AS
     SELECT e.id, e.work_id, f.failed_at
     FROM cover_failing f JOIN editions e ON e.cover_media_id = f.media_id
     WHERE EXISTS (SELECT 1 FROM shelf_entries se WHERE se.edition_id = e.id)
-       OR EXISTS (SELECT 1 FROM quotes q WHERE q.edition_id = e.id)
+       OR EXISTS (SELECT 1 FROM quotes q WHERE q.edition_id = e.id AND q.visibility = 'audience')
        OR EXISTS (SELECT 1 FROM legacy_work_keys k WHERE k.edition_id = e.id);
 
 -- The admin's "Without a cover" list (notes §5.1) and its count in the summary: the works of
@@ -174,7 +179,7 @@ COMMENT ON COLUMN media.ol_gone_at IS
 COMMENT ON FUNCTION bc_cover_missing(bigint) IS
     'True when a cover_media_id shows no cover: NULL, or a removed or gone media row. A failing Open Library picture still counts as a cover. For one row; the scans (cover_missing) test cover_media_id IS NULL, which is the same outside the transaction of a takedown or the gone step, since both clear every reference to the row.';
 COMMENT ON FUNCTION bc_cover_in_use(bigint) IS
-    'True when readers use the work: a shelf entry, favourite, quote, club pick, nomination, post or legacy key names it (tier 1 of the cover search). For one row; the scans use the view cover_in_use.';
+    'True when readers use the work: a shelf entry, favourite, audience quote, club pick, nomination, audience post or legacy key names it (tier 1 of the cover search; only_me items do not count). For one row; the scans use the view cover_in_use.';
 COMMENT ON FUNCTION bc_cover_suggestion_moot(bigint) IS
     'True for a suggestion nobody needs to decide any more (its book has a cover or was merged away, its picture is removed or gone, or its Open Library work was decided for the book or a book merged into it).';
 COMMENT ON TABLE cover_search IS
@@ -246,12 +251,12 @@ COMMENT ON INDEX media_failing_idx IS
 COMMENT ON INDEX editions_cover_media_id_idx IS
     'The editions that show a picture (cover_failing_editions; clearing a taken-down or gone picture).';
 COMMENT ON VIEW cover_in_use IS
-    'The works readers use, one row per row that names one (tier 1 of the cover search). Use it as a semi-join.';
+    'The works readers use, one row per row that names one (tier 1 of the cover search); only_me quotes and diary entries do not count. Use it as a semi-join.';
 COMMENT ON VIEW cover_missing IS
     'Works without a cover the cover search may look at or a reader''s photo waits for: current, not a reader''s own book, not left empty by an admin; in_use = tier 1.';
 COMMENT ON VIEW cover_failing IS
     'Open Library pictures whose last fetch ended without a picture, not removed or gone.';
 COMMENT ON VIEW cover_failing_editions IS
-    'Editions readers use (a shelf entry, quote or legacy key names them) whose picture is failing.';
+    'Editions readers use (a shelf entry, audience quote or legacy key names them) whose picture is failing.';
 COMMENT ON VIEW cover_gaps IS
     'The admin''s list of books without a cover and its count: cover_missing, plus works readers use whose own picture or an in-use edition''s picture is failing.';
