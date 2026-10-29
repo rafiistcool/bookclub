@@ -97,7 +97,7 @@ The app deletes old records itself, every hour, with nothing to configure (Q14, 
 
 ## Updates and rollback
 
-`BOOKCLUB_TAG` in `.env` names the image tag the app follows: `stable` follows the highest release (see "Releases"), and an exact version such as `0.11.0` stays on that version. `update.sh`, which `bookclub-update.timer` starts every 3 minutes, carries out every change of that tag:
+`BOOKCLUB_TAG` in `.env` names the image tag the app follows: `stable` follows the highest release (see "Releases"), and an exact version such as `0.11.0` follows only that version's tag, which no release moves. `update.sh`, which `bookclub-update.timer` starts every 3 minutes, carries out every change of that tag:
 
 1. `docker compose pull app`. While the tag has not moved, that is one request to the registry.
 2. If the app already runs the tag's image, nothing happens.
@@ -113,6 +113,8 @@ The app deletes old records itself, every hour, with nothing to configure (Q14, 
 A failed update of an image (the backup failed, or the app did not come up on it) is tried again an hour later, not every 3 minutes, because every try starts with a full backup. `/var/lib/bookclub-backup/update.failed` holds the image and the time; the runs in between log `the next try comes after …` and ping 1. A new image for the tag is tried at once.
 
 `update.sh` never starts an app that is not running. While the stack is down (a restore) or the app is stopped (`docker compose stop app`, the legacy import), it changes nothing and pings nothing. If the app is stopped while an update's backup runs, which can wait hours for the nightly backup or the restore test, the update stops before it touches the app, and pings 1.
+
+**Who can deploy.** Whoever can push an image to `git.tillhome.de/rafiistcool/bookclub-server` deploys it to production within about 3 minutes, with nobody in the loop: the timer starts whatever image the followed tag names now, and the app container gets `.env` (the database password, the SMTP credentials) and a route out. That is the user `rafiistcool`, every token with `write:package` on that user (`REGISTRY_TOKEN`, which the publish job hands its job image and BuildKit, both pulled by tag: `docs/phase1/security-review.md`, Phase 2 Wave 1, finding 2), and whoever controls the Forgejo instance. Nothing checks a digest or a signature. Registry tags can be moved, exact versions too: `release.yml` pushes each one once, but the registry takes a second push under the same tag, and the timer deploys it like a release. A pinned exact version is therefore no freeze; a pinned digest is (see "Rollback").
 
 Stop the timer for such work anyway, so that no update starts in between, and wait for a run that is already busy: stopping the timer does not stop it, and its backup would dump the database in the middle of the work. The `flock` returns once no `update.sh` runs (it takes that lock); `systemctl is-active` does not help, because a running oneshot service is `activating`, not `active`. Afterwards, start the timer again:
 
@@ -173,6 +175,16 @@ docker compose images app
 ```
 
 Later releases leave a pinned app alone. `BOOKCLUB_TAG=stable` follows the releases again, from the next run on.
+
+A pinned version is still pulled every 3 minutes, so an image pushed again under its tag replaces the app (see "Who can deploy" above). To freeze the app, for example while a leak of the registry token is being looked into, pin the digest of the image it runs:
+
+```sh
+docker image inspect -f '{{index .RepoDigests 0}}' "$(docker inspect -f '{{.Image}}' "$(docker compose ps -q app)")"
+# git.tillhome.de/rafiistcool/bookclub-server@sha256:…
+sed -i 's/^BOOKCLUB_TAG=.*/BOOKCLUB_TAG=0.11.0@sha256:…/' .env
+```
+
+Compose then pulls that image by its digest and ignores the tag. With a local registry, a `0.11.0` pushed again with other content left an app pinned this way on its old image, and `update.sh` handles the form unchanged. Or stop the timer (`systemctl disable --now bookclub-update.timer`); its heartbeat check then alerts after its grace time.
 
 A version cannot run on a database that a newer version has migrated: it stops at startup with `cannot apply the database migrations: migration <N> was previously applied but is missing in the resolved migrations`, and `update.sh` reports a failed update. A rollback across a migration therefore needs the backup from before the update: stop the timer and wait for a running update (see above), and restore the snapshot that `update.sh` took right before the newer version started (see "Restoring for real"; `backup.sh restic snapshots` lists them with their times). `backup.sh` keeps every snapshot of the last 14 days, so that one is still there after later backups the same day, the rollback's own among them. Whatever was written since then is lost.
 
