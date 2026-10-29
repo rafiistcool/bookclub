@@ -151,11 +151,11 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 | Purpose | Receive and decide notices about content (in the app and by mail), remove illegal or infringing content, keep the record, tell the reporter and the uploader the decision (Q12 A, ADM2), and suspend accounts (Q15, ADM2) (`takedown.md`) |
 | Legal basis | Art. 6 (1) (c) with Art. 16, 17 DSA (notice and action, statement of reasons; to confirm that they apply); otherwise Art. 6 (1) (f) (keeping the service lawful) |
 | Data subjects | reporters; uploaders of reported covers, owners of reported profile pictures, readers who added reported books and editions; people a notice names; suspended users |
-| Data | the report: its target (a cover, a profile picture with whose it is (`target_user_id`), or a work or edition a reader added (`target_work_id`)), reason, details, reporter, how it came in (`via`: the app or a notice by mail), time; the decision (admin, time, outcome, closed on arrival); hashes of removed pictures; a reported profile picture its owner replaced, held until the decision; notices received by mail; a suspension (its time, and the time it was lifted; the account's sessions are deleted) |
+| Data | the report: its target (a cover, a profile picture with whose it is (`target_user_id`), or a work or edition a reader added (`target_work_id`)), reason, details, reporter, how it came in (`via`: the app or a notice by mail), time; the decision (admin, time, outcome, closed on arrival); hashes of removed pictures; a reported profile picture its owner replaced, held until the decision; notices received by mail; a suspension (its time, and the time it was lifted; the account's sessions are deleted), and in the app log a line per suspension and lifting with the admin's and the account's numeric ids (`privacy-facts.md` §4) |
 | Tables | `reports`, `media_removed_hashes`, `media` (`removed_at`), `users` (`suspended_at`, `server/migrations/2102_users_suspended_at.sql`; `unsuspended_at`, `server/migrations/2900_users_unsuspended_at.sql`) |
 | Recipients | instance admins; by mail through Brevo (ADM2): each reporter the decision, and whoever uploaded or added removed content the statement of reasons, neither naming the other |
 | Third countries | none |
-| Retention | reports 3 years after the decision, open ones until decided (Q14); hashes as long as the block must hold; a suspension until it is lifted, or with the account; the time of its lifting with the account |
+| Retention | reports 3 years after the decision, open ones until decided (Q14); hashes as long as the block must hold; a suspension until it is lifted, or with the account; the time of its lifting with the account; the log line by size, like the rest of the app log (activity 10) |
 | Source | `server/src/media/reports.rs`, `server/src/catalog/reports.rs`, `server/src/admin/notices.rs`, `server/src/admin/users.rs`; ADM and ADM2 (#54, #55) |
 
 ### 10. Security and abuse prevention
@@ -165,7 +165,7 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 | Purpose | Keep the service available and accounts safe: rate limits, request logs, the reverse proxy log |
 | Legal basis | Art. 6 (1) (f) (security of the service, Recital 49) |
 | Data subjects | every visitor |
-| Data | in memory: IP addresses (IPv6 by /64), account ids, session ids, hashed unknown login names and recipient email addresses (case-folded, the keys of the per-address mail limits: 6 mails of each kind a day, also for addresses of people without an account) with their counters; in the app log: method, path, status, latency, request id (no IP); in the proxy log: IP address, time, method, path (query and invite codes redacted), status, request headers with the User-Agent (no cookies, no Referer) |
+| Data | in memory: IP addresses (IPv6 by /64), account ids, session ids, hashed unknown login names and recipient email addresses (case-folded, the keys of the per-address mail limits: 6 mails of each kind a day, also for addresses of people without an account) with their counters; in the app log: method, path, status, latency, request id (no IP, no user id; the one exception is the line of a suspension or its lifting, activity 9); in the proxy log: IP address, time, method, path (query and invite codes redacted), status, request headers with the User-Agent (no cookies, no Referer) |
 | Tables | none (memory and log files) |
 | Recipients | none |
 | Third countries | none |
