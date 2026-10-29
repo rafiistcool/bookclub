@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO cover_search (work_id, takedown_at)\n             SELECT id, now() FROM unnest($1::int8[]) AS t (id)\n             ON CONFLICT (work_id) DO UPDATE SET takedown_at = now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3788ed0691de120f2385ce5556e34cb365ae6caf78f6fb5d594883aca18bdc2f"
+}

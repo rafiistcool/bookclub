@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO cover_search AS cs (work_id, failures, next_search_at, last_error)\n         VALUES ($1, 1, now() + interval '1 hour', $2)\n         ON CONFLICT (work_id) DO UPDATE SET\n             failures = cs.failures + 1,\n             next_search_at = now() + LEAST(interval '1 hour' * power(2, LEAST(cs.failures, 8)),\n                                            interval '24 hours'),\n             last_error = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "29bafbee9f60e92bd9497f9d2bcd53749046351539d0600bd55612cd03663db6"
+}

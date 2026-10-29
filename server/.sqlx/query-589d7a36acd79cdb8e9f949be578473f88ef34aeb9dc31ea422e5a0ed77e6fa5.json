@@ -1,0 +1,144 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT w.id AS \"id!\", bc_cover_in_use(w.id) AS \"in_use!\",\n                  EXISTS (SELECT 1 FROM legacy_work_keys k WHERE k.work_id = w.id) AS \"imported!\",\n                  bc_cover_missing(w.cover_media_id) AS \"missing!\",\n                  EXISTS (SELECT 1 FROM catalog_edit_requests r\n                          WHERE r.work_id = w.id AND r.edition_id IS NULL\n                            AND r.kind = 'cover_replace' AND r.status = 'open')\n                      AS \"photo_waiting!\",\n                  (SELECT m.fetch_failed_at FROM media m\n                   WHERE m.id = w.cover_media_id AND m.storage_key IS NULL\n                     AND m.removed_at IS NULL AND m.ol_gone_at IS NULL) AS work_failed_at,\n                  fe.id AS \"failing_edition_id?\", fe.fetch_failed_at AS \"edition_failed_at?\",\n                  cs.searched_at AS \"searched_at?\", cs.outcome AS \"outcome?\",\n                  cs.next_search_at AS \"next_search_at?\", COALESCE(cs.failures, 0) AS \"failures!\",\n                  EXISTS (SELECT 1 FROM cover_search t JOIN works tw ON tw.id = t.work_id\n                          WHERE t.takedown_at IS NOT NULL\n                            AND (tw.id = w.id OR tw.merged_into_id = w.id)) AS \"after_takedown!\",\n                  (SELECT s.id FROM cover_suggestions s\n                   WHERE s.work_id = w.id AND s.status = 'open') AS suggestion_id\n           FROM works w\n           LEFT JOIN cover_search cs ON cs.work_id = w.id\n           LEFT JOIN LATERAL (\n               SELECT e.id, m.fetch_failed_at FROM editions e JOIN media m ON m.id = e.cover_media_id\n               WHERE e.work_id = w.id AND m.storage_key IS NULL AND m.fetch_failed_at IS NOT NULL\n                 AND m.removed_at IS NULL AND m.ol_gone_at IS NULL\n               ORDER BY e.id LIMIT 1\n           ) fe ON true\n           WHERE w.id = ANY($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "in_use!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "imported!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "missing!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "photo_waiting!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "work_failed_at",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "failing_edition_id?",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "edition_failed_at?",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "fetch_failed_at"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "searched_at?",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "cover_search",
+            "name": "searched_at"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "outcome?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "cover_search",
+            "name": "outcome"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "next_search_at?",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "cover_search",
+            "name": "next_search_at"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "failures!",
+        "type_info": "Int4",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 12,
+        "name": "after_takedown!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 13,
+        "name": "suggestion_id",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      true,
+      null,
+      null,
+      null,
+      null,
+      null,
+      true,
+      true,
+      true,
+      true,
+      true,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "589d7a36acd79cdb8e9f949be578473f88ef34aeb9dc31ea422e5a0ed77e6fa5"
+}

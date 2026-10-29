@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n               (SELECT count(*) FROM cover_suggestions\n                WHERE status = 'open' AND NOT bc_cover_suggestion_moot(id)) AS \"suggestions!\",\n               (SELECT count(*) FROM works w\n                WHERE w.merged_into_id IS NULL AND w.source <> 'user'\n                  AND bc_cover_missing(w.cover_media_id)\n                  AND NOT COALESCE(w.cover_media_id IS NULL\n                                   AND w.field_sources ->> 'cover_media_id' = 'admin', false)\n                  AND bc_cover_in_use(w.id)) AS \"missing!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "suggestions!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "missing!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "b4c967199e06a7a10bddfb0cee8721531d7c1591f233bf2314a12e0bdfb29145"
+}

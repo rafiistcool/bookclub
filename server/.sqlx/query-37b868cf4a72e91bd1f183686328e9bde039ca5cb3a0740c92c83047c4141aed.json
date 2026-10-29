@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT public_id, ol_cover_id, storage_key, removed_at IS NOT NULL AS \"removed!\",\n                      COALESCE(fetch_failed_at > now() - make_interval(days => $2), false)\n                          AS \"recently_failed!\"\n               FROM media WHERE id = $1 AND kind = 'cover'",
+  "query": "SELECT public_id, ol_cover_id, storage_key, removed_at IS NOT NULL AS \"removed!\",\n                      ol_gone_at IS NOT NULL AS \"gone!\",\n                      COALESCE(fetch_failed_at > now() - make_interval(days => $2), false)\n                          AS \"recently_failed!\"\n               FROM media WHERE id = $1 AND kind = 'cover'",
   "describe": {
     "columns": [
       {
@@ -44,6 +44,12 @@
       },
       {
         "ordinal": 4,
+        "name": "gone!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
         "name": "recently_failed!",
         "type_info": "Bool",
         "origin": "Expression"
@@ -60,8 +66,9 @@
       true,
       true,
       null,
+      null,
       null
     ]
   },
-  "hash": "e40863ad5e8200197451b5f0ee38adfed0ad7245cb94386f01c7496158f912d5"
+  "hash": "37b868cf4a72e91bd1f183686328e9bde039ca5cb3a0740c92c83047c4141aed"
 }
