@@ -55,7 +55,11 @@ pub fn routes() -> OpenApiRouter<AppState> {
 
 /// Instance-admin routes; every path starts with `/api/admin/`.
 pub fn admin_routes() -> OpenApiRouter<AppState> {
+    let uploads = OpenApiRouter::new()
+        .routes(routes!(cover::admin_set_cover))
+        .layer(DefaultBodyLimit::max(upload::UPLOAD_BODY_LIMIT));
     OpenApiRouter::new()
+        .merge(uploads)
         .routes(routes!(reports::list_reports))
         .routes(routes!(reports::resolve_report))
         .routes(routes!(reports::take_down))

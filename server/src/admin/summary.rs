@@ -1,5 +1,6 @@
 //! `GET /api/admin/summary` (#54): what waits in the two admin queues and how fast reports were
-//! decided, for the tab badges, the overdue flags and the open count in Settings.
+//! decided, for the tab badges, the overdue flags and the open count in Settings; and the cover
+//! search's suggestions and books without a cover (#74).
 
 use axum::Json;
 use axum::extract::State;
@@ -27,6 +28,17 @@ pub struct AdminSummary {
     pub edit_requests: AdminQueueSummary,
     /// How reports were decided in the last 90 days.
     pub report_stats: AdminReportStats,
+    /// The cover search (#74): suggestions to decide, books without a cover.
+    pub covers: AdminCoverSummary,
+}
+
+/// The cover search at a glance (#74). No response target: nothing is overdue.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AdminCoverSummary {
+    /// Open cover suggestions an admin still needs to decide.
+    pub suggestions: i64,
+    /// Catalog and imported books readers use that have no cover.
+    pub missing: i64,
 }
 
 /// The open part of one queue.
@@ -133,6 +145,7 @@ pub async fn admin_summary(conn: &mut PgConnection) -> sqlx::Result<AdminSummary
     )
     .fetch_one(&mut *conn)
     .await?;
+    let (suggestions, missing) = crate::catalog::covers::admin::cover_counts(conn).await?;
     let oldest = |id: Option<i64>, at: Option<OffsetDateTime>| match (id, at) {
         (Some(id), Some(created_at)) => Some(AdminOldestItem { id, created_at }),
         _ => None,
@@ -155,6 +168,10 @@ pub async fn admin_summary(conn: &mut PgConnection) -> sqlx::Result<AdminSummary
             median_hours: stats.median_hours,
             max_hours: stats.max_hours,
             over_target: stats.over_target,
+        },
+        covers: AdminCoverSummary {
+            suggestions,
+            missing,
         },
     })
 }
