@@ -15,9 +15,11 @@
 //!   direct admin edit.
 //! - [`reports`]: reports on works and editions readers added, and what "remove" does to them.
 //! - [`merge`]: `merge_works`, two works becoming one (conventions §7.6).
+//! - [`covers`]: the cover search for catalog and imported books without a cover (#74).
 
 pub mod admin;
 pub mod cache;
+pub mod covers;
 pub mod custom;
 pub mod detail;
 pub mod dnb_sru;
