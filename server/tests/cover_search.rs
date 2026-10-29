@@ -863,6 +863,67 @@ async fn a_book_that_loses_its_cover_is_due_at_once(db: PgPool) {
     assert_eq!((row.misses, row.next_hours, row.takedown), (0, None, false));
 }
 
+/// The gone probe tries an older stored picture when Open Library no longer has the newest
+/// one: a single deleted picture does not stop every 404 from being confirmed.
+#[sqlx::test]
+async fn the_probe_tries_an_older_picture(db: PgPool) {
+    let app = TestApp::new(db).await;
+    // Two pictures we have bytes for; Open Library deleted the newer one.
+    for cover in [998, 999] {
+        let media = ol_media(&app, cover).await;
+        app.exec(&format!(
+            "UPDATE media SET storage_key = 'cover/probe{cover}', content_type = 'image/webp'
+             WHERE id = {media}"
+        ))
+        .await;
+    }
+    serve_cover(&app, 998, 200, jpeg([10, 200, 10])).await;
+    serve_cover(&app, 999, 404, Vec::new()).await;
+    let work = legacy_work(&app, "Momo", "Michael Ende").await;
+    let dead_media = ol_media(&app, 301).await;
+    set_cover(
+        &app,
+        CoverTarget::Work(work),
+        dead_media,
+        Source::OpenLibrary,
+    )
+    .await;
+    app.exec(&format!(
+        "UPDATE media SET fetch_failed_at = now() - interval '25 hours' WHERE id = {dead_media}"
+    ))
+    .await;
+    serve_cover(&app, 301, 404, Vec::new()).await;
+    let report = run_job(&app).await;
+    assert_eq!(
+        (report.dead.gone, report.dead.unconfirmed),
+        (1, 0),
+        "{report:?}"
+    );
+
+    // A failing cover server (5xx on the newest) confirms nothing.
+    let other = legacy_work(&app, "Circe", "Madeline Miller").await;
+    let failing = ol_media(&app, 302).await;
+    set_cover(&app, CoverTarget::Work(other), failing, Source::OpenLibrary).await;
+    app.exec(&format!(
+        "UPDATE media SET fetch_failed_at = now() - interval '25 hours' WHERE id = {failing}"
+    ))
+    .await;
+    serve_cover(&app, 302, 404, Vec::new()).await;
+    let newest = ol_media(&app, 1000).await;
+    app.exec(&format!(
+        "UPDATE media SET storage_key = 'cover/probe1000', content_type = 'image/webp'
+         WHERE id = {newest}"
+    ))
+    .await;
+    serve_cover(&app, 1000, 503, Vec::new()).await;
+    let report = run_job(&app).await;
+    assert_eq!(
+        (report.dead.gone, report.dead.unconfirmed),
+        (0, 1),
+        "{report:?}"
+    );
+}
+
 /// Tier 1 (books in use) before tier 2; tier 2 never suggests, stops after two misses and is
 /// due again once readers use it. DNB works still to come and Open Library works nobody uses
 /// are not searched.

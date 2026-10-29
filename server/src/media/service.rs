@@ -103,6 +103,9 @@ pub enum RecheckOutcome {
     Failed,
 }
 
+/// Stored Open Library pictures the gone probe tries at most, newest first (#74).
+pub const PROBE_PICTURES: i64 = 3;
+
 /// What one Open Library cover request gave.
 #[derive(Debug)]
 pub enum CoverFetch {
@@ -237,30 +240,37 @@ impl MediaService {
             .await
     }
 
-    /// Whether Open Library's cover server still serves the picture we stored most recently,
-    /// fetched without storing it. Anything but a picture (or no stored picture to try) means
-    /// the cover server is broken or has moved, and nothing may be marked gone (#74, notes
+    /// Whether Open Library's cover server still serves a picture we stored, fetched without
+    /// storing it: the most recently stored one, and when Open Library no longer has that one
+    /// picture (404, 410, or no usable picture under it), the next older, up to
+    /// [`PROBE_PICTURES`]. A throttled or failing cover server, or no stored picture that loads,
+    /// means the cover server is broken or has moved, and nothing may be marked gone (#74, notes
     /// §1.1).
     pub async fn probe_covers(&self, db: &PgPool, policy: RetryPolicy) -> bool {
         let known = sqlx::query_scalar!(
             r#"SELECT ol_cover_id AS "ol_cover_id!" FROM media
                WHERE source = 'openlibrary' AND storage_key IS NOT NULL AND removed_at IS NULL
-               ORDER BY id DESC LIMIT 1"#
+               ORDER BY id DESC LIMIT $1"#,
+            PROBE_PICTURES
         )
-        .fetch_optional(db)
+        .fetch_all(db)
         .await;
-        let cover_id = match known {
-            Ok(Some(cover_id)) => cover_id,
-            Ok(None) => return false,
+        let known = match known {
+            Ok(known) => known,
             Err(error) => {
                 tracing::warn!(%error, "the cover probe cannot read the database");
                 return false;
             }
         };
-        match fetch_ol_cover(&self.inner.outbound, cover_id, &policy).await {
-            CoverFetch::Image(bytes) => image::guess_format(&bytes).is_ok(),
-            _ => false,
+        for cover_id in known {
+            match fetch_ol_cover(&self.inner.outbound, cover_id, &policy).await {
+                CoverFetch::Image(bytes) if image::guess_format(&bytes).is_ok() => return true,
+                // Open Library removed this one picture: an older one tells.
+                CoverFetch::Image(_) | CoverFetch::Gone | CoverFetch::NoCover => {}
+                CoverFetch::Busy | CoverFetch::Failed => return false,
+            }
         }
+        false
     }
 }
 
