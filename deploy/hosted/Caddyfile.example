@@ -41,9 +41,10 @@
 		-Server
 	}
 
-	# Only the hashed JS and CSS bundle is compressed, to about a third. API answers mix
-	# personal data with text a client sent, which compression side channels (BREACH) need,
-	# and pictures are compressed already.
+	# Only the hashed build output under /assets is compressed: the JS and CSS to about a third,
+	# the barcode decoder's wasm (#56) to under half. API answers mix personal data with text a
+	# client sent, which compression side channels (BREACH) need, and pictures are compressed
+	# already.
 	@assets path /assets/*
 	encode @assets zstd gzip
 
