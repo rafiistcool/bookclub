@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted, onUnmounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import Avatar from "../components/Avatar.vue";
@@ -7,18 +7,44 @@ import EmailPrompt from "../components/EmailPrompt.vue";
 import LegalLinks from "../components/LegalLinks.vue";
 import NavIcon from "../components/NavIcon.vue";
 import TermsPrompt from "../components/TermsPrompt.vue";
+import { tp } from "../i18n";
 import { NAV_ITEMS, isActive } from "../nav";
+import { reloadWhenVisible, useFriends } from "../stores/friends";
 import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
 
 const { t } = useI18n();
 const service = useService();
 const session = useSession();
+const friends = useFriends();
 const route = useRoute();
 
 const bottomItems = NAV_ITEMS.filter((item) => item.bottomBar);
 const username = computed(() => session.user?.username ?? "");
 const avatarUrl = computed(() => session.user?.avatar_url ?? null);
+
+/** The Friends item's count: requests and club invitations waiting (Home shows it on the phone). */
+function badgeFor(to: string): number {
+  return to === "/friends" ? friends.badge : 0;
+}
+
+let stopReloading: (() => void) | null = null;
+
+onMounted(() => {
+  void friends.load();
+  stopReloading = reloadWhenVisible();
+});
+
+onUnmounted(() => stopReloading?.());
+
+// A join, leave or new club changes which invitations still wait. A sign-out
+// (no user) asks nothing.
+watch(
+  () => session.user?.clubs.map((club) => club.slug).sort().join(" "),
+  (now, before) => {
+    if (session.user && now !== before) void friends.load();
+  },
+);
 </script>
 
 <template>
@@ -47,6 +73,10 @@ const avatarUrl = computed(() => session.user?.avatar_url ?? null);
         >
           <NavIcon :name="item.icon" :size="20" />
           {{ t(item.labelKey) }}
+          <span v-if="badgeFor(item.to)" class="side-count nums">
+            <span aria-hidden="true">{{ badgeFor(item.to) }}</span>
+            <span class="visually-hidden">{{ tp("friends.waiting", badgeFor(item.to)) }}</span>
+          </span>
         </RouterLink>
       </nav>
       <RouterLink class="side-account" to="/settings">
@@ -217,6 +247,19 @@ const avatarUrl = computed(() => session.user?.avatar_url ?? null);
   .side-link.active {
     background: var(--accent-soft);
     color: var(--accent-hover);
+  }
+
+  .side-count {
+    margin-left: auto;
+    min-width: 1.5rem;
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-size: var(--text-xs);
+    font-weight: 700;
+    line-height: 1.5rem;
+    text-align: center;
   }
 
   .side-account {

@@ -1,7 +1,9 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { FriendsOut } from "../api/generated";
 import { activityItem, bookOut, clubOut, favorite, shelfItem, user } from "../test/fixtures";
+import { friendClubInvite, friendOut, friendRequest, friendsOut } from "../test/friends";
 import type { ClubSummary } from "../types";
 
 const api = {
@@ -18,15 +20,18 @@ vi.mock("../api/client", () => ({
 }));
 
 import { i18n } from "../i18n";
+import { useFriends } from "../stores/friends";
 import { useSession } from "../stores/session";
 import HomePage from "./HomePage.vue";
 
 const SUMMARY: ClubSummary = { slug: "readers-ab12", name: "Readers", role: "member", timezone: "Europe/Berlin", member_count: 3 };
 
-async function mountHome(clubs: (typeof SUMMARY)[]) {
+/** Home with the viewer's clubs and, when given, the friends lists the shell loaded. */
+async function mountHome(clubs: (typeof SUMMARY)[], friends?: FriendsOut) {
   const pinia = createPinia();
   setActivePinia(pinia);
   useSession().user = user({ clubs });
+  if (friends) useFriends().take(friends);
   const wrapper = mount(HomePage, { global: { plugins: [pinia, i18n], stubs: { BookCover: true } } });
   await flushPromises();
   return wrapper;
@@ -79,6 +84,40 @@ describe("HomePage", () => {
     expect(wrapper.get(".activity-club").attributes("href")).toBe("/c/readers-ab12");
     expect(api.diaryFeed).toHaveBeenCalledWith(undefined, 8, undefined);
     expect(wrapper.find(".solo-prompt").exists()).toBe(false);
+  });
+
+  it("leads to the friends page with what waits there, or the way to add friends", async () => {
+    // Before the shell's lists arrive (or when they failed): the plain row.
+    let wrapper = await mountHome([]);
+    let row = wrapper.get("a.friends-row");
+    expect(row.attributes("href")).toBe("/friends");
+    expect(row.get(".friends-row-label").text()).toBe("Friends");
+    expect(row.find(".friends-count").exists()).toBe(false);
+    expect(row.text()).not.toContain("Add friends");
+
+    wrapper = await mountHome([], friendsOut());
+    expect(wrapper.get("a.friends-row").text()).toContain("Add friends");
+
+    wrapper = await mountHome(
+      [SUMMARY],
+      friendsOut({
+        friends: [friendOut("grace")],
+        incoming: [friendRequest("mia"), friendRequest("max")],
+        outgoing: [friendRequest("olga")],
+        club_invites: [friendClubInvite()],
+      }),
+    );
+    row = wrapper.get("a.friends-row");
+    expect(row.get(".friends-count [aria-hidden=true]").text()).toBe("3");
+    expect(row.get(".friends-count .visually-hidden").text()).toBe("3 requests or invitations waiting");
+    expect(row.text()).not.toContain("Add friends");
+
+    // Friends and nothing waiting: just the way there. Home asks the server nothing itself.
+    wrapper = await mountHome([], friendsOut({ friends: [friendOut("grace")] }));
+    row = wrapper.get("a.friends-row");
+    expect(row.find(".friends-count").exists()).toBe(false);
+    expect(row.text()).not.toContain("Add friends");
+    expect(Object.keys(api)).not.toContain("friends");
   });
 
   it("saves progress from the reading list", async () => {

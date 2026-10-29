@@ -36,7 +36,9 @@ const ROSTER = [
   member({ username: "max", role: "member" }),
 ];
 
-async function mountAs(role: "owner" | "admin" | "member", me: string) {
+const INVITES = [invite({ id: 1, code: "AAAA1111AA" }), invite({ id: 2, code: "BBBB2222BB", active: false, revoked: true })];
+
+async function mountAs(role: "owner" | "admin" | "member", me: string, invites = INVITES) {
   const pinia = createPinia();
   setActivePinia(pinia);
   const club = clubOut({ role, member_count: 4 });
@@ -45,9 +47,7 @@ async function mountAs(role: "owner" | "admin" | "member", me: string) {
   api.clubMembers.mockResolvedValue({
     items: ROSTER.map((row) => ({ ...row, you: row.username === me })),
   });
-  api.clubInvites.mockResolvedValue({
-    items: [invite({ id: 1, code: "AAAA1111AA" }), invite({ id: 2, code: "BBBB2222BB", active: false, revoked: true })],
-  });
+  api.clubInvites.mockResolvedValue({ items: invites });
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -120,6 +120,20 @@ describe("ClubMembersPage", () => {
     await wrapper.get(".sheet .btn-danger").trigger("click");
     await flushPromises();
     expect(api.removeMember).toHaveBeenCalledWith("readers-ab12", "mia");
+  });
+
+  it("names a friend invite's friend to its creator only, and calls it personal for other admins", async () => {
+    const { wrapper } = await mountAs("admin", "adam", [
+      invite({ id: 5, code: "FFFF5555FF", created_by: "adam", personal: true, invitee: "grace" }),
+      invite({ id: 6, code: "GGGG6666GG", created_by: "olga", personal: true, invitee: null }),
+      invite({ id: 7, code: "HHHH7777HH", created_by: "olga" }),
+    ]);
+    const lines = wrapper.findAll(".invite-row:not(.past) .invite-meta .finer").map((line) => line.text());
+    expect(lines[0]).toMatch(/^Personal invite for grace · expires .* · by adam$/);
+    expect(lines[1]).toMatch(/^Personal invite · expires .* · by olga$/);
+    expect(lines[2]).toMatch(/^Single use · expires .* · by olga$/);
+    // A personal invite is withdrawn like any other.
+    expect(wrapper.findAll(".invite-row:not(.past)")[1]!.text()).toContain("Withdraw");
   });
 
   it("gives the owner roles, the hand-over and the delete", async () => {
