@@ -514,7 +514,7 @@ flock /var/lib/bookclub-backup/.update.lock true
 
 ### Restoring from a Storage Box snapshot
 
-When the repository itself is gone or damaged, for example because someone deleted it from the VM. Treat that VM as compromised. Whoever deleted the repository could read everything on it: `.env` with the SMTP credentials, the package token of `docker login`, `backup.env`, the restic password and the box's SSH key. With that key they may also have added a key of their own to the box's `.ssh/authorized_keys`. The old restic password and everything in the old repository therefore count as known to them. So does the database: every address and password hash, everything people wrote, and the invite codes, which are stored as they are. While they were in, they could also write it (`docker compose exec postgres psql`): plant a session for a token they hold, make an account an instance admin, join a club, change an address. The snapshot below is from before the damage, not from before the intrusion, so steps 6 to 8 end that access before the app starts. Restore onto a new VM, set up as in "First boot", steps 1 to 5, with new SMTP credentials and a new read-only package token (revoke the old ones), and with the backup scripts and `backup.env` as in "Backups", "Setting up", step 2. The steps below make the box's key, the restic password and the repository; take the box back before anything else:
+When the repository itself is gone or damaged, for example because someone deleted it from the VM. Treat that VM as compromised. Whoever deleted the repository could read everything on it: `.env` with the SMTP credentials, the package token of `docker login`, `backup.env`, the restic password and the box's SSH key. With that key they may also have added a key of their own to the box's `.ssh/authorized_keys`. The old restic password and everything in the old repository therefore count as known to them. So does the database: every address and password hash, everything people wrote, and the invite codes, which are stored as they are. While they were in, they could also write it (`docker compose exec postgres psql`): plant a session for a token they hold, make an account an instance admin, join a club, change an address. The snapshot below is from before the damage, not from before the intrusion, so steps 6 to 8 end that access before the app starts. Restore onto a new VM, set up as in "First boot", steps 1 to 5, with new SMTP credentials and a new read-only package token (revoke the old ones), and with the scripts (`backup.sh`, `restore-test.sh`, `backup-lib.sh`, `update.sh`) and `backup.env` as in "Backups", "Setting up", step 2. Give `backup.env` new heartbeat checks too: the old ping URLs were in the old `backup.env`, and a ping URL is its check's only credential, so whoever has them can keep the old checks green from anywhere while a backup, a restore test or an update on the new VM stops. Create the three checks anew ("Backups", "Setting up", step 3, and "Updates and rollback", "Setting up", step 2), put only their URLs into the new `backup.env`, and delete the old checks. The steps below make the box's key, the restic password and the repository; take the box back before anything else:
 
 1. Take the box back. In the Hetzner Console, reset the box's password. On the new VM, create a new key, root's SSH config and `known_hosts` with the commands of "Backups", "Setting up", step 1. Then, instead of the usual upload, replace the box's key file as a whole with one that holds only the new key (the first `scp` asks for the new password; if the box has no `.ssh` any more, `ssh bookclub-backup mkdir .ssh` first), and read it back. `diff` prints nothing when the new key is the only one:
 
@@ -572,13 +572,15 @@ When the repository itself is gone or damaged, for example because someone delet
 
    Anything nobody can explain goes before the app starts: an admin flag with `UPDATE users SET is_admin = false WHERE username = '<name>'`; an address its owner did not set with `UPDATE users SET email = NULL, email_verified_at = NULL WHERE username = '<name>'`, so that no reset link goes there (tell the owner, who sets it again); an account or a membership through the club's owner or, once the app runs, the admin page.
 
-8. Back up again, so that the newest snapshot holds the database as it is now, then start the app as in step 5 of "Restoring for real":
+8. Back up again, so that the newest snapshot holds the database as it is now, then start the app as in step 5 of "Restoring for real", and the timers, which this VM does not have yet. Their first runs ping the new checks:
 
    ```sh
    /opt/bookclub/backup.sh
    docker compose up -d --wait
    rm -rf /var/lib/bookclub-backup/restore
-   systemctl start bookclub-update.timer
+   cp deploy/hosted/systemd/bookclub-* /etc/systemd/system/
+   systemctl daemon-reload
+   systemctl enable --now bookclub-backup.timer bookclub-restore-test.timer bookclub-update.timer
    ```
 
 9. Remove the copies: `rm /opt/bookclub/backup-snapshot.env /opt/bookclub/restic-password-old`.
