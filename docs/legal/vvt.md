@@ -20,7 +20,7 @@ Shared by every activity below. Sources are in `privacy-facts.md` and `docs/phas
 
 - **Transport:** TLS at the reverse proxy with HSTS (DEP, #51). Mail to the provider only over TLS: `smtps://` or STARTTLS that must succeed (`server/src/config.rs`, `check_smtp_tls`).
 - **Authentication:** passwords hashed with argon2id (conventions §5.4); session secrets and mail-link tokens stored only as SHA-256 hashes (§5.1, §5.5); the session cookie is `__Host-`, `HttpOnly`, `Secure`, `SameSite=Lax`; cross-site writes are refused (§5.8); a password change ends every other session.
-- **Abuse limits:** sign-up, login, reset, search, upload, report and export are rate limited in memory (`server/src/ratelimit.rs:273-302`).
+- **Abuse limits:** sign-up, login, reset, search, upload, report and export are rate limited in memory (`server/src/ratelimit.rs` (`RateLimits`)).
 - **Access control:** strangers see nothing of a user in the app (pictures are served to whoever has their unguessable URL, `privacy-facts.md` §2); the audience sees only what the user did not mark "only me"; club data only the club's members (conventions §6). Instance-admin routes sit behind one guard (`server/src/lib.rs`, `InstanceAdmin`).
 - **Data minimisation:** no IP addresses in the app log or database; no third-party requests from the browser; pictures re-encoded without metadata; the Goodreads rows are emptied after the import.
 - **Isolation:** the app VM sits in its own VLAN, accepts connections only from the reverse proxy, and cannot reach the LAN (work plan §5 step 10; to confirm at #51 acceptance).
@@ -106,7 +106,7 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 
 | | |
 |---|---|
-| Purpose | Reading clubs of up to 20 members (`server/src/clubs/mod.rs:29`): membership and roles, invites, the current pick and its milestones, voting on the next book, the activity feed |
+| Purpose | Reading clubs of up to 20 members (`server/src/clubs/mod.rs` (`MAX_MEMBERS`)): membership and roles, invites, the current pick and its milestones, voting on the next book, the activity feed |
 | Legal basis | Art. 6 (1) (b) |
 | Data subjects | users who create, join or are invited to clubs |
 | Data | membership, role, who invited whom, removals, invite codes and their uses, picks with meeting notes, milestones, nominations and ballots, activity events |
