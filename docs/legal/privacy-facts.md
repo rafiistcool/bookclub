@@ -1,6 +1,6 @@
 # Privacy facts
 
-These are the facts a privacy policy (Datenschutzerklärung) for the hosted Bookclub service needs, taken from the code with file references. They are input for eRecht24 or a lawyer, not legal text and not legal advice. Every "to confirm" is a decision Rafael still has to make, or a value a later package fills in.
+These are the facts a privacy policy (Datenschutzerklärung) for the hosted Bookclub service needs, taken from the code with file references. They are input for eRecht24 or a lawyer, not legal text and not legal advice. Every "to confirm" is a decision Rafael still has to make, a value that only exists once the service goes live, or a point for the legal source to confirm. "To sign" marks a data processing agreement that is not signed yet.
 
 The facts describe the Rust server (`server/`) and the Vue app (`frontend/`) on branch `phase-2`. Until the cutover (#52), production still runs the Python app in `backend/`; these facts apply from the cutover on.
 
@@ -9,18 +9,26 @@ Companion documents:
 - `docs/legal/processors.md`: processors and the services that are not processors
 - `docs/legal/takedown.md`: how notices about content are handled
 
-## 0. Open decisions (to confirm)
+## 0. Decisions
 
-| Decision | Recommendation (work plan §4) | Affects |
+Rafael took the recommendations of the work plan (`docs/phase2/work-plan.md` §4, "Answers (2026-10-29)"). Accounts, DNS and agreements that only make sense once the service goes live follow then. These facts use the decided options.
+
+| Decision | Decided on 2026-10-29 | Still open | Affects |
+|---|---|---|---|
+| Mail provider (Q4) | Brevo (FR) | the account, the DNS records and the DPA (to sign), once the domain exists | §5, processors |
+| Backup target (Q9; Phase 2 security review finding 3) | Hetzner Storage Box with restic, encrypted on the VM before upload: 7 daily, 4 weekly and 12 monthly snapshots. On top, the Storage Box's own snapshots (option A), which the VM cannot delete | the DPA (to sign), the box's location, how many Storage Box snapshots are kept (DEP2's setup in `deploy/hosted/README.md`) | §5, §7, processors |
+| Uptime monitor (Q10 A) | a hosted HTTP check on `/api/health`, plus healthchecks.io heartbeats for the backup, update and restore-test timers | which HTTP check (Better Stack or UptimeRobot); the accounts come with the VM | §5, processors |
+| Takedown targets (Q12 A) | acknowledge an emailed notice within 24 h, decide within 72 h; the app mails the decision to the reporter and a statement of reasons to the uploader | the wording, confirmed by the legal source | `takedown.md` |
+| Suspension (Q15) | an instance admin can suspend an account: no sign-in, sessions dropped, content stays | | §8 |
+| Retention periods (Q14 A) | reports and edit requests 3 years after their decision; empty sign-ups after 30 days; the old app's data: the copy on the development VM right after the rehearsal, the final snapshot and the stopped Python container 30 days after the cutover | | §7 |
+
+Still open (to confirm):
+
+| Decision | State | Affects |
 |---|---|---|
-| Public name and domain (Q1, #50) | not decided | controller details, cookie origin, mail sender, `CONTACT_EMAIL` |
-| Mail provider (Q4) | Brevo (FR), with a DPA | §5, processors |
-| Backup target and retention (Q9) | Hetzner Storage Box with restic: 7 daily, 4 weekly, 12 monthly snapshots | §5, §7, processors |
-| Uptime monitor (Q10) | a hosted HTTP check (Better Stack or UptimeRobot) plus healthchecks.io heartbeats | §5, processors |
-| Takedown targets (Q12) | acknowledge within 24 h, decide within 72 h, the app mails the decision | `takedown.md` |
-| Retention periods (Q14) | reports and edit requests 3 years; empty sign-ups 30 days; legacy data 30 days after the cutover | §7 |
-| Reverse proxy log retention | 7 days, with IP addresses (work plan §5 step 17) | §4 |
-| App log retention | the Docker log options of DEP's compose file | §4 |
+| Public name and domain (Q1, #50) | deferred; a name check comes first (work plan §4) | controller details, cookie origin, mail sender, `CONTACT_EMAIL` |
+| The legal source's review | eRecht24 or a lawyer checks these facts and the "to confirm with the lawyer" points (work plan §5 step 17) | every document |
+| App log retention | kept by size, not by time (§4); the log holds no IP address | §4 |
 | Minimum age | not in the code; the terms state it | terms |
 
 ## 1. Controller, hosting and contact
@@ -59,7 +67,7 @@ The app sets one cookie and uses `localStorage` and `sessionStorage` for a few p
 | Name | Kind | Content | Lifetime | Source |
 |---|---|---|---|---|
 | `__Host-bookclub_session` (`bookclub_session` in development) | cookie, `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/` | a random session secret (32 bytes, base64url) | `Max-Age` 400 days; the server ends the session after 30 days without use, at logout, password change, reset or account deletion | `server/src/auth/mod.rs` (`SESSION_COOKIE`, `SECURE_SESSION_COOKIE`), `server/src/auth/session.rs:29-30` |
-| `bookclub.theme`, `bookclub.mode` | `localStorage` | the chosen palette and light/dark mode, so the page paints in them before the app starts | until changed or cleared | `frontend/src/stores/theme.ts` (`THEME_KEY`, `MODE_KEY`), and the first script of `frontend/index.html`, which reads them before the app starts |
+| `bookclub.theme`, `bookclub.mode` | `localStorage` | the chosen palette and light/dark mode, so the page paints in them before the app starts | until changed or cleared | `frontend/src/stores/theme.ts` (`THEME_KEY`, `MODE_KEY`), and `frontend/public/theme-init.js`, the first script `frontend/index.html` loads, which reads them before the app starts |
 | `bookclub.locale` | `localStorage` | the chosen language | until changed or cleared | `frontend/src/i18n/index.ts:8` |
 | `bookclub.club` | `localStorage` | the slug of the club opened last | until changed, or the club is gone | `frontend/src/stores/clubs.ts:8` |
 | `bookclub.draft.<username>.…` | `localStorage` | the text of an unsent diary entry or reply | until sent or emptied; all drafts are removed when the user signs out on this device or deletes the account | `frontend/src/drafts.ts:3-41` |
@@ -71,13 +79,13 @@ The browser also keeps the app's own files (HTML, scripts, styles, icons) in its
 
 ## 4. Logs and IP addresses
 
-- **The app log** (standard output of the container) has one line per request with the method, the path, the status, the latency and a random request id (`server/src/lib.rs`, `TraceLayer`). It has **no IP address, no User-Agent, no cookie and no user id**. Invite codes in paths are replaced by `{code}` (`loggable_path`). Outbound catalog requests are logged with their URL (`server/src/outbound.rs`), which contains the search text or the ISBN, but not who asked. Errors are logged without request bodies. Mails are never logged in production: the log transport, which writes every mail into the log, is refused outside development (`server/src/config.rs`, `EMAIL_TRANSPORT`). Retention: the Docker log options of the deployment (to confirm, DEP).
-- **The reverse proxy** (Caddy, shared with Forgejo) logs every request with the client IP address, time, request line, status and User-Agent. Planned retention: 7 days (to confirm, DEP's `deploy/hosted/Caddyfile.example`).
+- **The app log** (standard output of the container) has one line per request with the method, the path, the status, the latency and a random request id (`server/src/lib.rs`, `TraceLayer`). It has **no IP address, no User-Agent, no cookie and no user id**. Invite codes in paths are replaced by `{code}` (`loggable_path`). Outbound catalog requests are logged with their URL (`server/src/outbound.rs`), which contains the search text or the ISBN, but not who asked. Errors are logged without request bodies. Mails are never logged in production: the log transport, which writes every mail into the log, is refused outside development (`server/src/config.rs`, `EMAIL_TRANSPORT`). Retention: by size, not by time. Docker keeps at most 5 files of 10 MB per container (`deploy/hosted/compose.yaml`, `x-logging`), so the days the log covers depend on the traffic. To confirm with the lawyer: whether a log without IP addresses needs a time limit.
+- **The reverse proxy** (Caddy, shared with Forgejo) logs every request to the service into a file of its own with the client IP address, the time, the method, the path, the status and the request headers, the User-Agent among them. Caddy writes cookies and credentials as `REDACTED`, and the log filter drops the Referer, replaces the query string with `?{redacted}` and invite codes in paths with `{redacted}`. logrotate on the proxy host rolls the file daily and keeps 5 old files, so no line is older than 7 days (`deploy/hosted/Caddyfile.example`, the comment above its `log` block; `deploy/hosted/README.md`, "Reverse proxy").
 - **Rate limiting** uses the client IP address (an IPv4 address, or the /64 prefix of an IPv6 address, `server/src/ratelimit.rs:314-322`), taken from `X-Forwarded-For` only when the proxy is trusted (`server/src/client_ip.rs:41-65`), plus account ids, session ids (for the password checks of a signed-in session, `server/src/auth/account.rs` (`session_key`)) and SHA-256 hashes of login names that match no account (`server/src/ratelimit.rs:327-331`). The per-address mail limits (6 mails of each kind a day) are keyed by the recipient's email address itself, case-folded (`server/src/auth/mail.rs` (`target_key`, `deliver`)). Every address the server mails becomes such a key, including one somebody typed at sign-up or at an email change that belongs to a third person. These counters live in memory only, for at most 24 hours (the longest window, `server/src/ratelimit.rs:273-302`), and are gone after a restart. They are never written to disk or to the log.
 
 ## 5. Connections the server makes
 
-The browser never talks to these hosts; the server does, from its own IP address, without the user's IP address, cookies, account id or username.
+The browser never talks to these hosts; the server does, or for backups and heartbeats the VM it runs on, from its own IP address, without the user's IP address, cookies, account id or username.
 
 | Host | When | What is sent | Source |
 |---|---|---|---|
@@ -85,15 +93,16 @@ The browser never talks to these hosts; the server does, from its own IP address
 | `covers.openlibrary.org`, redirected to `archive.org` | a cover is fetched once and then served from the server's own media store | the cover id | `server/src/media/service.rs:394`, `server/src/outbound.rs:31-33` |
 | `services.dnb.de` (SRU) | an ISBN lookup | the ISBN | `server/src/catalog/dnb_sru.rs:26-31` |
 | `services.dnb.de` (OAI-PMH) | the optional new-releases harvest (`DNB_HARVEST`) | nothing from users | `server/src/harvest/run.rs:170-185` |
-| the mail provider (to confirm, Q4) | verification links, password reset links, the "email changed" and "address in use" notices; later admin notifications and takedown decisions | the recipient address, the username, the link, the text in the user's language | `server/src/email/templates.rs` (`verify_email`, `reset_password`, `email_changed`, `address_in_use`) |
-| the backup target (to confirm, Q9) | nightly | the encrypted database dump and media files | DEP (#51) |
-| the monitor (to confirm, Q10) | the monitor calls `GET /api/health`; the backup and update timers ping heartbeats | nothing personal: the health answer is `{"status":"ok"}` | `server/src/health.rs` |
+| the mail provider Brevo (Q4; its SMTP host follows with the account, the DPA is to sign) | verification links, password reset links, the "email changed" and "address in use" notices; to instance admins, the news of reports and catalog requests (counts only, no reporter); with ADM2 (Q12 A), the decision to a reporter and the statement of reasons to an uploader | the recipient address, the username, the link or notice, the text in the user's language | `server/src/email/templates.rs` (`verify_email`, `reset_password`, `email_changed`, `address_in_use`, `admin_reports`, `admin_requests_digest`) |
+| the backup target, a Hetzner Storage Box (Q9; the DPA is to sign) | nightly, over SFTP; Hetzner's own snapshots of the box then keep copies of what is stored there | the database dump and the media files, encrypted by restic on the VM before they leave it; the key stays with the operator | `deploy/hosted/backup.sh`, `deploy/hosted/README.md` ("Backups") |
+| the uptime check, Better Stack or UptimeRobot (Q10 A; which one is to confirm) | it calls `GET /api/health` every few minutes | nothing: the answer is `{"status":"ok"}`, or `{"status":"unavailable"}` when the database does not answer | `server/src/health.rs` |
+| healthchecks.io (Q10 A) | the backup, update and restore-test timers ping it when they start and end | the exit status and, at the end, the last 50 lines of the run's log: row counts per table and restic's summary. Rarely, a line names the storage key of a picture the run could not read (`avatars/…/<public id>/a`), which holds the secret part of that picture's URL (§2). No username, address or content. To confirm: what the update timer (DEP2) sends | `deploy/hosted/backup-lib.sh` (`heartbeat`, `supervise`) |
 
 ## 6. The browser contacts no third party
 
 - The app is one origin: the page, its scripts and styles, the API (`/api`) and every picture (`/media`) come from the service's own host. Covers from Open Library are fetched and stored by the server first (§5), so the browser never loads them from Open Library.
 - No web fonts are loaded: the font stacks name fonts the device may have installed and fall back to system fonts (`frontend/src/styles/tokens.css:6-7`); the app ships no font files.
-- No analytics, no error tracking, no CDN, no embedded media, no social plugins. GATE (#55) adds a Content-Security-Policy that limits the page to its own origin.
+- No analytics, no error tracking, no CDN, no embedded media, no social plugins. The page's Content-Security-Policy limits it to its own origin (`server/src/spa.rs` (`SHELL_CSP`)).
 - The only way out is a link the user clicks: "View on Open Library" on a book page, which opens in a new tab without a referrer (`frontend/src/pages/BookDetailPage.vue` (`book.viewOpenLibrary`)).
 - The web app manifest and icons are local files (`frontend/public/`).
 - The legal pages show the operator's HTML without pictures, frames, styles or scripts, and links to other sites open in a new tab without a referrer (`frontend/src/pages/LegalPage.vue` (`sanitizeLegalHtml`)), so a generator template cannot add a request to a third party.
@@ -106,25 +115,27 @@ The browser never talks to these hosts; the server does, from its own IP address
 | Mail links | valid 48 hours (verification) or 1 hour (reset); removed by the hourly cleanup once used or expired | `server/src/auth/mail.rs:90-93`, `server/src/auth/mod.rs` (`cleanup`) |
 | Search history | only the newest 20 per account are kept; the user can delete single entries or all | `server/src/shelf/search_history.rs:21`, `:105-115` |
 | Goodreads rows | the uploaded rows are emptied when the import ends; counts and up to 25 skipped titles stay until the account is deleted | `server/src/shelf/goodreads.rs:609-611`, `:667` |
-| Account and everything in it | when the user deletes the account (§8). There is no deletion for inactivity yet. Planned (Q14, LEG2): delete sign-ups that never verified an address and hold no data after 30 days (to confirm) | `server/src/auth/deletion.rs` |
+| Account and everything in it | when the user deletes the account (§8). An account is never deleted for inactivity alone | `server/src/auth/deletion.rs` (`delete_user`) |
+| Empty sign-ups (Q14) | 30 days after the last sign-in, by the hourly cleanup, the way the user's own deletion goes (sessions and mail links with it). An empty sign-up never verified the address it typed, holds no data at all (no profile picture, nothing on the shelf, in a club, in the catalog or in the admin queue: no row that references the account except its sessions, its mail links and the use of a sign-up invite) and shows no sign-in for 30 days (account created, password changed and terms accepted more than 30 days ago, no session used and no mail link sent since). Accounts with a verified address, instance admins, and imported accounts that never added an address are never deleted this way; an imported account that typed an address keeps it while it holds data. A sign-in whose session ended by logging out leaves no trace, so the 30 days then count from the last trace | `server/src/auth/mod.rs` (`cleanup`, `purge_empty_sign_ups`), `server/src/jobs.rs` (`auth_cleanup_loop`) |
 | Posts with replies by others | kept as an anonymous tombstone without text when the author's account is deleted | `docs/phase1/conventions.md` §5.6 |
 | Club records (picks, nominations, milestones, invites) | kept without the name when the account is deleted | §5.6 |
 | Cover photos a user uploaded and books a user added | kept as catalog content without the name when the account is deleted | §5.6 |
-| Reports and decided edit requests | kept; the reporter or requester becomes anonymous when their account is deleted. Planned (Q14, LEG2): delete after 3 years (to confirm) | `server/migrations/0001_init.sql` (`reports`, `catalog_edit_requests`) |
+| Reports and edit, merge and cover requests (Q14) | deleted by the hourly cleanup 3 years after the decision (`resolved_at`, `decided_at`), to defend claims about a takedown or a correction; open ones are kept until decided. Until then the reporter or requester becomes anonymous when their account is deleted | `server/src/auth/mod.rs` (`cleanup`), `server/migrations/0001_init.sql` (`reports`, `catalog_edit_requests`) |
 | Removed pictures | the files are deleted at the takedown; the media row (with the uploader) and the hashes of the files stay, so the same picture cannot be uploaded again. Copies a browser cached before the takedown can stay in that browser for up to a year (§2) | `server/src/media/reports.rs` (`take_down_locked`, `record_removed_hashes`) |
 | Terms acceptance | with the account | `users` |
 | Rate-limit counters (with IP addresses, account and session ids, hashed login names and recipient email addresses) | at most 24 hours, in memory | §4 |
-| App log | the Docker log options (to confirm, DEP) | §4 |
-| Proxy log | 7 days (to confirm, DEP) | §4 |
-| Backups | 7 daily, 4 weekly and 12 monthly snapshots (to confirm, Q9): deleted data can stay in a backup for up to about 12 months | DEP (#51) |
-| Data of the old Python app | the dev-VM copy right after the rehearsal; the final snapshot (encrypted) and the stopped Python container 30 days after the cutover (to confirm, Q14) | CUT (#52) |
+| App log | by size: at most 5 files of 10 MB per container, no time limit (to confirm with the lawyer) | §4 |
+| Proxy log | at most 7 days | §4 |
+| Backups (Q9) | restic keeps 7 daily, 4 weekly and 12 monthly snapshots, so deleted data can stay in a backup for up to about 12 months. The Storage Box's own snapshots (option A of the Phase 2 security review, finding 3) each keep the encrypted repository as it was when taken, and with it restic snapshots that were pruned since, so a deleted item can outlive the 12 months by the age of the oldest Storage Box snapshot (how many are kept: DEP2's setup, to confirm) | `deploy/hosted/backup.sh`, `deploy/hosted/README.md` ("Backups"), `docs/phase1/security-review.md` |
+| Data of the old Python app (Q14) | the copy of the production database on the development VM, for the rehearsal: deleted right after the rehearsal. The final snapshot taken at the cutover (kept encrypted) and the stopped Python container with its data: deleted 30 days after the cutover | `docs/phase2/cutover.md`, CUT2 (#38) |
 
 ## 8. Rights of the user
 
 - **Access and portability (Art. 15, 20):** Settings → "Export my data" downloads a ZIP with `data.json` (every row that belongs to the user, from every table that references the account) and the pictures the user uploaded (`GET /api/auth/me/export`, `server/src/auth/export.rs:77`; contents in `docs/phase1/conventions.md` §5.7). Rows of clubs the user has left keep only what the user wrote. Five exports per hour.
 - **Erasure (Art. 17):** Settings → "Delete account" with the password (`DELETE /api/auth/me`, `server/src/auth/deletion.rs` (`delete_user`)). Everything the user owns is deleted in one transaction: sessions, links, shelf, favourites, quotes, layout, search history, imports, memberships, reactions, ballots, events, profile pictures and posts (posts with replies by others become anonymous tombstones). An owner of a club with other members must hand it over or delete it first. Details: `docs/phase1/conventions.md` §5.6.
 - **Rectification (Art. 16):** the user changes the email address, language, time zone and display settings in Settings. The username cannot be changed in the app; the operator changes it on request (to confirm how).
-- **Suspended accounts:** a suspended account (planned, ADM2, Q15) cannot sign in and so cannot export or delete itself. Its owner writes to `CONTACT_EMAIL`, and the operator runs the export or deletion (ADM2 documents the steps in `takedown.md`).
+- **Suspended accounts (Q15, ADM2):** an instance admin can suspend an account. It then cannot sign in, its sessions are ended, and its content stays. It therefore loses the in-app export and deletion above (Art. 15, 17 and 20). Its owner writes to `CONTACT_EMAIL` instead, and the operator answers by hand: an export of the same content, or the deletion of the account, after checking that the request comes from the account's owner. `takedown.md` holds the operator's steps (ADM2). To confirm with the lawyer: how the owner proves the account is theirs (for example a mail from the account's verified address), and whether data needed as evidence for the suspension may be kept back from a deletion.
+- **Accounts that stay empty** (no verified address, no data, no sign-in for 30 days) are deleted by the server itself (§7).
 - **Objection, restriction, complaint:** by mail to `CONTACT_EMAIL`; the privacy text names the supervisory authority (to confirm).
 
 ## 9. Terms acceptance
@@ -141,5 +152,5 @@ Recommended option of Q13: a sentence with links above the sign-up button, with 
 
 - **Strangers see nothing** of a user in the app. The one exception: a picture whose URL they have, which loads without signing in (§2). People who share a club (the audience) see the username, the profile picture, the shelf, ratings and takes, diary entries, quotes, favourites, stats and the physical shelf, except items the user marked "only me" (`docs/phase1/conventions.md` §6.1).
 - **Club members** see the club's posts, picks, votes, members and activity.
-- **Instance admins** see the admin queue: reports (with the reporter's username), edit, merge and cover requests (with the requester's username), and the sign-up invites. No admin screen shows email addresses (to confirm when ADM2 adds decision mails, Q12).
+- **Instance admins** see the admin queue: reports (with the reporter's username), edit, merge and cover requests (with the requester's username), and the sign-up invites. No admin screen shows email addresses: the app sends the decision mails of Q12 A itself (ADM2), so an admin never needs a reporter's or uploader's address.
 - **Email addresses** are never shown to other users. Sign-up and the email change never reveal whether an address is in use (`docs/phase1/conventions.md` §5.5).

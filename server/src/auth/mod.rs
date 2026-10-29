@@ -20,7 +20,7 @@ pub mod tokens;
 use axum::Json;
 use axum::extract::State;
 use serde::Serialize;
-use sqlx::PgConnection;
+use sqlx::{Connection, PgConnection};
 use utoipa::ToSchema;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -176,7 +176,17 @@ pub async fn user_out(conn: &mut PgConnection, user_id: i64) -> ApiResult<UserOu
     })
 }
 
-/// The hourly cleanup job: deletes expired sessions and used or expired email tokens.
+/// Empty sign-ups deleted per run at most ([`purge_empty_sign_ups`]); the rest wait for the next
+/// hour.
+pub const PURGE_BATCH: i64 = 500;
+
+/// The hourly cleanup job and the retention periods of Q14 (docs/legal/privacy-facts.md §7).
+/// It deletes:
+///
+/// - expired sessions, and used or expired email tokens;
+/// - reports and catalog edit requests 3 years after their decision (`resolved_at`,
+///   `decided_at`); open ones stay however old they are;
+/// - empty sign-ups, 30 days after their last sign-in ([`purge_empty_sign_ups`]).
 pub async fn cleanup(conn: &mut PgConnection) -> sqlx::Result<()> {
     let sessions = sqlx::query!("DELETE FROM sessions WHERE expires_at < now()")
         .execute(&mut *conn)
@@ -187,10 +197,155 @@ pub async fn cleanup(conn: &mut PgConnection) -> sqlx::Result<()> {
             .execute(&mut *conn)
             .await?
             .rows_affected();
+    let reports = sqlx::query!(
+        "DELETE FROM reports WHERE status <> 'open' AND resolved_at < now() - interval '3 years'"
+    )
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    let edit_requests = sqlx::query!(
+        "DELETE FROM catalog_edit_requests
+         WHERE status <> 'open' AND decided_at < now() - interval '3 years'"
+    )
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    let sign_ups = purge_empty_sign_ups(conn).await?;
     tracing::info!(
         sessions,
         tokens,
-        "deleted expired sessions and email tokens"
+        reports,
+        edit_requests,
+        sign_ups,
+        "deleted expired sessions and email tokens, old decisions and empty sign-ups"
     );
     Ok(())
+}
+
+/// Deletes up to [`PURGE_BATCH`] empty sign-ups ([`empty_sign_ups`]), lowest id first, each in a
+/// transaction of its own through [`deletion::delete_user`], the path of `DELETE /api/auth/me`.
+/// Returns how many it deleted. An account whose deletion fails is logged and kept, and the
+/// others go on; a failure of the connection itself ends the run.
+///
+/// Each account is locked first and then looked at again in a new statement. A write that would
+/// give it data or a sign-in references the account, so it holds the row `FOR KEY SHARE` until
+/// it commits: once the lock is granted, such a write has either committed, and the second look
+/// sees it, or it waits for this transaction and fails when the account is gone. Taking the
+/// account's lock before any club's breaks no lock order (conventions §5.6): an empty account
+/// has no row in a club, so `delete_user` locks no club.
+pub async fn purge_empty_sign_ups(conn: &mut PgConnection) -> sqlx::Result<u64> {
+    let candidates = empty_sign_ups(conn, None, PURGE_BATCH).await?;
+    let mut deleted = 0;
+    for user_id in candidates {
+        let mut tx = conn.begin().await?;
+        let hash = sqlx::query_scalar!(
+            "SELECT password_hash FROM users WHERE id = $1 FOR UPDATE",
+            user_id
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(hash) = hash else {
+            tx.rollback().await?;
+            continue;
+        };
+        if empty_sign_ups(&mut tx, Some(user_id), 1).await?.is_empty() {
+            tx.rollback().await?;
+            continue;
+        }
+        let prefixes = match deletion::delete_user(&mut tx, user_id, &hash).await {
+            Ok(prefixes) => prefixes,
+            Err(error) => {
+                // A database error (logged by `AppError::internal`); the account's own checks
+                // cannot fail for an empty account under its lock.
+                tracing::error!(user_id, %error, "deleting an empty sign-up failed; kept");
+                tx.rollback().await?;
+                continue;
+            }
+        };
+        if !prefixes.is_empty() {
+            // Unreachable while `empty_sign_ups` requires no picture. The job has no media store
+            // to delete the files with, so it never deletes rows whose files would stay behind.
+            tracing::error!(user_id, ?prefixes, "an empty sign-up has pictures; kept");
+            tx.rollback().await?;
+            continue;
+        }
+        tx.commit().await?;
+        deleted += 1;
+    }
+    Ok(deleted)
+}
+
+/// The empty sign-ups of Q14, lowest id first, at most `limit`; with `only`, that account if it
+/// is one. An empty sign-up is an account that:
+///
+/// - **has an address it never verified.** Sign-up always stores the address it was given, so an
+///   account without any is an imported one that never added an address, and it stays. An
+///   imported account that typed an address without verifying it stays while it holds data.
+/// - **is not an instance admin.**
+/// - **shows no sign-in for 30 days:** it was created, changed its password and accepted the
+///   terms more than 30 days ago, and no session of it was used and no mail link was sent to it
+///   since then. A sign-in ended by logging out leaves no trace once its session row is gone.
+/// - **holds no data:** no profile picture, and no row behind any foreign key to `users` other
+///   than the traces of signing up and signing in: its sessions, its mail links and the use of
+///   a sign-up invite (`club_invites.club_id` NULL). The use of a club invite is data.
+///
+/// One `NOT EXISTS` per foreign-key column. `tests/jobs.rs`
+/// (`every_reference_to_an_account_is_data_or_a_trace_of_signing_in`) reads every foreign key
+/// to `users` from `pg_constraint` and gives an account a row behind each: a new one fails there
+/// until it has a line here, or is named a trace in that test.
+async fn empty_sign_ups(
+    conn: &mut PgConnection,
+    only: Option<i64>,
+    limit: i64,
+) -> sqlx::Result<Vec<i64>> {
+    sqlx::query_scalar!(
+        "SELECT u.id FROM users u
+         WHERE ($1::bigint IS NULL OR u.id = $1)
+           AND u.email IS NOT NULL
+           AND u.email_verified_at IS NULL
+           AND NOT u.is_admin
+           -- no sign-in for 30 days
+           AND greatest(u.created_at, u.password_changed_at, u.terms_accepted_at)
+               < now() - interval '30 days'
+           AND NOT EXISTS (SELECT 1 FROM sessions x
+                           WHERE x.user_id = u.id AND x.last_used_at >= now() - interval '30 days')
+           AND NOT EXISTS (SELECT 1 FROM email_tokens x
+                           WHERE x.user_id = u.id AND x.created_at >= now() - interval '30 days')
+           -- no data
+           AND u.avatar_media_id IS NULL
+           AND NOT EXISTS (SELECT 1 FROM shelf_entries x WHERE x.user_id = u.id)
+           AND NOT EXISTS (SELECT 1 FROM physical_shelf_layouts x WHERE x.user_id = u.id)
+           AND NOT EXISTS (SELECT 1 FROM user_favorites x WHERE x.user_id = u.id)
+           AND NOT EXISTS (SELECT 1 FROM search_history x WHERE x.user_id = u.id)
+           AND NOT EXISTS (SELECT 1 FROM quotes x WHERE x.user_id = u.id)
+           AND NOT EXISTS (SELECT 1 FROM import_jobs x WHERE x.user_id = u.id)
+           AND NOT EXISTS (SELECT 1 FROM posts x WHERE x.author_id = u.id)
+           AND NOT EXISTS (SELECT 1 FROM post_reactions x WHERE x.user_id = u.id)
+           AND NOT EXISTS (SELECT 1 FROM clubs x WHERE x.created_by = u.id)
+           AND NOT EXISTS (SELECT 1 FROM club_memberships x WHERE x.user_id = u.id)
+           AND NOT EXISTS (SELECT 1 FROM club_memberships x WHERE x.invited_by = u.id)
+           AND NOT EXISTS (SELECT 1 FROM club_removals x WHERE x.user_id = u.id)
+           AND NOT EXISTS (SELECT 1 FROM club_invites x WHERE x.created_by = u.id)
+           AND NOT EXISTS (SELECT 1 FROM club_invite_uses x
+                           JOIN club_invites i ON i.id = x.invite_id
+                           WHERE x.user_id = u.id AND i.club_id IS NOT NULL)
+           AND NOT EXISTS (SELECT 1 FROM club_picks x WHERE x.set_by = u.id)
+           AND NOT EXISTS (SELECT 1 FROM milestones x WHERE x.created_by = u.id)
+           AND NOT EXISTS (SELECT 1 FROM next_up_nominations x WHERE x.nominated_by = u.id)
+           AND NOT EXISTS (SELECT 1 FROM next_up_ballots x WHERE x.user_id = u.id)
+           AND NOT EXISTS (SELECT 1 FROM events x WHERE x.actor_id = u.id)
+           AND NOT EXISTS (SELECT 1 FROM works x WHERE x.created_by = u.id)
+           AND NOT EXISTS (SELECT 1 FROM editions x WHERE x.created_by = u.id)
+           AND NOT EXISTS (SELECT 1 FROM media x WHERE x.uploaded_by = u.id)
+           AND NOT EXISTS (SELECT 1 FROM catalog_edit_requests x WHERE x.created_by = u.id)
+           AND NOT EXISTS (SELECT 1 FROM catalog_edit_requests x WHERE x.decided_by = u.id)
+           AND NOT EXISTS (SELECT 1 FROM reports x WHERE x.created_by = u.id)
+           AND NOT EXISTS (SELECT 1 FROM reports x WHERE x.resolved_by = u.id)
+         ORDER BY u.id
+         LIMIT $2",
+        only,
+        limit
+    )
+    .fetch_all(conn)
+    .await
 }
