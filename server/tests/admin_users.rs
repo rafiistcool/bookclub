@@ -187,6 +187,12 @@ async fn suspensions_are_checked(db: PgPool) {
     let res = unsuspend(&root, "grace").await;
     res.assert_status(200);
     assert_eq!(res.json()["suspended_at"], Value::Null);
+    assert_eq!(
+        app.scalar_i64("SELECT count(*) FROM users WHERE unsuspended_at IS NOT NULL")
+            .await,
+        0,
+        "lifting no suspension records none"
+    );
     // Another admin can be suspended; then they cannot use the admin routes.
     suspend(&root, "grace").await.assert_status(200);
     grace

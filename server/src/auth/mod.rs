@@ -392,9 +392,10 @@ pub async fn is_empty_sign_up(conn: &mut PgConnection, user_id: i64) -> sqlx::Re
 /// - **is not suspended.** A suspension (`suspended_at`) is a moderation record: purging would
 ///   free the username, and a suspended account cannot sign in, so it would otherwise go 30 days
 ///   after its last sign-in.
-/// - **shows no sign-in for 30 days:** it was created, changed its password, accepted the terms
-///   and last used a session that has ended (`last_seen_at`) more than 30 days ago, and no
-///   session of it was used and no mail link was sent to it since then.
+/// - **shows no sign-in for 30 days:** it was created, changed its password, accepted the terms,
+///   last used a session that has ended (`last_seen_at`) and had a suspension lifted
+///   (`unsuspended_at`, migration 2900: it could not sign in before) more than 30 days ago, and
+///   no session of it was used and no mail link was sent to it since then.
 /// - **holds no data:** no profile picture, and no row behind any foreign key to `users` other
 ///   than the traces of signing up and signing in: its sessions, its mail links and the use of
 ///   a sign-up invite (`club_invites.club_id` NULL). The use of a club invite is data.
@@ -418,7 +419,7 @@ async fn empty_sign_ups(
            AND u.suspended_at IS NULL
            -- no sign-in for 30 days
            AND greatest(u.created_at, u.password_changed_at, u.terms_accepted_at,
-                        u.last_seen_at)
+                        u.last_seen_at, u.unsuspended_at)
                < now() - interval '30 days'
            AND NOT EXISTS (SELECT 1 FROM sessions x
                            WHERE x.user_id = u.id AND x.last_used_at >= now() - interval '30 days')

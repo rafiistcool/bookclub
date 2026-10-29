@@ -140,8 +140,14 @@ pub async fn unsuspend(
 ) -> ApiResult<Json<AdminUserOut>> {
     let username = normalize_username(&username);
     let mut conn = state.db.acquire().await?;
+    // The end of a suspension counts as a sign-in for the purge of empty sign-ups
+    // (`auth::empty_sign_ups`): the account could not sign in while it was suspended.
     let user_id = sqlx::query_scalar!(
-        "UPDATE users SET suspended_at = NULL WHERE username = $1 RETURNING id",
+        "UPDATE users
+         SET suspended_at = NULL,
+             unsuspended_at = CASE WHEN suspended_at IS NULL THEN unsuspended_at ELSE now() END
+         WHERE username = $1
+         RETURNING id",
         username
     )
     .fetch_optional(&mut *conn)

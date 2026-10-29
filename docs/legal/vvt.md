@@ -39,11 +39,11 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 | Purpose | Provide personal accounts: sign-up (by invite, later open), sign-in, sessions in the browser and the apps, password change and reset |
 | Legal basis | Art. 6 (1) (b): performance of the contract (the terms of use) |
 | Data subjects | users |
-| Data | username, email address, verification time, password hash, preferences (theme, colour mode, language, time zone, notification switches), admin flag, sign-up and password change times, the last use of a session that ended before it expired (`last_seen_at`), the time of a suspension (`suspended_at`, activity 9); per session: the secret's hash, the kind, the device label (User-Agent or app name), created, last used, expiry; per mail link: the token's hash, the address, created, expiry, used |
+| Data | username, email address, verification time, password hash, preferences (theme, colour mode, language, time zone, notification switches), admin flag, sign-up and password change times, the last use of a session that ended before it expired (`last_seen_at`), the time of a suspension and of its lifting (`suspended_at`, `unsuspended_at`, activity 9); per session: the secret's hash, the kind, the device label (User-Agent or app name), created, last used, expiry; per mail link: the token's hash, the address, created, expiry, used |
 | Tables | `users`, `sessions`, `email_tokens` |
 | Recipients | none; mails go through the mail provider (activity 2) |
 | Third countries | none |
-| Retention | the account until the user deletes it; an empty sign-up (no verified address, no data, no sign-in for 30 days, not suspended) 30 days after its last sign-in (Q14); sessions 30 days idle (app tokens 90 days); mail links 48 h or 1 h, removed hourly once used or expired |
+| Retention | the account until the user deletes it; an empty sign-up (no verified address, no data, no sign-in for 30 days, not suspended) 30 days after its last sign-in or the lifting of a suspension (Q14); sessions 30 days idle (app tokens 90 days); mail links 48 h or 1 h, removed hourly once used or expired |
 | Source | `server/src/auth/` (`signup.rs`, `login.rs`, `session.rs`, `tokens.rs`, `reset.rs`, `address.rs`, `account.rs`) |
 
 ### 2. Transactional email
@@ -151,11 +151,11 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 | Purpose | Receive and decide notices about content (in the app and by mail), remove illegal or infringing content, keep the record, tell the reporter and the uploader the decision (Q12 A, ADM2), and suspend accounts (Q15, ADM2) (`takedown.md`) |
 | Legal basis | Art. 6 (1) (c) with Art. 16, 17 DSA (notice and action, statement of reasons; to confirm that they apply); otherwise Art. 6 (1) (f) (keeping the service lawful) |
 | Data subjects | reporters; uploaders of reported covers, owners of reported profile pictures, readers who added reported books and editions; people a notice names; suspended users |
-| Data | the report: its target (a cover, a profile picture with whose it is (`target_user_id`), or a work or edition a reader added (`target_work_id`)), reason, details, reporter, how it came in (`via`: the app or a notice by mail), time; the decision (admin, time, outcome, closed on arrival); hashes of removed pictures; a reported profile picture its owner replaced, held until the decision; notices received by mail; a suspension (its time; the account's sessions are deleted) |
-| Tables | `reports`, `media_removed_hashes`, `media` (`removed_at`), `users` (`suspended_at`, `server/migrations/2102_users_suspended_at.sql`) |
+| Data | the report: its target (a cover, a profile picture with whose it is (`target_user_id`), or a work or edition a reader added (`target_work_id`)), reason, details, reporter, how it came in (`via`: the app or a notice by mail), time; the decision (admin, time, outcome, closed on arrival); hashes of removed pictures; a reported profile picture its owner replaced, held until the decision; notices received by mail; a suspension (its time, and the time it was lifted; the account's sessions are deleted) |
+| Tables | `reports`, `media_removed_hashes`, `media` (`removed_at`), `users` (`suspended_at`, `server/migrations/2102_users_suspended_at.sql`; `unsuspended_at`, `server/migrations/2900_users_unsuspended_at.sql`) |
 | Recipients | instance admins; by mail through Brevo (ADM2): each reporter the decision, and whoever uploaded or added removed content the statement of reasons, neither naming the other |
 | Third countries | none |
-| Retention | reports 3 years after the decision, open ones until decided (Q14); hashes as long as the block must hold; a suspension until it is lifted, or with the account |
+| Retention | reports 3 years after the decision, open ones until decided (Q14); hashes as long as the block must hold; a suspension until it is lifted, or with the account; the time of its lifting with the account |
 | Source | `server/src/media/reports.rs`, `server/src/catalog/reports.rs`, `server/src/admin/notices.rs`, `server/src/admin/users.rs`; ADM and ADM2 (#54, #55) |
 
 ### 10. Security and abuse prevention

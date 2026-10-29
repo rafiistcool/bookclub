@@ -464,6 +464,11 @@ async fn cleanup_deletes_sign_ups_that_stayed_empty_for_30_days(db: PgPool) {
             "UPDATE users SET suspended_at = now() - interval '40 days' WHERE id = {u}",
         ),
         (
+            "a suspension lifted yesterday",
+            sign_up(db, "unsuspended", 60).await,
+            "UPDATE users SET unsuspended_at = now() - interval '1 day' WHERE id = {u}",
+        ),
+        (
             "a profile picture",
             sign_up(db, "avatar", 60).await,
             "INSERT INTO media (public_id, kind, source) VALUES (repeat('b', 26), 'avatar', 'legacy');
@@ -509,6 +514,42 @@ async fn cleanup_deletes_sign_ups_that_stayed_empty_for_30_days(db: PgPool) {
     // Run again: nothing more to delete.
     run_cleanup(db).await;
     assert_eq!(user_ids(db).await, left);
+}
+
+/// Lifting a suspension counts as a sign-in for the purge. A suspended account cannot sign in,
+/// and the suspension ended its sessions, so its last sign-in stays where it was; without this an
+/// empty sign-up whose suspension an admin lifts more than 30 days after its last sign-in went
+/// at the next hourly run, before its owner could sign in again, and its name was free. The 30
+/// days start again when the suspension is lifted (`users.unsuspended_at`).
+#[sqlx::test]
+async fn lifting_a_suspension_starts_the_30_days_of_an_empty_sign_up_again(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let root = app.admin("root").await;
+    let ada = sign_up(&app.db, "ada", 60).await;
+    root.post("/api/admin/users/ada/suspend", serde_json::json!({}))
+        .await
+        .assert_status(200);
+    run_cleanup(&app.db).await;
+    assert!(user_ids(&app.db).await.contains(&ada), "suspended, kept");
+
+    root.post("/api/admin/users/ada/unsuspend", serde_json::json!({}))
+        .await
+        .assert_status(200);
+    run_cleanup(&app.db).await;
+    assert!(
+        user_ids(&app.db).await.contains(&ada),
+        "the account whose suspension was lifted just now was deleted"
+    );
+
+    // 30 days after the suspension was lifted, with no sign-in since, it goes.
+    exec(
+        &app.db,
+        "UPDATE users SET unsuspended_at = now() - interval '31 days' WHERE id = {u}",
+        &[("u", ada)],
+    )
+    .await;
+    run_cleanup(&app.db).await;
+    assert!(!user_ids(&app.db).await.contains(&ada));
 }
 
 /// Every foreign key to `users` whose row means the account holds data, with SQL that gives the
@@ -910,7 +951,7 @@ async fn a_failing_deletion_keeps_that_account_and_the_purge_goes_on(db: PgPool)
 /// a sign-in or a state that keeps the account (a suspension) needs a condition in
 /// `auth::empty_sign_ups` and a kept case in
 /// [`cleanup_deletes_sign_ups_that_stayed_empty_for_30_days`] before it is named here.
-const USERS_COLUMNS: [(&str, &str); 21] = [
+const USERS_COLUMNS: [(&str, &str); 22] = [
     ("id", "the account"),
     ("username", "no bearing"),
     (
@@ -953,6 +994,10 @@ const USERS_COLUMNS: [(&str, &str); 21] = [
         "a sign-in: the last use of a session that has ended",
     ),
     ("suspended_at", "a suspended account is never purged"),
+    (
+        "unsuspended_at",
+        "a sign-in: the account could not sign in until its suspension was lifted",
+    ),
 ];
 
 /// A new column of `users` is not a foreign key, so
