@@ -373,3 +373,78 @@ The snapshot restore set `backup.env` up again "as in Backups, Setting up, step 
 ### Rejected
 
 None: every finding of this round was confirmed.
+
+### ADM2 merge
+
+A security review of `phase-2` after ADM2's merge (f6e28e8) and its follow-ups, at `ba42b94`, through the suspension, reports-privacy and integration lenses, beside an end-to-end browser run whose six findings are fixed too (`docs/phase2/notes/adm2.md`, "Checks after the merge"). Three verifiers tried to refute each finding against the code; for finding 5, two of them reproduced the leak in a throwaway `postgres:17` with fictional data. A finding counts as confirmed when at least two of the three did not refute it. Severity follows the rubric above. Rafael's answer for Wave 2 applies: take the recommended option.
+
+| # | Severity | Finding | Outcome |
+|---|---|---|---|
+| 1 | medium | A suspension left every invite the account knew working, so a suspended club owner could sign up again with her own link and rejoin the club, and a suspended instance admin kept the sign-up invites she had listed | Fixed in `d8345a4` and `20cd936` |
+| 2 | low | A suspended instance admin kept `is_admin`, so the unsuspension `takedown.md` §7 requires gave the admin routes back, and two admins suspending each other at once could both succeed | Fixed in `d8345a4` |
+| 3 | medium | The statement of reasons and the export's `about_me` could give two reasons, or two entries, for one decision, which told the owner that more than one report came in | Fixed in `c797c97` |
+| 4 | low | A former club mate's profile picture showed on their old posts, but the members could not report it | Fixed in `7ec0d90` |
+| 5 | low | A failed restore test could send a row of `users` (an address, the start of a password hash) to healthchecks.io: `log_tail` only blanked public ids | Fixed in `8e3aa6a` |
+| 6 | low | The review after a compromise restore did not cover suspensions, so a lifted suspension survived the restore | Fixed in `0cdb767` (documentation) |
+| 7 | low | "Remove" on a reader's book blanks text other people wrote (an approved edit request, a merge) and sends the statement and the export entry to the book's creator | Open: a product decision for Rafael, see below |
+
+#### 1. [medium] A suspension left the account's invites working
+
+`admin::users::suspend` set `suspended_at` and deleted the sessions; it touched no invite. A suspended owner registered a second account with her club link (a club invite unlocks sign-up in `SIGNUP_MODE=invite`) and joined the club whose members reported her. Nobody in the app could stop it: an owner cannot be removed, which is what revokes a removed member's invites (Phase 1 finding 9), and the instance admin had no route that revokes an invite. A suspended instance admin kept every sign-up invite she had listed, one minted with only `max_uses` without an expiry.
+
+**Fix:** the suspension revokes every active invite the account knows, in its transaction: the rule of a club removal for each club it belongs to, plus those it created or redeemed anywhere and, for an instance admin, every sign-up invite. It locks no club row (a redemption locks the inviter `FOR KEY SHARE` only, then the invite row, which the revocation waits for). `DELETE /api/admin/invites/{invite_id}` revokes one sign-up invite, and the "Invites" tab offers "Withdraw". Limit: an invite created by a request that was already past the route guard when the suspension committed survives; the next suspension, or the club's admins, revoke it.
+
+**Tests:** `admin_users.rs::a_suspension_revokes_the_invites_the_account_knows` (an owner's link, every invite of her club, a member's redeemed link, an admin's sign-up invites; register and accept refused; another club's link works), `clubs_invites.rs::instance_admins_revoke_sign_up_invites`, `admin_guard.rs` (16 operations). The first fails without the fix.
+
+#### 2. [low] A suspended admin got the admin routes back
+
+`unsuspend` cleared only `suspended_at`, so the unsuspension of `takedown.md` §7 (export, deletion) handed a suspended co-admin the admin routes, with which she could suspend the operator. `suspend` locked only the target's row, so two admins suspending each other at once both committed.
+
+**Fix:** a suspension clears `is_admin` for good (`make-admin` grants it again). `suspend` locks the acting admin's row and the target's in id order and re-reads both: an admin suspended or demoted meanwhile gets 404 `Not found`. New CLI commands `unsuspend` and `revoke-admin` recover from the host without `psql`. `takedown.md` §7 says the unsuspension gives back the sign-in only.
+
+**Tests** (`admin_users.rs`): `a_suspension_ends_the_admin_rights_for_good`, `an_admin_suspended_meanwhile_suspends_nobody` (a race with a held row lock), `the_operator_commands_lift_a_suspension_and_end_admin_rights`. The first two fail without the fix.
+
+#### 3. [medium] Two reasons for one decision
+
+The statement of reasons took the reason of the report the admin pressed (or of the recorded notice), the export's `about_me` the oldest report's, and the export grouped a decision by picture and edition. A decision on the newer of two reports with different reasons, a notice recorded after a reader's report, a held picture taken down with the owner's copy, or a cover reported while it showed on two editions told the owner that more than one report came in; for a profile picture in a club of three, who sent them.
+
+**Fix:** `admin::notices::decision_reason` gives every statement the decision's ground (the recorded notice's, else the oldest removed report's), and `about_me` groups per decision (`resolved_by`, `resolved_at`) and picks its reason in the same order.
+
+**Test:** `auth_export.rs::the_statement_and_the_export_give_one_reason_per_decision` (all three cases), failing without the fix; `every_section_holds_the_users_rows` gives its seeded decisions distinct times, as real ones have.
+
+#### 4. [low] A former club mate's picture on their old posts
+
+`posts/out.rs` returned the author's current profile picture on every post the viewer may see, and club posts stay visible to the club after their author was removed. A picture set after the removal showed to members who could not report it (the report route takes the profile picture of someone the reader shares a club with).
+
+**Fix:** `author_avatar_url` only when the viewer can see the author (`bc_can_see_user`), the rule of the report route and of the reaction names. The name stays (club posts are club data).
+
+**Test:** `posts_visibility.rs::a_former_club_mates_picture_leaves_their_old_posts`, failing without the fix.
+
+#### 5. [low] A failed restore test could ping a row
+
+`restore-test.sh` let `pg_restore` write its errors into the log, whose end goes to healthchecks.io, and Postgres quotes the data in them (`Key (lower(email))=(…) is duplicated`, `Failing row contains (…)`). The verifiers corrected one detail: Postgres cuts each value at 64 bytes, so at most the start of a password hash leaks; the address and the username leak whole. The trigger, a corrupted unique index after a collation change in the floating `postgres:17` image, is the failure the test exists to catch.
+
+**Fix:** `pg_restore`'s messages go to `/var/lib/bookclub-backup/pg_restore.err` on the VM, and the log gets only its own error and warning lines, with a value quoted after a colon withheld. `log_tail` withholds every line Postgres adds to an error (`DETAIL`, `CONTEXT`, `HINT`, `LINE n`, `QUERY`, `STATEMENT`, `Command was`). `processors.md` and `privacy-facts.md` §5 say so.
+
+**Tests** (`deploy_env.rs`): `supervise_pings_withhold_postgres_detail` and `a_failed_restore_test_pings_no_row` (`restore-test.sh` against stand-ins for `docker` and `curl`), both failing without the fix.
+
+#### 6. [low] A lifted suspension survived a compromise restore
+
+Step 7 of "Restoring from a Storage Box snapshot" (Wave 2 finding 3) predates suspensions. A `psql` write that clears `suspended_at` leaves `unsuspended_at` as it was, the restored snapshot keeps it, and no query of the step showed it.
+
+**Fix (documentation):** step 7 lists the suspensions and the takedowns, compares them with the record in the contact mailbox (off the VM), and says how to suspend or take down again before the app starts. It also notes that a direct write can change an address or a password hash without the timestamps the other queries read.
+
+#### 7. [low] "Remove" blames a book's creator for text others wrote
+
+Any reader can file an edit request on another reader's book, and an approved one writes its text with provenance `admin` while the book keeps `source = 'user'` and its `created_by`; a merge fills a reader's surviving book from the other one. "Remove" (`catalog::reports::decide`) then withdraws every field, the creator's own title and authors too, and the statement of reasons and the export entry go to the creator, while the author of the removed text is never told. The verifiers agreed that it takes two admin decisions (approving the edit or the merge, then "remove" instead of the direct edit) and rated it low.
+
+**Not fixed: a product decision for Rafael.** What "remove" does with text the book's creator did not type is open, and the two fixes the finding offers trade differently:
+
+- (A) Withdraw only the fields with provenance `user`, and send the statement only when one of them changed. Small, but provenance does not tell readers apart: in the finding's case it would still withdraw the creator's own title and authors and keep the approved description (provenance `admin`), and text a merge copied from another reader's book keeps `user`.
+- (B) Keep removing the whole record, but show the admin before the second tap which fields came from an approved edit request or a merge, and address the statement to whoever wrote the removed text (the approved request's `created_by`), or to nobody when an admin wrote it. This needs a field history the queue does not have (`ReportOut.book` is the book as it is now).
+
+Until Rafael picks one, `takedown.md` §4 tells the admin to look for approved edit requests of the book before "Remove the text", and to correct text another reader wrote with "Edit as admin" instead.
+
+#### Rejected
+
+None: every finding of this round was confirmed.
