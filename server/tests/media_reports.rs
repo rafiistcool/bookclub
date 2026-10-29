@@ -2075,6 +2075,71 @@ async fn reports_of_the_avatar_of_a_deleted_account_are_closed_as_gone(db: PgPoo
     );
 }
 
+/// Each gone report is closed on its own. Deleting the account clears every report's
+/// `target_user_id` (`ON DELETE SET NULL`) as well as its `media_id`, so nothing ties two reports
+/// of the same deleted account's picture together: closing Bob's leaves Dan's open, and Dan
+/// hears of it when his is closed.
+#[sqlx::test]
+async fn each_report_of_a_deleted_accounts_avatar_is_closed_on_its_own(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let dan = app.user("dan").await;
+    let root = app.admin("root").await;
+    let club = app.club(&bob, "Readers").await;
+    app.join(&club, &ada, "member").await;
+    app.join(&club, &dan, "member").await;
+    let avatar = upload_avatar(&ada, [10, 120, 200]).await;
+    let mut ids = Vec::new();
+    for reporter in [&bob, &dan] {
+        ids.push(
+            report(reporter, &avatar, json!({"reason": "offensive"}))
+                .await
+                .json()["id"]
+                .as_i64()
+                .unwrap(),
+        );
+    }
+    ada.delete_json("/api/auth/me", json!({"password": PASSWORD}))
+        .await
+        .assert_status(204);
+    assert_eq!(
+        app.scalar_i64(
+            "SELECT count(*) FROM reports
+             WHERE status = 'open' AND media_id IS NULL AND target_user_id IS NULL"
+        )
+        .await,
+        2
+    );
+
+    let res = root
+        .post(
+            &format!("/api/admin/reports/{}/resolve", ids[0]),
+            json!({"action": "dismiss"}),
+        )
+        .await;
+    res.assert_status(200);
+    assert_eq!(res.json()["gone"], true);
+    let open = root.get("/api/admin/reports").await.json()["items"].clone();
+    assert_eq!(open.as_array().unwrap().len(), 1, "{open:#}");
+    assert_eq!(open[0]["id"], ids[1]);
+    assert_eq!(mails_to(&app, "bob").len(), 1);
+    assert!(mails_to(&app, "dan").is_empty());
+
+    root.post(
+        &format!("/api/admin/reports/{}/resolve", ids[1]),
+        json!({"action": "dismiss"}),
+    )
+    .await
+    .assert_status(200);
+    let to_dan = mails_to(&app, "dan");
+    assert_eq!(to_dan.len(), 1);
+    assert_eq!(
+        to_dan[0].subject,
+        "Your report on Bookclub: no longer online"
+    );
+}
+
 /// A profile picture its owner deletes after a report read it, but before the report locked it,
 /// is 404 like an unknown picture, not a 500: the report waits for the reader's turn (held here),
 /// the owner's deletion commits meanwhile, and the locked read finds no row.

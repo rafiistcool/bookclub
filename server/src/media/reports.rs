@@ -53,9 +53,10 @@
 //! the account (`auth::deletion`; the report keeps `target_user_id` until then), or a work merged
 //! into another one since it was reported (`catalog::reports`). Nothing is left to take down, so
 //! "remove" is refused (409 [`PICTURE_GONE`], `catalog::reports::REPORTED_BOOK_MERGED`) and
-//! "dismiss" closes the report, with every other open report of the same gone picture (the
-//! owner's profile pictures without a row) or work; the reporters learn that it is no longer
-//! online, and nobody gets a statement of reasons.
+//! "dismiss" closes the report, a merged work's with every other open report of that work; the
+//! reporters learn that it is no longer online, and nobody gets a statement of reasons. Each
+//! report of a deleted account's profile picture is closed on its own: the deletion clears its
+//! `media_id` and its `target_user_id` (`ON DELETE SET NULL`), so nothing ties it to the others.
 //!
 //! **Closed on arrival** (`reports.closed_on_arrival`, migration 2101): a report or notice that
 //! arrives when the picture is down already is recorded as `removed`, closed at once, with no
@@ -529,8 +530,9 @@ pub async fn list_reports(
 /// avatar's owner or the reader who added the record gets a statement of reasons. A profile
 /// picture its owner replaced or deleted while it was reported is held for the decision:
 /// "remove" takes it down, "dismiss" deletes it. A report of something gone (`ReportOut.gone`:
-/// the profile picture of an account deleted since, a work merged away) is only dismissed, with
-/// the other open reports of it; its reporters learn that it is no longer online.
+/// the profile picture of an account deleted since, a work merged away) is only dismissed, a
+/// merged work's with the other open reports of that work, a deleted account's picture's on its
+/// own; its reporters learn that it is no longer online.
 #[utoipa::path(
     post,
     path = "/api/admin/reports/{report_id}/resolve",
@@ -642,24 +644,22 @@ pub async fn resolve_report(
             })
         }
     };
-    let gone = decision.as_ref().is_some_and(|decision| decision.gone);
-    // This report, and every other open report of the same picture, work or edition; for a
-    // gone profile picture, every open report of the owner's pictures that have no row.
+    // This report, and every other open report of the same picture, work or edition. A gone
+    // profile picture has no `media_id`, and its account's deletion cleared `target_user_id`
+    // too, so its report is closed alone.
     sqlx::query!(
         "UPDATE reports SET status = $3, resolved_by = $2, resolved_at = now()
          WHERE status = 'open'
            AND (id = $1 OR media_id = $4
                 OR (target_kind = 'work' AND $5 = 'work' AND target_work_id = $6)
-                OR (target_kind = 'edition' AND $5 = 'edition' AND edition_id = $7)
-                OR (target_kind = 'avatar' AND media_id IS NULL AND target_user_id = $8))",
+                OR (target_kind = 'edition' AND $5 = 'edition' AND edition_id = $7))",
         report_id,
         admin.id,
         status,
         report.media_id,
         report.target_kind,
         report.target_work_id,
-        report.edition_id,
-        report.target_user_id.filter(|_| avatar && gone)
+        report.edition_id
     )
     .execute(&mut *tx)
     .await?;
