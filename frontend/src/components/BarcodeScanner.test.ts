@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const cameraSupport = vi.fn();
 const openCamera = vi.fn();
+const showCamera = vi.fn();
 const createDecoder = vi.fn();
 const drawScanBand = vi.fn();
 const detect = vi.fn();
@@ -11,6 +12,7 @@ vi.mock("../scan/camera", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../scan/camera")>()),
   cameraSupport: () => cameraSupport(),
   openCamera: (...args: unknown[]) => openCamera(...args),
+  showCamera: (...args: unknown[]) => showCamera(...args),
 }));
 
 vi.mock("../scan/decoder", () => ({
@@ -24,6 +26,43 @@ import BarcodeScanner from "./BarcodeScanner.vue";
 function fakeStream() {
   const track = { stop: vi.fn() };
   return { track, stream: { getTracks: () => [track] } as unknown as MediaStream };
+}
+
+/**
+ * `<video>` as browsers have it: `play()` waits until `startPlaying()`, and a new `srcObject`
+ * interrupts a pending `play()` with `AbortError`. jsdom implements neither.
+ */
+function browserVideo() {
+  const proto = HTMLMediaElement.prototype;
+  const pending = new Map<HTMLMediaElement, { resolve: () => void; reject: (err: DOMException) => void }>();
+  const sources = new WeakMap<HTMLMediaElement, MediaStream | null>();
+  Object.defineProperty(proto, "srcObject", {
+    configurable: true,
+    get(this: HTMLMediaElement) {
+      return sources.get(this) ?? null;
+    },
+    set(this: HTMLMediaElement, value: MediaStream | null) {
+      pending.get(this)?.reject(new DOMException("interrupted by a new load request", "AbortError"));
+      pending.delete(this);
+      sources.set(this, value);
+    },
+  });
+  Object.defineProperty(proto, "play", {
+    configurable: true,
+    value(this: HTMLMediaElement) {
+      return new Promise<void>((resolve, reject) => pending.set(this, { resolve, reject }));
+    },
+  });
+  return {
+    startPlaying() {
+      for (const play of pending.values()) play.resolve();
+      pending.clear();
+    },
+    restore() {
+      delete (proto as unknown as Record<string, unknown>).srcObject;
+      delete (proto as unknown as Record<string, unknown>).play;
+    },
+  };
 }
 
 function setVisibility(value: "visible" | "hidden") {
@@ -50,6 +89,7 @@ describe("BarcodeScanner", () => {
     vi.useFakeTimers();
     cameraSupport.mockReset().mockReturnValue("ok");
     openCamera.mockReset();
+    showCamera.mockReset().mockResolvedValue(undefined);
     detect.mockReset().mockResolvedValue([]);
     createDecoder.mockReset().mockResolvedValue({ kind: "zxing", detect });
     drawScanBand.mockReset().mockReturnValue(true);
@@ -59,6 +99,7 @@ describe("BarcodeScanner", () => {
     wrapper?.unmount();
     wrapper = null;
     vi.useRealTimers();
+    vi.unstubAllGlobals();
     Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
   });
 
@@ -112,6 +153,20 @@ describe("BarcodeScanner", () => {
     expect(w.text()).toContain("The camera is in use by another app.");
     expect(w.findAll("button").some((button) => button.text() === "Try again")).toBe(true);
     expect(manualEntry(w).exists()).toBe(true);
+  });
+
+  it("says another app has the camera when the video cannot start, and tries again", async () => {
+    const first = fakeStream();
+    const second = fakeStream();
+    openCamera.mockResolvedValueOnce(first.stream).mockResolvedValueOnce(second.stream);
+    showCamera.mockRejectedValueOnce(new DOMException("busy", "NotReadableError"));
+    const w = await mountScanner();
+    expect(showCamera).toHaveBeenCalledWith(expect.any(HTMLVideoElement), first.stream);
+    expect(w.text()).toContain("The camera is in use by another app.");
+    await w.findAll("button").find((button) => button.text() === "Try again")!.trigger("click");
+    await flushPromises();
+    expect(showCamera).toHaveBeenLastCalledWith(expect.any(HTMLVideoElement), second.stream);
+    expect(w.text()).toContain("Hold the barcode 15–20 cm away");
   });
 
   it("falls back to manual entry when no decoder can run, and stops the camera", async () => {
@@ -218,6 +273,45 @@ describe("BarcodeScanner", () => {
     expect(second.track.stop).not.toHaveBeenCalled();
     await pass();
     expect(detect).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps one stream when the page comes back while the permission prompt is open", async () => {
+    // The real camera module, a getUserMedia that waits for the prompt, and a browser's <video>.
+    const actual = await vi.importActual<typeof import("../scan/camera")>("../scan/camera");
+    openCamera.mockImplementation(actual.openCamera);
+    showCamera.mockImplementation(actual.showCamera);
+    const prompts: Array<(stream: MediaStream) => void> = [];
+    vi.stubGlobal("navigator", {
+      mediaDevices: { getUserMedia: () => new Promise<MediaStream>((allow) => prompts.push(allow)) },
+    });
+    const video = browserVideo();
+    try {
+      const first = fakeStream();
+      const second = fakeStream();
+      const w = await mountScanner();
+      expect(prompts).toHaveLength(1);
+      setVisibility("hidden");
+      setVisibility("visible");
+      await flushPromises();
+      expect(prompts).toHaveLength(2);
+
+      // The reader allows: both requests resolve.
+      prompts[0](first.stream);
+      prompts[1](second.stream);
+      await flushPromises();
+      video.startPlaying();
+      await flushPromises();
+
+      expect(w.text()).not.toContain("The camera is in use by another app.");
+      expect(w.text()).toContain("Hold the barcode 15–20 cm away");
+      expect(first.track.stop).toHaveBeenCalledTimes(1);
+      expect(second.track.stop).not.toHaveBeenCalled();
+      expect(w.get("video").element.srcObject).toBe(second.stream);
+      await pass();
+      expect(detect).toHaveBeenCalledTimes(1);
+    } finally {
+      video.restore();
+    }
   });
 
   it("stops the camera and emits cancel", async () => {

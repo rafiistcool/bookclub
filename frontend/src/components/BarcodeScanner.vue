@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId } from "vue";
 import { useI18n } from "vue-i18n";
 import { isbnFromScan, parseIsbn } from "../isbn";
-import { cameraError, cameraSupport, openCamera, stopCamera } from "../scan/camera";
+import { cameraError, cameraSupport, openCamera, showCamera, stopCamera } from "../scan/camera";
 import { createDecoder, drawScanBand, type Decoder } from "../scan/decoder";
 
 /**
@@ -104,16 +104,28 @@ async function start() {
   }
   let opened: MediaStream;
   try {
-    opened = await openCamera(element);
+    opened = await openCamera();
   } catch (err) {
     if (current === run) state.value = cameraError(err);
     return;
   }
+  // Stopped while the prompt was open (hidden and back, unmounted): the newer start owns the
+  // video, so this stream never reaches it. Its srcObject would interrupt the other's play().
   if (current !== run) {
     stopCamera(opened);
     return;
   }
+  // From here on a stop() ends this stream, also while play() is pending.
   stream = opened;
+  try {
+    await showCamera(element, opened);
+  } catch (err) {
+    if (current !== run) return;
+    stream = null;
+    state.value = cameraError(err);
+    return;
+  }
+  if (current !== run) return;
   let ready: Decoder;
   try {
     ready = await decoder;

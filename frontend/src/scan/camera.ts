@@ -21,9 +21,13 @@ export function cameraSupport(): CameraSupport {
   return "ok";
 }
 
-/** The rear camera if there is one, at about 720p, shown in `video` (`playsinline muted autoplay`). */
-export async function openCamera(video: HTMLVideoElement): Promise<MediaStream> {
-  const stream = await navigator.mediaDevices.getUserMedia({
+/**
+ * The rear camera if there is one, at about 720p. It waits for the permission prompt; the
+ * caller checks it still wants the stream before `showCamera`, so a stale request never
+ * touches the video (a new `srcObject` interrupts the `play()` of the stream before it).
+ */
+export function openCamera(): Promise<MediaStream> {
+  return navigator.mediaDevices.getUserMedia({
     audio: false,
     video: {
       facingMode: { ideal: "environment" },
@@ -31,15 +35,21 @@ export async function openCamera(video: HTMLVideoElement): Promise<MediaStream> 
       height: { ideal: 720 },
     },
   });
+}
+
+/**
+ * Shows `stream` in `video` (`playsinline muted autoplay`). If it cannot play, the stream is
+ * stopped, and the video is cleared only while it still shows this stream.
+ */
+export async function showCamera(video: HTMLVideoElement, stream: MediaStream): Promise<void> {
   try {
     video.srcObject = stream;
     await video.play();
   } catch (err) {
     stopCamera(stream);
-    video.srcObject = null;
+    if (video.srcObject === stream) video.srcObject = null;
     throw err;
   }
-  return stream;
 }
 
 /** Stops every track, so the camera light goes off. */

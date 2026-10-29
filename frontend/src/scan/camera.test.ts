@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cameraError, cameraSupport, openCamera, stopCamera } from "./camera";
+import { cameraError, cameraSupport, openCamera, showCamera, stopCamera } from "./camera";
 
 function fakeStream() {
   const tracks = [{ stop: vi.fn() }, { stop: vi.fn() }];
@@ -57,30 +57,53 @@ describe("cameraError", () => {
   });
 });
 
-describe("openCamera and stopCamera", () => {
+describe("openCamera, showCamera and stopCamera", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("asks for the rear camera without audio and shows the stream", async () => {
+  it("asks for the rear camera without audio", async () => {
     const { stream } = fakeStream();
     const getUserMedia = vi.fn().mockResolvedValue(stream);
     vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
-    const video = fakeVideo();
-    await expect(openCamera(video as unknown as HTMLVideoElement)).resolves.toBe(stream);
+    await expect(openCamera()).resolves.toBe(stream);
     expect(getUserMedia).toHaveBeenCalledWith({
       audio: false,
       video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
     });
+  });
+
+  it("shows the stream in the video", async () => {
+    const { stream, tracks } = fakeStream();
+    const video = fakeVideo();
+    await showCamera(video as unknown as HTMLVideoElement, stream);
     expect(video.srcObject).toBe(stream);
     expect(video.play).toHaveBeenCalled();
+    expect(tracks.every((track) => track.stop.mock.calls.length === 0)).toBe(true);
   });
 
   it("stops the stream when the video cannot play", async () => {
     const { stream, tracks } = fakeStream();
-    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(stream) } });
     const video = fakeVideo(() => Promise.reject(new DOMException("gone", "AbortError")));
-    await expect(openCamera(video as unknown as HTMLVideoElement)).rejects.toMatchObject({ name: "AbortError" });
+    await expect(showCamera(video as unknown as HTMLVideoElement, stream)).rejects.toMatchObject({
+      name: "AbortError",
+    });
     expect(tracks.every((track) => track.stop.mock.calls.length === 1)).toBe(true);
     expect(video.srcObject).toBeNull();
+  });
+
+  it("leaves a newer stream on the video when its own play() is interrupted", async () => {
+    const mine = fakeStream();
+    const newer = fakeStream();
+    const video = fakeVideo(() => {
+      // Another start attached its stream meanwhile, which interrupts this play().
+      video.srcObject = newer.stream;
+      return Promise.reject(new DOMException("interrupted by a new load request", "AbortError"));
+    });
+    await expect(showCamera(video as unknown as HTMLVideoElement, mine.stream)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(mine.tracks.every((track) => track.stop.mock.calls.length === 1)).toBe(true);
+    expect(newer.tracks.every((track) => track.stop.mock.calls.length === 0)).toBe(true);
+    expect(video.srcObject).toBe(newer.stream);
   });
 
   it("stops every track, and nothing without a stream", () => {
