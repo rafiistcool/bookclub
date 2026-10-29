@@ -2,7 +2,7 @@
 
 Owner: FRIENDS. These notes record what the friends package built, where it decided something the plan (`docs/phase3/work-plan.md` §4, §6 answers 16–29) left open or where the code made it differ, and the texts the integrator moves into `docs/phase1/conventions.md`, `docs/phase1/endpoint-map.md`, `CLAUDE.md`, `README.md` and `docs/plan.md`. The design documents themselves are unchanged.
 
-Status: **part 1 (data and visibility) done**: e5d86e3 (the schema and the account-reference rules), c06b067 (the visibility layer and its tests). Part 2 (the friend and block routes, friend invites into clubs, the rate limit, the SPA) follows on the same branch, `phase3/friends`.
+Status: **part 1 (data and visibility) done**: e5d86e3 (the schema and the account-reference rules), c06b067 (the visibility layer and its tests). **Part 2 (the API) done**: 13ceec5 (the friend and block routes, the rate limit, the matrix's `Friends` kind), a888202 (friend invites into clubs); below, "Part 2: the API". The SPA follows on the same branch, `phase3/friends`.
 
 ## Part 1: data and visibility
 
@@ -85,3 +85,116 @@ An empty sign-up may now hold a friend invite bound to it (`club_invites.invitee
 **`endpoint-map.md`:** part 2 (the Friends section, `kind: "friend"`, `InviteOut.invitee` and `personal`, the new strings). From part 1 only the three changed descriptions (`activity_home_feed`, `auth_delete_me`, `media_report`) and the `errors.noMember` copy.
 
 **For #53 (the privacy text), facts only:** friendships and requests are stored per pair with the time of the request and of the acceptance; a friend sees what a club mate sees of personal data (shelf, ratings except "only me", quotes, diary, stats, the home feed from the acceptance on), never club data; a block is stored, never told to the blocked account, and withheld from its export; all of it goes with either account; the export lists friendships, requests both ways, the account's own blocks and the friend invites it received.
+
+## Part 2: the API
+
+### What part 2 built
+
+- **`server/src/friends/`**, merged in `lib.rs` (`pub mod friends;`, `.merge(friends::routes())` after `legal::routes()`), tag `friends`, the operation ids of §4.5:
+  - `mod.rs`: the routes, `GET /api/friends` (`friends_list`), `DELETE /api/friends/club-invites/{invite_id}` (`friends_decline_club_invite`), and the shared helpers: `PathName` (the `{username}` extractor), `account_id`, `lock_pair` (the lock order below), `revoke_pair_invites`, and `locked_friend` for the friend invites of `clubs::invites`.
+  - `requests.rs`: `POST /api/friends/requests` (`friends_send_request`, body `FriendRequestIn {username}`), `POST /api/friends/requests/{username}/accept` (`friends_accept_request`), `DELETE /api/friends/requests/{username}` (`friends_delete_request`: decline and cancel), `DELETE /api/friends/list/{username}` (`friends_remove`).
+  - `blocks.rs`: `PUT` and `DELETE /api/friends/blocks/{username}` (`friends_block`, `friends_unblock`).
+  - `out.rs`: `FriendsOut`, `FriendOut`, `FriendReadingOut`, `FriendRequestOut`, `BlockedOut`, `FriendClubInviteOut` (§4.5), and `friends_out(conn, viewer)`, which every route answers with. Five queries, no N+1: the friends (`bc_friends`, by username), the currently-reading previews (the windowed query of §4.5 through `bc_visible_shelf`, then `book_outs`), both directions of the pending requests in one query (hidden ones left out of `incoming`; a picture only where `bc_can_see_user`), the blocks, and the open bound invites to clubs the caller is not in.
+- **Every transition of §4.2 and §4.3** with the answers of the tables there and of §4.9's table for an unknown name. Unblock always answers 200 with `FriendsOut`.
+- **Rate limit** (`server/src/ratelimit.rs`): `friend_request_user: SlidingWindow::new(20, DAY)`, keyed `u:<id>`, 429 `Slow down a little. Try again later.` with `Retry-After`; in `thresholds_match_the_table`. `send` counts every request that reaches the handler (a body that fails validation never does), before any lookup. `block` counts an unknown name and every block of an account the caller has no `friendships` row with (checked under the pair's locks); the caller's own name (400) is not counted.
+- **Error strings** (`server/src/error.rs`, `msg`, add-only): `NO_ACCOUNT` (moved from `admin::users`, which now uses `msg::NO_ACCOUNT`), `SELF_ACCOUNT`, `YOU_BLOCKED`, `NO_FRIEND_REQUEST`, `NO_FRIEND`, `FRIEND_IN_CLUB`, `ONLY_FRIEND_INVITE_NAMES` (`Only a friend invite names a person`). `No such invite` stays `clubs::invites::NO_SUCH_INVITE`.
+- **Friend invites into clubs** (§4.6):
+  - `clubs/invites.rs`: `InviteKind::Friend`; `InviteIn.username` (normalised; required for `friend`, 400 `Field required`; refused for the other kinds, 400 `Only a friend invite names a person`); `create_invite` defaults `friend` to one use and 30 days (`expires_in_days` 1–30), and under the club lock runs `friends::locked_friend` (404 `No friend with that name`), then the membership check (409 `That friend is already in this club`), then answers with the caller's open friend invite for that friend when there is one, else inserts through the new `insert_bound_invite` (`insert_invite` is its wrapper without an invitee). `consume` adds `AND (invitee_id IS NULL OR invitee_id = $2)` with the redeeming account's id. The module docs and both utoipa descriptions say so.
+  - `clubs/out.rs`: `InviteOut` gains `personal` (a bound invite) and `invitee` (the friend's username, for the invite's creator only). `club_invite_outs`/`club_invite_out` take the viewer; `invite_outs`/`invite_out` keep their signatures for `admin/invites.rs` (sign-up invites, never personal) and pass no viewer.
+  - `clubs/members.rs`: `revoke_known_invites` adds `OR invitee_id = $2`; the descriptions of `remove_member` and `Known::Own` say so.
+- **Tests:**
+  - `server/tests/friends_requests.rs` (9): every row of §4.2 (send, repeat, accept, mutual send, decline, cancel, remove and every 404), the race of two tasks sending to each other (five rounds, one accepted row each), normalisation (`" Ada "`, `%20BOB%20`), a NUL name in the path (404) and in the body (400, deviation 1), a deleted account, the 21st request in a day (unknown names, repeats and a block counted; accept, decline, remove and unblock not), and a suspended friend staying a friend (answer 27).
+  - `server/tests/friends_blocks.rs` (7): a block in each pair state; a request after the block, compared field by field with one nobody answers; 409 `You blocked this account`; unblock dropping the hidden request and its identical answers (an unblocked name, an unknown one, NUL, the caller); 25 requesters blocked in a day for free, then the budget counted from zero; the pair's friend invites revoked both ways; the clubs untouched, and a later join through a third admin's friend invite making the blocked account `Audience` again (answer 21); blocking back.
+  - `server/tests/friends_invites.rs` (12): the acceptance's end to end; 403 for a member; the same 404 for a stranger, an unknown name, the caller, both sides of a pending request and a block either way, also for the blocked account's own attempt; the body rules; 409 for a member; a second invite answering the first (and a co-admin's being their own, deviation 2); another account's accept and a sign-up refused with the code; the 20-member cap; decline, unfriend (either side), block and a removal from the club revoking; 21 days valid, 31 days not; `invitee` for the creator only; and an invite waiting for an unfriend that holds the friendship's row (the `FOR SHARE`).
+  - `server/tests/friends_visibility.rs` (+3, the `GET /api/friends` cases of §4.11): requesters' pictures only where `bc_can_see_user`; nobody else's lists (also with `?username=`, which the route ignores); three current books in the friend's shelf order with the count and progress, no "only me" take.
+  - `server/tests/clubs_invites.rs`: `personal` and `invitee` in the one exact `InviteOut`.
+  - The matrix (`server/tests/parity_visibility.rs`): `Kind::Friends` (label "Friends") with its five cases: the owner's four lists; each other viewer's lists hold only their own rows (the friend sees the owner, the two sides of a pending request their request, the blocked account nothing), and the `{username}` routes about the owner change nothing for a viewer without a row; an unknown name answers like a name without a row on accept, decline, remove and unblock, and the block alone gives 404 `No account with that name`. `USER_COLUMNS`: `friendships.requester_id`, `friendships.addressee_id` and `user_blocks.user_id` are `Kinds(&[Kind::Friends])`. `USERNAME_ROUTES` gains the five routes of §4.8 (16 rows). The checklist's #46 table has the row "Friends" and says 16 routes.
+  - `server/tests/common/visibility.rs` and the helpers of `friends_visibility.rs` now make the friendships, the unfriend and the block through the routes (part 1's deviation 4 is gone).
+- `server/.sqlx/` regenerated on a freshly reset database; `frontend/src/api/generated.ts` regenerated; `frontend/src/test/fixtures.ts` `invite()` gains `personal: false` and `invitee: null` (add-only).
+- **No doc or mapping line was needed** for `openapi_contract.rs` (no §0 DTO changed; the new schemas are module-local) or `api_error_copy.rs` (it checks mapped strings against the server, and part 2 maps nothing; `No account with that name` stays a literal, now in `msg`).
+
+### Decisions
+
+- **The pair's turn.** Every write about a pair (send, accept, decline or cancel, remove, block, unblock) first takes `pg_advisory_xact_lock(0x6263_0300, hashtext('<lower id>:<higher id>'))`, beside ingest's `0x6263_0100` and the reports' `0x6263_0200`. Without it, a request and a block by the same account could interleave (the block's `DELETE` does not see the request's uncommitted row, so a pending request would survive next to its sender's own block), and an unblock could miss a request sent at the same moment and surface it. The plan's `INSERT … ON CONFLICT DO NOTHING`, then `FOR UPDATE`, stays as written.
+- **Both accounts' rows `FOR KEY SHARE`** come next, in id order. An account deletion locks its row `FOR UPDATE` before its cascade reaches `friendships`, `user_blocks` and `club_invites`, in an order of its own; a pair write that held the pair's row and then waited for an invite row the cascade held would deadlock with it. With the account rows first, the deletion either finished before (the write answers as for an unknown name) or waits for the write. This replaces the plan's mapping of a foreign-key violation to 404 `No account with that name`: the answer is the same, and the violation can no longer happen.
+- **Lock order**, then: the pair's turn → both accounts' rows → the `user_blocks` row → the pair's `friendships` row → the pair's invite rows (the plan's order for a block, after the first two). No pair write locks a club.
+- **A friend invite** takes the club (with the caller's role re-read) → the friend's account row `FOR KEY SHARE` → the pair's accepted `friendships` row `FOR SHARE` → the membership check → the insert. The account row comes before the friendship for the deletion's sake, as above; `consume` takes the inviter's row the same way. The `FOR SHARE` conflicts with an unfriend's or a block's `DELETE`, so an invite cannot slip past either (`friends_invites.rs::an_invite_waits_for_an_unfriend_in_flight`). A block always deletes the friendship, so an accepted row is also proof that neither blocked the other.
+- **`accepted_at = clock_timestamp()`**, not `now()`: the other side's request can have been created after the accepting transaction began (it waited for the pair's turn), and `friendships_accepted_after` would refuse `now()`.
+- **`PathName`**, the `{username}` extractor of the friend routes: normalised with `normalize_username`; a NUL character or a path that is not UTF-8 is `None`, which every route answers as an unknown name (the club extractors' rule for `{slug}`, conventions §4.5), never with `ApiPath`'s 400.
+- **Revocations** by an unfriend or a block (`revoke_pair_invites`) and a decline touch only open invites (not revoked, expired or used up), like `revoke_known_invites`: a used invite keeps its history in the club's invite list. A decline needs no club lock (one row); declining twice is 200; an invite made for someone else, or an ordinary one, is 404 `No such invite`.
+- **`FriendClubInviteOut.expires_at` is never null:** the query takes `expires_at > now()`, and `kind: "friend"` always sets 1 to 30 days.
+- **Order of ties:** `incoming` and `outgoing` by `created_at DESC`, then username; `blocked` the same; `club_invites` by `created_at DESC, id DESC`, like the club's invite list.
+- **The friend route answers are read inside the write's transaction**, before the commit, so a write's answer always shows its own result.
+
+### Deviations from the plan
+
+1. **A NUL character in the request body is 400 `Invalid value`**, not 404 `No account with that name` (§4.2's table, §4.11). `ApiJson` refuses U+0000 anywhere in a body before the handler runs (conventions §4.3: the only JSON extractor). No account can have such a name, so the 400 discloses nothing. In the path, a NUL name is unknown, as planned (`PathName`).
+2. **A second friend invite answers with the caller's own open invite only** (§4.6: "an active bound invite for the same friend and club"). Answering with a co-admin's open invite would tell the caller whom that admin is friends with, which answer 24 keeps from them. A co-admin who invites the same friend gets an invite of their own, so the friend may see two invitations into one club, one from each admin.
+3. **Two locks the plan does not give** (the pair's turn and the account rows), see "Decisions". The plan's foreign-key mapping is replaced by the account rows' lock read, with the same 404.
+4. **`accepted_at` is `clock_timestamp()`** (§4.2 writes `now()`), see "Decisions".
+5. **An unfriend and a block revoke only open invites**; §4.3's SQL revokes every invite that is not yet revoked, used ones included.
+6. **`invite_outs` and `insert_invite` keep their signatures**: `admin/invites.rs` (not a FRIENDS file) calls them. `club_invite_outs`, `club_invite_out` and `insert_bound_invite` are the new forms with a viewer or an invitee.
+7. **Part 1's prose counts:** the checklist's #46 now says 16 routes, as the plan does.
+
+### Texts for the integrator (part 2)
+
+**`endpoint-map.md`, a new section "Friends (#57, owner FRIENDS)"** after §10 (or as §13 with the index):
+
+| Path | Who | Request → response | Notes |
+|---|---|---|---|
+| `GET /api/friends` | signed in | → `FriendsOut` | The caller's own lists only; nothing about anyone else's friends, requests or blocks is ever served, and there are no counts. |
+| `POST /api/friends/requests` | signed in | `FriendRequestIn {username}` → `FriendsOut` | none → pending (hidden from the addressee if they blocked the caller); pending either way or friends: a request back accepts, a repeat changes nothing. 400 `Field required`, `Invalid value` (NUL), `That is your own account`; 404 `No account with that name`; 409 `You blocked this account`; 429 `Slow down a little. Try again later.` |
+| `POST /api/friends/requests/{username}/accept` | signed in | → `FriendsOut` | A pending request from `username` that the caller can see. 404 `No such friend request` otherwise. |
+| `DELETE /api/friends/requests/{username}` | signed in | → `FriendsOut` | Declines a visible request from `username` or cancels the caller's own (hidden or not). No trace. 404 `No such friend request`. |
+| `DELETE /api/friends/list/{username}` | signed in | → `FriendsOut` | Ends a friendship; the pair's open friend invites are revoked. 404 `No friend with that name`. Not `/api/friends/{username}`: names such as `requests` would collide. |
+| `PUT /api/friends/blocks/{username}` | signed in | → `FriendsOut` | Silent. Deletes the pair's row in any state, revokes the pair's open friend invites; later requests from them are stored and hidden. 400 `That is your own account`; 404 `No account with that name`; 429. |
+| `DELETE /api/friends/blocks/{username}` | signed in | → `FriendsOut` | Deletes the block and the requests they sent meanwhile. Always 200, for an unknown name too. |
+| `DELETE /api/friends/club-invites/{invite_id}` | the invitee | → `FriendsOut` | Declines a friend invite into a club (revokes it if still open). 404 `No such invite` (also one made for someone else). |
+
+- `{username}` is normalised like every username lookup; a NUL character or a path that is not UTF-8 counts as an unknown name (never 400).
+- DTOs (none in §0; names unique crate-wide): `FriendsOut {friends: FriendOut[], incoming: FriendRequestOut[], outgoing: FriendRequestOut[], blocked: BlockedOut[], club_invites: FriendClubInviteOut[]}`; `FriendOut {user: UserSummary, since, currently_reading_count, currently_reading: FriendReadingOut[]}` (at most 3, shelf order, through `bc_visible_shelf`); `FriendReadingOut {book: BookOut, progress|null}`; `FriendRequestOut {user: UserSummary, created_at}` (`avatar_url` null unless `bc_can_see_user`); `BlockedOut {username, created_at}`; `FriendClubInviteOut {id, club: ClubRef, invited_by|null, code, created_at, expires_at}`; `FriendRequestIn {username}`.
+- Order: `friends` by username; `incoming`, `outgoing` and `blocked` newest first (then username); `club_invites` newest first, only open invites to clubs the caller is not in.
+- Rate limit: §10.1 `friend_request_user`.
+
+**`endpoint-map.md` §3:**
+- `GET /api/clubs/{slug}/invites`: `InviteOut` gains `personal: bool` (a friend invite) and `invitee|null` (the friend's username, only for the invite's creator; other admins see a personal invite without the name, answer 24).
+- `POST /api/clubs/{slug}/invites`: `{kind: "single_use"|"link"|"friend", expires_in_days?: 1..30, username?}`. `friend`: one use, 30 days by default, bound to `username`, who must be the caller's friend (404 `No friend with that name`, also for an unknown name, the caller, a pending request and a block either way) and not a member (409 `That friend is already in this club`). `username` is required for `friend` (400 `Field required`) and refused for the others (400 `Only a friend invite names a person`). While the caller's friend invite for that friend is still open, a second call answers 201 with it.
+- `POST /api/invites/{code}/accept` and sign-up: a friend invite is redeemable only by its invitee; anyone else, and every sign-up, gets 400 `That invite code is not valid`. The preview (`GET /api/invites/{code}`) is unchanged.
+- `DELETE /api/clubs/{slug}/members/{username}`: the removal also revokes the open friend invites made for the removed member.
+
+**`endpoint-map.md` §11.3, a "Phase 3 (FRIENDS, #57)" table** (the SPA part maps them in `apiErrors.ts`, en and de):
+
+| String | Where | Constant |
+|---|---|---|
+| `No account with that name` | 404, friend request, block (and, as before, suspend and unsuspend) | `msg::NO_ACCOUNT` (moved from `admin::users::NO_ACCOUNT`; already mapped to `errors.noAccount`) |
+| `That is your own account` | 400, friend request and block | `msg::SELF_ACCOUNT` |
+| `You blocked this account` | 409, friend request | `msg::YOU_BLOCKED` |
+| `No such friend request` | 404, accept, decline, cancel | `msg::NO_FRIEND_REQUEST` |
+| `No friend with that name` | 404, remove, friend invite | `msg::NO_FRIEND` |
+| `That friend is already in this club` | 409, friend invite | `msg::FRIEND_IN_CLUB` |
+| `Only a friend invite names a person` | 400, `POST /api/clubs/{slug}/invites` | `msg::ONLY_FRIEND_INVITE_NAMES` |
+
+The ADM2 row for `No account with that name` changes its constant to `msg::NO_ACCOUNT`.
+
+**`conventions.md` §5.3 (clubs and invites):**
+- `consume`'s atomic `UPDATE` also requires `invitee_id IS NULL OR invitee_id = <the redeeming account>`; sign-up passes the new account's id, so a bound code never signs anyone up.
+- "**Friend invites** (FRIENDS): `kind: "friend"` inserts a single-use invite with `invitee_id` (`clubs::invites::insert_bound_invite`). Lock order: the club (`lock_as_admin`), the friend's `users` row `FOR KEY SHARE`, the pair's accepted `friendships` row `FOR SHARE` (`friends::locked_friend`), then the insert. The share lock conflicts with an unfriend's or a block's `DELETE`, which then revoke the new invite or make it wait for them."
+- The removal paragraph: `revoke_known_invites` also revokes the open friend invites made for the removed person.
+
+**`conventions.md`, a new subsection "Friends" (in §5, after §5.3, or §6.6):**
+- One row per pair; a block is its own row and deletes the pair's row; hidden requests (from an account the addressee blocked) stay, show as sent, and are left out of the addressee's lists, badge and actions.
+- "**Lock order of a pair write** (send, accept, decline or cancel, remove, block, unblock; `friends::lock_pair`): the pair's turn, `pg_advisory_xact_lock(0x6263_0300, hashtext('<lower id>:<higher id>'))` (beside ingest's `0x6263_0100` and the reports' `0x6263_0200`) → both accounts' `users` rows `FOR KEY SHARE`, in id order (a deletion locks its row `FOR UPDATE` before its cascade, so it either finished or waits; a gone account answers as an unknown name) → the `user_blocks` row → the pair's `friendships` row → the pair's invite rows. No pair write locks a club; a friend invite takes the club first and then the friend's row and the friendship (§5.3)."
+- `accepted_at` is `clock_timestamp()` (the other side's request may be newer than the transaction).
+- Send: `INSERT … ON CONFLICT ((least(…)), (greatest(…))) DO NOTHING`, then the pair's row `FOR UPDATE`: a request back accepts.
+- Unfriend and block revoke the pair's open friend invites (`friends::revoke_pair_invites`: bound to one, created by the other, not revoked, expired or used up).
+- `{username}` of the friend routes: `friends::PathName`, normalised; NUL or non-UTF-8 is an unknown name (the NUL paragraph of §4.5 gains "and the friend routes answer such a `{username}` as an unknown name").
+
+**`conventions.md` §10.1:** the `RateLimits` struct line gains `pub friend_request_user`, and the table a row: "`friend_request_user`: every `POST /api/friends/requests` per account (`u:<id>`), unknown names and repeats included, and every `PUT /api/friends/blocks/{username}` unless the caller already has a `friendships` row with that account (a block of a requester is free) | 20 per day (429 `Slow down a little. Try again later.`)".
+
+**`conventions.md` §6.5:** `Viewers::new` makes the friendships, the unfriend and the block through the friend routes. The matrix's kinds gain `Friends` (`GET /api/friends` and the five `{username}` routes): 34 columns, 16 routes, 11 schemas.
+
+**`docs/plan.md:31`:** "They see each other's reading and can invite each other into clubs they administer."
+
+**`CLAUDE.md`:** nothing new for part 2 beyond part 1's TRACES wording (the SPA part adds its `/friends` line).
+
+**For #53 (facts only):** a friend request names the account by its exact username, and the server says whether such an account exists (as sign-up does), at most 20 times a day per account; a block is never told to the blocked account, whose requests are kept but not shown; a friend invite into a club names the friend only to the admin who made it.
