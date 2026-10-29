@@ -232,6 +232,7 @@ The ownership gate's first repair (part 4, 9f404ae) put every file outside ADM2'
 - **A report of a merged-away book** is closed with the "merged" outcome; if the survivor took over reported text, the admin edits it directly. A "take down a book's text" admin route for the survivor (mirroring the picture takedown) would record that decision too.
 - **Suspension mails:** the app sends none; DSA Art. 17 covers suspensions too, so the operator writes the statement by hand (`takedown.md` §5). A template like `statement_of_reasons` with a reason field on `/suspend` would be small if the legal source wants it.
 - **Notices about books by email** have no record path of their own: the admin files a report in the app with the notice in its details (`takedown.md` §2). A body on a future "take down a book" admin route could mirror the picture takedown.
+- **"Remove" on a book with text another reader wrote** (security review of the merge, finding 7): an approved edit request or a merge can bring another reader's text into a reader's book, and "remove" withdraws every field and sends the statement to the book's creator. Whether "remove" should act by provenance or show the admin each field's origin is Rafael's decision; `docs/phase1/security-review.md` ("ADM2 merge", 7) has both options, and `takedown.md` §4 tells the admin to check the approved edit requests first.
 - **Who suspended** is not stored in the database (only when); the mailbox record holds it. The app log has a line per suspension and lifting with the admin's id, but only as long as the log lasts (`privacy-facts.md` §4). A `suspended_by` column would be a new foreign key to `users` (export count).
 
 ## Security review fixes (integrator, Phase 2 Wave 2)
@@ -257,3 +258,20 @@ Reviewers of the merge (f6e28e8 and the follow-ups up to 467fa43) found these; t
 - **Lifting a suspension and the empty sign-up purge** (05e8ac2). Migration `2900_users_unsuspended_at.sql` adds `users.unsuspended_at`, set by `/unsuspend` and read by `auth::empty_sign_ups` as a sign-in: before, an empty account whose suspension was lifted more than 30 days after its last sign-in went at the next hourly run (`jobs.rs::lifting_a_suspension_starts_the_30_days_of_an_empty_sign_up_again`).
 - **The suspension's log line** (084176f): `privacy-facts.md` §4 named no exception to "no user id" in the app log; it now names the line of `suspend` and `unsuspend`, and `vvt.md` and `takedown.md` §6 follow.
 - **Docs** (4ed7ce1 and this commit): endpoint-map §2's avatar rows (held, and the 400), `takedown.md` §5 ("no longer online"), the session retention and the "merged" outcome in `privacy-facts.md`, the table index of `vvt.md`, and the "Done" marks above.
+
+## Checks after the merge (integrator)
+
+An end-to-end browser run and a security review of `phase-2` at `ba42b94` (`docs/phase1/security-review.md`, "Phase 2 Wave 2", "ADM2 merge"). Fixed on `phase-2`:
+
+- **Suspension** (review 1 and 2; d8345a4, 20cd936): a suspension revokes every active invite the account knows (the club removal's rule for each of its clubs, those it created or redeemed, every sign-up invite for an instance admin) and clears `is_admin` for good; `suspend` locks the acting admin's row with the target's in id order and refuses an admin suspended or demoted meanwhile (404 `Not found`). New: `DELETE /api/admin/invites/{invite_id}` ("Withdraw" in the Invites tab, operation `admin_revoke_invite`), and the CLI commands `unsuspend` and `revoke-admin`. `admin_guard.rs` counts 16 operations.
+- **One reason per decision** (review 3; c797c97): `admin::notices::decision_reason` gives the statement of reasons the decision's ground (the recorded notice's, else the oldest removed report's), and `reports.about_me` groups per decision (`resolved_by`, `resolved_at`) with the same reason. `Removal` lost its `reason` field.
+- **A former club mate's picture** (review 4; 7ec0d90): `PostOut.author_avatar_url` only when the viewer can see the author.
+- **The restore test's ping** (review 5; 8e3aa6a): `pg_restore`'s messages stay in `/var/lib/bookclub-backup/pg_restore.err`, the log gets its own error lines with quoted values withheld, and `log_tail` withholds Postgres's DETAIL, CONTEXT and similar lines.
+- **The compromise restore** (review 6; 0cdb767): step 7 compares suspensions and takedowns with the mailbox record.
+- **A withdrawn book** (E2E 1 and 2; 1f5bb1b): a report of a work or edition whose text was withdrawn on a report, with nothing left to withdraw, is closed on arrival (`removed`, no `resolved_by`), so it never enters the queue again; the book page and the correction sheet offer no report for it, and the toast says the text was removed. The book page uses the translated `[entfernt]` for the cover's alt text and cloth, the report, merge and correction sheets; the German statement names „[entfernt]“ (with „[removed]“ for the lists that still show the stored title).
+- **The admin tabs at 360 px** (E2E 3; 622eadc): two rows of two below 480 px; checked in Chromium at 360 x 740 with "Reports 2".
+- **An edition's report** (E2E 4; 4079ff2): the edition list's "Report" and the correction sheet name a reader's edition by its own title before its line (`editionName`).
+- **A held picture's statement** (E2E 5; 8ac9b85): a takedown that leaves the owner's current picture up names "an earlier profile picture of yours" (`Reported::EarlierAvatar`).
+- **The Accounts tab's text** (E2E 6; f35d901): names the notice-and-takedown runbook by title, not a repository path, and says what a suspension now does.
+
+Open: review finding 7 (above, "Open points").
