@@ -54,7 +54,7 @@ Run a single test:
 
 - Backend: `.venv/bin/python -m pytest -q tests/test_shelf.py::test_name` (or `-k pattern`)
 - Frontend: `npx vitest run src/shelf.test.ts` (`-t "name"` filters by test name)
-- Server: `cargo test --test health` (one test file) or `cargo test name_substring`. Some test files read docs and deploy files: `openapi_contract` (`endpoint-map.md` §0, `conventions.md` §14), `api_error_copy` (`apiErrors.ts`), `parity_checklist` (`docs/phase1/parity-checklist.md`), `legal_docs` (`docs/legal/`), `deploy_env` (`deploy/hosted/env.example`, `ci.env`, `smoke-test.sh`, `backup.env.example` and `backup-lib.sh`, `systemd/`, and `update.sh` and `backup.sh` against stand-ins for docker and curl), `cutover_counts` (`deploy/cutover/*.sql`).
+- Server: `cargo test --test health` (one test file) or `cargo test name_substring`. Some test files read docs and deploy files: `openapi_contract` (`endpoint-map.md` §0, `conventions.md` §14), `api_error_copy` (`apiErrors.ts`), `parity_checklist` (`docs/phase1/parity-checklist.md`), `legal_docs` (`docs/legal/`), `deploy_env` (`deploy/hosted/env.example`, `ci.env`, `smoke-test.sh`, `backup.env.example` and `backup-lib.sh`, `systemd/`, and `update.sh` and `backup.sh` against stand-ins for docker and curl), `cutover_counts` (`deploy/cutover/*.sql`), `auth_sessions` (`deploy/hosted/revoke-access.sql`).
 
 Dev servers:
 

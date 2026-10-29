@@ -514,7 +514,7 @@ flock /var/lib/bookclub-backup/.update.lock true
 
 ### Restoring from a Storage Box snapshot
 
-When the repository itself is gone or damaged, for example because someone deleted it from the VM. Treat that VM as compromised. Whoever deleted the repository could read everything on it: `.env` with the SMTP credentials, the package token of `docker login`, `backup.env`, the restic password and the box's SSH key. With that key they may also have added a key of their own to the box's `.ssh/authorized_keys`. The old restic password and everything in the old repository therefore count as known to them. Restore onto a new VM, set up as in "First boot", steps 1 to 5, with new SMTP credentials and a new read-only package token (revoke the old ones), and with the backup scripts and `backup.env` as in "Backups", "Setting up", step 2. The steps below make the box's key, the restic password and the repository; take the box back before anything else:
+When the repository itself is gone or damaged, for example because someone deleted it from the VM. Treat that VM as compromised. Whoever deleted the repository could read everything on it: `.env` with the SMTP credentials, the package token of `docker login`, `backup.env`, the restic password and the box's SSH key. With that key they may also have added a key of their own to the box's `.ssh/authorized_keys`. The old restic password and everything in the old repository therefore count as known to them. So does the database: every address and password hash, everything people wrote, and the invite codes, which are stored as they are. While they were in, they could also write it (`docker compose exec postgres psql`): plant a session for a token they hold, make an account an instance admin, join a club, change an address. The snapshot below is from before the damage, not from before the intrusion, so steps 6 to 8 end that access before the app starts. Restore onto a new VM, set up as in "First boot", steps 1 to 5, with new SMTP credentials and a new read-only package token (revoke the old ones), and with the backup scripts and `backup.env` as in "Backups", "Setting up", step 2. The steps below make the box's key, the restic password and the repository; take the box back before anything else:
 
 1. Take the box back. In the Hetzner Console, reset the box's password. On the new VM, create a new key, root's SSH config and `known_hosts` with the commands of "Backups", "Setting up", step 1. Then, instead of the usual upload, replace the box's key file as a whole with one that holds only the new key (the first `scp` asks for the new password; if the box has no `.ssh` any more, `ssh bookclub-backup mkdir .ssh` first), and read it back. `diff` prints nothing when the new key is the only one:
 
@@ -547,9 +547,43 @@ When the repository itself is gone or damaged, for example because someone delet
 
    **Put the new password into the password manager**, next to the old one: the old one still reads the old repository in the box's snapshots, until the last of them is gone. Rolling the box back to the snapshot instead would bring back the old repository with the old password, and the `.ssh/authorized_keys` of that day, perhaps with the attacker's key in it.
 
-5. Go on with steps 2 to 5 of "Restoring for real": step 3 left the restore where they expect it, and step 4's `backup.sh` takes the first backup into the new repository.
+5. Go on with steps 2 to 4 of "Restoring for real": step 3 left the restore where they expect it, and step 4's `backup.sh` takes the first backup into the new repository. Do not start the app yet.
 
-6. Remove the copies: `rm /opt/bookclub/backup-snapshot.env /opt/bookclub/restic-password-old`.
+6. End what the attacker can reuse from the database: every session and app token (a session is the SHA-256 of its token, with no secret of the server's, so a planted one works on the new VM too), every open club and sign-up invite, and every email link not used yet. `revoke-access.sql`, from the checkout the new VM was set up from, does it in one transaction and prints how many rows each statement changed. Everyone signs in again with their password; club admins create new invites:
+
+   ```sh
+   cd /opt/bookclub
+   docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 -U bookclub -d bookclub \
+       < <checkout>/deploy/hosted/revoke-access.sql
+   ```
+
+7. Check what they could have changed: the instance admins, the accounts created and the addresses verified or passwords changed since the intrusion may have begun, and the club memberships since then. `<date>` is that day; when in doubt, the day of the oldest snapshot of the old box:
+
+   ```sh
+   docker compose exec -T postgres psql -X -U bookclub -d bookclub -v since="'<date>'" <<'SQL'
+   SELECT username, email FROM users WHERE is_admin ORDER BY username;
+   SELECT username, email, created_at, email_verified_at, password_changed_at FROM users
+    WHERE greatest(created_at, email_verified_at, password_changed_at) >= :since ORDER BY 3;
+   SELECT c.name AS club, u.username, m.role, m.joined_at FROM club_memberships m
+     JOIN clubs c ON c.id = m.club_id JOIN users u ON u.id = m.user_id
+    WHERE m.joined_at >= :since ORDER BY m.joined_at;
+   SQL
+   ```
+
+   Anything nobody can explain goes before the app starts: an admin flag with `UPDATE users SET is_admin = false WHERE username = '<name>'`; an address its owner did not set with `UPDATE users SET email = NULL, email_verified_at = NULL WHERE username = '<name>'`, so that no reset link goes there (tell the owner, who sets it again); an account or a membership through the club's owner or, once the app runs, the admin page.
+
+8. Back up again, so that the newest snapshot holds the database as it is now, then start the app as in step 5 of "Restoring for real":
+
+   ```sh
+   /opt/bookclub/backup.sh
+   docker compose up -d --wait
+   rm -rf /var/lib/bookclub-backup/restore
+   systemctl start bookclub-update.timer
+   ```
+
+9. Remove the copies: `rm /opt/bookclub/backup-snapshot.env /opt/bookclub/restic-password-old`.
+
+10. Tell people. The addresses and password hashes of every account, and everything people wrote, left the VM: a personal data breach. Unless it is unlikely to put anyone at risk, report it to the data protection authority within 72 hours of noticing it (Art. 33 GDPR), and when the risk to people is high, tell them too (Art. 34): what happened, and to choose a new password, here and wherever they used the same one. Write down what happened, what it affected and what was done, whether or not it is reported (Art. 33 (5)).
 
 Without a compromise, when a mistake or a bug on a VM you trust damaged the repository, roll the box back instead: in the console, "Snapshots", the snapshot's menu. A rollback undoes every change on the box since the snapshot: the backups taken after it, and the newer snapshots, are gone. The repository keeps its password and its history; restore from it as in "Restoring for real".
 
