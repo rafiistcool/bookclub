@@ -6,7 +6,7 @@ Scope: #74. Rafael's requirement (2026-10-29): every book from a catalog or the 
 
 ## Status
 
-Design revised after the review of 2026-10-29 ("Design review" lists every finding and what became of it). **Part 1, the server, is built** ("Part 1: the server" at the end: what was built, the decisions and deviations, and what the integrator moves). Part 2, the SPA (§5.4, §5.5, the `apiErrors.ts` mapping and the i18n keys), the browser check and `cutover.md` (§8.2 steps 8–10) follow.
+Design revised after the review of 2026-10-29 ("Design review" lists every finding and what became of it). **Part 1, the server, is built** ("Part 1: the server" at the end: what was built, the decisions and deviations, and what the integrator moves). **Part 2, the SPA, is built and checked in a browser** ("Part 2: the SPA": §5.4, §5.5, the `apiErrors.ts` mapping, the i18n keys, §8.2 steps 8–9). `cutover.md` (§8.2 step 10) follows.
 
 ## Summary
 
@@ -632,3 +632,63 @@ Shared checks edited as §7 records: `admin_guard.rs` (22 operations, the two ta
 - `endpoint-map.md` §4: operation ids `catalog_admin_list_cover_suggestions`, `catalog_admin_approve_cover_suggestion`, `catalog_admin_reject_cover_suggestion`, `catalog_admin_list_missing_covers`, `catalog_admin_search_cover`; §6 `media_admin_set_cover`; §11 `This book has a cover now` (to be mapped in `apiErrors.ts` in Part 2) and the admin-only `Input should be 'in_use' or 'all'`.
 - `CLAUDE.md`: no new test file reads docs; the server's background jobs now include the cover search (every 10 minutes, `lock_ids::COVER_SEARCH`).
 - `import-legacy` gained the hidden `--cover-budget-ms`, `rematch-legacy` the hidden `--cover-pace-ms` (tests only, like `--retry-wait-ms`).
+
+## Part 2: the SPA
+
+Built on `phase2/cover` in the order of §8.2 steps 8–9: §5.4 and §5.5 are SPA code now, against the types Part 1 generated (`frontend/src/api/generated.ts` is unchanged; `check:api` passes).
+
+### What was built
+
+| Where | What |
+|---|---|
+| `api/client.ts` | Add-only: `adminCoverSuggestionPage`, `approveCoverSuggestion`, `rejectCoverSuggestion`, `adminMissingCovers`, `adminSearchCover`, `adminSetCover` (multipart `file` and optional `edition_id`, as `uploadCover`). |
+| `i18n/apiErrors.ts` | `This book has a cover now` → `errors.coverExists` (en "This book has a cover now.", de "Dieses Buch hat inzwischen ein Cover."). The other strings the routes answer were mapped already; `Input should be 'in_use' or 'all'` stays unmapped (admin-only). |
+| `i18n/en.json`, `de.json` | `cover.prompt.{title,body,action}` with the §5.4 wording; `errors.coverExists`; `admin.tabs.covers`; `admin.setCover`, `admin.setEditionCover`, `admin.coverSet`; `admin.covers.*` (views, blurbs, the six reasons, statuses, decisions, the missing list's states, the outcomes of "Search now"); `admin.lede` names the covers. |
+| `covers.ts` | `asksForCoverPhoto(book)`: a book not added by a reader (`custom` false), on the viewer's shelf in any status, without a cover URL. The prompt and the book page share it. |
+| `admin.ts` | `COVER_REASONS`, `coverReasonLabel`, `coverStatusLabel`, `coverCandidateUrl` (the candidate's Open Library edition, else its work; only `OL…M`/`OL…W` ids), `coverSearchMessage`, `coverFound`, `missingCoverNotes(item, day, now)` (the §5.5 states as lines). |
+| `components/CoverPhotoButton.vue` | New optional props: `label`; `look` (`fine`, the link under a cover as before; `inline`; `primary`/`ghost`, a small button); `admin` (calls `adminSetCover`: the picture replaces any cover at once, toast `admin.coverSet`). The hidden file input's keyboard focus now shows on the label. |
+| `components/CoverPrompt.vue` | The §5.4 prompt: heading, body, and a primary `CoverPhotoButton` uploading for the viewer's edition; renders nothing unless `asksForCoverPhoto`. |
+| `pages/BookDetailPage.vue` | The prompt in the side column above "Your shelf" (deviation 1); the small link under the cover is hidden while the prompt shows; "Set cover as admin" and, with the viewer's edition, "Set your edition's cover as admin" beside "Edit as admin". |
+| `components/admin/AdminCovers.vue` | The Covers tab: "Suggestions" (open/decided through `useQueue`; our book beside the candidate, the candidate's picture from our `/media`, Open Library's title, authors, year and language, a "View on Open Library" link in a new tab without a referrer, the reason; "Use this cover" and "Not this book", each after a second tap with a sentence on what it does) and "Without a cover" (`in_use`/`all`, 50 a page; badges "Readers use it" and "Imported"; the state lines; "Search now", "Upload a picture", "Open the book"). The counts of `AdminSummary.covers` on the two views. |
+| `components/admin/useQueue.ts` | Add-only: the view's type is a parameter with a first view (default `open`), so the missing list pages like the queues (deviation 6). |
+| `pages/AdminPage.vue` | A fifth tab `covers` between Reports and Invites (the queues together; the first two tabs keep their place), badge `summary.covers.suggestions`, never marked overdue. On a phone the five tabs are rows of two, the last across both. |
+
+Tests (Vitest): `CoverPrompt.test.ts` (4: who sees it, the edition upload, the hand-over of the new cover, German), `AdminCovers.test.ts` (10: the comparison and the `/media` picture, the second taps, a 409 that reads the list again, a gone picture, the decided view, the missing list's states, pages and scopes, "Search now" with each outcome, a 409 and a 502, the uploads for the book and for a failing edition, German), `BookDetailPage.test.ts` (+3: the prompt in place of the link and its upload, a reader's own book, the admin's two uploads), `AdminPage.test.ts` (the five tabs and the badge, never overdue; the tab opened, a decision re-reading the summary), `CoverPhotoButton.test.ts` (+1: the admin mode), `admin.test.ts` (+5: labels, the link, the outcomes, the state lines in both languages), `covers.test.ts` (+1), `apiErrors.test.ts` (+1 assertion). `messages.test.ts` and `thirdParty.test.ts` pass unchanged (the Open Library link is an `<a href>` a person clicks, not a load).
+
+### The browser check (§8.2 step 9)
+
+The server with the built SPA on `http://agents.lan:8087` (`DEV_MODE`, `STATIC_DIR=../frontend/dist`, the package's database freshly reset), against a **local stand-in for Open Library** on 127.0.0.1 (`OPENLIBRARY_URL` and `OPENLIBRARY_COVERS_URL` pointed at a small script in the scratchpad that answers `search.json` for fictional titles and draws a gradient PNG for any cover id), so nothing left the VM. Synthetic catalog: nine works with fictional titles and authors (legacy, DNB and one reader's book), legacy keys and shelf entries of one fictional admin account. A restart's first cover-search run searched eight of them (the reader's book left out) and logged `searched=8 attached=1 suggested=4 no_match=3`: one clear match, and one suggestion for each of `number_differs`, `generic_title`, `several_works` and `title_differs`.
+
+Headless Chromium at 360 × 780 and at 1280 × 900, in English and German:
+
+- Admin → Covers, both views and both languages: `document.documentElement.scrollWidth` stayed 360 at 360 px, and no element of the tab reached past the right edge. The candidate pictures came from `/media/…` (fetched by the server from the stand-in). The second tap, "Use it for everyone", attached the cover; the tab badge and the suggestions count went from 4 to 3, and the missing count from 5 to 4 (6 before, minus the photo uploaded on the book page below).
+- "Search now" on a book with no match: toast "Kein Treffer bei Open Library.", and the line under the book read the new date.
+- The book page of a shelved legacy book without a cover showed the prompt and no small link; a generated picture uploaded through it became the cover at once ("Your photo is the cover now"), the prompt left, "Suggest a photo of your copy" came back under the cover. The page stayed 360 px wide.
+
+Two fixes came out of it: the admin's two upload labels on the book page are laid out like the text buttons beside them (they flowed as plain text), and the comparison of a suggestion is at most 34 rem wide (at 1280 px the candidate sat at the far edge of the card).
+
+### Decisions taken while building
+
+1. **Both decisions on a suggestion need a second tap**, as the takedown and the suspension do: an approval puts the picture on the book for everyone, and a rejection keeps that Open Library work out for good; undoing either takes an upload or a takedown. The first tap shows what the decision does.
+2. **After an error on a decision** (400 picture gone, 404, 409 decided or the book has a cover) the suggestions are read again: the server hides the moot ones, so the list shows what is left.
+3. **"Search now"** drops the book from the list on `attached`, `inherited` and `isbn`, and on 409 or 404; on `suggested` it notes the suggestion and marks the suggestions view for a re-read; on `no_match` it records the search on the row (today, no next try shown: the server's backoff is not in the answer).
+4. **The direct upload in the missing list** goes to the edition whose Open Library picture fails (`failing_edition_id`, labelled "Upload for edition {id}"), else to the book: replacing the work's cover would not fix a failing edition cover, which the edition's readers see.
+5. **The edition's admin upload on the book page** reads the book again afterwards (`adminEditionSaved`, as the edition edit does): the page shows the work's cover, which the edition's picture may or may not be.
+6. **The Settings link to the admin page** still counts reports and requests only: suggestions have no response target, and the Covers tab shows their count.
+
+### Deviations from the design
+
+1. **The prompt's place:** in the side column above "Your shelf" (a full-width row under the cover and the title on a phone), not inside `.hero-cover`: that column is 120 px wide on a phone, too narrow for the heading, the sentence and the button. It still replaces the small link under the cover.
+2. **No separate "Open Library's picture cannot be used" state:** `MissingCoverOut` does not tell a refused redirect, an oversize or an undecodable picture from a passing failure (all are `failing` with `failed_at`), so every one reads "Open Library's picture (of edition N) failed to load on <date>". Telling them apart needs a field on the server; nothing is lost meanwhile, since the dead check settles the 404s and the admin uploads for the rest.
+3. **Wording on the book page:** "Set your edition's cover as admin" instead of "Set this edition's cover", in line with "Edit your edition as admin" (the page's edition is the viewer's).
+4. **`CoverPhotoButton` gains `look` and `admin`** besides the `label` the design names: the prompt needs a button look, the admin's uploads the direct route.
+5. **The `reason` and state labels** are functions in `admin.ts` as planned; the date formatter is a parameter of `missingCoverNotes`, so the tests pin the lines without a time zone.
+6. **`useQueue.ts` (ADM's file) changed, add-only:** a type parameter for the view and an optional first view. Its callers are unchanged.
+
+### For the integrator (Part 2)
+
+- `CLAUDE.md`, "Frontend": the admin page's tabs gain `?tab=covers` ("Covers": the cover suggestions and the books without a cover); the book page asks a reader with a coverless catalog or imported book on their shelf for a photo (`components/CoverPrompt.vue`, rule in `covers.ts`).
+- `README.md`: the photo prompt and the admin's Covers tab (with §8.3's line on covers for catalog and imported books).
+- `endpoint-map.md` §11: `This book has a cover now` is mapped (`errors.coverExists`).
+- Nothing for `conventions.md` beyond §8.3 and Part 1.
+
