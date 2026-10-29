@@ -2,7 +2,7 @@
 
 Owner: FRIENDS. These notes record what the friends package built, where it decided something the plan (`docs/phase3/work-plan.md` §4, §6 answers 16–29) left open or where the code made it differ, and the texts the integrator moves into `docs/phase1/conventions.md`, `docs/phase1/endpoint-map.md`, `CLAUDE.md`, `README.md` and `docs/plan.md`. The design documents themselves are unchanged.
 
-Status: **part 1 (data and visibility) done**: e5d86e3 (the schema and the account-reference rules), c06b067 (the visibility layer and its tests). **Part 2 (the API) done**: 13ceec5 (the friend and block routes, the rate limit, the matrix's `Friends` kind), a888202 (friend invites into clubs); below, "Part 2: the API". The SPA follows on the same branch, `phase3/friends`.
+Status: **part 1 (data and visibility) done**: e5d86e3 (the schema and the account-reference rules), c06b067 (the visibility layer and its tests). **Part 2 (the API) done**: 13ceec5 (the friend and block routes, the rate limit, the matrix's `Friends` kind), a888202 (friend invites into clubs); below, "Part 2: the API". **Part 3 (the SPA) done**: `/friends`, the store and its badge, the invite sheet, the Home row, personal invites on the members page; below, "Part 3: the SPA". Before its final checks the branch still merges `phase-3` once COVER is in it (`work-plan.md` §2.1 rule 1).
 
 ## Part 1: data and visibility
 
@@ -198,3 +198,97 @@ The ADM2 row for `No account with that name` changes its constant to `msg::NO_AC
 **`CLAUDE.md`:** nothing new for part 2 beyond part 1's TRACES wording (the SPA part adds its `/friends` line).
 
 **For #53 (facts only):** a friend request names the account by its exact username, and the server says whether such an account exists (as sign-up does), at most 20 times a day per account; a block is never told to the blocked account, whose requests are kept but not shown; a friend invite into a club names the friend only to the admin who made it.
+
+## Part 3: the SPA
+
+### What part 3 built
+
+- **`frontend/src/api/client.ts`** (add-only): `FriendsOut` in the import list and eight calls after `clubStats`: `friends`, `sendFriendRequest`, `acceptFriendRequest`, `deleteFriendRequest` (decline and withdraw), `removeFriend`, `blockAccount`, `unblockAccount`, `declineClubInvite`. Friend invites go through the existing `createInvite(slug, {kind: "friend", username})`. `types.ts` is unchanged: the new code imports `FriendsOut` and the rest from `api/generated` directly (its header allows that).
+- **`frontend/src/stores/friends.ts`** (Pinia `friends`):
+  - state `data: FriendsOut | null`, `owner` (the account id the lists belong to), `failed`, `loadedAt`, `answers`;
+  - getters `lists` (the lists, or null when they belong to another account) and `badge` (`incoming.length + club_invites.length`);
+  - actions `load()`, `loadIfStale()`, and one per route (`send`, `accept`, `deleteRequest`, `remove`, `block`, `unblock`, `declineClubInvite`), each replacing the lists with the answer (`take`);
+  - `reloadWhenVisible()`: a `visibilitychange` listener that calls `loadIfStale()` (at most once a minute, `RELOAD_AFTER_MS`), returning its remover.
+  - A failed `load()` keeps the lists and sets `failed`; only the page reads it, and only when it has no lists. The badge never shows an error.
+- **`frontend/src/layouts/AppShell.vue`**: `load()` on mount, `reloadWhenVisible()` while mounted, and a load when the set of the viewer's clubs changes (see "Decisions"). The sidebar's Friends item carries a count pill with a visually hidden "N requests or invitations waiting" (the pattern of `AdminLink.vue`).
+- **`frontend/src/nav.ts`**: `NavIconName` gains `"friends"`; the item `{to: "/friends", labelKey: "nav.friends", icon: "friends", bottomBar: false}` after Club. **`NavIcon.vue`**: a person and a heart.
+- **`frontend/src/router.ts`**: `{path: "friends", component: FriendsPage}` (lazy, before `settings`) replaces the redirect to `/club`; `/friends/:username` → `/u/:username` stays.
+- **`frontend/src/pages/FriendsPage.vue`** at `/friends`, top to bottom as §4.10 lists it:
+  1. "Add a friend": the username field, "Type their exact username.", "Send request". Errors stay under the field (`No account with that name`, `You blocked this account`, `That is your own account`, 429). The toast says what became of it: "Request sent to <name>", "You and <name> are friends now" (their request was waiting), or "<name> is already your friend".
+  2. "Requests to you": avatar (null unless visible, as the server sends it), name, "asked <day>", Accept, Decline, Block (confirmed in a sheet).
+  3. "Invitations to clubs": "<name> invited you to <club>" ("You were invited to <club>" when the inviter is gone), "valid until <day>", Join (a link to `/join/<code>`) and Decline.
+  4. "Your friends": avatar, name (link to `/u/<name>`), "Friends since <day>", up to three current books (cover, title, progress) and "+N more"; an Options sheet per friend with "Invite to a club…" (only when the viewer owns or runs a club), "Remove from friends" and "Block", each of the last two confirmed in the sheet.
+  5. "Requests you sent": name, "sent <day>", Withdraw.
+  6. "Blocked": name, "blocked <day>", Unblock, and the line of §4.10 ("Blocking ends the friendship and hides their requests. It does not hide anything in clubs you share now or join later. …"). The block confirmation says the same in short: "<name> is not told. … It does not hide anything in clubs you share: there you still see each other." (answer 21).
+  - An empty line for every list; a skeleton until the first answer; "Could not load your friends" with "Try again" when the first load fails (the add form still works).
+- **`frontend/src/components/InviteFriendSheet.vue`**: prop `username`; lists the clubs of `UserOut.clubs` where the viewer is owner or admin, one Invite button each (`kind: "friend"`), "Invitation sent" in the club's row, the translated 404 `No friend with that name` or 409 `That friend is already in this club` in the club's row; "You do not run a club. …" without such a club.
+- **`frontend/src/pages/HomePage.vue`**: a compact Friends row after the clubs (or the solo prompt), a link to `/friends`: the count pill when requests or invitations wait, "Add friends" when the viewer has no friends, else just the arrow. Home asks nothing itself; the shell loads the lists.
+- **`frontend/src/pages/club/ClubMembersPage.vue`**: a bound invite's line starts with "Personal invite for <name>" for its creator and "Personal invite" for other admins, in place of "Single use"; and a layout fix (below).
+- **i18n** (`en.json`, `de.json`): `nav.friends`; `friends.*` (title, lede, `add.*`, `incoming.*`, `invites.*`, `list.*`, `outgoing.*`, `blocked.*`, `block.*`, `remove.*`, `inviteSheet.*`, `waiting`, `homeAdd`, `loadFailed`, `actionFailed`); `invites.personal`, `invites.personalFor`; `errors.selfAccount`, `errors.youBlocked`, `errors.noFriendRequest`, `errors.noFriend`, `errors.friendInClub`, `errors.onlyFriendInviteNames`. `errors.noMember` was changed in part 1.
+- **`frontend/src/i18n/apiErrors.ts`** (add-only, a "Friends" group before "Catalog"): `That is your own account`, `You blocked this account`, `No such friend request`, `No friend with that name`, `That friend is already in this club`, `Only a friend invite names a person`. `No account with that name` was mapped already (`errors.noAccount`, ADM2). `server/tests/api_error_copy.rs` finds each in `error.rs`.
+- **Tests:**
+  - new: `stores/friends.test.ts` (6: the badge, replacing the lists after every action, a failed load, one load at a time and no older lists over a write's answer, another account on the tab, the visibility reload at most once a minute and its remover), `pages/FriendsPage.test.ts` (8), `components/InviteFriendSheet.test.ts` (3), `layouts/AppShell.test.ts` (3: the sidebar item after Club with its count and outside the tab bar, no count without anything waiting or after a failed load, the reloads on visibility and on a change of clubs, none after a sign-out or an unmount);
+  - changed: `nav.test.ts` (the item, the five tabs), `router.test.ts` (`/friends` is the page, with and without clubs; `/friends/grace` still leads to `/u/grace`), `pages/HomePage.test.ts` (the row's three states), `pages/club/ClubMembersPage.test.ts` (personal invites for the creator and another admin), `pages/LegalPage.test.ts` (a `friends` mock answering empty lists), `acceptance.test.ts` (a `GET /api/friends` handler in both fake servers, and a third case, below);
+  - fixtures: a new `frontend/src/test/friends.ts` (`friendsOut`, `friendOut`, `reading`, `friendRequest`, `blockedOut`, `friendClubInvite`).
+  - The suite: 75 files, 500 tests (71 and 475 before part 3).
+
+### Decisions
+
+- **The lists know their account.** `session.ts` (not a FRIENDS file) clears the clubs on a sign-in or sign-out, but knows nothing of this store. So the store records the account that asked, and `lists` (and with it the badge and the page) is null for any other account: after a sign-out and another sign-in on the same tab, the previous account's requests never flash up while the new load runs.
+- **One load at a time, and a write's answer wins.** The shell and the page both load on mount; the second call joins the first. Every answer the store takes raises `answers`; a load that began before a write's answer was taken drops its own (older) answer.
+- **A change of clubs reloads the lists** (a watcher in `AppShell.vue` on the sorted slugs of `UserOut.clubs`, not on a sign-out). `club_invites` only lists clubs the caller is not in, so a join (also with a code on `/clubs`), a leave or a new club changes what waits. Joining through `/join/<code>` leaves the shell (the join page is outside it), so the shell's mount loads again anyway; the watcher covers the changes inside the shell. Not in §4.10, which names mount and visibility only.
+- **Requesters are not links.** A requester is usually not audience (no shared club), so `/u/<name>` would answer 404; friends link to `/u/<name>`.
+- **The Home row** has three states (§4.10: "the badge count when there are requests or invitations, and 'Add friends' with none"): the count when something waits, "Add friends" when the viewer has no friends, else only the arrow. With friends and nothing waiting, "Add friends" read as if the list were empty.
+- **Confirmations** use one sheet that switches between the friend's options and the confirmation of a removal or a block (keyed by mode, so focus starts on the first button of each). A failed removal or block keeps the sheet open, with the reason in a toast.
+- **Dates** are days in the viewer's own zone (`UserOut.timezone`), like the rest of the personal pages.
+- **The block confirmation** is shown for a block from a request too (§4.10 asks for it there).
+
+### Deviations from the plan
+
+1. **"+N more" links to `/u/<name>`**, not `/u/<name>/shelf` (§4.10). In the code, `/u/<name>/shelf` is the physical shelf (`MemberPhysicalShelfPage.vue`, the spines on their boards); `/u/<name>` is the shelf list (`MemberShelfPage.vue`) with its status filter, where the other books in progress are listed. The intent (see the rest of what they are reading) is kept.
+2. **Fixture helpers in a new `frontend/src/test/friends.ts`**, not in `fixtures.ts` (§2.1 rule 2 allows add-only lines there). That keeps `fixtures.ts` at part 2's two lines, away from SCAN's `isbnHit()`.
+3. **A new `frontend/src/layouts/AppShell.test.ts`.** The shell had no test of its own; §2.2 asks for the shell's changes "with their tests". `LegalPage.test.ts` and `acceptance.test.ts` mount the shell too and got their mock and handlers.
+4. **`acceptance.test.ts` gains a third case**, the SPA half of the acceptance in the fake server: Home's row counts a request and an invitation, `/friends` accepts the request, the invitation's Join link is `/join/<code>`, the join page joins, and back in the shell the count is gone; `server.unknown` is empty. In the second case (two clubs) `server.unknown` was not checked before and is not empty (`GET …/vote` and `…/vote/suggestions` of one club have no handler); it now checks that no `/api/friends` request is unknown, rather than growing that case's fake server.
+5. **A layout fix on the members page outside the "for <name>" hunk.** At 360 px a member card with three current covers and the Manage button needs about 358 px in a 328 px column, so the page scrolled sideways (found in the browser run; not caused by friends, any co-member reading three books does it). `.member-link` now wraps and `.member-meta` has a basis of 7rem, so on a phone the covers go below the name.
+
+### The browser run (8094, synthetic accounts)
+
+The server from this branch with the built SPA (`STATIC_DIR=../frontend/dist`, `DEV_MODE=true`, Postgres on 5462), three accounts made with `beta-invite` codes and verified through the logged mails, two browser sessions (`playwright-cli`), mostly at 360 × 780:
+- the second account sent " Ada " from `/friends` ("Request sent to ada"); the third asked through the API;
+- the first account's Home row showed "2"; on `/friends` it accepted the second ("You and grace are friends now") and blocked the third through the sheet (the copy of answer 21 shown); the third asked again, saw its request as sent, and the first account's lists after a reload showed it only under Blocked;
+- the friend card showed three current books with progress and "+2 more";
+- Options → "Invite to a club…" → Invite showed "Invitation sent"; the friend's `/friends` showed "ada invited you to <club>", Join led to `/join/<code>`, the join page joined, the friend appeared on the members page, the creator's members page showed the used invite as "Personal invite for grace", and the friend's Home row no longer counted it;
+- at 1280 px the sidebar's Friends item showed its count;
+- `document.documentElement.scrollWidth` was 360 on Home, `/friends` (English and German, with a 21-character username) and the members page (after deviation 5); both consoles had no error besides the signed-out `GET /api/auth/me` 401 before sign-in.
+
+### Texts for the integrator (part 3)
+
+**`CLAUDE.md`, "Frontend (`frontend/src/`)"**, after the "Pages map 1:1 …" bullet:
+- "Friends (#57): `/friends` (`pages/FriendsPage.vue`) holds the friends, requests both ways, invitations into clubs and blocks; `stores/friends.ts` keeps `GET /api/friends` (every friend route answers with the whole lists). The shell loads it on mount, when the tab comes back after a minute and when the viewer's clubs change, and shows what waits (requests and invitations) on the sidebar's Friends item and on Home's Friends row. Friends is a sidebar-only nav item (`bottomBar: false`): the phone's tab bar keeps five tabs. `components/InviteFriendSheet.vue` makes a personal invite (`kind: "friend"`) into a club the viewer runs."
+- In the same bullet, "old paths redirect there" stays true: `/friends/:username` still redirects to `/u/:username`; only `/friends` itself is a page now.
+
+**`endpoint-map.md` §11.3 (or the "Phase 3 (FRIENDS, #57)" table of part 2):** the SPA maps every new string, en / de:
+
+| String | Key | en | de |
+|---|---|---|---|
+| `That is your own account` | `errors.selfAccount` | That is your own account | Das ist dein eigenes Konto |
+| `You blocked this account` | `errors.youBlocked` | You blocked this account. Unblock it first. | Du hast dieses Konto blockiert. Gib es zuerst frei. |
+| `No such friend request` | `errors.noFriendRequest` | That request no longer exists | Diese Anfrage gibt es nicht mehr |
+| `No friend with that name` | `errors.noFriend` | None of your friends has that name | Keiner deiner Freunde hat diesen Namen |
+| `That friend is already in this club` | `errors.friendInClub` | That friend is already in this club | Diese Person ist schon in diesem Club |
+| `Only a friend invite names a person` | `errors.onlyFriendInviteNames` | Only a personal invite names a person | Nur eine persönliche Einladung nennt eine Person |
+| `No account with that name` | `errors.noAccount` (ADM2) | unchanged | unchanged |
+
+**`README.md`, the feature list**, a bullet after "Diary": "**Friends** — Ask someone by their exact username; once they accept, you see each other's shelves, ratings, quotes and notes, as club mates do, and what they are reading. Club admins invite a friend into a club with a personal invite only that friend can use. Blocking is silent and ends the friendship; it does not reach into clubs you share."
+
+**`conventions.md`:** nothing for the SPA beyond parts 1 and 2.
+
+**`docs/plan.md:31`:** part 2's sentence.
+
+### Later ideas
+
+- From the plan (answer 26): friend actions on a member's page (`/u/<name>`: "Ask to be friends", "Invite to a club…"), inviting a friend from a club's members page, a "Friends are reading" strip on Home.
+- The count on the phone's top bar (the avatar) as well as on Home's row, if requests are missed on phones.
+- The members page's invite blurb could mention personal invites ("To invite one friend, use their options on your Friends page").
+- Seen in the browser run, not FRIENDS': the members page calls a used invite "ended <expiry>", although it ended at its use, before the expiry.
+- Push for requests and invitations waits for #60 (answer 25).
