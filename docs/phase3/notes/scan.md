@@ -76,3 +76,127 @@ All green in the worktree, against `bookclub-pg-scan` on 5461:
 ### Bundle sizes (for Part 2's comparison)
 
 The main entry before any SCAN SPA code (`npm run build` on this branch after Part 1, which changes no SPA code): `dist/assets/index-<hash>.js` 325.16 kB, 115.20 kB gzip.
+
+## Part 2: the SPA
+
+Plan §3.1–§3.5, §3.7 and the SPA tests of §3.9, with answers 5–15. The phones are tested after the move (§3.8, §5.8); #56 stays open until then.
+
+### What was built
+
+| Where | What |
+|---|---|
+| `frontend/package.json`, `package-lock.json` | `zxing-wasm` exactly `3.1.6` (`npm install --save-exact`). `npm view zxing-wasm@3.1.6 scripts` lists no `preinstall`, `install`, `postinstall` or `prepare`. It brings `type-fest` and `@types/emscripten` (types only). MIT; the wasm bundles zxing-cpp (Apache-2.0). |
+| `frontend/src/isbn.ts` | `normalizeIsbnInput` (NFKC, whitespace and `-` dropped, uppercased), `parseIsbn` (manual entry: ISBN-10 or ISBN-13, returned as ISBN-13, 978/979 only, check digits), `isbnFromScan` (exactly 13 digits, 978/979, check digit; no ISBN-10). `extractIsbn` in `constants.ts` is unchanged. |
+| `frontend/src/scan/camera.ts` | `cameraSupport()` (`insecure` when `isSecureContext` is false, `unsupported` without `getUserMedia`), `openCamera(video)` (rear camera, about 720p, no audio; stops the stream again if `play()` fails), `stopCamera(stream)`, `cameraError(err)` (the `DOMException` names of §3.4; a plain object's `name` too, since Chrome's `OverconstrainedError` is not a `DOMException`). |
+| `frontend/src/scan/decoder.ts` | `createDecoder()`: native `BarcodeDetector` only when `getSupportedFormats()` lists `ean_13` (a throwing or empty list falls through), else `await import("./zxing")`. The `BarcodeDetector` types are local. Also `scanBand(width, height)` and `drawScanBand(video, canvas)`: the centre band (full width, the middle 40 %, at most 1280 px wide) drawn into a canvas whose context is created with `willReadFrequently: true`. |
+| `frontend/src/scan/zxing.ts` | `prepareZXingModule({overrides: {locateFile}, fireImmediately: true})` once, before the first read, with one overrides object (zxing-wasm compares overrides shallowly; a new function per call would instantiate the module again). `locateFile` returns `wasmUrl` (`zxing-wasm/reader/zxing_reader.wasm?url`) for every `.wasm`. A failed start is purged (`purgeZXingModule`), so a later scan tries again. `readBarcodes(imageData, {formats: ["EAN13"], tryHarder: true, maxNumberOfSymbols: 1})`, keeping `text` where `isValid`. |
+| `frontend/src/components/BarcodeScanner.vue` | Emits `isbn: [isbn13]` and `cancel: []`. States `starting`, `live`, `insecure`, `unsupported`, `nocamera`, `denied`, `busy`, `failed`, `nodecoder`. One decode every 200 ms with `setTimeout`, the next scheduled only when the pass has ended. Manual entry (`autocomplete="off"`, `enterkeyhint="search"`, no `inputmode`) in every state, focused in `insecure`. The camera stops on a result, on cancel, on unmount and on `visibilitychange` to hidden, and starts again when the page is visible. A run counter drops a stream that opens after a stop (unmount while the permission prompt is open), so only one stream is ever open. |
+| `frontend/src/pages/ScanPage.vue` | `/scan`: the scanner, then one `GET /api/books/isbn/{isbn}` with an `AbortController`; the ISBN and, from 2 s on, the seconds; "Cancel" aborts and goes back to the camera. The hit card, the miss card and the error panel of §3.1–§3.5 (details below). |
+| `frontend/src/components/AddBookSheet.vue` | `initialIsbn` seeds the ISBN field; `stay` emits `added: [book]` and `close` instead of navigating. |
+| `frontend/src/components/AddEditionForm.vue` | `initialIsbn` seeds the ISBN field. Its 409 handling is unchanged. |
+| `frontend/src/pages/DiscoverPage.vue` | A scan button (a link to `/scan`, "Scan a barcode") at the right end of the search field, always shown. After an ISBN search, "Add your own book" opens `AddBookSheet` with `:initial-isbn` and an empty title. |
+| `frontend/src/router.ts` | `{ path: "scan", component: () => import("./pages/ScanPage.vue") }` in the AppShell, after `discover`. |
+| `client.ts`, `types.ts`, `apiErrors.ts`, `fixtures.ts` | Add-only: `api.lookupIsbn(isbn, signal?)`, the `IsbnHitOut` re-export, `"No book found for that ISBN": "errors.isbnNotFound"`, and `isbnHit()`. |
+| `frontend/src/i18n/{en,de}.json` | `scan.*` (37 keys), `addBook.isbnFilled`, `editions.isbnFilled`, `errors.isbnNotFound`; add-only. |
+
+The hit card: the cover (or the cloth placeholder), title, authors, year, pages and ISBN. Not on the shelf: the four statuses as the book page's segmented control (short labels, the full one as `title`), each `POST /api/shelf {work_id, edition_id, status}`; a 409 with `err.item` becomes `PATCH /api/shelf/{id} {edition_id, status, position: 0}`. On the shelf: "On your shelf" and "Use this edition" (`PATCH /api/shelf/{shelf_id} {edition_id}`); after either write the card says "This edition is on your shelf." No cover: "Add a photo of the cover", `CoverPhotoButton` with `workId`, `editionId` and COVER's `label` prop; a 200 puts the new cover on the card, a 202 is the button's own toast. Always "Open book" and "Scan another".
+
+The miss card: "Find the book by title" (a search field, `GET /api/books/search?q=…&limit=10`, a list of works; a choice shows `AddEditionForm` with `workId` and `initialIsbn`), then "Add it as a new book" (`AddBookSheet` with `initialIsbn` and `stay`), then "Scan another". After a save (also after `AddEditionForm`'s `existing`) the page looks the ISBN up again and shows the hit card.
+
+Errors: 404 is the miss card. 429 (the busy strings and `Slow down a little. Try again later.`), 502 and anything else show the mapped message, the ISBN, "Try again" (the same ISBN) and "Scan another".
+
+### Tests
+
+- `src/isbn.test.ts`: the vectors of `isbn.rs` (ISBN-10 to 978, ISBN-13 kept, 979, all zeros, wrong check digits, the 977 EAN, `X` only last, 12 and 14 digits), full-width digits, hyphens and `Ｘ`, the ISMN `9790…`, and `isbnFromScan` refusing ISBN-10, other EANs, hyphens and padding.
+- `src/scan/decoder.test.ts`: native only with `ean_13` listed; `[]`, a list without it, a throwing `getSupportedFormats()` and no `BarcodeDetector` load zxing (mocked); a failing zxing rejects; `scanBand` and `drawScanBand`.
+- `src/scan/zxing.test.ts`: with `zxing-wasm/reader` mocked, `prepareZXingModule` is called once, with `fireImmediately`, before any read, and its `locateFile` turns `zxing_reader.wasm` (with jsDelivr as the prefix) into a path that starts with `/` and has no `://`; a failed start is purged and tried again; `readBarcodes` gets the options above and only valid results come back. Under Vitest the real `?url` import is used (`/node_modules/zxing-wasm/dist/reader/zxing_reader.wasm`).
+- `src/scan/camera.test.ts`: `cameraSupport` for an insecure context (also with `mediaDevices` present), missing `mediaDevices` or `getUserMedia`, and ok; `cameraError` for every name; `openCamera`'s constraints and its stop on a failed `play()`; `stopCamera`.
+- `src/components/BarcodeScanner.test.ts` (fake timers, camera and decoder mocked, the real `stopCamera`): insecure (manual entry focused, no camera and no decoder started), unsupported, no camera, denied (both how-tos, "Try again" reaches `live`), busy, no decoder (the stream is stopped); a typed ISBN-10 emits its ISBN-13; a wrong one shows `invalidIsbn`; a 977 EAN and a wrong check digit are ignored and the valid one emits once, with no pass after it; passes never overlap; the tracks stop on emit, unmount, a stream that opens after unmount, `visibilitychange` (and restart when visible), and cancel.
+- `src/pages/ScanPage.test.ts` (the real add forms, `CoverPhotoButton` and `ApiError`; the scanner stubbed): a hit adds with `edition_id`; `on_shelf` sends PATCH `edition_id`; a 409 becomes a PATCH with `position: 0`; the photo button with and without a cover; a 404 shows the miss card with "Find the book by title" before "Add it as a new book", the first leads through the search to `AddEditionForm` with the ISBN and back to the hit card, the second to `AddBookSheet` with the ISBN (title empty, no navigation) and then the hit card with the photo button; 429 (both kinds) and 502 keep the ISBN and look it up again; the clock after 2 s, and "Cancel" aborts the request.
+- `src/components/AddBookSheet.test.ts`: `initialIsbn` fills the ISBN field, not the title, and its hint; the usual hint once it is changed; `stay` emits `added` and `close` and does not navigate; a failed save with `stay` keeps the sheet and its values.
+- `src/components/AddEditionForm.test.ts` (new): empty by default; `initialIsbn` fills the ISBN and is sent; the 409 "Choose that edition" still emits `existing`.
+- `src/pages/DiscoverPage.test.ts`: the scan link in the search field; an ISBN search gives `AddBookSheet` `initialIsbn` and an empty title; any other search still fills the title.
+- `src/router.test.ts`: `/scan` opens in the app shell (SCAN's hunk of the shared file).
+
+### The Chromium run (2026-10-30, §3.9)
+
+- The built SPA from the Rust server on `http://localhost:8091` (`DEV_MODE=true`, `PUBLIC_URL=http://localhost:8091`, `STATIC_DIR=../frontend/dist`, `MEDIA_DIR` in the scratchpad, `DNB_HARVEST=false`, `bookclub-pg-scan`), one synthetic account (`scantester`, from a `beta-invite` code).
+- `/usr/bin/chromium` headless through `playwright-cli`, launched with `--use-fake-ui-for-media-stream --use-fake-device-for-media-stream --use-file-for-fake-video-capture=<scratchpad>/video/ean-<isbn>.y4m`, viewport 390 × 844 and then 360 × 740, and a `securitypolicyviolation` listener installed with `addInitScript` before the first page.
+- The clips are still EAN-13 barcodes written as Y4M by a short Python script (bars of 9 px on white, 1280 × 720), one browser per clip.
+- Open Library resets TLS connections from this VM, so `OPENLIBRARY_URL` and `OPENLIBRARY_COVERS_URL` pointed at a local stub on 127.0.0.1 that answers every `search.json` with no docs and everything else with 404. The DNB was the real one. The outbound User-Agent was the server's DEV_MODE one, `Bookclub/1.0 (+http://localhost:8091)`.
+
+Results:
+- **Known ISBN:** Discover → the scan button → `/scan` → the camera decoded `9783895614194` on the zxing path (`'BarcodeDetector' in window` was false; requests: `ScanPage-*.js`, `zxing-*.js`, `/assets/zxing_reader-*.wasm`, `/api/books/isbn/9783895614194`, all same-origin) → the DNB answered → the hit card ("Ich kann nicht vergeben", Rudolf Vrba, 496 pages). "Want" shelved it with the edition; "Scan another" read it again (now local, on the shelf), "Use this edition" answered "Edition saved"; a synthetic PNG through "Add a photo of the cover" became the cover on the card. The app log wrote the path as `/api/books/isbn/{isbn}`.
+- **Made-up ISBN:** `9780000000002` → the stub had nothing → 404 → the miss card. "Find the book by title" found the work above locally; `AddEditionForm` opened with the ISBN and "The ISBN you looked up."; "Add edition" → the second lookup → the hit card.
+- **Denied and manual entry:** with `getUserMedia` replaced by a `NotAllowedError` in the page, "Scan another" showed the denied state with both how-tos, "Try again" and manual entry; `978-0-306-40615-7` typed → miss → "Add it as a new book" opened the sheet with the ISBN and an empty title → saved → the hit card with "Add a photo of the cover".
+- **Zero `securitypolicyviolation` events** in all three browsers, on every page above.
+- **360 px:** a third browser at 360 × 740 walked Discover, the live scanner, the hit card, the denied state, the miss card, the list of works, the edition form and the add-book sheet; `document.documentElement.scrollWidth` was 360 on each, so nothing scrolls sideways, and no CSP violation either.
+
+### Decisions taken while building
+
+1. **The decode band's geometry lives in `decoder.ts`** (`scanBand`, `drawScanBand`) so it is unit-tested; the loop itself is in `BarcodeScanner.vue`, as planned.
+2. **Two more scanner states than the table:** `failed` ("The camera did not start.", with "Try again") for an error name §3.4 does not list, and `nodecoder` ("This browser cannot read barcodes.", §3.4's last bullet), which also follows five decode passes in a row that throw. `starting` shows "Starting the camera…" over the black video box.
+3. **The decoder is created in parallel with the permission prompt**, and only when the camera is supported, so an insecure or camera-less page loads no wasm. Its promise is marked handled at once, so a rejection while the prompt is open is not an unhandled rejection.
+4. **`isbnFromScan` takes the decoded text as it is** (no trimming); a barcode's text has no spaces or hyphens.
+5. **Full-width digits** pass `parseIsbn` after NFKC, as the plan says, although the server's `parse_isbn` refuses them (`isbn.rs` test vector `978031676948８`): the SPA sends the ASCII ISBN-13, so the server never sees them.
+6. **The hit card after a save** shows the photo button only when the hit has no cover. `IsbnHitOut` falls back to the work's cover, so a new edition of a work that already has one shows that cover and no button (seen in the Chromium run); a reader's own new book has none and gets the button.
+7. **After a save in the miss flow, `AddEditionForm`'s `existing`** (the ISBN turned out to be an edition of this work) also leads to the second lookup and the hit card.
+8. **`AddBookSheet` with `stay`** still navigates for "Open that book" after a 409: that is the reader's explicit choice.
+9. **The hint under a prefilled ISBN** ("The ISBN you looked up.") shows only while the field still holds it.
+10. **Discover's scan button is 40 px wide** and sits on the field's right padding, and the browser's own search cancel button (a second × next to "Clear") is hidden, so the field keeps as much room as it can at 360 px. The placeholder "Title, author, or ISBN" still loses its last characters at 360 px (it fits from about 375 px); see "Later ideas".
+11. **`vite.config.ts` is unchanged:** the dev server serves the `?url` import as `/node_modules/zxing-wasm/dist/reader/zxing_reader.wasm` with `application/wasm` (checked with `vite --host 127.0.0.1`), so `optimizeDeps.exclude` is not needed.
+12. **The jsDelivr default stays in the zxing chunk** (the package's own `locateFile`, `dist/assets/zxing-*.js`). It is never used: a decoder exists only after `createZxingDecoder` prepared the module with ours, and every later read reuses that module (zxing-wasm keeps the cached overrides). A `readBarcodes` before any preparation would take the default, so nothing else may call zxing-wasm directly. The Chromium run made no request to another origin.
+
+### Deviations from the design
+
+1. **No `addEdition` namespace exists:** `AddEditionForm.vue` uses `editions.*`, so its new key is `editions.isbnFilled` (the plan's §3.7 and §2.1 rule 2 say `addEdition`).
+2. **The fake camera clip** is a Y4M written directly by a Python script instead of an MJPEG made from a PNG with ffmpeg (§3.9 said "for example"); Chromium reads both.
+3. **The Chromium run used a local Open Library stub** (above), because openlibrary.org is not reachable from this VM. The DNB lookup was real.
+4. **Discover's native search cancel button is hidden** (decision 10), which the plan does not mention.
+
+### Bundle sizes (`npm run build`, 2026-10-30)
+
+| Asset | Before SCAN's SPA code | After |
+|---|---|---|
+| Main entry `index-<hash>.js` | 325.16 kB (115.20 kB gzip) | 329.44 kB (116.55 kB gzip) |
+| `ScanPage-<hash>.js` / `.css` | – | 15.37 kB (5.70 kB gzip) / 2.96 kB (0.92 kB gzip) |
+| `zxing-<hash>.js` (glue, only on the zxing path) | – | 36.20 kB (13.07 kB gzip) |
+| `zxing_reader-<hash>.wasm` (only on the zxing path) | – | 946.86 kB (411.57 kB gzip) |
+
+- The main entry grows by 4.3 kB: the new copy in both catalogues (the i18n JSON is in the entry) and the route. It contains no `zxing` (`grep -c -i zxing` is 0).
+- `dist/assets/` holds exactly one `zxing_reader-<hash>.wasm`; only `zxing-<hash>.js` names it, and only `ScanPage-<hash>.js` imports that chunk.
+- The server answers the wasm with `Content-Type: application/wasm` and `Cache-Control: public, max-age=31536000, immutable`, so a phone downloads it once per release. On Android with Play Services the native detector is used and neither file is loaded.
+
+### For the integrator (Part 2)
+
+**`CLAUDE.md`**
+- "Frontend" section, a new bullet: "The barcode scanner (#56) is `/scan` (`pages/ScanPage.vue`, entered from Discover): `components/BarcodeScanner.vue` with `scan/camera.ts`, `scan/decoder.ts` (native `BarcodeDetector` when it lists `ean_13`, else zxing-wasm) and `scan/zxing.ts`; `isbn.ts` mirrors the server's `parse_isbn`. zxing-wasm is only loaded through `createDecoder`'s dynamic import and is always prepared with `scan/zxing.ts`'s `locateFile` first: its default fetches the wasm from jsDelivr, which the CSP blocks."
+- "Dev servers", after the `agents` VM lines: "The camera needs a secure context, so on `http://agents.lan:<port>` the scanner offers manual entry only. Try the camera on `http://localhost:<port>` (Chromium with `--use-fake-device-for-media-stream --use-file-for-fake-video-capture=<clip>.y4m`), or on a phone over HTTPS."
+- The "No third party, no inline script" text from Part 1 stands; it may add: "zxing-wasm's wasm comes from our own `/assets` (`scan/zxing.ts`)".
+
+**`README.md`**, the table of pages: a row "`/scan` | Scan a book's barcode (or type its ISBN), then shelve it, set your edition, or add the book when the catalog has none". The table still describes the Python app's pages; the integrator decides whether it is updated now or with CUT-R.
+
+**`docs/plan.md`**, if it lists what Phase 3 shipped: "barcode scanning on the web (`/scan`), with manual ISBN entry everywhere".
+
+**Shared files, for the merge with FRIENDS:** every SCAN hunk in `client.ts`, `types.ts`, `apiErrors.ts`, `fixtures.ts` and `en.json`/`de.json` is add-only; `router.ts` and `router.test.ts` have one hunk each (after `discover`, and a new test after "leaves every known page to its own route"). `scan` is a new top-level key after `discover` in both catalogues.
+
+### For #53 only: the camera
+
+- The camera is used only on `/scan`, after the reader opens it, and only while that page is visible; the stream stops on a result, on cancel, when leaving the page and when the page is hidden (`frontend/src/components/BarcodeScanner.vue`).
+- Frames are decoded in the browser, by the browser's own barcode detector or by zxing-wasm running from the service's own `/assets`; no frame and no picture leaves the device. Only the ISBN read from the barcode is sent, as `GET /api/books/isbn/{isbn}` (`frontend/src/pages/ScanPage.vue`). The app log and the proxy log write that path without the ISBN (Part 1).
+- Nothing about the camera is stored: no permission flag, no setting, no browser storage. The permission itself is the browser's.
+- The decoder's wasm is a first-party file like the scripts (`privacy-facts.md` §6 stays true: no CDN, no third-party request). The `Permissions-Policy` allows the camera on the own origin only (`camera=(self)`, Part 1).
+- A photo added from the hit card is the existing cover upload (`privacy-facts.md` as for COVER): metadata stripped, re-encoded.
+
+### Noticed, not changed
+
+- `npm install` reports 5 high-severity advisories, all in `vue-i18n` and its `@intlify/*` packages (`escapeParameter`); they were there before SCAN, and `zxing-wasm` adds none. Not SCAN's to fix (§2.1 rule 3: no other npm change).
+
+### Later ideas
+
+- "Scan your copy" in the edition picker (`EditionPicker.vue`), for a shelved book (answer 11).
+- The hit card could say which edition and status the shelf entry has, without a tap, if `IsbnHitOut` named the entry's edition (a DTO change).
+- Torch and zoom on Android (`MediaStreamTrack.applyConstraints`), if dim shelves need them.
+- A worker for zxing, only if a phone shows jank (answer 6).
+- Discover's "Clear" as an icon, so the placeholder fits at 360 px too.
+- Continuous scanning of a whole shelf belongs to the native app (#60).
