@@ -238,13 +238,6 @@ const USER_COLUMNS: &[(&str, Class)] = &[
         "reports.resolved_by",
         Not("moderation: instance admins only"),
     ),
-    (
-        "reports.target_user_id",
-        Not(
-            "moderation: whose profile picture was reported, for instance admins only \
-             (media_reports.rs); exported to that account without the reporter (auth_export.rs)",
-        ),
-    ),
 ];
 
 /// Every operation with a `username` parameter, as `METHOD /path`.
@@ -263,14 +256,6 @@ const USERNAME_ROUTES: &[(&str, Class)] = &[
     (
         "DELETE /api/clubs/{slug}/members/{username}",
         Not("club administration: admins of that club (clubs_members.rs)"),
-    ),
-    (
-        "POST /api/admin/users/{username}/suspend",
-        Not("instance administration: instance admins only (admin_guard.rs, admin_users.rs)"),
-    ),
-    (
-        "POST /api/admin/users/{username}/unsuspend",
-        Not("instance administration: instance admins only (admin_guard.rs, admin_users.rs)"),
     ),
 ];
 

@@ -1,8 +1,14 @@
+// The report sheet for every kind of #54 (Q11 option B: covers, profile pictures, and the books
+// and editions readers added) and the "Report" actions that open it. It tests
+// components/ReportSheet.vue, pages/MemberShelfPage.vue, pages/BookDetailPage.vue and
+// components/EditRequestSheet.vue, which ADM2 owns, but lives here because their colocated test
+// files are outside ADM2's files (ADM's precedent: BookDetailAdminEdit.test.ts,
+// ReportCoverSheetRemoved.test.ts; docs/phase2/notes/adm2.md).
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
-import { bookDetail, edition, user } from "../test/fixtures";
+import { bookDetail, edition, user } from "../../test/fixtures";
 
 const api: Record<string, ReturnType<typeof vi.fn>> = {
   reportCover: vi.fn(),
@@ -14,7 +20,7 @@ const api: Record<string, ReturnType<typeof vi.fn>> = {
   diary: vi.fn(),
 };
 
-vi.mock("../api/client", () => {
+vi.mock("../../api/client", () => {
   class ApiError extends Error {
     status: number;
     constructor(message: string, status: number) {
@@ -25,15 +31,15 @@ vi.mock("../api/client", () => {
   return { ApiError, api: new Proxy({}, { get: (_target, key: string) => api[key] }) };
 });
 
-import { ApiError } from "../api/client";
-import { i18n } from "../i18n";
-import BookDetailPage from "../pages/BookDetailPage.vue";
-import MemberShelfPage from "../pages/MemberShelfPage.vue";
-import { useService } from "../stores/service";
-import { useSession } from "../stores/session";
-import { useToast } from "../stores/toast";
-import EditRequestSheet from "./EditRequestSheet.vue";
-import ReportSheet, { picturePublicId, REMOVED_TITLE, type ReportTarget } from "./ReportSheet.vue";
+import { ApiError } from "../../api/client";
+import { i18n } from "../../i18n";
+import BookDetailPage from "../../pages/BookDetailPage.vue";
+import MemberShelfPage from "../../pages/MemberShelfPage.vue";
+import { useService } from "../../stores/service";
+import { useSession } from "../../stores/session";
+import { useToast } from "../../stores/toast";
+import EditRequestSheet from "../EditRequestSheet.vue";
+import ReportSheet, { picturePublicId, REMOVED_TITLE, type ReportTarget } from "../ReportSheet.vue";
 
 const PICTURE = "abcdefghijklmnopqrstuvwxyz";
 const COVER: ReportTarget = { kind: "cover", publicId: "abc2def", title: "Circe" };
@@ -146,8 +152,8 @@ describe("ReportSheet", () => {
   });
 });
 
-// The "Report" actions of #54 on pages ADM2 owns (pages/MemberShelfPage.vue and
-// pages/BookDetailPage.vue), whose colocated test files are other packages' files.
+// The "Report" actions of #54 on pages ADM2 owns (pages/MemberShelfPage.vue,
+// pages/BookDetailPage.vue and components/EditRequestSheet.vue).
 describe("the report actions", () => {
   beforeEach(() => {
     for (const fn of Object.values(api)) fn.mockReset();

@@ -60,7 +60,7 @@ onMounted(loadSummary);
   <section class="admin-page">
     <div class="page-head">
       <h1>{{ t("admin.title") }}</h1>
-      <p class="lede">{{ t("admin.lede") }}</p>
+      <p class="lede">{{ t("admin.intro") }}</p>
     </div>
 
     <div class="segmented admin-tabs" role="group" :aria-label="t('admin.sections')">

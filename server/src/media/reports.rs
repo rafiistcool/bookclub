@@ -99,6 +99,12 @@ pub const PICTURE_GONE: &str = "The reported picture is no longer online";
 pub const TAKEN_DOWN_NOTE: &str = "The picture was taken down";
 /// 400 for a notice `received_at` in the future (pydantic's `PastDatetime` message).
 pub const RECEIVED_IN_FUTURE: &str = "Input should be in the past";
+/// Retired by ADM2 (#54): the takedown records notices about profile pictures too, so no
+/// route answers with this 400 any more. It stays only while `frontend/src/i18n/apiErrors.ts`,
+/// which packages may only add to, still maps it, because `server/tests/api_error_copy.rs`
+/// requires every mapped string in the server. The integrator removes the constant, that
+/// mapping and `errors.noticeCoversOnly` together (docs/phase2/notes/adm2.md).
+pub const NOTICE_COVERS_ONLY: &str = "Only notices about covers can be recorded";
 /// How far a `received_at` may lie ahead of the server's clock (the admin's clock may run fast).
 const RECEIVED_AT_SLACK: time::Duration = time::Duration::minutes(5);
 

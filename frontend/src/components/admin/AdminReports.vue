@@ -97,7 +97,7 @@ async function resolve(report: ReportOut, action: "remove" | "dismiss") {
   try {
     await api.resolveReport(report.id, action);
     if (action === "remove") toast.show(isPicture(report) ? t("admin.takenDown") : t("admin.textRemoved"));
-    else toast.show(t("admin.kept"));
+    else toast.show(isPicture(report) && !report.gone ? t("admin.kept") : t("admin.reportClosed"));
     emit("changed");
     await dropDecided(report);
   } catch (err) {
@@ -197,9 +197,9 @@ onMounted(load);
 <template>
   <section class="admin-queue" aria-labelledby="admin-reports">
     <div class="section-head">
-      <h2 id="admin-reports">{{ t("admin.reports") }}</h2>
+      <h2 id="admin-reports">{{ t("admin.tabs.reports") }}</h2>
     </div>
-    <p class="fine muted">{{ t("admin.reportsBlurb") }}</p>
+    <p class="fine muted">{{ t("admin.reportsIntro") }}</p>
 
     <div class="segmented queue-views" role="group" :aria-label="t('admin.views')">
       <button type="button" :aria-pressed="view === 'open'" @click="showView('open')">{{ t("admin.openView") }}</button>
