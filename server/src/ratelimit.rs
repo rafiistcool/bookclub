@@ -261,8 +261,9 @@ pub struct RateLimits {
     /// One picture upload (avatar or cover) per account at a time; a second one is refused
     /// before its body is read, so one account holds at most one 50 MiB buffer.
     pub upload_gate: KeyedGate,
-    /// Catalog requests that may call Open Library (search, trending, subjects, the import or
-    /// first view of a book) per account, so one account cannot use up the shared budget.
+    /// Catalog requests that may call Open Library (search, trending, subjects, an ISBN lookup,
+    /// the import or first view of a book) per account, so one account cannot use up the shared
+    /// budget.
     pub catalog_user: SlidingWindow,
     /// Two of those requests per account at a time; more wait for a turn. One account then
     /// holds at most a few of the `ol_api` throttle's slots, and other users' requests still

@@ -9,6 +9,7 @@ use bookclub_server::auth::rules::valid_email;
 use bookclub_server::clubs::out::invite_out;
 use bookclub_server::config::{Config, EmailTransport};
 use bookclub_server::email::{self, EmailSender, LogEmail, NoEmail, SmtpEmail};
+use bookclub_server::error::msg;
 use bookclub_server::importer::{self, ImportError};
 use bookclub_server::media::shared::FsMediaStore;
 use bookclub_server::{AppState, admin, app, jobs, serve};
@@ -331,8 +332,8 @@ async fn set_password(username: &str) -> Result<()> {
             println!("{password}");
             Ok(())
         }
-        // The words the admin page answers for an unknown name.
-        None => bail!("No account with that name"),
+        // The words the admin page and the friend routes answer for an unknown name.
+        None => bail!(msg::NO_ACCOUNT),
     }
 }
 
