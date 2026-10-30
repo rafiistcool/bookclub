@@ -15,10 +15,13 @@ In this plan, "I" means the implementing agent: it has the repo and a shell on t
 
 ## 1. Status and the new order
 
-**Where things stand (2026-10-29).**
+**Where things stand (2026-10-30).**
 - Phase 1 is merged. Phase 2 Waves 1 and 2 are merged into `main` (PR #73): the admin queue, the image, compose, releases, backups and automatic updates, the legal machinery (pages, terms, retention), suspension, and the import tooling. The import rehearsal on a copy of the production database passed (CUT2, #38 closed).
 - Not done from Phase 2: BRAND, the cutover (#52), CUT-R, and everything §5 of `docs/phase2/work-plan.md` lists for the VM, the domain, mail, legal texts and open sign-up.
-- COVER (#74, covers for every catalog and imported book) is being built on `phase2/cover` (worktree `../bookclub-cover`, migrations 2300–2399, Postgres 5458, browser 8087). It merges into `phase-2`.
+- **Wave 1 is merged into `phase-3`:** COVER (#74, through `phase-2`, d1583c8), SCAN (7f6497c), FRIENDS (5f77a50) and MOVE's M1 (67dc780), each with its notes applied (§2.2, §2.3).
+- Browser pass over the merged `phase-3` on 8096 (§2.1 rule 8: Discover, `/scan` with the fake camera, `/friends`, a club's members page; zero CSP violations): passed.
+- M1 boot test on the merged `phase-3` (§2.3, M2's first step): passed.
+- **Next is M2:** the PR `phase-3` → `main` for Rafael's approval, then the tag `v0.11.0` on `main`.
 - Production still runs the Python app (v0.10.0, SQLite) with 2 accounts.
 
 **The new order.** Rafael, on 2026-10-29: "das ist mir aktuell schon viel zu professionell. lass uns erstmal die anwendung bauen und dann meine aktuellen nutzer weiternutzen lassen und dann machen wir das rechtliche" ("This is already far too professional for me right now. Let's build the application first, then let my current users carry on using it, and then we do the legal part.").
@@ -32,7 +35,7 @@ In this plan, "I" means the implementing agent: it has the repo and a shell on t
 
 ### For Rafael
 
-- Your to-dos are in §8, the three questions in §7. Wave 1 needs nothing from you.
+- Your to-dos are in §8, the three questions in §7. Wave 1 is merged and needed nothing from you; the next thing for you is approving the PR `phase-3` → `main` (§8, item 4).
 - What you and the other member will notice after the move (§6, answer 47):
   - Everyone signs in again once, with the old username and password.
   - "Forgot password" says a link is on its way, but no mail leaves yet. They ask you, and you run one command from the runbook (§5.2).
@@ -150,8 +153,8 @@ SCAN, FRIENDS and MOVE's code (M1, §2.3) need no answer from Rafael. The sugges
 - The phone test after the move (§3.8, §5.8); #56 stays open until then.
 - Done with FRIENDS's merge (f7ce60e): `RateLimits::catalog_user`'s doc comment (`server/src/ratelimit.rs`, FRIENDS' file) names the ISBN lookup too.
 - `README.md`'s table of pages gets `/scan` with CUT-R's rewrite (§2.4), like COVER's features: it still describes the Python app.
-- Two choices for Rafael, then for #53's text (`notes/scan.md`, Part 1, "For the integrator"): the request id in the proxy log (`resp_headers>X-Request-Id delete` in the Caddy filter, or catalog URLs logged without query and ISBN), and the wider filter that also hides book and cover ids. Neither is built.
-- The browser pass over the merged `phase-3` on 8096 after Wave 1 (§2.1 rule 8) covers `/scan` with the fake camera.
+- The two proxy-log choices of `notes/scan.md` (Part 1, "For the integrator") are decided with #53, before the public launch (§9): the wider Caddy log filter that also hides book and cover ids, and the request id in the proxy log (`resp_headers>X-Request-Id delete` in the Caddy filter, or catalog URLs logged without query and ISBN). The private move keeps Rafael's existing proxy (§5.4), so neither applies before then. Neither is built.
+- Browser pass over the merged `phase-3` on 8096 (§2.1 rule 8), `/scan` with the fake camera included: passed.
 
 #### FRIENDS: friends (#57)
 
@@ -183,7 +186,7 @@ SCAN, FRIENDS and MOVE's code (M1, §2.3) need no answer from Rafael. The sugges
 - For Rafael (security finding 4, `notes/friends.md` "Checks"): a co-admin can work out that a co-member came in through another admin's personal invite. Accepted for the private move; revisit with #55 before open sign-up.
 - For #53's privacy text: the facts in `notes/friends.md` (parts 1 and 2 and the review round), among them the lines of `takedown.md` and `privacy-facts.md` that friends make false.
 - Later ideas (`notes/friends.md`): friend actions on a member's page, inviting from a club's members page, a "Friends are reading" strip on Home.
-- The browser pass over the merged `phase-3` on 8096 after Wave 1 (§2.1 rule 8) covers `/friends` and a club's members page.
+- Browser pass over the merged `phase-3` on 8096 (§2.1 rule 8), `/friends` and a club's members page included: passed.
 
 ### 2.3 MOVE, the slim private move (#52, the parts of #51 it needs, CUT-R)
 
@@ -221,7 +224,8 @@ M1, the code, is a Wave 1 package. M2–M6 are Wave 2: operations, no new code.
   - M5: CUT-R's acceptance (`docs/phase2/work-plan.md` §2.4) and Forgejo CI green; my key gone from root's `authorized_keys`.
 
 **Status (2026-10-30):** M1 merged into `phase-3` (67dc780), with no conflicts and no regenerated files. Its notes are applied to `conventions.md` (§2's module layout, §3 `AppState::new` and "Fallbacks" for `/sw.js`, §5.5 `deliver`, §9 `NoEmail` and "Mail off", §11 `EMAIL_TRANSPORT`, `SIGNUP_MODE` and the SMTP detail, §16 `send-test-mail` and `set-password`), `endpoint-map.md` (§10's CLI lines, `/sw.js` in the SPA catch-all row) and `CLAUDE.md` (mail off and `set-password` in the dev-server notes, `private_move` among the tests that read docs, the kill switch under "Backend features without a frontend"). `README.md` and `docs/plan.md` are unchanged: the notes give them nothing, and CUT-R rewrites the README (§5.8). Deviations are in `notes/move.md` (1–11, among them: `set_password` takes the hasher and returns `anyhow::Result`; more tests than listed; more host facts; `TRUSTED_PROXIES` and the loopback binding chosen by the proxy's upstream; M6 removes only the `bookclub` container and runs a restore test itself; CUT2's counts are a floor for the go; the alias case may need a proxy reload; a six-step rollback; the second test file `server/tests/private_move.rs`). Open:
-- M2–M6 (Wave 2), after FRIENDS: the M1 boot test once more on the merged `phase-3`, the PR, `v0.11.0`, the host, move day, CUT-R, the cleanup.
+- M1 boot test once more on the merged `phase-3` (M2's first step): passed.
+- Next is M2: the PR `phase-3` → `main` for Rafael's approval, then `v0.11.0`. Then M3–M6 (Wave 2): the host, move day, CUT-R, the cleanup.
 - Done with FRIENDS's merge (f7ce60e): `main.rs` no longer spells `No account with that name` as a literal (`notes/move.md`, "Decisions"); `set-password` bails with `error::msg::NO_ACCOUNT`.
 - For #53's privacy text: with mail off no processor receives an address; an address entered in the prompt is stored unverified and used only once mail exists.
 
@@ -1014,7 +1018,7 @@ Only facts about his hosts, and one preference. "Take the recommendations" answe
 Before any stranger can sign up, and before Phase 4 (the App Store needs a privacy policy). `docs/phase2/work-plan.md` §5 holds the details. These items wait until after the private move:
 - **#50, BRAND:** the name (Q1, `docs/phase2/name-check.md`), the domain and DNS (§5 items 6–7), and BRAND's files (§0). The current hostname then redirects through `deploy/legacy-origin/` (CUT's block, with its `/sw.js`).
 - **Mail:** Brevo (Q4): the account, the DPA, SPF, DKIM and DMARC, `EMAIL_TRANSPORT=smtp`, and `send-test-mail` to three providers (items 8, 23). The SPA's "link sent" copy becomes true then.
-- **#53:** the contact mailbox and Impressum address (item 9), the legal texts, the VVT signature and the DPAs (items 17–19). The privacy text also names the camera (on-device decoding) and the redacted ISBN paths, both from SCAN's notes, and friendships.
+- **#53:** the contact mailbox and Impressum address (item 9), the legal texts, the VVT signature and the DPAs (items 17–19). The privacy text also names the camera (on-device decoding) and the redacted ISBN paths, both from SCAN's notes, and friendships. Decided here, before the text is written: SCAN's two proxy-log choices (`notes/scan.md`, Part 1, "For the integrator"), the wider Caddy log filter that also hides book and cover ids, and the request id in the proxy log; the text says what the chosen ones leave.
 - **#51, the rest:** its own VM in its own VLAN (item 10), the Storage Box with snapshots (item 12), the monitor, heartbeats and the outside check (item 13), the Caddy site block from `Caddyfile.example` with HSTS (item 14), and the alert test (item 16).
 - **#55:** `verify-limits.sh` from outside, a takedown run, and `SIGNUP_MODE=open` (items 24–26); Q11 C, reports on texts, now that friends exist; a cap on pending incoming friend requests per account (or their expiry) and a way for admins to see request spam.
 - **The GATE checks** against the real stack, and the first `v1.0.0`.
