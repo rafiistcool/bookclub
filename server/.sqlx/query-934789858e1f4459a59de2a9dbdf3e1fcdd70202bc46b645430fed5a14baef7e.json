@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE cover_suggestions SET status = 'closed', decided_at = now()\n         WHERE status = 'open' AND bc_cover_suggestion_moot(id)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "934789858e1f4459a59de2a9dbdf3e1fcdd70202bc46b645430fed5a14baef7e"
+}

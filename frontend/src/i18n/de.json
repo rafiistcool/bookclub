@@ -26,7 +26,12 @@
     "photoUploading": "Wird hochgeladen …",
     "photoSet": "Dein Foto ist jetzt das Cover",
     "photoQueued": "Danke. Ein Admin sieht sich dein Foto an.",
-    "photoFailed": "Das Foto konnte nicht hochgeladen werden"
+    "photoFailed": "Das Foto konnte nicht hochgeladen werden",
+    "prompt": {
+      "title": "Dieses Buch hat noch kein Cover",
+      "body": "Es steht in deinem Regal. Wenn du dein Exemplar zur Hand hast, gibt ein Foto der Vorderseite dem Buch ein Cover – für alle. Fotografiere nur das Cover.",
+      "action": "Foto vom Cover hinzufügen"
+    }
   },
   "report": {
     "action": {
@@ -711,7 +716,8 @@
     "reportResolved": "Diese Meldung wurde schon geschlossen",
     "invalidValueFor": "Dieser Wert für „{field}“ geht nicht",
     "reportedBookMerged": "Dieses Buch wurde seit der Meldung mit einem anderen zusammengeführt. Schließ die Meldung und korrigiere das andere Buch mit „Als Admin bearbeiten“, falls es den gemeldeten Text übernommen hat.",
-    "pictureGone": "Das gemeldete Bild ist nicht mehr online: Wer es hochgeladen hat, hat es ersetzt oder gelöscht. Schließ die Meldung."
+    "pictureGone": "Das gemeldete Bild ist nicht mehr online: Wer es hochgeladen hat, hat es ersetzt oder gelöscht. Schließ die Meldung.",
+    "coverExists": "Dieses Buch hat inzwischen ein Cover."
   },
   "physicalShelf": {
     "title": "Dein Bücherregal",
@@ -1313,11 +1319,12 @@
   },
   "admin": {
     "title": "Verwaltung",
-    "lede": "Was Leser:innen ändern lassen oder gemeldet haben, Einladungen für die geschlossene Beta und gesperrte Konten.",
+    "lede": "Was Leser:innen ändern lassen oder gemeldet haben, Cover, die die Suche nicht klären konnte, Einladungen für die geschlossene Beta und gesperrte Konten.",
     "sections": "Bereiche der Verwaltung",
     "tabs": {
       "requests": "Anfragen",
       "reports": "Meldungen",
+      "covers": "Cover",
       "invites": "Einladungen",
       "users": "Konten"
     },
@@ -1347,6 +1354,16 @@
     "noChange": "schon so",
     "editAsAdmin": "Als Admin bearbeiten",
     "editEditionAsAdmin": "Deine Ausgabe als Admin bearbeiten",
+    "setCover": "Cover als Admin setzen",
+    "setEditionCover": "Cover einer Ausgabe als Admin setzen",
+    "editionCover": {
+      "title": "Cover einer Ausgabe",
+      "blurb": "Das Bild wird sofort für alle zum Cover dieser Ausgabe und ersetzt ein vorhandenes. Das Cover des Buchs selbst bleibt, wie es ist; hat das Buch noch keins, bekommt es dieses Bild auch.",
+      "upload": "Hochladen",
+      "yours": "Deine Ausgabe",
+      "none": "Dieses Buch hat noch keine Ausgaben."
+    },
+    "coverSet": "Das Cover gilt jetzt für alle",
     "mergeInto": "Zusammenführen mit:",
     "bookN": "Buch {id}",
     "approve": "Freigeben",
@@ -1473,7 +1490,84 @@
       "work": "Seit der Meldung mit diesem Buch zusammengeführt, der gemeldete Text erscheint nicht mehr für sich. Hat dieses Buch etwas davon übernommen, korrigiere es mit „Als Admin bearbeiten“."
     },
     "closeReport": "Meldung schließen",
-    "closedBy": "Geschlossen von {name} · {when}"
+    "closedBy": "Geschlossen von {name} · {when}",
+    "covers": {
+      "title": "Cover",
+      "blurb": "Jedes Buch aus dem Katalog oder dem Import soll ein echtes Cover haben. Eindeutige Treffer von Open Library hängt die Suche selbst an; die unsicheren warten hier auf dich. Bücher, die Leser:innen angelegt haben, behalten ihren Einband, bis jemand ein Foto hochlädt.",
+      "views": "Vorschläge oder Bücher ohne Cover",
+      "suggestions": "Vorschläge",
+      "missing": "Ohne Cover",
+      "suggestionsBlurb": "Cover, die die Suche gefunden, aber nicht selbst angehängt hat. „Dieses Cover nehmen“ macht das Bild für alle zum Cover des Buchs; „Nicht dieses Buch“ schließt dieses Open-Library-Buch für immer aus, und die Suche sucht das nächste.",
+      "noSuggestions": "Kein Vorschlag wartet auf dich.",
+      "found": "gefunden {when}",
+      "ourBook": "Unser Buch",
+      "candidate": "Bei Open Library",
+      "noCandidatePicture": "Das Bild ist nicht mehr online",
+      "viewOpenLibrary": "Bei Open Library ansehen",
+      "reason": {
+        "single_record": "Das einzige Buch mit diesem Titel von dieser Person bei Open Library, aber ein Eintrag mit nur einer Ausgabe: Den kann jede Person anlegen.",
+        "title_differs": "Die Titel unterscheiden sich im Untertitel oder im Namen einer Reihe oder eines Bands.",
+        "number_differs": "Eine Zahl im Titel unterscheidet sich: vielleicht ein anderer Band.",
+        "several_works": "Open Library hat mehr als ein Buch mit diesem Titel von dieser Person.",
+        "generic_title": "Ein Sammeltitel, unter dem die Person viele Bücher hat.",
+        "no_author": "Unser Buch nennt niemanden als Autor:in.",
+        "after_takedown": "Das Cover dieses Buchs wurde entfernt, deshalb entscheidet ab jetzt ein Mensch."
+      },
+      "use": "Dieses Cover nehmen",
+      "useConfirm": "Für alle übernehmen",
+      "useBlurb": "Das Bild wird sofort für alle zum Cover dieses Buchs, und keine Katalogquelle ersetzt es später.",
+      "reject": "Nicht dieses Buch",
+      "rejectConfirm": "Endgültig nicht dieses Buch",
+      "rejectBlurb": "Dieses Open-Library-Buch wird für dieses Buch nie wieder vorgeschlagen, und die Suche sucht das nächste.",
+      "used": "Das Cover ist gesetzt",
+      "rejected": "Wird nicht wieder vorgeschlagen",
+      "status": {
+        "open": "Offen",
+        "approved": "Übernommen",
+        "rejected": "Nicht dieses Buch",
+        "closed": "Geschlossen"
+      },
+      "decided": {
+        "approved": "Als Cover übernommen · {when}",
+        "rejected": "Nicht dieses Buch · {when}",
+        "closed": "Von der Suche geschlossen · {when}: Das Buch hat ein Cover bekommen, wurde zusammengeführt, oder das Bild ist nicht mehr online"
+      },
+      "scope": "Genutzte Bücher oder alle",
+      "scopeInUse": "Genutzte",
+      "scopeAll": "Alle",
+      "missingBlurb": "Bücher aus dem Katalog oder dem Import ohne brauchbares Cover. Die Suche versucht sie von selbst; „Jetzt suchen“ fragt Open Library sofort, und ein Upload setzt das Cover direkt.",
+      "noMissing": "Jedes Buch hier hat ein Cover.",
+      "inUse": "Wird genutzt",
+      "imported": "Importiert",
+      "searchNow": "Jetzt suchen",
+      "searching": "Wird gesucht …",
+      "upload": "Bild hochladen",
+      "uploadEdition": "Für Ausgabe {id} hochladen",
+      "openBook": "Buch öffnen",
+      "searchFailed": "Die Suche hat gerade nicht geklappt",
+      "result": {
+        "attached": "Gefunden: Das Cover von Open Library ist jetzt das Cover des Buchs.",
+        "inherited": "Das Buch hat das Cover einer seiner Ausgaben übernommen.",
+        "isbn": "Open Library hatte das Cover zur ISBN einer Ausgabe.",
+        "suggested": "Ein mögliches Cover gefunden. Es wartet unter „Vorschläge“.",
+        "no_match": "Kein Treffer bei Open Library.",
+        "failing": "Das Bild von Open Library lässt sich weiterhin nicht laden. Lade stattdessen ein Bild hoch."
+      },
+      "state": {
+        "photoWaiting": "Das Foto einer Leserin oder eines Lesers wartet im Tab „Anfragen“.",
+        "failing": "Das Bild von Open Library ließ sich am {date} nicht laden.",
+        "failingUndated": "Das Bild von Open Library ließ sich nicht laden.",
+        "failingEdition": "Das Bild von Open Library zu Ausgabe {id} ließ sich am {date} nicht laden.",
+        "failingEditionUndated": "Das Bild von Open Library zu Ausgabe {id} ließ sich nicht laden.",
+        "suggestion": "Ein Vorschlag wartet unter „Vorschläge“.",
+        "failures": "Open Library hat bei der letzten Suche nicht geantwortet. | Open Library hat bei den letzten {n} Suchen nicht geantwortet.",
+        "notSearched": "Noch nicht gesucht.",
+        "noMatch": "Kein Treffer bei Open Library am {date}.",
+        "searched": "Zuletzt gesucht am {date}.",
+        "nextTry": "Nächster Versuch am {date}.",
+        "afterTakedown": "Nach einer Entfernung macht die Suche nur noch Vorschläge."
+      }
+    }
   },
   "notFound": {
     "title": "Seite nicht gefunden",

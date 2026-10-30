@@ -1,0 +1,63 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT w.merged_into_id IS NULL AS \"current!\", w.source = 'user' AS \"readers_book!\",\n                  bc_cover_missing(w.cover_media_id) AS \"missing!\",\n                  COALESCE(w.cover_media_id IS NULL\n                           AND w.field_sources ->> 'cover_media_id' = 'admin', false)\n                      AS \"admin_cleared!\",\n                  EXISTS (SELECT 1 FROM catalog_edit_requests r\n                          WHERE r.work_id = w.id AND r.edition_id IS NULL\n                            AND r.kind = 'cover_replace' AND r.status = 'open')\n                      AS \"photo_waiting!\",\n                  w.match_key\n           FROM works w WHERE w.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "current!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "readers_book!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "missing!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "admin_cleared!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "photo_waiting!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "match_key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "match_key"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      true
+    ]
+  },
+  "hash": "e4b2999bbb0aa338c3545d37334d09b26bd5dd11a1f56be2bba04290d33477bf"
+}

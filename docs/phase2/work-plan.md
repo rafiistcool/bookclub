@@ -112,6 +112,8 @@ Two things stop any release from `main` today:
 Wave 1  DEP #51 ─ GATE #55 ─ ADM #54 ─ LEG #53 ─ CUT #52/#38            parallel, start now
           │  (Wave 1 merged, phase-2 → main; Rafael's answers to §4)
 Wave 2  DEP2 #51 ─ ADM2 #54/#55 ─ LEG2 #53 ─ CUT2 #38                     parallel
+          │
+COVER   #74 covers for every catalog and imported book                  alone, before Wave 3; blocks #52
           │  (Rafael: domain, mail, VM, legal texts live)
 Cutover CUT-R: branch cutover/remove-python, merged only on cutover day   (#52)
           │
@@ -146,7 +148,7 @@ Cutover CUT-R: branch cutover/remove-python, merged only on cutover day   (#52)
    If a crate is needed after all, the integrator adds it on `phase-2`.
 
 4. **Migrations.**
-   - Reserved blocks: ADM and ADM2 use 2100–2199, LEG and LEG2 use 2200–2299, the integrator uses 2900–2999.
+   - Reserved blocks: ADM and ADM2 use 2100–2199, LEG and LEG2 use 2200–2299, COVER uses 2300–2399, the integrator uses 2900–2999.
    - There is no squash (default D7).
    - A migration merged into `phase-2` is never edited afterwards.
    - A new foreign key to `users` needs a section in the export, or the `pg_constraint` completeness check in `server/tests/auth_export.rs` fails (conventions.md §5.7).
@@ -163,8 +165,8 @@ Cutover CUT-R: branch cutover/remove-python, merged only on cutover day   (#52)
 
 6. **Worktrees, databases and build resources.**
    - Each package runs its own Postgres server: `docker run -d --name bookclub-pg-<pkg> -p 127.0.0.1:<port>:5432 … postgres:17 -c max_connections=200 -c shared_buffers=64MB`.
-   - Ports: ADM 5451, LEG 5452, DEP 5453, GATE 5454, CUT 5455, the CUT2 rehearsal 5456. The integrator uses the compose server on 5432.
-   - Each package that checks pages in a browser runs the built SPA from the server (`STATIC_DIR=../frontend/dist`) with `BIND_ADDR=0.0.0.0:<port> PUBLIC_URL=http://agents.lan:<port>`. Ports: ADM 8083, LEG 8084, CUT 8085, the DEP staging stack 8081, the GATE Caddy stack 8082, the CUT2 rehearsal 8080.
+   - Ports: ADM 5451, LEG 5452, DEP 5453, GATE 5454, CUT 5455, the CUT2 rehearsal 5456, COVER 5458. The integrator uses the compose server on 5432.
+   - Each package that checks pages in a browser runs the built SPA from the server (`STATIC_DIR=../frontend/dist`) with `BIND_ADDR=0.0.0.0:<port> PUBLIC_URL=http://agents.lan:<port>`. Ports: ADM 8083, LEG 8084, CUT 8085, COVER 8087, the DEP staging stack 8081, the GATE Caddy stack 8082, the CUT2 rehearsal 8080.
    - Copy the main checkout's untracked `.cargo/config.toml` (`jobs = 3`, debug info off) into each worktree and change its `DATABASE_URL`. Also export `DATABASE_URL` for `cargo sqlx`.
    - At most 5 worktrees build at once (the VM has 12 CPUs, 17 GiB RAM and 113 GB free disk today).
    - DEP's `docker build`s count as one build slot. Run `docker builder prune -f` after its image tests.
@@ -536,6 +538,20 @@ All five run in parallel. They need no answer from Rafael. Where an answer is st
   - Rafael logs in with his old password and sees his data.
   - #38 is closed.
 
+#### COVER: covers for every catalog and imported book (#74, before Wave 3)
+
+**Status (2026-10-29):** merged into `phase-2` (8392cc5). Its notes are applied to `conventions.md` (§7.2–§7.4, §8, §13, §16, §17), `endpoint-map.md` (§4, §6, §10, §11), `legacy-mapping.md` (§0 "Report", §3.3, §3.5), `cutover.md` (the window, the go/no-go, rematch's cover pass, the review in 3.5 and the day-after revisit), `CLAUDE.md`, `deploy/hosted/README.md` and the legal documents (`privacy-facts.md` §5, §6, §10, `processors.md`, `vvt.md`, `takedown.md` §4). Rafael's four open questions (`notes/cover.md`, "Open questions") are answered with the recommendations, as in §4 "Answers": no second rehearsal (the cutover's own dry run measures the search), suggestions decided before 3.6 and photos after, the single-record bar kept as built, and the "readers use it" flag kept and listed under "Instance admins see" in `privacy-facts.md` §10. Open: `README.md`'s feature list waits for CUT-R's rewrite (§2.4); "Open Library's picture cannot be used" is not told apart from a passing failure on the Covers tab (`notes/cover.md`, Part 2 deviation 2); an Open Library cover taken down before its first fetch has no hash, so only its cover id is blocked.
+
+- **Size:** L. **Dependencies:** Wave 2 merged (`phase-2` at 7793faf). Blocks #52.
+- **Scope:** #74: a cover search by title and author on Open Library for every work without a cover that is not a reader's own, suggestions for uncertain matches in a new admin tab, the photo prompt on the book page, the admin's direct cover, and the import report's count of books still without a cover. The design, the file list and the tests are in `docs/phase2/notes/cover.md`.
+- **Worktree:** `../bookclub-cover`, branch `phase2/cover`; Postgres 5458, browser 8087; migrations 2300–2399.
+- **Touches frozen interfaces additively** (recorded in its notes for the integrator): `CatalogLookup::cover_candidates` and `cover_by_isbn` (with default bodies) in `catalog/shared/lookup.rs`; in `ingest`, `clear_media` (also records the takedown for the cover search), `ol_cover_medias` (skips pictures Open Library confirmed gone) and the new `clear_gone_media`. It also changes MED's `media/service.rs` (Open Library fetches refuse removed hashes; `recheck_cover`, `probe_covers`) and adds `media.ol_gone_at` and an index on `editions.cover_media_id`.
+- **Edits other packages' files** (each hunk in its notes §8.1):
+  - server: `catalog/{mod,openlibrary,service}.rs`, `catalog/shared/{lookup,ingest}.rs`, `media/{service,cover,mod}.rs`, `admin/summary.rs`, `importer/{mod,report,rematch}.rs`, `jobs.rs`;
+  - server tests: `admin_guard.rs`, `admin_summary.rs`, `parity_importer.rs`, `parity_schema.rs`, `importer_books.rs`, `common/catalog.rs`, `fixtures/legacy/harness.rs`;
+  - SPA: `api/client.ts`, `api/generated.ts`, `i18n/{en,de}.json`, `i18n/apiErrors.ts` and its test, `admin.ts` and its test, `covers.ts` and its test, `components/CoverPhotoButton.vue` and its test, `components/admin/useQueue.ts`, `pages/AdminPage.vue` and its test, `pages/BookDetailPage.vue` and its test;
+  - docs: `docs/phase1/parity-checklist.md`, `docs/phase2/cutover.md`.
+
 ### 2.4 Cutover branch CUT-R (#52), merged only on cutover day
 
 - **Branch:** `cutover/remove-python`, cut from `main` after Wave 1 lands there. It has a draft PR into `main`, is rebased whenever `main` moves, and is **merged only after the real import is verified** (the counts match and Rafael has checked in the browser).
@@ -550,7 +566,7 @@ All five run in parallel. They need no answer from Rafael. Where an answer is st
   - `.github/workflows/` (D8)
   - the Python lines in `.gitignore`. It also adds `server/data/` to `.gitignore`.
 - **Docs:**
-  - `README.md` describes the hosted service and the dev setup, and mentions the password change again (the README criterion of #35).
+  - `README.md` describes the hosted service and the dev setup, and mentions the password change again (the README criterion of #35). Its feature list names covers for every catalog and imported book (Open Library by title and author, readers' photos), the photo prompt on the book page and the admin page's Covers tab (COVER #74).
   - `SELFHOST.md` is deleted.
   - `CLAUDE.md` loses the "In transition" paragraph and the Python commands and sections.
   - `docs/plan.md` gets a status line with the cutover date.
@@ -574,6 +590,7 @@ All five run in parallel. They need no answer from Rafael. Where an answer is st
 | LEG2 | LEG, ADM; Q14 | Wave 2 | |
 | DEP2 | DEP; Q5, Q7, Q8 | Wave 2 | |
 | CUT2 | CUT; A2, A4 | Wave 2 | Needs real data; touches no repo files |
+| COVER | Wave 2 merged | alone, before Wave 3 | Changes `lookup.rs`, `ingest.rs` and `media/service.rs` additively; blocks #52 |
 | CUT-R | Wave 1 in `main` | rebased continuously | Merged on cutover day only |
 
 ---
@@ -591,10 +608,11 @@ All five run in parallel. They need no answer from Rafael. Where an answer is st
 | DEP2: first release and registry tags | Q5 | Any release from `main`; the staging deploy |
 | CUT: `legacy-python` branch and tag (done 2026-10-29) | Q6 | #52 step 8; a Python hotfix path |
 | CUT2: rehearsal | A2, A4 (snapshot and facts) | Closing #38; the size of the downtime window |
+| COVER: covers for every catalog and imported book (merged 2026-10-29, 8392cc5) | #74 | #52: the import gives its books covers and reports the rest |
 | Admin and decision mails in production | Q4, and A21 (a verified admin address) | #54 response time, #55 |
 | Staging deploy on the VM | A6–A13 | #51 acceptance (LAN isolation, restore, monitor) |
 | Legal texts live | Q1, A15–A18, LEG merged | #53; #52 if Q3 = at cutover; #55 |
-| Cutover | Q1, Q2, Q3, Q4, #51 done, CUT2 done | #52, then the beta invites |
+| Cutover | Q1, Q2, Q3, Q4, #51 done, CUT2 done, COVER merged (#74, done) | #52, then the beta invites |
 | Open sign-up | Everything above, A23–A26 | #55 |
 | Phase 1 "Needs Rafael" (`docs/phase1/work-plan.md:589-600`) | The mail provider is Q4; the production copy is A4; Open Library descriptions are Q18; the other defaults stand unless overridden | |
 
@@ -611,6 +629,7 @@ Ordered by how much work each answer unblocks. "Take the recommendations" is a v
 - **Option chosen, real values later:** Q4 Brevo (account, DNS and DPA once the domain exists), Q7 A (the Caddy IP goes into `TRUSTED_PROXIES` once the VM exists), Q10 A (the monitor account comes with the VM).
 - **Deferred:** Q1, the name. I prepare `docs/phase2/name-check.md` as a first pass; BRAND waits for the choice. The production facts of §5 item 2 wait too: CUT2's rehearsal assumes them, and its notes say how.
 - **Backups** (security review, Phase 2 Wave 1 finding 3): option A, Storage Box snapshots. DEP2 documents the setup.
+- **COVER (#74), its open questions, recommendations taken and built:** 1. no second rehearsal: the cutover's own dry run measures the cover search, and the window counts about 3 s per book without a cover, at most 5 minutes per run (`cutover.md` §1). 2. Before the go (3.5) the cover suggestions are decided, time-boxed to 15 minutes; photos for the books still without a cover come after 3.6. 3. The only title-equal Open Library record attaches only with at least two editions, else it is a suggestion; readers' reports and the takedown remain the way out. 4. Option (a): the Covers tab keeps its "Readers use it" flag (no name, no count; `only_me` quotes and diary entries never count), and `privacy-facts.md` §10 lists it under "Instance admins see".
 
 **Q1. Which public name (#50)?**
 - **Options:** Eselsohr, Shelfmates, Marginalia, Lesezirkel, or another name.

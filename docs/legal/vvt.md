@@ -83,7 +83,7 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 | Data subjects | users |
 | Data | the entries and their visibility; search texts (newest 20); the rows of an uploaded Goodreads CSV while it is imported, then counts and up to 25 skipped titles |
 | Tables | `shelf_entries`, `user_favorites`, `quotes`, `physical_shelf_layouts`, `search_history`, `import_jobs` |
-| Recipients | the user's audience (people who share a club), except "only me" items; search texts and imported titles and ISBNs go to Open Library and the DNB without the user's identity (`processors.md`) |
+| Recipients | the user's audience (people who share a club), except "only me" items; search texts and imported titles and ISBNs go to Open Library and the DNB without the user's identity, and so do the title and first author of a catalog or imported book without a cover, for the cover search (never a book a reader added; `processors.md`) |
 | Third countries | Open Library (Internet Archive, USA) receives search texts, titles and ISBNs, but no personal reference (`processors.md`; to confirm that this is no transfer of personal data) |
 | Retention | until the user deletes them or the account |
 | Source | `server/src/shelf/`, `server/src/catalog/search.rs` |

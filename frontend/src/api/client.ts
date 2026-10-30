@@ -16,6 +16,9 @@ import type {
   ClubPickOut,
   ClubPickPatchIn,
   ClubPickSetIn,
+  CoverSearchOut,
+  CoverSuggestionList,
+  CoverSuggestionOut,
   CustomBookIn,
   DiaryEntryIn,
   DiaryFeedOut,
@@ -40,6 +43,7 @@ import type {
   MilestoneIn,
   MilestoneListOut,
   MilestoneOut,
+  MissingCoverList,
   NewEditionIn,
   NotificationsIn,
   NotificationsOut,
@@ -477,6 +481,34 @@ export const api = {
   /** The same for one edition. */
   adminEditEdition: (editionId: number, fields: EditFields) =>
     request<EditionOut>(`/api/admin/editions/${editionId}`, json("PATCH", { fields })),
+  /**
+   * A page of the cover search's suggestions (#74): `open` oldest first (the
+   * server hides those nobody needs to decide any more), `resolved` newest
+   * decision first; 50 a page.
+   */
+  adminCoverSuggestionPage: (status: "open" | "resolved", page = 1) =>
+    request<CoverSuggestionList>(`/api/admin/cover-suggestions?status=${status}&page=${page}`),
+  /** Uses the suggested picture as the book's cover; that Open Library work is not suggested again. */
+  approveCoverSuggestion: (id: number) =>
+    request<CoverSuggestionOut>(`/api/admin/cover-suggestions/${id}/approve`, { method: "POST" }),
+  /** "Not this book": that Open Library work never comes back for the book. */
+  rejectCoverSuggestion: (id: number) =>
+    request<CoverSuggestionOut>(`/api/admin/cover-suggestions/${id}/reject`, { method: "POST" }),
+  /** Catalog and imported books without a usable cover: `in_use` (readers use them) or `all`; 50 a page. */
+  adminMissingCovers: (scope: "in_use" | "all", page = 1) =>
+    request<MissingCoverList>(`/api/admin/missing-covers?scope=${scope}&page=${page}`),
+  /** Searches Open Library for this book's cover now (never for a book a reader added). */
+  adminSearchCover: (workId: number | string) =>
+    request<CoverSearchOut>(`/api/admin/works/${enc(String(workId))}/cover-search`, { method: "POST" }),
+  /**
+   * The admin's picture becomes the cover of the book, or of `editionId`, at
+   * once, replacing any cover (provenance `admin`).
+   */
+  adminSetCover: (workId: number | string, file: File, editionId?: number | null) => {
+    const body = upload(file);
+    if (editionId != null) body.append("edition_id", String(editionId));
+    return request<CoverSet>(`/api/admin/works/${enc(String(workId))}/cover`, { method: "PUT", body });
+  },
   /** Club-less sign-up invites, newest first. */
   adminInvites: () => request<InviteList>("/api/admin/invites"),
   createSignupInvite: (body: SignupInviteIn) =>

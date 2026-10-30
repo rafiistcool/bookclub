@@ -53,7 +53,7 @@ const PERSONAL: [&str; 7] = [
 /// Accounts, the clubs themselves, the shared catalog, media and jobs: neither club nor
 /// personal data, no `club_id`. `friendships` is a relation between two accounts, with no
 /// single `user_id`.
-const GLOBAL: [&str; 16] = [
+const GLOBAL: [&str; 18] = [
     "users",
     "sessions",
     "email_tokens",
@@ -69,6 +69,8 @@ const GLOBAL: [&str; 16] = [
     "catalog_edit_requests",
     "reports",
     "harvest_state",
+    "cover_search",
+    "cover_suggestions",
     "friendships",
 ];
 

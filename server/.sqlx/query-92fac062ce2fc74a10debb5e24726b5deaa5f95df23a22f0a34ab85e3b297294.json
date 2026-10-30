@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO media_removed_hashes (sha256, media_id, variant, blocks_covers)\n         SELECT DISTINCT ON (sha256) sha256, $1, variant, $4\n         FROM UNNEST($2::bytea[], $3::text[]) WITH ORDINALITY AS h (sha256, variant, n)\n         ORDER BY sha256, n\n         ON CONFLICT (sha256) DO UPDATE SET\n             blocks_covers = media_removed_hashes.blocks_covers OR EXCLUDED.blocks_covers",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "ByteaArray",
+        "TextArray",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "92fac062ce2fc74a10debb5e24726b5deaa5f95df23a22f0a34ab85e3b297294"
+}

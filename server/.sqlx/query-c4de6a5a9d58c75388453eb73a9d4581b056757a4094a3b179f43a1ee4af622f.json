@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH candidates AS (\n               SELECT c.work_id AS id, c.source, c.match_key, c.in_use,\n                      cs.work_id IS NULL AS never, cs.next_search_at, cs.misses, cs.searched_key,\n                      cs.outcome\n               FROM cover_missing c\n               LEFT JOIN cover_search cs ON cs.work_id = c.work_id\n               WHERE NOT EXISTS (SELECT 1 FROM catalog_edit_requests r\n                                 WHERE r.work_id = c.work_id AND r.edition_id IS NULL\n                                   AND r.kind = 'cover_replace' AND r.status = 'open')\n                 AND NOT EXISTS (SELECT 1 FROM cover_suggestions s\n                                 WHERE s.work_id = c.work_id AND s.status = 'open')\n           ),\n           keyed AS (\n               SELECT c.*, (c.searched_key IS NOT NULL\n                            AND c.searched_key IS DISTINCT FROM c.match_key) AS key_changed\n               FROM candidates c\n           )\n           SELECT id AS \"id!\" FROM keyed k\n           WHERE (k.in_use\n                  OR (k.source IN ('dnb', 'legacy')\n                      AND NOT (k.source = 'dnb'\n                               AND EXISTS (SELECT 1 FROM editions e WHERE e.work_id = k.id)\n                               AND NOT EXISTS (\n                                   SELECT 1 FROM editions e\n                                   WHERE e.work_id = k.id\n                                     AND (e.planned_publication_date IS NULL\n                                          OR e.planned_publication_date <= current_date)))\n                      AND (k.never OR k.key_changed OR k.misses < 2)))\n             AND (k.never OR k.key_changed OR k.next_search_at IS NULL\n                  OR k.next_search_at <= now() OR (k.outcome = 'uncertain' AND k.in_use))\n           ORDER BY k.in_use DESC, k.never DESC, k.next_search_at NULLS FIRST, k.id\n           LIMIT $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "cover_missing",
+            "name": "work_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "c4de6a5a9d58c75388453eb73a9d4581b056757a4094a3b179f43a1ee4af622f"
+}

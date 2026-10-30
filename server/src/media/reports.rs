@@ -49,6 +49,15 @@
 //! pictures with the same bytes as received (the same file uploaded again meanwhile). "Dismiss"
 //! deletes the held picture with its files, and its reporters learn that it is no longer online.
 //!
+//! **Copies of a cover** (#74, security review of the cover search): a cover's takedown also
+//! takes down the live covers with the same bytes as received that the same reader uploaded,
+//! or that came from Open Library (no uploader, so one statement of reasons covers them all):
+//! every such copy when the takedown judged the picture ([`Judged::Picture`]), only those the
+//! same book shows when every reason behind it was `wrong_book` ([`Judged::WrongBook`]). The
+//! cover search would otherwise put a copy on an edition back on the book. Only a takedown that
+//! judged a cover's picture marks its hashes `blocks_covers`: Open Library fetches and the cover
+//! search refuse those bytes, while every recorded hash keeps refusing uploads.
+//!
 //! **Gone** (`ReportOut.gone`): a profile picture whose row is gone, because its owner deleted
 //! the account (`auth::deletion`; the report keeps `target_user_id` until then), or a work merged
 //! into another one since it was reported (`catalog::reports`). Nothing is left to take down, so
@@ -939,7 +948,17 @@ pub async fn take_down(
         shown_on(&mut tx, media_id).await?
     };
     let title = book_title(&mut tx, shown.0, shown.1).await?;
-    let prefixes = take_down_locked(&mut tx, state.media.as_ref(), media_id, admin.id).await?;
+    let notice_reason = notice
+        .as_ref()
+        .map(|notice| notice.reason.as_deref().unwrap_or("other"));
+    let prefixes = take_down_answering(
+        &mut tx,
+        state.media.as_ref(),
+        media_id,
+        admin.id,
+        notice_reason,
+    )
+    .await?;
     if let Some(notice) = &notice {
         let target = Picture {
             media_id,
@@ -1022,15 +1041,33 @@ async fn record_notice(
 /// profile picture takes the owner's other live profile pictures with the same bytes as received
 /// down with it: the same file uploaded again while this one was reported and held (security
 /// review, Phase 2 Wave 2), which the hash block, a check on new uploads only, would leave up.
-/// Returns the storage prefixes to delete after the commit (empty when the picture was removed
-/// already).
+/// A cover takes its copies down with it ([`cover_copies`]; see the module docs), judged by the
+/// picture's open reports ([`judged`]). Returns the storage prefixes to delete after the commit
+/// (empty when the picture was removed already).
 pub async fn take_down_locked(
     conn: &mut PgConnection,
     store: &dyn MediaStore,
     media_id: i64,
     admin_id: i64,
 ) -> ApiResult<Vec<String>> {
-    let (mut prefixes, copies_of) = take_down_one(conn, store, media_id, admin_id).await?;
+    take_down_answering(conn, store, media_id, admin_id, None).await
+}
+
+/// [`take_down_locked`] answering a notice with this reason as well as the open reports.
+async fn take_down_answering(
+    conn: &mut PgConnection,
+    store: &dyn MediaStore,
+    media_id: i64,
+    admin_id: i64,
+    notice_reason: Option<&str>,
+) -> ApiResult<Vec<String>> {
+    let judged = judged(conn, media_id, notice_reason).await?;
+    // Locked before the takedown clears any cover (media rows before works).
+    let cover_copies = cover_copies(conn, media_id, judged).await?;
+    let (mut prefixes, copies_of) = take_down_one(conn, store, media_id, admin_id, judged).await?;
+    for copy in cover_copies {
+        prefixes.extend(take_down_one(conn, store, copy, admin_id, judged).await?.0);
+    }
     if let Some((owner, sha256)) = copies_of {
         let copies = sqlx::query_scalar!(
             "SELECT id FROM media
@@ -1045,10 +1082,78 @@ pub async fn take_down_locked(
         .fetch_all(&mut *conn)
         .await?;
         for copy in copies {
-            prefixes.extend(take_down_one(conn, store, copy, admin_id).await?.0);
+            prefixes.extend(take_down_one(conn, store, copy, admin_id, judged).await?.0);
         }
     }
     Ok(prefixes)
+}
+
+/// What a takedown judged (#74, security review of the cover search).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Judged {
+    /// The picture itself: offensive, a copyright matter, another reason, or none given. A
+    /// cover's bytes are refused as a cover anywhere from now on (`blocks_covers`).
+    Picture,
+    /// Only that the cover shows another book: every report or notice behind the takedown said
+    /// `wrong_book`. The picture may be right for its own book, so Open Library fetches of it
+    /// are not refused, and only its copies on the same book go with it.
+    WrongBook,
+}
+
+/// What the takedown of `media_id` judges: [`Judged::WrongBook`] when every reason behind it
+/// (the picture's open reports, which the takedown resolves, and a notice's) is `wrong_book`,
+/// else [`Judged::Picture`], also when no reason is given.
+async fn judged(
+    conn: &mut PgConnection,
+    media_id: i64,
+    notice: Option<&str>,
+) -> sqlx::Result<Judged> {
+    let mut reasons = sqlx::query_scalar!(
+        "SELECT reason FROM reports WHERE media_id = $1 AND status = 'open'",
+        media_id
+    )
+    .fetch_all(conn)
+    .await?;
+    reasons.extend(notice.map(str::to_owned));
+    Ok(
+        if !reasons.is_empty() && reasons.iter().all(|reason| reason == "wrong_book") {
+            Judged::WrongBook
+        } else {
+            Judged::Picture
+        },
+    )
+}
+
+/// The live covers a cover's takedown takes down with it, locked `FOR UPDATE` in id order: the
+/// same bytes as received, uploaded by the same reader or from Open Library (no uploader); with
+/// [`Judged::WrongBook`] only those that the same book (a work showing the picture, or the work
+/// of an edition showing it) shows on itself or an edition. None for a profile picture, or a
+/// picture already removed.
+async fn cover_copies(
+    conn: &mut PgConnection,
+    media_id: i64,
+    judged: Judged,
+) -> sqlx::Result<Vec<i64>> {
+    sqlx::query_scalar!(
+        r#"SELECT c.id AS "id!" FROM media m JOIN media c ON c.sha256 = m.sha256 AND c.id <> m.id
+           WHERE m.id = $1 AND m.kind = 'cover' AND m.removed_at IS NULL
+             AND c.kind = 'cover' AND c.removed_at IS NULL
+             AND (c.uploaded_by IS NULL OR c.uploaded_by = m.uploaded_by)
+             AND ($2 OR c.id IN (
+                 SELECT w.cover_media_id FROM works w WHERE w.id IN (
+                     SELECT b.id FROM works b WHERE b.cover_media_id = $1
+                     UNION SELECT e.work_id FROM editions e WHERE e.cover_media_id = $1)
+                 UNION
+                 SELECT e.cover_media_id FROM editions e WHERE e.work_id IN (
+                     SELECT b.id FROM works b WHERE b.cover_media_id = $1
+                     UNION SELECT e.work_id FROM editions e WHERE e.cover_media_id = $1)))
+           ORDER BY c.id
+           FOR UPDATE OF c"#,
+        media_id,
+        judged == Judged::Picture
+    )
+    .fetch_all(conn)
+    .await
 }
 
 /// [`take_down_locked`] of one picture. Also returns, for a profile picture this call took down,
@@ -1058,6 +1163,7 @@ async fn take_down_one(
     store: &dyn MediaStore,
     media_id: i64,
     admin_id: i64,
+    judged: Judged,
 ) -> ApiResult<(Vec<String>, Option<(i64, Vec<u8>)>)> {
     let Some(row) = sqlx::query!(
         r#"SELECT kind, public_id, storage_key, variants, sha256, uploaded_by,
@@ -1082,7 +1188,8 @@ async fn take_down_one(
             Some(prefix) => stored_variants(store, prefix, &row.variants).await?,
             None => Vec::new(),
         };
-        record_removed_hashes(conn, media_id, row.sha256, stored).await?;
+        let blocks_covers = row.kind == "cover" && judged == Judged::Picture;
+        record_removed_hashes(conn, media_id, row.sha256, stored, blocks_covers).await?;
         sqlx::query!(
             "UPDATE media SET removed_at = now(), storage_key = NULL WHERE id = $1",
             media_id
@@ -1137,12 +1244,15 @@ async fn stored_variants(
 /// checked by every upload): the bytes as received (`original`, a copy of `media.sha256` that
 /// outlives the row) and every stored variant, the bytes readers actually saw and saved. An
 /// Open Library cover taken down before its first fetch has neither: we never had its bytes,
-/// and fetching them now would download the removed picture again.
+/// and fetching them now would download the removed picture again. `blocks_covers`: the
+/// takedown judged a cover's picture, so Open Library fetches and the cover search refuse the
+/// bytes too (a hash recorded once without it gains it from a later such takedown).
 async fn record_removed_hashes(
     conn: &mut PgConnection,
     media_id: i64,
     original: Option<Vec<u8>>,
     stored: Vec<(String, Bytes)>,
+    blocks_covers: bool,
 ) -> anyhow::Result<()> {
     let (names, bytes): (Vec<String>, Vec<Bytes>) = stored.into_iter().unzip();
     let mut hashes: Vec<Vec<u8>> = sha256_all(bytes)
@@ -1156,12 +1266,16 @@ async fn record_removed_hashes(
         variants.insert(0, None);
     }
     sqlx::query!(
-        "INSERT INTO media_removed_hashes (sha256, media_id, variant)
-         SELECT sha256, $1, variant FROM UNNEST($2::bytea[], $3::text[]) AS h (sha256, variant)
-         ON CONFLICT (sha256) DO NOTHING",
+        "INSERT INTO media_removed_hashes (sha256, media_id, variant, blocks_covers)
+         SELECT DISTINCT ON (sha256) sha256, $1, variant, $4
+         FROM UNNEST($2::bytea[], $3::text[]) WITH ORDINALITY AS h (sha256, variant, n)
+         ORDER BY sha256, n
+         ON CONFLICT (sha256) DO UPDATE SET
+             blocks_covers = media_removed_hashes.blocks_covers OR EXCLUDED.blocks_covers",
         media_id,
         &hashes,
-        &variants as &[Option<String>]
+        &variants as &[Option<String>],
+        blocks_covers
     )
     .execute(conn)
     .await?;

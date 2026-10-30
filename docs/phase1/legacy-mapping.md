@@ -19,7 +19,7 @@ bookclub-server import-legacy <bookclub.db>
     [--allow-unmatched]         # an unavailable source does not abort; those rows are kept as bare facts
 ```
 
-`bookclub-server rematch-legacy [--dry-run]` re-resolves every `source='legacy'` edition that has an ISBN through `CatalogLookup::resolve_isbn_remote` and lets ingest upgrade it under the provenance rules (§3.3). Rafael runs it after an `--offline` or `--allow-unmatched` import, and whenever he wants to retry.
+`bookclub-server rematch-legacy [--dry-run]` re-resolves every `source='legacy'` edition that has an ISBN through `CatalogLookup::resolve_isbn_remote` and lets ingest upgrade it under the provenance rules (§3.3), then runs the cover search for the imported books still without a cover (§3.5). Rafael runs it after an `--offline` or `--allow-unmatched` import, after an import whose cover search stopped, and whenever he wants to retry.
 
 `DATABASE_URL` and `MEDIA_DIR` come from the environment, as for `serve`.
 
@@ -81,6 +81,25 @@ push_subscriptions    2 → DROPPED (Phase 4)
 ```
 
 The real run has to show the same numbers as the dry run (see "Lookup errors" above for the one way they can differ, and how to see it). If a book merge collapsed duplicate rows, the report says so per table. Merges and the documented skips (§9.2) are the only ways target counts can differ from source counts (#38 AC, "matching counts for every entity"), and each is listed.
+
+**The cover search** (COVER #74, §3.5) adds a `cover search` line after `lookup wait` and a `without a cover` section after `isbn keys`:
+
+```
+cover search           20 searched: 12 attached, 8 still without a cover (3 suggested, 4 no match, 1 not searched); 2 books readers added left as they are; 9 imported cover ids not fetched yet (checked once the server runs)
+...
+without a cover:
+  book 12 "<title>" by <authors>: suggested, review it on the admin page
+  book 14 "<title>" by <authors>: no match on Open Library
+  book 15 "<title>" by <authors>: not searched (Open Library unavailable)
+  book 16 "<title>" by <authors>: not searched (stopped after an outage)
+```
+
+- "still without a cover" is counted in the database at the end of the step (`bc_cover_missing` over the imported works), not added up. `uncertain` and `blocked` outcomes count as "no match". "Not searched" names its cause: Open Library unavailable, Open Library busy (the throttle waits gave up), stopped after an outage, the time budget, or a database error.
+- "imported cover ids not fetched yet" counts the imported works whose cover is an Open Library picture without bytes, those the search attached included: the importer has no media service, so the server's prefetch and dead check take them after the start.
+- The section names the legacy book id (stable between the dry and the real run; work ids are not) and the title, like `isbn keys`: **only in the private report file**, never in #38.
+- With `--offline`: `cover search           skipped (--offline): 20 without a cover; rematch-legacy searches them`.
+- **Not an entity line:** its name has a space and it has no `→`, so `compare.sh` and `cutover_counts.rs` ignore it. The counts depend on Open Library's answers, not on the legacy data, so the dry and the real run may differ in this line and section (an answer, a throttle, an outage or the time budget at another book).
+- `rematch-legacy` prints the same line and section for its pass. A dry rematch also prints a second header line under `DRY RUN` (`importer::REMATCH_DRY_RUN_COVERS`): its cover pass sees the books as they were before the ISBN pass, whose upgrades it rolled back, so it may search books the real run will not.
 
 ### Test fixtures (#38 AC)
 
@@ -186,7 +205,7 @@ Each row is classified by its key. The id is `canonical_work_id(work_id_from_key
    - A hit means `match='isbn_matched'`, and the legacy row maps onto that work. `legacy_work_keys.edition_id` is the resolved edition. The legacy `year` and `pages` fill only the NULL fields of that edition and work, with provenance `legacy` (§3.2).
    - A miss means `match='isbn_unmatched'`. The importer calls `ingest::upsert_edition_with_work(work, edition, WorkGrouping::NewWork, Mode::Refresh)` with `Source::Legacy` records: the work (title, `author_names`, `first_publish_year`, `pages`) and the edition (`isbn13`, `pages`, `publication_year`). `isbn10` is derived, never stored.
 3. **Shelf entries and quotes of an ISBN-matched book get `edition_id` = `legacy_work_keys.edition_id`.** The legacy row identified exactly that edition by its ISBN, so its page count, cover and pagination stay what the user saw. (Unmatched rows have a single edition; their entries get it too.)
-4. **GB rows are never fuzzy-matched by title or author.** They keep bare facts, and anyone can propose a merge through `POST /api/books/works/{work_id}/merge-requests`. The plan only asks for ISBN re-matching, and fuzzy matching would need a review loop.
+4. **GB rows are never fuzzy-matched by title or author.** They keep bare facts, and anyone can propose a merge through `POST /api/books/works/{work_id}/merge-requests`. The plan only asks for ISBN re-matching, and fuzzy matching would need a review loop. The cover search (§3.5) does search Open Library by title and author for such a book, but only for a **picture**: it never changes a work's facts, identity, `source` or `ol_work_id`, and never merges anything.
 5. **Re-matching later.** Unmatched and error rows are not stuck: `rematch-legacy` (§0) calls `resolve_isbn_remote` for every `source='legacy'` edition with an ISBN. A hit is persisted through ingest, which finds the bare-facts edition by its ISBN and overwrites its `legacy`-ranked fields (and its work's title and authors) with the source record; the work's `source` becomes `dnb` or `openlibrary`, and `legacy_work_keys.match` becomes `isbn_matched`. Shelf entries keep pointing at the same work and edition. (When the source record belongs to a work that already exists, ingest's lookup by ISBN still returns the bare-facts edition, so nothing is duplicated; the two works can then be merged through the queue.)
 
 ### 3.4 Merge rules when several legacy books become one work
@@ -201,6 +220,10 @@ The rules are the pure functions of `catalog::shared::merge_rules` (conventions.
 | `club_picks`, `posts`, `quotes`, `events` | none | `work_id` is re-mapped. |
 
 Every merge is listed in the report.
+
+### 3.5 Cover search for imported books (COVER #74)
+
+Google covers are dropped (§3.2), so an ISBN row unknown to the DNB and Open Library, and every GB or OTHER row without an Open Library `cover_id`, arrives as bare facts without a cover (in the #38 rehearsal, 15 of 51 legacy books were Google ISBN rows unknown to both). `import-legacy` therefore searches Open Library for a picture right after the books step, inside its transaction, for every imported work that is a cover-search candidate (conventions.md §7.3: not a reader's own `BC…` book, no cover), in legacy book id order. Each book runs in a savepoint: a database error in one book's step rolls back only that step and reports the book "not searched (database error)". The first unavailable answer, the first book whose throttle waits give up (3 waits of `--retry-wait-ms`, counted in `lookup wait`) and the 5-minute budget stop the search; the books after it are "not searched" and have no `cover_search` row, so the server's job takes them first after the start. Nothing in the cover step makes the import exit 1, and `--offline` skips it. A clear match puts the cover on the work with provenance `openlibrary`; an uncertain one becomes a suggestion on the admin page (Admin → Covers). The dry run reports what the real run will do unless Open Library answers, throttles or fails differently in between. `rematch-legacy` searches the imported books still without a cover after its ISBN pass, 2 s apart, each step committing on its own. The report lines are in §0 "Report".
 
 ## 4. `shelf` → `shelf_entries` (personal)
 

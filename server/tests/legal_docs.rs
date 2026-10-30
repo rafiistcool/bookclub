@@ -183,7 +183,7 @@ fn every_cited_file_exists() {
 /// A line number into one of them goes stale at that package's merge while
 /// [`every_cited_file_exists`] stays green (the files grow), so the documents cite them by name:
 /// `` `path` (`symbol`) ``, which [`every_cited_name_exists`] checks. A directory ends in `/`.
-const EDITED_ELSEWHERE: [&str; 43] = [
+const EDITED_ELSEWHERE: [&str; 45] = [
     // ADM
     "server/src/admin/",
     "server/src/catalog/admin.rs",
@@ -222,6 +222,9 @@ const EDITED_ELSEWHERE: [&str; 43] = [
     "server/src/auth/mod.rs",
     "server/src/auth/deletion.rs",
     "server/tests/jobs.rs",
+    // COVER
+    "server/src/catalog/openlibrary.rs",
+    "server/src/media/service.rs",
     // Phase 3 (SCAN, FRIENDS, MOVE)
     "server/src/ratelimit.rs",
     "server/src/auth/export.rs",

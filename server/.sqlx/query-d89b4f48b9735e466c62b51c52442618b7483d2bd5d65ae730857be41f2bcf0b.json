@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, title, subtitle, language, isbn13 FROM editions WHERE work_id = $1 ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "title",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "subtitle",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "subtitle"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "language",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "language"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "isbn13",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "isbn13"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "d89b4f48b9735e466c62b51c52442618b7483d2bd5d65ae730857be41f2bcf0b"
+}
