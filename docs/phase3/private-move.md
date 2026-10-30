@@ -469,16 +469,68 @@ No proxy step: the port takeover was the switch. One backup of the imported data
 "$NEW/restore-test.sh"; echo "exit $?"         # restore test passed: …
 ```
 
-Then **[Rafael]** sends "done" (section 6). The rollback window closes when the other member writes to the new app.
+Then **[Rafael]** sends "done" (section 6). The rollback window closes when the other member writes to the new app; section 8's first step tells whether they have signed in.
 
 ## 8. Rollback
 
-The window lasts until the other member writes to the new app. Until then the old app's data is untouched (stopped, and the importer read a copy), and the only writes on the new app are Rafael's checks, which a rollback discards.
+The window lasts until the other member writes to the new app. Until then the old app's data is untouched (stopped, and the importer read a copy), and the only writes on the new app are Rafael's checks, which a rollback discards (step 4 backs them up first).
 
-1. In `$NEW`: `docker compose stop app`.
-2. In `$OLD`: `docker compose start bookclub`, wait until `docker compose ps bookclub` says healthy, and sign in once. If section 2.3 needed a proxy change, **[Rafael]** reverts it. A proxy that needed a reload on move day (section 3.1) needs one now too.
-3. In `$NEW`: `docker compose down -v` and `find "$DATA/media" -mindepth 1 -delete`, so the next attempt starts from an empty target. Before the next attempt, section 3.2 again (`up -d --wait postgres`, the check on 18080).
-4. Rafael tells the other member the update is postponed, and I record why in #52.
+Each step is one block on the host as root that loads `vars.sh` and changes into its own directory, so it runs as written in a fresh SSH session. A block whose variables are missing stops before it touches anything (`${NEW:?}`, or `set -u` in the `bash -s` blocks).
+
+1. **Is the window still open?** Counts only: the accounts other than the club's owner (Rafael) that signed in to the new app, by a live session or by one that ended (`last_seen_at`). Every write needs a sign-in.
+
+   ```bash
+   . /root/bookclub-move/vars.sh
+   cd "${NEW:?}" && docker compose exec -T postgres psql -U bookclub -d bookclub -At <<'SQL'
+   SELECT count(*) FROM users u
+   WHERE NOT EXISTS (SELECT 1 FROM club_memberships m WHERE m.user_id = u.id AND m.role = 'owner')
+     AND (u.last_seen_at IS NOT NULL OR EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.id));
+   SQL
+   ```
+
+   `0`: on to step 2 (before the import it prints 0 too). Anything else: the other member has signed in, and what they wrote exists only on the new app. Then no rollback without **[Rafael]**: he asks them. If they wrote nothing, the rollback goes on; otherwise problems are fixed forward.
+2. **The new app stops.**
+
+   ```bash
+   . /root/bookclub-move/vars.sh
+   cd "${NEW:?}" && docker compose stop app
+   ```
+
+3. **The old app starts.** Run the block again until `ps` says healthy (a second `start` changes nothing), then sign in once. If section 2.3 needed a proxy change, **[Rafael]** reverts it. A proxy that needed a reload on move day (section 3.1) needs one now too.
+
+   ```bash
+   . /root/bookclub-move/vars.sh
+   cd "${OLD:?}" && docker compose start bookclub && docker compose ps bookclub
+   ```
+
+4. **The new stack is backed up, then emptied**, so the next attempt starts from an empty target. The backup keeps what the new app holds (restic keeps every snapshot of the last 14 days). The block deletes nothing unless `$NEW` holds the new stack (`backup.env` exists only there) and its `MEDIA_DIR` is `$DATA/media`, and nothing when the backup fails:
+
+   ```bash
+   bash -s <<'ROLLBACK'
+   set -euo pipefail
+   . /root/bookclub-move/vars.sh
+   cd "$NEW"
+   if [[ ! -f backup.env || ! -f compose.yaml ]] || ! grep -qx "MEDIA_DIR=$DATA/media" backup.env; then
+       echo "stop: $NEW is not the new stack, or its MEDIA_DIR is not $DATA/media; nothing was deleted"
+       exit 1
+   fi
+   ./backup.sh
+   docker compose down -v
+   find "$DATA/media" -mindepth 1 -delete
+   echo "done: the new stack is empty; its data is in the backup"
+   ROLLBACK
+   ```
+
+   Before the next attempt, section 3.2 again (`up -d --wait postgres`, the check on 18080).
+5. Rafael tells the other member the update is postponed, and I record why in #52 (counts only).
+6. **The leftovers go**, once the reason is in #52 and Rafael has read on the host what he needs: the import copy holds every password hash, the reports and logs name people and books.
+
+   ```bash
+   . /root/bookclub-move/vars.sh
+   rm -f "${IMPORT:?}"/bookclub.db* "${NEW:?}"/{dry,real,compare}.txt "$NEW"/{dry,real,rematch-dry,rematch}.log
+   ```
+
+   My key goes too, unless the next attempt has a date within the next 7 days: `sed -i '/ bookclub-move$/d' /root/.ssh/authorized_keys` on the host, then on the agents VM `ssh -i ~/.ssh/bookclub-move root@<host> true` fails with `Permission denied`, and `rm ~/.ssh/bookclub-move ~/.ssh/bookclub-move.pub`. The next attempt then starts at section 2.1 with a new key. The key has no passphrase and every session on the agents VM can read it, so it does not wait on the host for a move that has no date.
 
 Python's `restart: unless-stopped` keeps a stopped container stopped after a reboot. Starting it while the new app holds the port fails with "port already allocated", which is safe. In the alias case no port stops it: it would answer under the same alias as the new app. So nothing runs `docker compose up` or `start` in `$OLD` outside the rollback, also when the proxy is a service of that project.
 
