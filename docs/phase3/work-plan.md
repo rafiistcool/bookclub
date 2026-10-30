@@ -212,6 +212,11 @@ M1, the code, is a Wave 1 package. M2–M6 are Wave 2: operations, no new code.
   - M4: the counts match (`compare.sh` exit 0), Rafael signs in with his old password and sees his data, `verify-limits.sh` gets its 429s while Rafael's phone signs in, the phone test is recorded, the other member signs in.
   - M5: CUT-R's acceptance (`docs/phase2/work-plan.md` §2.4) and Forgejo CI green; my key gone from root's `authorized_keys`.
 
+**Status (2026-10-30):** M1 merged into `phase-3` (67dc780), with no conflicts and no regenerated files. Its notes are applied to `conventions.md` (§2's module layout, §3 `AppState::new` and "Fallbacks" for `/sw.js`, §5.5 `deliver`, §9 `NoEmail` and "Mail off", §11 `EMAIL_TRANSPORT`, `SIGNUP_MODE` and the SMTP detail, §16 `send-test-mail` and `set-password`), `endpoint-map.md` (§10's CLI lines, `/sw.js` in the SPA catch-all row) and `CLAUDE.md` (mail off and `set-password` in the dev-server notes, `private_move` among the tests that read docs, the kill switch under "Backend features without a frontend"). `README.md` and `docs/plan.md` are unchanged: the notes give them nothing, and CUT-R rewrites the README (§5.8). Deviations are in `notes/move.md` (1–11, among them: `set_password` takes the hasher and returns `anyhow::Result`; more tests than listed; more host facts; `TRUSTED_PROXIES` and the loopback binding chosen by the proxy's upstream; M6 removes only the `bookclub` container and runs a restore test itself; CUT2's counts are a floor for the go; the alias case may need a proxy reload; a six-step rollback; the second test file `server/tests/private_move.rs`). Open:
+- M2–M6 (Wave 2), after FRIENDS: the M1 boot test once more on the merged `phase-3`, the PR, `v0.11.0`, the host, move day, CUT-R, the cleanup.
+- `main.rs` spells `No account with that name` as a literal (`notes/move.md`, "Decisions"): once FRIENDS has moved the constant to `error::msg::NO_ACCOUNT`, the integrator may use it there.
+- For #53's privacy text: with mail off no processor receives an address; an address entered in the prompt is stored unverified and used only once mail exists.
+
 ### 2.4 Dependencies and concurrency
 
 | Package | Hard dependencies | Runs alongside | Notes |

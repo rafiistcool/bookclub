@@ -28,8 +28,8 @@ server/
   migrations/0001_init.sql        # the whole Phase 1 schema
   .sqlx/                          # committed offline query data (§13)
   src/
-    main.rs                       # clap CLI: serve | import-legacy | rematch-legacy | make-admin | revoke-admin | unsuspend | beta-invite | openapi
-                                  #   | healthcheck | send-test-mail (§16)
+    main.rs                       # clap CLI: serve | import-legacy | rematch-legacy | make-admin | revoke-admin | unsuspend | set-password
+                                  #   | beta-invite | openapi | healthcheck | send-test-mail (§16)
     healthcheck.rs                # `bookclub-server healthcheck` (DEP #51; `mod healthcheck;` in main.rs, the binary crate)
     lib.rs                        # AppState, app(state), openapi(): router assembly only
     config.rs                     # Config::from_env (§11)
@@ -47,7 +47,7 @@ server/
     activity/{mod.rs, record.rs, feed.rs}         # record() is W1, feed.rs is CLUB
     auth/…                        # #39: sessions, tokens, passwords, email flows, account delete/export
     clubs/…                       # #40: clubs, memberships, roles, invites, join/leave/transfer
-    email/…                       # EmailSender trait, LogEmail, SmtpEmail, templates (§9)
+    email/…                       # EmailSender trait, LogEmail, SmtpEmail, NoEmail, templates (§9)
     catalog/
       shared/{mod,books,ingest,isbn,lookup,work_ref,dnb_marc,merge_rules}.rs   # frozen shared interfaces (W1, §7)
       …                           # everything else: CAT (incl. merge.rs: merge_works)
@@ -147,7 +147,7 @@ pub struct AppState {
 }
 ```
 
-`AppState::new(db: PgPool, config: Config) -> anyhow::Result<AppState>` builds the production state (`FsMediaStore` on `MEDIA_DIR`, `LogEmail` or `SmtpEmail` by `EMAIL_TRANSPORT`, `Passwords::new()`, `lookup` = `catalog`). Tests build theirs through the harness (§17).
+`AppState::new(db: PgPool, config: Config) -> anyhow::Result<AppState>` builds the production state (`FsMediaStore` on `MEDIA_DIR`, `LogEmail`, `SmtpEmail` or `NoEmail` by `EMAIL_TRANSPORT`, `Passwords::new()`, `lookup` = `catalog`). Tests build theirs through the harness (§17).
 
 The fields are frozen after Wave 1. Packages keep their private state inside `CatalogService` / `MediaService`, or in function-local statics where that is trivially safe. They never add fields.
 
@@ -212,6 +212,7 @@ Apart from the header read timeout and the request deadline, there are no global
 - A wrong method gets `method_not_allowed_fallback` → 405 `{"detail":"Method Not Allowed"}`.
 - Every other GET or HEAD gets the SPA shell when `STATIC_DIR` is set (`spa.rs`: `ServeDir` for files; `index.html` with `Cache-Control: no-store`; `/assets/*` with `public, max-age=31536000, immutable`; a missing asset is a JSON 404, never the shell). Other methods on those paths get the JSON 405; without `STATIC_DIR` they are all JSON 404s.
 - Every answer of the SPA fallback (the shell, `/assets/*`, the other built files, a missing asset's JSON 404) carries `Content-Security-Policy: <spa::SHELL_CSP>` (GATE #55): `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; manifest-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`. Scripts, styles, pictures, fonts, fetches and the manifest come from the own origin only; `data:` and `blob:` pictures, the `blob:` manifest of `frontend/src/brand.ts` and inline styles are allowed; no plugins, no framing. WebAssembly may compile (`'wasm-unsafe-eval'`, for the barcode decoder's `zxing_reader-<hash>.wasm` from `/assets`, #56); `'unsafe-eval'` and `'unsafe-inline'` stay out of `script-src`. So `frontend/index.html` has no inline script (the theme boot script is `frontend/public/theme-init.js`), and `frontend/src/thirdParty.test.ts` keeps third-party loads and inline scripts out of the sources. API, `/media` and other JSON answers keep `frame-ancestors 'none'` (layer 2). `tests/platform.rs::the_spa_carries_the_shell_policy` checks both, and that `script-src` has `'wasm-unsafe-eval'` but neither `'unsafe-eval'` nor `'unsafe-inline'`.
+- `/sw.js` (MOVE #52) is one of the built files (`frontend/public/sw.js`), served like any other with a JavaScript type and the shell's policy: the kill switch for the Python app's old offline worker. A browser that still runs that worker fetches it on its update check; it skips waiting, deletes every cache, unregisters itself and reloads the open pages, and it has no fetch handler. The SPA registers no worker and uses no Cache API (`frontend/src/swKillSwitch.test.ts` pins its code to `deploy/legacy-origin/sw.js`).
 
 ## 4. Errors, extraction, validation
 
@@ -540,7 +541,7 @@ pub async fn club_refs(conn: &mut PgConnection, club_ids: &[i64]) -> sqlx::Resul
   /// The verified account holding an address (`lower(email) = lower($1)`), for the "address in use" notice.
   pub async fn verified_holder(conn, email: &str) -> sqlx::Result<Option<Holder>>;
   pub enum MailKind { Link, EmailChanged, AddressInUse }   // which per-address bucket a mail counts in
-  /// After commit: the per-address limit of `kind` (silent when over), then send; failures logged. True when sent.
+  /// After commit: the per-address limit of `kind` (silent when over), then send; failures logged (mail off at INFO, §9). True when sent.
   pub async fn deliver(state: &AppState, email: Email, kind: MailKind) -> bool;
   pub async fn void_token(conn, token: &str) -> sqlx::Result<()>;   // marks a link used, e.g. when its mail was not sent
   pub const LINK_EXPIRED: &str = "That link has expired or was already used";   // verify and reset confirm
@@ -1214,11 +1215,15 @@ pub trait EmailSender: Send + Sync { async fn send(&self, msg: Email) -> anyhow:
 pub struct LogEmail;        // logs to and subject, plus the full body, at INFO: the dev transport (EMAIL_TRANSPORT=log, DEV_MODE only)
 pub struct SmtpEmail { … }  // lettre AsyncSmtpTransport<Tokio1Executor>, rustls, pooled; from SMTP_URL;
                             // parses `to` as lettre::Address and sends to Mailbox::new(None, address)
+pub struct NoEmail;         // EMAIL_TRANSPORT=none (MOVE #52): every send fails with MAIL_OFF and logs nothing
+pub const MAIL_OFF: &str = "mail is off (EMAIL_TRANSPORT=none)";
+pub fn is_mail_off(error: &anyhow::Error) -> bool;   // NoEmail's refusal: a bare &'static str equal to MAIL_OFF
 // tests: CapturingEmail (tests/common) keeps every message
 pub fn test_mail(config: &Config, to: &str) -> Email;   // DEP (#51): the `send-test-mail` message (§16)
 ```
 
 - **Headers** (DEP #51): `SmtpEmail` sets `Message-ID: <uuid-v4@domain of EMAIL_FROM>` on every mail (the UUID from `auth::random`; lettre 0.11 adds none by itself), and lettre adds `Date`.
+- **Mail off** (MOVE #52, the private move): `EMAIL_TRANSPORT=none` sends nothing until a mail provider exists. `NoEmail` logs no recipient, subject, body or link, so a reset link never reaches a log outside DEV_MODE (§19). `auth::mail::deliver` logs `mail not sent: mail is off` at INFO with the kind only (other failures WARN) and returns false, so callers treat the mail as not sent: the reset request voids its link, sign-up still answers 201 with its verification token unreceived. `admin::notify` and `admin::notices` mail verified addresses only, and with mail off none can be verified. Password resets go through `bookclub-server set-password` (§16).
 - **`email::test_mail`** is English: subject `<SERVICE_NAME> test mail`, a body naming the service and `PUBLIC_URL`, no link that does anything. It lives in `email/mod.rs`, not in `templates.rs`.
 
 - **Templates** are plain text only, in English and German by `users.locale`, in `email/templates.rs`: verify, reset, email changed (to the old address), and "someone tried to use your address" (sent to a verified address instead of a verification link when a sign-up or an email change named it, §5.5; it says what was tried and links to login and password reset, and contains no link that changes anything), since ADM (#54) the two admin mails, and since ADM2 the two decision notices.
@@ -1404,13 +1409,13 @@ pub async fn get_text(o: &Outbound, t: &HostThrottle, url: Url, policy: &RetryPo
 | `SERVICE_NAME` | `Bookclub` | `/api/config.name`, email copy |
 | `DEV_MODE` | `false` | `COOKIE_SECURE` defaults to false, `EMAIL_TRANSPORT` to `log` (and allows it); the Vite origin is allowed for CORS and the origin check |
 | `COOKIE_SECURE` | `!DEV_MODE` | the `Secure` cookie attribute |
-| `SIGNUP_MODE` | `invite` | `invite` (closed beta) or `open` (#55) |
+| `SIGNUP_MODE` | `invite` | `invite` (closed beta) or `open` (#55). `open` needs mail: with `EMAIL_TRANSPORT=none` startup stops with `SIGNUP_MODE=open needs mail: set EMAIL_TRANSPORT=smtp`, checked before the legal texts (`LEGAL_DIR`) |
 | `TRUSTED_PROXIES` | required unless `DEV_MODE` (then empty) | comma-separated CIDRs whose `X-Forwarded-For` is trusted, or `none` (§10.2) |
 | `CORS_ORIGINS` | empty | extra allowed origins (Phase 4 Capacitor origins) |
 | `STATIC_DIR` | unset | built SPA (`frontend/dist`; the image sets `/app/static`). When unset, no SPA routes are served |
 | `MEDIA_DIR` | `./data/media` | `FsMediaStore` root (the image sets `/data/media`, owned by uid 1000). `serve` and `import-legacy` refuse to start when they cannot write a probe file there (§3 step 2a) |
 | `LEGAL_DIR` | unset | the operator's legal texts and `manifest.json` (LEG #53, §5.9); read once at startup. Unset: DEV_MODE serves the placeholders, production none. A path that does not exist or holds no text and no manifest serves none (with a warning). Outside DEV_MODE, `SIGNUP_MODE=open` needs all six files. The hosted setup sets `/app/legal` |
-| `EMAIL_TRANSPORT` | `log` if `DEV_MODE`, else `smtp` | `log` is refused at startup without `DEV_MODE`: `LogEmail` writes every mail, reset links included, to the log (§19) |
+| `EMAIL_TRANSPORT` | `log` if `DEV_MODE`, else `smtp` | `log` is refused at startup without `DEV_MODE`: `LogEmail` writes every mail, reset links included, to the log (§19). `none` (MOVE #52) sends nothing (`NoEmail`, §9), also without `DEV_MODE`, and needs no `SMTP_URL` or `EMAIL_FROM`. Another value: `EMAIL_TRANSPORT must be log, smtp or none, not "…"` |
 | `SMTP_URL` | – | e.g. `smtps://user:pass@smtp.provider.eu:465`. Without `DEV_MODE` it must be encrypted: `smtps://` or `smtp://…?tls=required` (STARTTLS that must succeed). Plain `smtp://` (unencrypted in lettre) and `?tls=opportunistic` (strippable by an on-path attacker) are refused at startup unless the host is `localhost` or a loopback address (a relay on the same host), because the mail carries reset links and the URL the SMTP password (security review 2026-10-28 #13) |
 | `EMAIL_FROM` | – | `Bookclub <noreply@…>` |
 | `CONTACT_EMAIL` | required unless `DEV_MODE` | contact in the outbound User-Agent, and the public contact and takedown address (`/api/config.contact_email`, LEG #53) |
@@ -1424,7 +1429,7 @@ pub async fn get_text(o: &Outbound, t: &HostThrottle, url: Url, policy: &RetryPo
 
 `Config::from_lookup` (public) stays testable (the scaffold pattern). Invalid values fail startup with the variable name in the message. Details fixed in Wave 1:
 - Empty values count as unset. Booleans accept `true/false/1/0/yes/no/on/off`.
-- `SMTP_URL` and `EMAIL_FROM` are required when the transport is `smtp`. `STATIC_DIR` must be an existing directory.
+- `SMTP_URL` and `EMAIL_FROM` are required when the transport is `smtp`, and ignored for `none`. `STATIC_DIR` must be an existing directory.
 - `TRUSTED_PROXIES` entries may also be bare IP addresses (a /32 or /128).
 - `CORS_ORIGINS` entries are reduced to `scheme://host[:port]` and may use any scheme with a host (`capacitor://localhost`).
 - `Config::allowed_origins()` (origin check) and `Config::cors_allowed_origins()` (CORS) apply the DEV_MODE Vite origins `http://localhost:5173` and `http://127.0.0.1:5173`.
@@ -1607,9 +1612,10 @@ pub async fn record(conn: &mut PgConnection, ev: NewEvent) -> sqlx::Result<i64>;
   - never panics (errors are logged)
 - Jobs are **not** started in tests. Tests call the job function directly.
 - **Goodreads jobs** run as `tokio::spawn` tasks started by the POST handler. The handler commits the job row first, so a crash is resumed at startup.
-- **The CLI** (clap, `main.rs`, W1) has `serve` (default), `import-legacy` (IMP fills `importer::run`), `rematch-legacy` (IMP fills `importer::rematch`: re-resolves legacy bare-facts editions by ISBN, legacy-mapping.md §3.3), `make-admin`, `revoke-admin` and `unsuspend` (the integrator, after the ADM2 merge: end an instance admin's rights, and lift a suspension as the admin page does, from the host), `beta-invite` and `openapi`. `import-legacy` and `rematch-legacy` connect and migrate like `serve`, build the production `AppState`, and print `importer::Report` with its `Display` impl (IMP keeps that impl). **Both search covers** (COVER #74, `importer::covers`, `docs/phase2/notes/cover.md` §4.2, §4.3, §6) for every imported catalog book without a cover, in legacy book order; books readers added are counted, never searched. `import-legacy` searches right after the books, inside its transaction, each book in a savepoint (a database error rolls back only that book's step); the first unavailable answer, the first book whose throttle waits give up (3 waits of `--retry-wait-ms`) and the time budget (`IMPORT_COVER_BUDGET`, 5 minutes, hidden `--cover-budget-ms` for tests) stop the search, and the books after it are "not searched" with no `cover_search` row, so the job takes them first. Nothing in the cover step makes the import exit 1; `--offline` skips it. `rematch-legacy` searches after its ISBN pass as the job does, each step committing on its own (rolled back with `--dry-run`), 2 s between two Open Library requests (`REMATCH_COVER_PACE`, hidden `--cover-pace-ms`), ignoring the schedule, the misses and the tier-2 stop but not rejections, approvals, open suggestions or takedowns; an unavailable answer stops its pass. Neither runs the dead check (no media service). The report gains the `cover search` line and the `without a cover` section (legacy-mapping.md §0 "Report"). There is no separate `find-covers` command. DEP (#51) added two that never touch the database:
+- **The CLI** (clap, `main.rs`, W1) has `serve` (default), `import-legacy` (IMP fills `importer::run`), `rematch-legacy` (IMP fills `importer::rematch`: re-resolves legacy bare-facts editions by ISBN, legacy-mapping.md §3.3), `make-admin`, `revoke-admin` and `unsuspend` (the integrator, after the ADM2 merge: end an instance admin's rights, and lift a suspension as the admin page does, from the host), `set-password` (MOVE #52, below), `beta-invite` and `openapi`. `import-legacy` and `rematch-legacy` connect and migrate like `serve`, build the production `AppState`, and print `importer::Report` with its `Display` impl (IMP keeps that impl). **Both search covers** (COVER #74, `importer::covers`, `docs/phase2/notes/cover.md` §4.2, §4.3, §6) for every imported catalog book without a cover, in legacy book order; books readers added are counted, never searched. `import-legacy` searches right after the books, inside its transaction, each book in a savepoint (a database error rolls back only that book's step); the first unavailable answer, the first book whose throttle waits give up (3 waits of `--retry-wait-ms`) and the time budget (`IMPORT_COVER_BUDGET`, 5 minutes, hidden `--cover-budget-ms` for tests) stop the search, and the books after it are "not searched" with no `cover_search` row, so the job takes them first. Nothing in the cover step makes the import exit 1; `--offline` skips it. `rematch-legacy` searches after its ISBN pass as the job does, each step committing on its own (rolled back with `--dry-run`), 2 s between two Open Library requests (`REMATCH_COVER_PACE`, hidden `--cover-pace-ms`), ignoring the schedule, the misses and the tier-2 stop but not rejections, approvals, open suggestions or takedowns; an unavailable answer stops its pass. Neither runs the dead check (no media service). The report gains the `cover search` line and the `without a cover` section (legacy-mapping.md §0 "Report"). There is no separate `find-covers` command. DEP (#51) added two that never touch the database:
   - `healthcheck` (`healthcheck.rs`, the image's `HEALTHCHECK`): reads only `BIND_ADDR` (`0.0.0.0` becomes `127.0.0.1`, `[::]` becomes `[::1]`), never `Config::from_env`, and GETs `/api/health` with reqwest, 3 s for the whole request and no proxy. Exit 0 and `GET <url> answered 200 OK` on stdout only on 200; otherwise exit 1 with `error: GET <url> answered …` (or the connection error) on stderr.
-  - `send-test-mail <address>`: the full configuration as for `serve`; the address must pass `auth::rules::valid_email`. It sends `email::test_mail` (§9) through the configured transport (`LogEmail` in DEV_MODE) and exits 1 with `error: SMTP send failed: …` when the server refuses.
+  - `send-test-mail <address>`: the full configuration as for `serve`; the address must pass `auth::rules::valid_email`. It sends `email::test_mail` (§9) through the configured transport (`LogEmail` in DEV_MODE) and exits 1 with `error: SMTP send failed: …` when the server refuses, or with `error: mail is off (EMAIL_TRANSPORT=none)` when mail is off.
+- **`set-password <username>`** (MOVE #52, the password reset without mail): `auth::reset::set_password(conn, passwords, username)` gives the account 20 random characters of the invite-code alphabet, hashed with `Passwords::new()`, and in one transaction does what the reset confirm does (`replace_password`: `password_hash`, `password_changed_at`, every session and bearer token deleted, the open reset and verification links voided). It prints only the password on stdout; an unknown name exits 1 with `error: No account with that name`; a suspended account stays suspended. The running server's in-memory login failures stay (another process) and empty within 10 minutes.
 - **The legacy importer** (`importer/source.rs`, CUT #52) never opens the legacy file itself: it resolves a symlink, copies the file and its `-wal` and `-journal` into a private directory `$TMPDIR/bookclub-legacy-<16 hex>` (0700, files 0600), opens that copy with `SQLITE_OPEN_READ_ONLY` and removes it afterwards, so a WAL database on a read-only mount imports with its committed `-wal` rows (never `immutable=1`). A hot journal is refused with its reason. The hosted container's `/tmp` is a 64 MB tmpfs; `TMPDIR` moves the copy (`deploy/hosted/README.md`, "The legacy import").
 
 ## 17. Testing
