@@ -111,10 +111,10 @@ pub fn admin_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(covers::admin::search_cover))
 }
 
-/// One account's turn at a request that may call Open Library (search, trending, a subject, the
-/// import or first view of a book), held until the request ends. Every user shares the `ol_api`
-/// throttle (3 requests a second, at most 2 s of waiting on request paths), so one account
-/// must not fill it (security review 2026-10-28 #5):
+/// One account's turn at a request that may call Open Library (search, trending, a subject, an
+/// ISBN lookup, also a local hit, the import or first view of a book), held until the request
+/// ends. Every user shares the `ol_api` throttle (3 requests a second, at most 2 s of waiting
+/// on request paths), so one account must not fill it (security review 2026-10-28 #5):
 ///
 /// - `catalog_user`: 60 such requests per account a minute (429 `Slow down a little. Try again
 ///   later.`);

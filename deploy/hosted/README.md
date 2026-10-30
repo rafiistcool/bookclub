@@ -270,7 +270,7 @@ TLS ends at the Caddy that already serves git.tillhome.de, which forwards to `BO
 3. Install the logrotate rule from the comment above the block's `log` as `/etc/logrotate.d/bookclub-access` (root-owned, mode 0644; logrotate ignores a group- or world-writable file), on the host that holds `/var/log/caddy`. If Caddy runs in a container, bind-mount that directory from the host. Check it with `logrotate -d /etc/logrotate.d/bookclub-access`. If logrotate refuses the directory's permissions, add `su <caddy user> <caddy group>` to the rule.
 4. Check and load: `caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`, then `caddy reload`.
 5. From home, run `verify-limits.sh` (next section), then make one sign-up attempt from a second network, such as a phone on mobile data. That attempt must not get 429.
-6. Open `https://<host>/login?next=/join/TEST` and `https://<host>/join/TEST` in a browser, then check that `grep -c TEST /var/log/caddy/bookclub-access.log` prints 0.
+6. Open `https://<host>/login?next=/join/TEST`, `https://<host>/join/TEST` and `https://<host>/api/books/isbn/9780306406157` in a browser (signed out, the last answers 401, which is enough), then check that `grep -cE 'TEST|9780306406157' /var/log/caddy/bookclub-access.log` prints 0.
 
 What the block does:
 

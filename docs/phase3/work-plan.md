@@ -146,6 +146,13 @@ SCAN, FRIENDS and MOVE's code (M1, §2.3) need no answer from Rafael. The sugges
   - The Chromium fake-camera run (§3.9) scans a known ISBN to the hit card and a made-up valid ISBN to the miss flow, with no CSP violation.
   - The phones are tested after the move (§5.8); #56 closes then.
 
+**Status (2026-10-30):** merged into `phase-3` (7f6497c), with no conflicts and no regenerated files. Its notes are applied to `conventions.md` (§3 layer 2 and "Fallbacks", §10.1 `catalog_user`, §19 "Never log"), `endpoint-map.md` (the SPA catch-all, §4's intro, `GET /api/books/isbn/{isbn}`), `CLAUDE.md` (the wasm exception in "No third party, no inline script", the camera on the `agents` VM), step 6 of `deploy/hosted/README.md`'s proxy section (the ISBN in the log check) and the doc comment of `catalog::upstream_turn`. Deviations are in `notes/scan.md` (no `addEdition` namespace, so `editions.isbnFilled`; `openCamera()` plus `showCamera()`; the add forms' events carry the saved ISBN). Open:
+- The phone test after the move (§3.8, §5.8); #56 stays open until then.
+- `RateLimits::catalog_user`'s doc comment (`server/src/ratelimit.rs`, FRIENDS' file) should name the ISBN lookup too: with FRIENDS's merge.
+- `README.md`'s table of pages gets `/scan` with CUT-R's rewrite (§2.4), like COVER's features: it still describes the Python app.
+- Two choices for Rafael, then for #53's text (`notes/scan.md`, Part 1, "For the integrator"): the request id in the proxy log (`resp_headers>X-Request-Id delete` in the Caddy filter, or catalog URLs logged without query and ISBN), and the wider filter that also hides book and cover ids. Neither is built.
+- The browser pass over the merged `phase-3` on 8096 after Wave 1 (§2.1 rule 8) covers `/scan` with the fake camera.
+
 #### FRIENDS: friends (#57)
 
 - **Size:** L. **Dependencies:** none to start; COVER in `phase-3` before its final checks (§2.1 rule 1).
