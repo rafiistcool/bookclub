@@ -3,10 +3,12 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use bookclub_server::auth::password::Passwords;
+use bookclub_server::auth::reset;
 use bookclub_server::auth::rules::valid_email;
 use bookclub_server::clubs::out::invite_out;
 use bookclub_server::config::{Config, EmailTransport};
-use bookclub_server::email::{self, EmailSender, LogEmail, SmtpEmail};
+use bookclub_server::email::{self, EmailSender, LogEmail, NoEmail, SmtpEmail};
 use bookclub_server::importer::{self, ImportError};
 use bookclub_server::media::shared::FsMediaStore;
 use bookclub_server::{AppState, admin, app, jobs, serve};
@@ -56,6 +58,13 @@ enum Command {
         /// The user's name.
         username: String,
     },
+    /// Give an account a new random password, the password reset without mail: prints only the
+    /// password, ends every session of the account and voids its open reset and verification
+    /// links. A suspended account stays suspended.
+    SetPassword {
+        /// The user's name.
+        username: String,
+    },
     /// Mint a closed-beta sign-up invite and print its link.
     BetaInvite {
         /// How many sign-ups the invite allows (1 to 100).
@@ -71,7 +80,7 @@ enum Command {
     /// HEALTHCHECK). Exits 0 only on 200. Reads no other setting and needs no database.
     Healthcheck,
     /// Send one test mail through the configured transport (SMTP_URL, EMAIL_FROM). Exits
-    /// non-zero when sending fails. Needs no database.
+    /// non-zero when sending fails, and with EMAIL_TRANSPORT=none. Needs no database.
     SendTestMail {
         /// The recipient address.
         address: String,
@@ -99,6 +108,7 @@ async fn main() -> ExitCode {
         Command::MakeAdmin { username } => make_admin(&username).await,
         Command::RevokeAdmin { username } => revoke_admin(&username).await,
         Command::Unsuspend { username } => unsuspend(&username).await,
+        Command::SetPassword { username } => set_password(&username).await,
         Command::BetaInvite { uses, days } => beta_invite(uses, days).await,
         Command::Openapi => print_openapi(),
         Command::Healthcheck => healthcheck::run().await,
@@ -305,6 +315,27 @@ async fn unsuspend(username: &str) -> Result<()> {
     }
 }
 
+/// The password reset without mail (`auth::reset::set_password`). stdout holds only the
+/// password; the log on stderr names no account. During the move its output goes to a root-only
+/// file (docs/phase3/private-move.md).
+async fn set_password(username: &str) -> Result<()> {
+    let config = Config::from_env()?;
+    let db = connect(&config).await?;
+    let mut conn = db.acquire().await?;
+    // The hasher sign-up uses in production (`AppState::new`).
+    match reset::set_password(&mut conn, &Passwords::new(), username).await? {
+        Some(password) => {
+            tracing::info!(
+                "password set from the command line; every session of the account ended"
+            );
+            println!("{password}");
+            Ok(())
+        }
+        // The words the admin page answers for an unknown name.
+        None => bail!("No account with that name"),
+    }
+}
+
 /// Mints a closed-beta sign-up invite (no club) and prints its code and join link. Without
 /// flags it is single-use and expires in 30 days.
 async fn beta_invite(uses: Option<i32>, days: Option<i32>) -> Result<()> {
@@ -331,6 +362,8 @@ async fn send_test_mail(address: &str) -> Result<()> {
     let sender: Box<dyn EmailSender> = match config.email_transport {
         EmailTransport::Log => Box::new(LogEmail),
         EmailTransport::Smtp => Box::new(SmtpEmail::new(&config)?),
+        // Fails with `email::MAIL_OFF`, which `main` prints as `error: mail is off (…)`.
+        EmailTransport::None => Box::new(NoEmail),
     };
     sender.send(email::test_mail(&config, address)).await?;
     println!("sent a test mail to {address}");
@@ -435,6 +468,12 @@ mod tests {
             cli.command,
             Some(Command::RevokeAdmin { username }) if username == "eve"
         ));
+        let cli = Cli::try_parse_from(["bookclub-server", "set-password", "ada"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::SetPassword { username }) if username == "ada"
+        ));
         assert!(Cli::try_parse_from(["bookclub-server", "unsuspend"]).is_err());
+        assert!(Cli::try_parse_from(["bookclub-server", "set-password"]).is_err());
     }
 }

@@ -1,15 +1,18 @@
 //! Password reset by email (endpoint-map §2, docs/phase1/conventions.md §5.5): request a link,
-//! then confirm it with a new password.
+//! then confirm it with a new password. Without mail, `bookclub-server set-password` does the
+//! confirm step's work from the host ([`set_password`]).
 
 use axum::extract::State;
 use axum::http::StatusCode;
 use serde::Deserialize;
+use sqlx::{Connection, PgConnection};
 use utoipa::ToSchema;
 
 use super::account::{account_key, email_login_key};
 use super::login::too_many;
 use super::mail::{self, LINK_EXPIRED, MailKind, TokenPurpose};
-use super::rules;
+use super::password::Passwords;
+use super::{random, rules};
 use crate::AppState;
 use crate::client_ip::ClientIp;
 use crate::email::Email;
@@ -202,20 +205,7 @@ pub async fn confirm_reset(
     if !account.verified || account.email.as_deref() != Some(&token_email) {
         return Err(link_expired());
     }
-    sqlx::query!(
-        "UPDATE users SET password_hash = $2, password_changed_at = now() WHERE id = $1",
-        user_id,
-        new_hash
-    )
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query!("DELETE FROM sessions WHERE user_id = $1", user_id)
-        .execute(&mut *tx)
-        .await?;
-    mail::void_open_tokens(&mut tx, user_id, TokenPurpose::ResetPassword).await?;
-    // A pending address change may be the work of whoever knew the old password: the owner
-    // starts it again if it was theirs.
-    mail::void_open_tokens(&mut tx, user_id, TokenPurpose::VerifyEmail).await?;
+    replace_password(&mut tx, user_id, &new_hash).await?;
     tx.commit().await?;
     // The link proves the mailbox; failed guesses by someone else no longer lock the owner out.
     state.limits.login_failures.clear(&account_key(user_id));
@@ -223,6 +213,99 @@ pub async fn confirm_reset(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Stores `new_hash` as the account's password and ends what the old one opened: every session
+/// and bearer token is deleted, and every open reset link and a pending address change are
+/// voided. Runs inside the caller's transaction, which holds the user row (`FOR UPDATE`): the
+/// reset confirm and [`set_password`].
+async fn replace_password(
+    conn: &mut PgConnection,
+    user_id: i64,
+    new_hash: &str,
+) -> sqlx::Result<()> {
+    sqlx::query!(
+        "UPDATE users SET password_hash = $2, password_changed_at = now() WHERE id = $1",
+        user_id,
+        new_hash
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query!("DELETE FROM sessions WHERE user_id = $1", user_id)
+        .execute(&mut *conn)
+        .await?;
+    mail::void_open_tokens(conn, user_id, TokenPurpose::ResetPassword).await?;
+    // A pending address change may be the work of whoever knew the old password: the owner
+    // starts it again if it was theirs.
+    mail::void_open_tokens(conn, user_id, TokenPurpose::VerifyEmail).await?;
+    Ok(())
+}
+
+/// The characters of a generated password: the invite codes' alphabet (Crockford base32, no
+/// I, L, O or U), so it reads out and types without doubt.
+const PASSWORD_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+/// The length of a generated password: 20 characters of 5 bits each, 100 random bits.
+const PASSWORD_LENGTH: usize = 20;
+
+/// The password reset without mail (`bookclub-server set-password <username>`, the private move
+/// #52): a new random password ([`PASSWORD_LENGTH`] characters of [`PASSWORD_ALPHABET`]),
+/// hashed by `passwords` (the CLI passes `Passwords::new()`, as the server's sign-up uses), and
+/// in one transaction what the reset confirm does ([`replace_password`]). Returns the password,
+/// or `None` when no account has that name (normalised like every username lookup). A suspended
+/// account gets the password and stays suspended.
+///
+/// The running server's in-memory login-failure buckets stay as they are (another process); they
+/// empty within 10 minutes.
+pub async fn set_password(
+    conn: &mut PgConnection,
+    passwords: &Passwords,
+    username: &str,
+) -> anyhow::Result<Option<String>> {
+    let username = rules::normalize_username(username);
+    let password = generate_password();
+    // Hashed before the transaction, as in the confirm, so the row lock waits for no argon2.
+    let new_hash = passwords.hash(&password).await?;
+    let mut tx = conn.begin().await?;
+    let Some(user_id) = sqlx::query_scalar!(
+        "SELECT id FROM users WHERE username = $1 FOR UPDATE",
+        username
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Ok(None);
+    };
+    replace_password(&mut tx, user_id, &new_hash).await?;
+    tx.commit().await?;
+    Ok(Some(password))
+}
+
+fn generate_password() -> String {
+    let mut bytes = [0u8; PASSWORD_LENGTH];
+    random::fill(&mut bytes);
+    // 256 is a multiple of 32: every character is equally likely.
+    bytes
+        .iter()
+        .map(|byte| PASSWORD_ALPHABET[usize::from(*byte) % PASSWORD_ALPHABET.len()] as char)
+        .collect()
+}
+
 fn link_expired() -> AppError {
     AppError::bad_request(LINK_EXPIRED)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_passwords_are_twenty_crockford_characters() {
+        let a = generate_password();
+        let b = generate_password();
+        assert_eq!(a.len(), 20);
+        assert!(
+            a.bytes().all(|byte| PASSWORD_ALPHABET.contains(&byte)),
+            "{a}"
+        );
+        assert!(rules::long_enough(&a));
+        assert_ne!(a, b);
+    }
 }

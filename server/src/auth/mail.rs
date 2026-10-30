@@ -13,8 +13,8 @@ use sqlx::PgConnection;
 use super::random;
 use crate::AppState;
 use crate::config::Config;
-use crate::email::Email;
 use crate::email::templates::Site;
+use crate::email::{self, Email};
 use crate::text::casefold;
 
 /// The longest a request waits for the mail transport (lettre's own SMTP timeout is a minute).
@@ -183,7 +183,8 @@ pub fn target_key(address: &str) -> String {
 /// Sends a mail after the transaction committed. Every mail counts against a per-address limit
 /// of its kind (6 a day each, case-folded, across all accounts): links in `email_target`, each
 /// notice in `notice_target` under its own prefix. Over it the mail is silently dropped. A send
-/// failure, or a send slower than [`SEND_TIMEOUT`], is logged and never fails the request.
+/// failure, or a send slower than [`SEND_TIMEOUT`], is logged and never fails the request. With
+/// mail off (`EMAIL_TRANSPORT=none`) every mail is one line at INFO with its kind only.
 /// Returns whether the mail went out.
 pub async fn deliver(state: &AppState, email: Email, kind: MailKind) -> bool {
     let address = target_key(&email.to);
@@ -207,6 +208,10 @@ pub async fn deliver(state: &AppState, email: Email, kind: MailKind) -> bool {
     }
     match tokio::time::timeout(SEND_TIMEOUT, state.email.send(email)).await {
         Ok(Ok(())) => true,
+        Ok(Err(error)) if email::is_mail_off(&error) => {
+            tracing::info!(?kind, "mail not sent: mail is off");
+            false
+        }
         Ok(Err(error)) => {
             tracing::warn!(error = %format!("{error:#}"), "sending mail failed");
             false

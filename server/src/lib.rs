@@ -94,6 +94,7 @@ impl AppState {
         let email: Arc<dyn email::EmailSender> = match config.email_transport {
             EmailTransport::Log => Arc::new(email::LogEmail),
             EmailTransport::Smtp => Arc::new(email::SmtpEmail::new(&config)?),
+            EmailTransport::None => Arc::new(email::NoEmail),
         };
         let catalog = Arc::new(catalog::CatalogService::new(&config, outbound.clone()));
         let media_service = Arc::new(media::MediaService::new(
