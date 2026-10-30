@@ -134,6 +134,12 @@ describe("unknown paths", () => {
     }
   });
 
+  it("opens the barcode scanner in the app shell", async () => {
+    expect(await landing("/scan", [READERS])).toBe("/scan");
+    expect(router.currentRoute.value.name).not.toBe("not-found");
+    expect(router.currentRoute.value.matched[0]?.path).toBe("/");
+  });
+
   it("asks a signed-out visitor to sign in first", async () => {
     const route = await guestLanding("/nonexistent/path");
     expect(route.path).toBe("/login");

@@ -1,5 +1,6 @@
 // Complete API objects for tests, so each test only spells out what it is about.
 import type { EditionOut } from "../api/generated";
+import type { IsbnHitOut } from "../api/generated";
 import type {
   ActivityItem,
   BookDetail,
@@ -321,5 +322,25 @@ export function activityItem(
     created_label: "Jan 1",
     ...rest,
     payload: (payload ?? {}) as ActivityItem["payload"],
+  };
+}
+
+/** `GET /api/books/isbn/{isbn}`: a catalog edition, not on the viewer's shelf, without a cover. */
+export function isbnHit(overrides: Partial<IsbnHitOut> = {}): IsbnHitOut {
+  return {
+    isbn: "9780316769488",
+    work_id: 9,
+    edition_id: 40,
+    ol_work_key: "/works/OL9W",
+    title: "The Catcher in the Rye",
+    authors: "J. D. Salinger",
+    year: 1951,
+    pages: 277,
+    cover_url: null,
+    cover_thumb_url: null,
+    cover_public_id: null,
+    on_shelf: false,
+    shelf_id: null,
+    ...overrides,
   };
 }

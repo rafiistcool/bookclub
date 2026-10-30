@@ -96,6 +96,7 @@ const API_ERROR_KEYS: Record<string, string> = {
   "This book has a cover now": "errors.coverExists",
   "That is not a valid ISBN-10 or ISBN-13": "errors.invalidIsbn",
   "Could not look that ISBN up right now. Try again.": "errors.isbnLookupFailed",
+  "No book found for that ISBN": "errors.isbnNotFound",
   "This book was added by a reader, not Open Library.": "errors.addedByReader",
   "A title is required": "errors.titleRequired",
   "Need at least 3 characters. Add the author, or paste an ISBN.": "errors.searchTooShort",
