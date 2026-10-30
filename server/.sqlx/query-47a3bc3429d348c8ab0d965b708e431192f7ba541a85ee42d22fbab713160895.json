@@ -1,0 +1,66 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT f.requester_id = $1 AS \"outgoing!\", u.id, u.username, f.created_at,\n                  CASE WHEN bc_can_see_user($1, u.id) THEN m.public_id END AS \"avatar_public_id?\"\n           FROM friendships f\n           JOIN users u ON u.id = CASE WHEN f.requester_id = $1 THEN f.addressee_id\n                                       ELSE f.requester_id END\n           LEFT JOIN media m ON m.id = u.avatar_media_id AND m.removed_at IS NULL\n           WHERE (f.requester_id = $1 OR f.addressee_id = $1) AND f.accepted_at IS NULL\n             AND NOT (f.addressee_id = $1 AND EXISTS (\n                 SELECT 1 FROM user_blocks b\n                 WHERE b.user_id = $1 AND b.blocked_user_id = f.requester_id))\n           ORDER BY f.created_at DESC, u.username",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "outgoing!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "username",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "username"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "friendships",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "avatar_public_id?",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "47a3bc3429d348c8ab0d965b708e431192f7ba541a85ee42d22fbab713160895"
+}

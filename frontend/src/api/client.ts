@@ -29,6 +29,7 @@ import type {
   EditionList,
   EditionOut,
   FavoritesOut,
+  FriendsOut,
   ImportJobOut,
   InviteIn,
   InviteList,
@@ -542,4 +543,27 @@ export const api = {
   },
   clubStats: (slug: string, year?: number) =>
     request<ClubStatsOut>(`${clubPath(slug)}/stats${year ? `?year=${year}` : ""}`),
+
+  // Friends (#57). Every write answers with the caller's whole `FriendsOut`.
+  /** The caller's friends, requests both ways, blocks and personal club invitations. */
+  friends: () => request<FriendsOut>("/api/friends"),
+  /** Asks `username` (exact; case and spaces do not matter). Their request to the caller makes it a friendship. */
+  sendFriendRequest: (username: string) =>
+    request<FriendsOut>("/api/friends/requests", json("POST", { username })),
+  acceptFriendRequest: (username: string) =>
+    request<FriendsOut>(`/api/friends/requests/${enc(username)}/accept`, { method: "POST" }),
+  /** Declines a request from `username`, or withdraws the caller's own request to them. */
+  deleteFriendRequest: (username: string) =>
+    request<FriendsOut>(`/api/friends/requests/${enc(username)}`, { method: "DELETE" }),
+  removeFriend: (username: string) =>
+    request<FriendsOut>(`/api/friends/list/${enc(username)}`, { method: "DELETE" }),
+  /** Silent: ends a friendship or request between the two, and hides their later requests. */
+  blockAccount: (username: string) =>
+    request<FriendsOut>(`/api/friends/blocks/${enc(username)}`, { method: "PUT" }),
+  /** Always 200, for a name the caller never blocked too. */
+  unblockAccount: (username: string) =>
+    request<FriendsOut>(`/api/friends/blocks/${enc(username)}`, { method: "DELETE" }),
+  /** Declines a friend's invitation into a club (`FriendClubInviteOut.id`). */
+  declineClubInvite: (id: number) =>
+    request<FriendsOut>(`/api/friends/club-invites/${id}`, { method: "DELETE" }),
 };

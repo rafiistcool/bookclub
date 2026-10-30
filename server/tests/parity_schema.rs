@@ -41,17 +41,19 @@ const INHERITED: [(&str, &str, &str); 2] = [
     ("club_invite_uses", "invite_id", "club_invites"),
 ];
 /// Personal data: owned by a user through a NOT NULL `user_id` → `users`, no `club_id`.
-const PERSONAL: [&str; 6] = [
+const PERSONAL: [&str; 7] = [
     "shelf_entries",
     "physical_shelf_layouts",
     "user_favorites",
     "search_history",
     "quotes",
     "import_jobs",
+    "user_blocks",
 ];
 /// Accounts, the clubs themselves, the shared catalog, media and jobs: neither club nor
-/// personal data, no `club_id`.
-const GLOBAL: [&str; 17] = [
+/// personal data, no `club_id`. `friendships` is a relation between two accounts, with no
+/// single `user_id`.
+const GLOBAL: [&str; 18] = [
     "users",
     "sessions",
     "email_tokens",
@@ -69,6 +71,7 @@ const GLOBAL: [&str; 17] = [
     "harvest_state",
     "cover_search",
     "cover_suggestions",
+    "friendships",
 ];
 
 struct ForeignKey {

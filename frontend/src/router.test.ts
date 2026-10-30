@@ -53,7 +53,14 @@ describe("club routes without a slug", () => {
     expect(await landing("/pick", [READERS])).toBe("/c/readers-ab12");
     // Without a club, the old pick page is Home.
     expect(await landing("/pick", [])).toBe("/");
-    expect(await landing("/friends", [READERS])).toBe("/c/readers-ab12");
+  });
+
+  it("opens the Friends page at the old friends path, which no longer leads into a club", async () => {
+    expect(await landing("/friends", [READERS])).toBe("/friends");
+    expect(await landing("/friends", [])).toBe("/friends");
+    const matched = router.currentRoute.value.matched;
+    expect(router.currentRoute.value.name).not.toBe("not-found");
+    expect(matched.map((record) => record.path)).toEqual(["/", "/friends"]);
   });
 
   it("ignores a last-used club the reader is no longer in", async () => {

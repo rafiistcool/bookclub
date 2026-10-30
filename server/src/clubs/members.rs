@@ -143,10 +143,10 @@ pub async fn change_role(
 /// the removal no longer work for that person; a newer invite does.
 ///
 /// The removal also revokes every active invite of the club the person knows, so a second
-/// account cannot walk back in with one: the invites they created or redeemed, and, when they
-/// are an admin (admins list every invite), all of them; when they were one before a demotion,
-/// every invite created up to the demotion. A link someone else forwarded to them is beyond
-/// what the server knows; the admins revoke it.
+/// account cannot walk back in with one: the invites they created or redeemed, the friend
+/// invites made for them, and, when they are an admin (admins list every invite), all of them;
+/// when they were one before a demotion, every invite created up to the demotion. A link someone
+/// else forwarded to them is beyond what the server knows; the admins revoke it.
 #[utoipa::path(
     delete,
     path = "/api/clubs/{slug}/members/{username}",
@@ -218,8 +218,9 @@ pub async fn remove_member(
 enum Known {
     /// An admin lists every invite.
     All,
-    /// A member: those they created or redeemed, plus, after a demotion, every invite created
-    /// while they could still list them (up to `admin_until`).
+    /// A member: those they created or redeemed and the friend invites made for them, plus,
+    /// after a demotion, every invite created while they could still list them (up to
+    /// `admin_until`).
     Own { admin_until: Option<OffsetDateTime> },
 }
 
@@ -241,7 +242,7 @@ async fn revoke_known_invites(
          WHERE club_id = $1 AND revoked_at IS NULL
            AND (expires_at IS NULL OR expires_at > now())
            AND (max_uses IS NULL OR use_count < max_uses)
-           AND ($3 OR created_by = $2 OR created_at <= $4
+           AND ($3 OR created_by = $2 OR invitee_id = $2 OR created_at <= $4
                 OR id IN (SELECT invite_id FROM club_invite_uses WHERE user_id = $2))",
         club_id,
         user_id,

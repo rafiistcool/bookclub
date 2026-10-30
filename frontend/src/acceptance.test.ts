@@ -7,6 +7,7 @@ import App from "./App.vue";
 import router from "./router";
 import { LAST_CLUB_KEY } from "./stores/clubs";
 import { activityItem, bookOut, clubOut, member, post, shelfItem, user, vote } from "./test/fixtures";
+import { friendClubInvite, friendOut, friendRequest, friendsOut } from "./test/friends";
 import { memoryStorage } from "./test/storage";
 import type { ClubSummary, User } from "./types";
 
@@ -77,6 +78,8 @@ describe("#48 acceptance", () => {
     const own = post({ id: 5, author: "ada", mine: true, body: "Witches and pigs.", created_at: "2026-10-01T09:00:00Z" });
     const server = fakeServer({
       "GET /api/auth/me": () => me,
+      // The shell asks for the Friends badge on every page.
+      "GET /api/friends": () => friendsOut(),
       "GET /api/shelf": () => ADA_SHELF,
       "GET /api/diary": () => ({
         items: [{ entry: own, book: bookOut({ id: 1, title: "Circe" }), parent_author: null, my_progress: 30, my_status: "currently_reading", club: null }],
@@ -131,6 +134,7 @@ describe("#48 acceptance", () => {
     });
     const server = fakeServer({
       "GET /api/auth/me": () => me,
+      "GET /api/friends": () => friendsOut(),
       "GET /api/clubs": () => ({ items: [clubOut({ ...readers }), clubOut({ ...owls })] }),
       "GET /api/shelf": () => ADA_SHELF,
       "GET /api/diary": () => ({ items: [], has_more: false, timezone: "UTC" }),
@@ -181,5 +185,68 @@ describe("#48 acceptance", () => {
     await flushPromises();
     expect(router.currentRoute.value.path).toBe(`/c/${readers.slug}/vote`);
     expect(app.get(".club-name").text()).toBe("Readers");
+    expect(server.unknown.filter((key) => key.includes("/api/friends"))).toEqual([]);
+  });
+
+  it("lets a reader accept a friend request and join a club a friend invited them to (#57)", async () => {
+    const me = user({ clubs: [] });
+    const readers = clubOut({ slug: "readers-ab12", name: "Readers", role: "member", member_count: 4 });
+    let lists = friendsOut({
+      incoming: [friendRequest("mia")],
+      club_invites: [friendClubInvite({ id: 4, invited_by: "grace", code: "7K3M9QX2HD", club: { slug: readers.slug, name: readers.name } })],
+    });
+    const server = fakeServer({
+      "GET /api/auth/me": () => me,
+      "GET /api/friends": () => lists,
+      "GET /api/shelf": () => ADA_SHELF,
+      "GET /api/diary": () => ({ items: [], has_more: false, timezone: "UTC" }),
+      "POST /api/friends/requests/mia/accept": () => {
+        lists = { ...lists, incoming: [], friends: [friendOut("mia")] };
+        return lists;
+      },
+      "GET /api/invites/7K3M9QX2HD": () => ({ club: { slug: readers.slug, name: readers.name }, kind: "club", personal: true }),
+      "POST /api/invites/7K3M9QX2HD/accept": () => {
+        // Joined: the invitation no longer waits.
+        lists = { ...lists, club_invites: [] };
+        return readers;
+      },
+      [`GET /api/clubs/${readers.slug}`]: () => readers,
+      [`GET /api/clubs/${readers.slug}/pick`]: () => ({ pick: null, timezone: readers.timezone }),
+      [`GET /api/clubs/${readers.slug}/pick/history`]: () => ({ items: [], timezone: readers.timezone }),
+      [`GET /api/clubs/${readers.slug}/vote`]: () => vote(),
+      "GET /api/clubs": () => ({ items: [readers] }),
+      "GET /api/activity": () => ({ items: [], has_more: false, timezone: "UTC" }),
+    });
+
+    // Home: the phone's way to /friends, with a request and an invitation waiting.
+    const app = await openApp(me, "/");
+    const row = app.get("a.friends-row");
+    expect(row.attributes("href")).toBe("/friends");
+    expect(row.get(".friends-count [aria-hidden=true]").text()).toBe("2");
+
+    await go("/friends");
+    expect(app.get("h1").text()).toBe("Friends");
+    const accept = app.findAll(".incoming-row button").find((button) => button.text() === "Accept")!;
+    await accept.trigger("click");
+    await flushPromises();
+    expect(server.requests).toContain("POST /api/friends/requests/mia/accept");
+    expect(app.findAll(".friend-card .person-meta strong").map((name) => name.text())).toEqual(["mia"]);
+
+    const join = app.get(".club-invite-row a");
+    expect(app.get(".club-invite-row").text()).toContain("grace invited you to Readers");
+    expect(join.attributes("href")).toBe("/join/7K3M9QX2HD");
+    await go("/join/7K3M9QX2HD");
+    await app.get(".join-page .btn-primary").trigger("click");
+    await flushPromises();
+    expect(server.requests).toContain("POST /api/invites/7K3M9QX2HD/accept");
+    // The club's pages load lazily.
+    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe(`/c/${readers.slug}`));
+    await flushPromises();
+
+    // Back in the shell, which asked again: nothing waits any more.
+    await go("/");
+    expect(server.requests.filter((line) => line === "GET /api/friends").length).toBeGreaterThan(1);
+    expect(app.find(".friends-row .friends-count").exists()).toBe(false);
+    expect(server.unknown).toEqual([]);
   });
 });

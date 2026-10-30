@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE club_invites SET use_count = use_count + 1\n         WHERE code = $1 AND revoked_at IS NULL\n           AND (expires_at IS NULL OR expires_at > now())\n           AND (max_uses IS NULL OR use_count < max_uses)\n         RETURNING id, club_id, created_by, created_at",
+  "query": "UPDATE club_invites SET use_count = use_count + 1\n         WHERE code = $1 AND revoked_at IS NULL\n           AND (expires_at IS NULL OR expires_at > now())\n           AND (max_uses IS NULL OR use_count < max_uses)\n           AND (invitee_id IS NULL OR invitee_id = $2)\n         RETURNING id, club_id, created_by, created_at",
   "describe": {
     "columns": [
       {
@@ -50,7 +50,8 @@
     ],
     "parameters": {
       "Left": [
-        "Text"
+        "Text",
+        "Int8"
       ]
     },
     "nullable": [
@@ -60,5 +61,5 @@
       false
     ]
   },
-  "hash": "c8718f7aa63df3af4dfd8263d1c0d67eca13f6303bdd81b25a8974f7c83222ed"
+  "hash": "8eed84f4c62a5934478cc621a763c337ab1b726560dcdadc8f0f675517121c86"
 }

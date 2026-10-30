@@ -569,7 +569,7 @@ When the repository itself is gone or damaged, for example because someone delet
 
 5. Go on with steps 2 to 4 of "Restoring for real": step 3 left the restore where they expect it, and step 4's `backup.sh` takes the first backup into the new repository. Do not start the app yet.
 
-6. End what the attacker can reuse from the database: every session and app token (a session is the SHA-256 of its token, with no secret of the server's, so a planted one works on the new VM too), every open club and sign-up invite, and every email link not used yet. `revoke-access.sql`, from the checkout the new VM was set up from, does it in one transaction and prints how many rows each statement changed. Everyone signs in again with their password; club admins create new invites:
+6. End what the attacker can reuse from the database: every session and app token (a session is the SHA-256 of its token, with no secret of the server's, so a planted one works on the new VM too), every open club and sign-up invite, every email link not used yet, and every pending friend request (one click by the account it is for makes it a friendship). `revoke-access.sql`, from the checkout the new VM was set up from, does it in one transaction and prints how many rows each statement changed. Everyone signs in again with their password; club admins create new invites:
 
    ```sh
    cd /opt/bookclub
@@ -577,7 +577,7 @@ When the repository itself is gone or damaged, for example because someone delet
        < <checkout>/deploy/hosted/revoke-access.sql
    ```
 
-7. Check what they could have changed: the instance admins, the accounts created and the addresses verified or passwords changed since the intrusion may have begun, the club memberships since then, and the moderation decisions. `<date>` is that day; when in doubt, the day of the oldest snapshot of the old box:
+7. Check what they could have changed: the instance admins, the accounts created and the addresses verified or passwords changed since the intrusion may have begun, the club memberships and friendships since then (a planted friendship shows as much as a planted membership), and the moderation decisions. `<date>` is that day; when in doubt, the day of the oldest snapshot of the old box:
 
    ```sh
    docker compose exec -T postgres psql -X -U bookclub -d bookclub -v since="'<date>'" <<'SQL'
@@ -587,6 +587,10 @@ When the repository itself is gone or damaged, for example because someone delet
    SELECT c.name AS club, u.username, m.role, m.joined_at FROM club_memberships m
      JOIN clubs c ON c.id = m.club_id JOIN users u ON u.id = m.user_id
     WHERE m.joined_at >= :since ORDER BY m.joined_at;
+   SELECT r.username AS requester, a.username AS addressee, f.created_at, f.accepted_at
+     FROM friendships f
+     JOIN users r ON r.id = f.requester_id JOIN users a ON a.id = f.addressee_id
+    WHERE greatest(f.created_at, f.accepted_at) >= :since ORDER BY f.accepted_at;
    SELECT username, suspended_at, unsuspended_at FROM users
     WHERE suspended_at IS NOT NULL OR unsuspended_at IS NOT NULL ORDER BY username;
    SELECT public_id, kind, removed_at FROM media WHERE removed_at IS NOT NULL ORDER BY removed_at;
@@ -595,7 +599,7 @@ When the repository itself is gone or damaged, for example because someone delet
 
    A direct write leaves no trace in these columns: `UPDATE users SET suspended_at = NULL` lifts a suspension without setting `unsuspended_at` (only the admin page and `bookclub-server unsuspend` do), and a cleared `removed_at` brings a picture back. So compare the suspensions and takedowns with the record in the contact mailbox (`docs/legal/takedown.md` §6), which is off the VM and out of the attacker's reach, not with the database's own timestamps. The same holds for the timestamps of the other queries: a direct write can change an address or a password hash without them, so ask the owners of the accounts that matter (the admins, the owners of clubs) to check their address once the app runs.
 
-   Anything nobody can explain goes before the app starts: an admin flag with `UPDATE users SET is_admin = false WHERE username = '<name>'`; an address its owner did not set with `UPDATE users SET email = NULL, email_verified_at = NULL WHERE username = '<name>'`, so that no reset link goes there (tell the owner, who sets it again); every account the record lists as suspended that is not, with `UPDATE users SET suspended_at = now(), is_admin = false WHERE username = '<name>'` (step 6 already ended its sessions and the invites); a picture the record lists as taken down whose `removed_at` is empty again, with `UPDATE media SET removed_at = now(), storage_key = NULL WHERE public_id = '<id>'` and `INSERT INTO media_removed_hashes (sha256, media_id) SELECT sha256, id FROM media WHERE public_id = '<id>' AND sha256 IS NOT NULL ON CONFLICT DO NOTHING` (the hash of the file as received, so the same file cannot be uploaded again; delete its files under `/srv/bookclub/media` by hand); an account or a membership through the club's owner or, once the app runs, the admin page.
+   Anything nobody can explain goes before the app starts: an admin flag with `UPDATE users SET is_admin = false WHERE username = '<name>'`; an address its owner did not set with `UPDATE users SET email = NULL, email_verified_at = NULL WHERE username = '<name>'`, so that no reset link goes there (tell the owner, who sets it again); every account the record lists as suspended that is not, with `UPDATE users SET suspended_at = now(), is_admin = false WHERE username = '<name>'` (step 6 already ended its sessions and the invites); a friendship with `DELETE FROM friendships f USING users a, users b WHERE a.username = '<name>' AND b.username = '<other name>' AND f.requester_id IN (a.id, b.id) AND f.addressee_id IN (a.id, b.id)` (step 6 already revoked the invites either made for the other); a picture the record lists as taken down whose `removed_at` is empty again, with `UPDATE media SET removed_at = now(), storage_key = NULL WHERE public_id = '<id>'` and `INSERT INTO media_removed_hashes (sha256, media_id) SELECT sha256, id FROM media WHERE public_id = '<id>' AND sha256 IS NOT NULL ON CONFLICT DO NOTHING` (the hash of the file as received, so the same file cannot be uploaded again; delete its files under `/srv/bookclub/media` by hand); an account or a membership through the club's owner or, once the app runs, the admin page.
 
 8. Back up again, so that the newest snapshot holds the database as it is now, then start the app as in step 5 of "Restoring for real", and the timers, which this VM does not have yet. Their first runs ping the new checks:
 

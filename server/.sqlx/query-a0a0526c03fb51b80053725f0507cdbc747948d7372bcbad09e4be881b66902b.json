@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE club_invites\n         SET revoked_at = CASE WHEN revoked_at IS NULL\n                                    AND (expires_at IS NULL OR expires_at > now())\n                                    AND (max_uses IS NULL OR use_count < max_uses)\n                               THEN clock_timestamp() ELSE revoked_at END\n         WHERE id = $1 AND invitee_id = $2\n         RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "club_invites",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a0a0526c03fb51b80053725f0507cdbc747948d7372bcbad09e4be881b66902b"
+}

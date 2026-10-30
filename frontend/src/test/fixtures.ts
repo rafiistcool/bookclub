@@ -250,6 +250,8 @@ export function invite(overrides: Partial<Invite> = {}): Invite {
     used_by: [],
     revoked: false,
     active: true,
+    personal: false,
+    invitee: null,
     ...overrides,
   };
 }

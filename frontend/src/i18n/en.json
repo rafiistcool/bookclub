@@ -4,6 +4,7 @@
     "discover": "Discover",
     "shelf": "Shelf",
     "club": "Club",
+    "friends": "Friends",
     "settings": "Settings",
     "settingsAndTheme": "Settings and theme",
     "settingsFor": "Settings for {name}",
@@ -684,7 +685,13 @@
     "clubNameRequired": "Give the club a name",
     "clubNameTooLong": "Keep the club name to 80 characters",
     "noSuchInvite": "That invite no longer exists",
-    "noMember": "Nobody with that name shares a club with you",
+    "noMember": "Nobody by that name in your clubs or among your friends",
+    "selfAccount": "That is your own account",
+    "youBlocked": "You blocked this account. Unblock it first.",
+    "noFriendRequest": "That request no longer exists",
+    "noFriend": "None of your friends has that name",
+    "friendInClub": "That friend is already in this club",
+    "onlyFriendInviteNames": "Only a personal invite names a person",
     "percentMax": "Percent milestones go up to 100",
     "rangeNeedsUnit": "A range needs a unit",
     "repliesNotPrivate": "Replies and club posts cannot be private",
@@ -924,6 +931,8 @@
     "past": "{n} used or withdrawn invite | {n} used or withdrawn invites",
     "singleUse": "Single use",
     "link": "Link",
+    "personal": "Personal invite",
+    "personalFor": "Personal invite for {name}",
     "uses": "used once | used {n} times",
     "expires": "expires {day}",
     "expired": "ended {day}",
@@ -939,6 +948,94 @@
       "revoked": "Withdrawn",
       "used_up": "Used",
       "expired": "Expired"
+    }
+  },
+  "friends": {
+    "title": "Friends",
+    "lede": "Friends see each other's shelves, quotes and notes, as club mates do. Only you see this page.",
+    "loadFailed": "Could not load your friends",
+    "actionFailed": "That did not work",
+    "waiting": "{n} request or invitation waiting | {n} requests or invitations waiting",
+    "homeAdd": "Add friends",
+    "add": {
+      "heading": "Add a friend",
+      "label": "Their username",
+      "hint": "Type their exact username.",
+      "send": "Send request",
+      "sending": "Sending…",
+      "sent": "Request sent to {name}",
+      "nowFriends": "You and {name} are friends now",
+      "alreadyFriends": "{name} is already your friend"
+    },
+    "incoming": {
+      "heading": "Requests to you",
+      "empty": "No requests right now.",
+      "asked": "asked {day}",
+      "accept": "Accept",
+      "decline": "Decline",
+      "declined": "Request declined"
+    },
+    "invites": {
+      "heading": "Invitations to clubs",
+      "empty": "No invitations right now.",
+      "from": "{name} invited you to {club}",
+      "fromGone": "You were invited to {club}",
+      "until": "valid until {day}",
+      "join": "Join",
+      "decline": "Decline",
+      "declined": "Invitation declined"
+    },
+    "list": {
+      "heading": "Your friends",
+      "empty": "No friends yet. Send a request to someone's exact username above.",
+      "since": "Friends since {day}",
+      "notReading": "Not reading anything right now",
+      "more": "+{n} more",
+      "options": "Options",
+      "optionsFor": "Options for {name}",
+      "invite": "Invite to a club…",
+      "remove": "Remove from friends"
+    },
+    "outgoing": {
+      "heading": "Requests you sent",
+      "empty": "No open requests.",
+      "sentOn": "sent {day}",
+      "withdraw": "Withdraw",
+      "withdrawn": "Request withdrawn"
+    },
+    "blocked": {
+      "heading": "Blocked",
+      "empty": "You have not blocked anyone.",
+      "since": "blocked {day}",
+      "unblock": "Unblock",
+      "unblocked": "{name} is no longer blocked",
+      "note": "Blocking ends the friendship and hides their requests. It does not hide anything in clubs you share now or join later. To stop that, leave the club or ask its admin to remove them."
+    },
+    "block": {
+      "action": "Block",
+      "title": "Block {name}?",
+      "blurb": "{name} is not told. Blocking ends your friendship or request, withdraws the invitations between you, and hides their requests from now on. It does not hide anything in clubs you share: there you still see each other.",
+      "confirm": "Yes, block",
+      "done": "{name} is blocked"
+    },
+    "remove": {
+      "title": "Remove {name} from your friends?",
+      "blurb": "You stop seeing each other's shelves and notes outside shared clubs, and open invitations between you are withdrawn. Either of you can ask again later.",
+      "confirm": "Yes, remove",
+      "done": "You and {name} are no longer friends"
+    },
+    "inviteSheet": {
+      "title": "Invite {name} to a club",
+      "blurb": "{name} finds the invitation on their Friends page and joins from there. Only {name} can use it, for 30 days.",
+      "none": "You do not run a club. Only a club's admins can invite people into it.",
+      "invite": "Invite",
+      "sent": "Invitation sent",
+      "failed": "Could not send the invitation",
+      "done": "Done"
+    },
+    "personalInvite": {
+      "signedOut": "This is a personal invite. Sign in with the account it was made for, and you join right after.",
+      "notYours": "This is a personal invite for someone else. Only the account it was made for can join with it."
     }
   },
   "clubSettings": {

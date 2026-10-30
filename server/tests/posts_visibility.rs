@@ -371,10 +371,10 @@ async fn reacting_to_an_invisible_post_is_404_without_the_body(db: PgPool) {
             );
         }
     }
-    // Only the audience's reaction on the open entry was stored.
+    // Only the audience's reactions on the open entry were stored, one per viewer.
     assert_eq!(
         app.scalar_i64("SELECT count(*) FROM post_reactions").await,
-        1
+        v.audience().len() as i64
     );
 }
 

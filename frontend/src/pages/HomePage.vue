@@ -6,8 +6,11 @@ import ActivityFeed from "../components/ActivityFeed.vue";
 import BookCover from "../components/BookCover.vue";
 import ClubCard from "../components/ClubCard.vue";
 import DiaryFeed from "../components/DiaryFeed.vue";
+import NavIcon from "../components/NavIcon.vue";
 import { bookPath } from "../constants";
+import { tp } from "../i18n";
 import { useClubs } from "../stores/clubs";
+import { useFriends } from "../stores/friends";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import type { Favorite, ShelfItem } from "../types";
@@ -16,11 +19,15 @@ import type { Favorite, ShelfItem } from "../types";
  * Home: the viewer's clubs and what moves in them (the combined activity
  * feed and diary across every club), plus what they are reading. With no
  * club (solo mode) it is a personal page that makes no club call, with a way
- * to create or join a club.
+ * to create or join a club. A compact Friends row leads to `/friends` (the
+ * phone's way there) with the requests and invitations waiting; the shell
+ * loads them. The activity feed also carries friends' personal events
+ * (§4.4), so it shows for a viewer with friends and no club too.
  */
 const { t } = useI18n();
 const session = useSession();
 const clubs = useClubs();
+const friends = useFriends();
 const toast = useToast();
 
 const clubsLoaded = ref(false);
@@ -33,6 +40,8 @@ const progress = ref<Record<number, number>>({});
 const savingId = ref<number | null>(null);
 
 const hasClubs = computed(() => clubs.hasClubs);
+/** The home feed has something to show besides one's own events: club mates' or friends'. */
+const showActivity = computed(() => hasClubs.value || (friends.lists?.friends.length ?? 0) > 0);
 
 async function loadClubs() {
   if (!clubs.hasClubs) {
@@ -116,6 +125,19 @@ onMounted(() => {
       </div>
     </section>
 
+    <RouterLink class="friends-row" to="/friends">
+      <NavIcon name="friends" :size="20" />
+      <span class="friends-row-label">{{ t("nav.friends") }}</span>
+      <span v-if="friends.badge" class="friends-count nums">
+        <span aria-hidden="true">{{ friends.badge }}</span>
+        <span class="visually-hidden">{{ tp("friends.waiting", friends.badge) }}</span>
+      </span>
+      <span v-else-if="friends.lists && friends.lists.friends.length === 0" class="fine subtle">
+        {{ t("friends.homeAdd") }}
+      </span>
+      <span class="friends-row-arrow" aria-hidden="true">→</span>
+    </RouterLink>
+
     <section class="section home-reading" aria-labelledby="reading-now">
       <div class="section-head">
         <h2 id="reading-now">{{ t("home.currentlyReading") }}</h2>
@@ -165,10 +187,10 @@ onMounted(() => {
           </template>
         </DiaryFeed>
       </section>
-      <section v-if="hasClubs" class="section">
+      <section v-if="showActivity" class="section">
         <ActivityFeed :heading="t('activity.heading')" />
       </section>
-      <section v-else-if="favorites.length" class="section" aria-labelledby="favourites">
+      <section v-if="!hasClubs && favorites.length" class="section" aria-labelledby="favourites">
         <div class="section-head">
           <h2 id="favourites">{{ t("home.favourites") }}</h2>
         </div>
@@ -192,6 +214,45 @@ onMounted(() => {
 .clubs-skeleton,
 .reading-skeleton {
   height: 110px;
+}
+
+.friends-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  min-height: var(--tap);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  color: inherit;
+  text-decoration: none;
+}
+
+.friends-row:hover {
+  border-color: var(--border-strong);
+}
+
+.friends-row-label {
+  flex: 1;
+  font-weight: 600;
+}
+
+.friends-count {
+  min-width: 1.5rem;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  line-height: 1.5rem;
+  text-align: center;
+}
+
+.friends-row-arrow {
+  color: var(--text-muted);
 }
 
 .club-grid {

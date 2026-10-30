@@ -10,6 +10,8 @@ const api: Record<string, ReturnType<typeof vi.fn>> = {
   legal: vi.fn(),
   myFavorites: vi.fn(),
   savePreferences: vi.fn(),
+  // The shell asks for the Friends badge (#57).
+  friends: vi.fn(),
 };
 
 vi.mock("../api/client", () => {
@@ -429,6 +431,7 @@ describe("the legal parts of the app shell and Settings", () => {
   beforeEach(() => {
     for (const fn of Object.values(api)) fn.mockReset();
     api.myFavorites.mockResolvedValue({ items: [] });
+    api.friends.mockResolvedValue({ friends: [], incoming: [], outgoing: [], blocked: [], club_invites: [] });
     vi.stubGlobal("localStorage", memoryStorage());
     vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   });

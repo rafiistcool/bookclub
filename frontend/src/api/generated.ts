@@ -13,7 +13,8 @@ export interface paths {
         };
         /**
          * The caller's home feed: events of every club they are in, the personal events of their
-         *     co-members from the moment each joined the shared club, and their own personal events.
+         *     co-members from the moment each joined the shared club and of their friends from the moment
+         *     the friendship began, and their own personal events.
          */
         get: operations["activity_home_feed"];
         put?: never;
@@ -528,8 +529,9 @@ export interface paths {
          *     - Posts that others replied to become anonymous tombstones; every other post is deleted.
          *     - Every avatar the user uploaded is deleted with its bytes; cover photos stay as catalog
          *       contributions, without the uploader.
-         *     - Personal data, sessions, memberships and the user's activity events go with the account;
-         *       picks, nominations, invites and catalog rows keep existing without the name.
+         *     - Personal data, sessions, memberships, friendships and requests, blocks, the friend invites
+         *       bound to the user and the user's activity events go with the account; picks, nominations,
+         *       invites and catalog rows keep existing without the name.
          *
          *     The password is checked under the current-password limits (10 checks per session in ten
          *     minutes, 30 per account an hour; then 429).
@@ -1383,10 +1385,19 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Every invite of the club, newest first (admins). */
+        /**
+         * Every invite of the club, newest first (admins). A personal invite (`personal`) names the
+         *     friend it is for (`invitee`) to its creator only.
+         */
         get: operations["clubs_list_invites"];
         put?: never;
-        /** Creates an invite to the club (admins): a single-use code or a shareable link. */
+        /**
+         * Creates an invite to the club (admins): a single-use code, a shareable link, or a personal
+         *     invite for one friend of the caller (`kind: "friend"`, `username`), which only that friend can
+         *     redeem through `/join/{code}`. A second friend invite for the same friend, while the caller's
+         *     first one is still open, answers with the first one. 20 friend invites per account a day,
+         *     unknown names and repeats included.
+         */
         post: operations["clubs_create_invite"];
         delete?: never;
         options?: never;
@@ -1466,10 +1477,10 @@ export interface paths {
          *     removes the owner, and nobody removes themselves (that is `leave`). Invites created before
          *     the removal no longer work for that person; a newer invite does.
          * @description The removal also revokes every active invite of the club the person knows, so a second
-         *     account cannot walk back in with one: the invites they created or redeemed, and, when they
-         *     are an admin (admins list every invite), all of them; when they were one before a demotion,
-         *     every invite created up to the demotion. A link someone else forwarded to them is beyond
-         *     what the server knows; the admins revoke it.
+         *     account cannot walk back in with one: the invites they created or redeemed, the friend
+         *     invites made for them, and, when they are an admin (admins list every invite), all of them;
+         *     when they were one before a demotion, every invite created up to the demotion. A link someone
+         *     else forwarded to them is beyond what the server knows; the admins revoke it.
          */
         delete: operations["clubs_remove_member"];
         options?: never;
@@ -1836,6 +1847,157 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/friends": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The caller's friends (with up to three books each is currently reading), the requests to and
+         *     from the caller, the accounts the caller blocked, and the caller's open friend invites into
+         *     clubs. Nobody else's friends, requests or blocks are ever listed.
+         */
+        get: operations["friends_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/friends/blocks/{username}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Blocks `username`: the friendship ends, pending requests in either direction go, the pair's
+         *     open friend invites are revoked, and later requests from them stay hidden from the caller.
+         *     Blocking twice is harmless. Counts against the 20 requests and blocks a day (and the
+         *     address's 60), unless the caller and that account already have a request or a friendship
+         *     (blocking any number of requesters is free).
+         */
+        put: operations["friends_block"];
+        post?: never;
+        /**
+         * Unblocks `username` and drops the requests they sent while blocked. Always 200 with the
+         *     caller's friends: for an account the caller never blocked and for an unknown name too.
+         */
+        delete: operations["friends_unblock"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/friends/club-invites/{invite_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Declines a friend's invite into a club: it is revoked and can no longer be redeemed. Only
+         *     the account the invite was made for can decline it; declining twice is harmless.
+         */
+        delete: operations["friends_decline_club_invite"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/friends/list/{username}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Ends a friendship. The friend invites into clubs either made for the other and nobody used
+         *     yet are revoked. The other account is not told; either may ask again.
+         */
+        delete: operations["friends_remove"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/friends/requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Asks another account to be friends. Sending to someone who already asked the caller makes
+         *     them friends at once; sending again, or to a friend, changes nothing. A request to someone
+         *     who blocked the caller is stored and shows as sent, but never reaches them. 20 requests and
+         *     blocks per account a day, unknown names and repeats included, and 60 per client address a
+         *     day across its accounts.
+         */
+        post: operations["friends_send_request"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/friends/requests/{username}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Declines a request from `username`, or cancels the caller's request to them: the pending
+         *     request goes, without a trace, and either may ask again.
+         */
+        delete: operations["friends_delete_request"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/friends/requests/{username}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accepts a request from `username`: from now on they are friends. A request the caller cannot
+         *     see (from an account the caller blocked) cannot be accepted.
+         */
+        post: operations["friends_accept_request"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -1932,8 +2094,8 @@ export interface paths {
         /**
          * Reports a cover (`cover_public_id` of a book or edition) or a profile picture (the public id
          *     in an `avatar_url`): copyright, the wrong book, offensive, or something else. A profile
-         *     picture can be reported by whoever can see its owner (they share a club), else it is 404
-         *     like an unknown picture. 20 new reports per day, and 30 requests per minute, repeats
+         *     picture can be reported by whoever can see its owner (they share a club or are friends), else
+         *     it is 404 like an unknown picture. 20 new reports per day, and 30 requests per minute, repeats
          *     included. Idempotent per reader and picture: a repeat answers with the reader's open report,
          *     and a picture already taken down gets a closed record (`status` `removed`); neither counts
          *     against the daily limit again.
@@ -2415,6 +2577,12 @@ export interface components {
              * @description When the account was suspended; null while it may sign in.
              */
             suspended_at: string | null;
+        };
+        /** @description An account the caller blocked. */
+        BlockedOut: {
+            username: string;
+            /** Format: date-time */
+            created_at: string;
         };
         /** @description One work with the viewer's shelf state, their audience's readers and the catalog facts. */
         BookDetailOut: {
@@ -3051,6 +3219,79 @@ export interface components {
         FavoritesOut: {
             items: components["schemas"]["FavoriteOut"][];
         };
+        /** @description A friend invite into a club for the caller. */
+        FriendClubInviteOut: {
+            /**
+             * Format: int64
+             * @description The invite's id, for `DELETE /api/friends/club-invites/{invite_id}`.
+             */
+            id: number;
+            club: components["schemas"]["ClubRef"];
+            /** @description The username of the friend who invited; null when that account is gone. */
+            invited_by: string | null;
+            /** @description The invite code, for `/join/{code}`. Only the caller can redeem it. */
+            code: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            expires_at: string;
+        };
+        /** @description One friend. */
+        FriendOut: {
+            user: components["schemas"]["UserSummary"];
+            /**
+             * Format: date-time
+             * @description When the friendship began.
+             */
+            since: string;
+            /** Format: int64 */
+            currently_reading_count: number;
+            /** @description At most three, in shelf order. */
+            currently_reading: components["schemas"]["FriendReadingOut"][];
+        };
+        /** @description A book a friend is currently reading. */
+        FriendReadingOut: {
+            book: components["schemas"]["BookOut"];
+            /**
+             * Format: int32
+             * @description Percent; null when the friend has not set it.
+             */
+            progress: number | null;
+        };
+        /** @description A friend request. */
+        FriendRequestIn: {
+            /** @description The other account's exact username (case and surrounding spaces are ignored). */
+            username: string;
+        };
+        /** @description A pending friend request. */
+        FriendRequestOut: {
+            /**
+             * @description The other account. `avatar_url` is null unless the caller can see that account (a club
+             *     mate): a reader only sees pictures they could report.
+             */
+            user: components["schemas"]["UserSummary"];
+            /** Format: date-time */
+            created_at: string;
+        };
+        /** @description The caller's friends, requests, blocks and personal club invitations. */
+        FriendsOut: {
+            /** @description By username. */
+            friends: components["schemas"]["FriendOut"][];
+            /**
+             * @description Requests to the caller, newest first. Requests from accounts the caller blocked are left
+             *     out.
+             */
+            incoming: components["schemas"]["FriendRequestOut"][];
+            /** @description Requests the caller sent and nobody answered yet, newest first. */
+            outgoing: components["schemas"]["FriendRequestOut"][];
+            /** @description The accounts the caller blocked, newest first. */
+            blocked: components["schemas"]["BlockedOut"][];
+            /**
+             * @description Friend invites into clubs for the caller that can still be redeemed, to clubs the caller
+             *     is not in, newest first.
+             */
+            club_invites: components["schemas"]["FriendClubInviteOut"][];
+        };
         /** @description The upload of `POST /api/shelf/import` (documentation only). */
         GoodreadsUpload: {
             /**
@@ -3113,15 +3354,17 @@ export interface components {
             kind: components["schemas"]["InviteKind"];
             /**
              * Format: int64
-             * @description 1 to 30; default 30 for `single_use`, 7 for `link`.
+             * @description 1 to 30; default 30 for `single_use` and `friend`, 7 for `link`.
              */
             expires_in_days?: number | null;
+            /** @description The friend a `friend` invite is for (required there, refused for the other kinds). */
+            username?: string | null;
         };
         /**
-         * @description The two invite presets.
+         * @description The invite presets.
          * @enum {string}
          */
-        InviteKind: "single_use" | "link";
+        InviteKind: "single_use" | "link" | "friend";
         /** @description Invites, newest first. */
         InviteList: {
             items: components["schemas"]["InviteOut"][];
@@ -3147,16 +3390,31 @@ export interface components {
             max_uses: number | null;
             /** Format: int32 */
             use_count: number;
-            /** @description Who redeemed it, oldest first, one entry per use (deleted accounts are left out). */
+            /**
+             * @description Who redeemed it, oldest first, one entry per use (deleted accounts are left out). Empty
+             *     for a personal invite another admin made, as `invitee` is null for it.
+             */
             used_by: string[];
             revoked: boolean;
             /** @description Not revoked, not expired and not used up: it can still be redeemed. */
             active: boolean;
+            /** @description A friend invite (`kind: "friend"`): only the friend it was made for can redeem it. */
+            personal: boolean;
+            /**
+             * @description The username of the friend a personal invite is for, shown only to the invite's creator
+             *     (another admin would learn whom the creator is friends with); null otherwise.
+             */
+            invitee: string | null;
         };
         /** @description The join page's view of a valid invite. */
         InvitePreview: {
             club: components["schemas"]["ClubRef"] | null;
             kind: components["schemas"]["InviteTarget"];
+            /**
+             * @description A personal invite (a club admin's invite for one friend, FRIENDS #57): only the account it
+             *     was made for can join with it, and it never makes an account. Whom it is for is not told.
+             */
+            personal: boolean;
         };
         /**
          * @description What an invite leads to.
@@ -4473,6 +4731,7 @@ export type AdminReportStats = components['schemas']['AdminReportStats'];
 export type AdminSummary = components['schemas']['AdminSummary'];
 export type AdminUserList = components['schemas']['AdminUserList'];
 export type AdminUserOut = components['schemas']['AdminUserOut'];
+export type BlockedOut = components['schemas']['BlockedOut'];
 export type BookDetailOut = components['schemas']['BookDetailOut'];
 export type BookOut = components['schemas']['BookOut'];
 export type BookReader = components['schemas']['BookReader'];
@@ -4517,6 +4776,12 @@ export type ErrorBody = components['schemas']['ErrorBody'];
 export type FavoriteOut = components['schemas']['FavoriteOut'];
 export type FavoritesIn = components['schemas']['FavoritesIn'];
 export type FavoritesOut = components['schemas']['FavoritesOut'];
+export type FriendClubInviteOut = components['schemas']['FriendClubInviteOut'];
+export type FriendOut = components['schemas']['FriendOut'];
+export type FriendReadingOut = components['schemas']['FriendReadingOut'];
+export type FriendRequestIn = components['schemas']['FriendRequestIn'];
+export type FriendRequestOut = components['schemas']['FriendRequestOut'];
+export type FriendsOut = components['schemas']['FriendsOut'];
 export type GoodreadsUpload = components['schemas']['GoodreadsUpload'];
 export type Health = components['schemas']['Health'];
 export type ImportJobOut = components['schemas']['ImportJobOut'];
@@ -8552,7 +8817,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The new invite */
+            /** @description The new invite (or the caller's open friend invite for that friend) */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -8561,7 +8826,7 @@ export interface operations {
                     "application/json": components["schemas"]["InviteOut"];
                 };
             };
-            /** @description An invalid kind or expiry */
+            /** @description An invalid kind or expiry, `Field required` (a friend invite without `username`), `Only a friend invite names a person` */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -8588,8 +8853,26 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description `No such club` */
+            /** @description `No such club`, `No friend with that name` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `That friend is already in this club` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Slow down a little. Try again later.` (friend invites only) */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10178,6 +10461,368 @@ export interface operations {
                 };
             };
             /** @description `No such club` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    friends_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's friends, requests, blocks and club invitations */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FriendsOut"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    friends_block: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The account to block */
+                username: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Blocked; the caller's friends */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FriendsOut"];
+                };
+            };
+            /** @description `That is your own account` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No account with that name` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Slow down a little. Try again later.` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    friends_unblock: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The account to unblock */
+                username: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Not blocked (any more); the caller's friends */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FriendsOut"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    friends_decline_club_invite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The invite's id (`FriendClubInviteOut.id`) */
+                invite_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Declined; the caller's friends */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FriendsOut"];
+                };
+            };
+            /** @description The id is not an integer */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such invite` (also one made for someone else) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    friends_remove: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The friend */
+                username: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No longer friends; the caller's friends */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FriendsOut"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No friend with that name` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    friends_send_request: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FriendRequestIn"];
+            };
+        };
+        responses: {
+            /** @description Sent (or now friends); the caller's friends */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FriendsOut"];
+                };
+            };
+            /** @description `Field required`, `That is your own account` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No account with that name` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `You blocked this account` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Slow down a little. Try again later.` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    friends_delete_request: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The other account of the request */
+                username: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Declined or cancelled; the caller's friends */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FriendsOut"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such friend request` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    friends_accept_request: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Who sent the request */
+                username: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Now friends; the caller's friends */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FriendsOut"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such friend request` */
             404: {
                 headers: {
                     [name: string]: unknown;

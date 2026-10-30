@@ -4,6 +4,7 @@
     "discover": "Entdecken",
     "shelf": "Regal",
     "club": "Club",
+    "friends": "Freunde",
     "settings": "Einstellungen",
     "settingsAndTheme": "Einstellungen und Design",
     "settingsFor": "Einstellungen für {name}",
@@ -684,7 +685,13 @@
     "clubNameRequired": "Gib dem Club einen Namen",
     "clubNameTooLong": "Der Clubname darf höchstens 80 Zeichen haben",
     "noSuchInvite": "Diese Einladung gibt es nicht mehr",
-    "noMember": "Niemand mit diesem Namen ist mit dir in einem Club",
+    "noMember": "Niemand mit diesem Namen in deinen Clubs oder unter deinen Freunden",
+    "selfAccount": "Das ist dein eigenes Konto",
+    "youBlocked": "Du hast dieses Konto blockiert. Gib es zuerst frei.",
+    "noFriendRequest": "Diese Anfrage gibt es nicht mehr",
+    "noFriend": "Keiner deiner Freunde hat diesen Namen",
+    "friendInClub": "Diese Person ist schon in diesem Club",
+    "onlyFriendInviteNames": "Nur eine persönliche Einladung nennt eine Person",
     "percentMax": "Prozent-Etappen gehen höchstens bis 100",
     "rangeNeedsUnit": "Ein Bereich braucht eine Einheit",
     "repliesNotPrivate": "Antworten und Club-Beiträge können nicht privat sein",
@@ -924,6 +931,8 @@
     "past": "{n} benutzte oder zurückgezogene Einladung | {n} benutzte oder zurückgezogene Einladungen",
     "singleUse": "Einmalig",
     "link": "Link",
+    "personal": "Persönliche Einladung",
+    "personalFor": "Persönliche Einladung für {name}",
     "uses": "einmal benutzt | {n}-mal benutzt",
     "expires": "gilt bis {day}",
     "expired": "endete am {day}",
@@ -939,6 +948,94 @@
       "revoked": "Zurückgezogen",
       "used_up": "Benutzt",
       "expired": "Abgelaufen"
+    }
+  },
+  "friends": {
+    "title": "Freunde",
+    "lede": "Freunde sehen gegenseitig ihre Regale, Zitate und Notizen, so wie Clubmitglieder. Diese Seite siehst nur du.",
+    "loadFailed": "Deine Freunde konnten nicht geladen werden",
+    "actionFailed": "Das hat nicht geklappt",
+    "waiting": "{n} Anfrage oder Einladung wartet | {n} Anfragen oder Einladungen warten",
+    "homeAdd": "Freunde hinzufügen",
+    "add": {
+      "heading": "Jemanden hinzufügen",
+      "label": "Benutzername",
+      "hint": "Gib den genauen Benutzernamen ein.",
+      "send": "Anfrage senden",
+      "sending": "Wird gesendet…",
+      "sent": "Anfrage an {name} gesendet",
+      "nowFriends": "Du und {name} seid jetzt befreundet",
+      "alreadyFriends": "Du bist schon mit {name} befreundet"
+    },
+    "incoming": {
+      "heading": "Anfragen an dich",
+      "empty": "Gerade keine Anfragen.",
+      "asked": "angefragt am {day}",
+      "accept": "Annehmen",
+      "decline": "Ablehnen",
+      "declined": "Anfrage abgelehnt"
+    },
+    "invites": {
+      "heading": "Einladungen in Clubs",
+      "empty": "Gerade keine Einladungen.",
+      "from": "{name} hat dich zu {club} eingeladen",
+      "fromGone": "Du wurdest zu {club} eingeladen",
+      "until": "gilt bis {day}",
+      "join": "Beitreten",
+      "decline": "Ablehnen",
+      "declined": "Einladung abgelehnt"
+    },
+    "list": {
+      "heading": "Deine Freunde",
+      "empty": "Noch keine Freunde. Schick oben eine Anfrage an einen genauen Benutzernamen.",
+      "since": "Befreundet seit {day}",
+      "notReading": "Liest gerade nichts",
+      "more": "+{n} weitere",
+      "options": "Optionen",
+      "optionsFor": "Optionen für {name}",
+      "invite": "In einen Club einladen…",
+      "remove": "Aus den Freunden entfernen"
+    },
+    "outgoing": {
+      "heading": "Deine Anfragen",
+      "empty": "Keine offenen Anfragen.",
+      "sentOn": "gesendet am {day}",
+      "withdraw": "Zurückziehen",
+      "withdrawn": "Anfrage zurückgezogen"
+    },
+    "blocked": {
+      "heading": "Blockiert",
+      "empty": "Du hast niemanden blockiert.",
+      "since": "blockiert am {day}",
+      "unblock": "Freigeben",
+      "unblocked": "{name} ist nicht mehr blockiert",
+      "note": "Blockieren beendet die Freundschaft und blendet die Anfragen der Person aus. In Clubs, die ihr jetzt teilt oder später teilt, verbirgt es nichts. Wenn du das nicht willst, verlass den Club oder bitte seine Admins, die Person zu entfernen."
+    },
+    "block": {
+      "action": "Blockieren",
+      "title": "{name} blockieren?",
+      "blurb": "{name} erfährt davon nichts. Blockieren beendet eure Freundschaft oder Anfrage, zieht die Einladungen zwischen euch zurück und blendet ab jetzt Anfragen der Person aus. In gemeinsamen Clubs verbirgt es nichts: Dort seht ihr euch weiterhin.",
+      "confirm": "Ja, blockieren",
+      "done": "{name} ist blockiert"
+    },
+    "remove": {
+      "title": "{name} aus deinen Freunden entfernen?",
+      "blurb": "Außerhalb gemeinsamer Clubs seht ihr eure Regale und Notizen dann nicht mehr, und offene Einladungen zwischen euch werden zurückgezogen. Ihr könnt euch später wieder anfragen.",
+      "confirm": "Ja, entfernen",
+      "done": "Du und {name} seid nicht mehr befreundet"
+    },
+    "inviteSheet": {
+      "title": "{name} in einen Club einladen",
+      "blurb": "{name} findet die Einladung auf der Freunde-Seite und tritt von dort bei. Nur {name} kann sie benutzen, 30 Tage lang.",
+      "none": "Du leitest keinen Club. Nur die Admins eines Clubs können in ihn einladen.",
+      "invite": "Einladen",
+      "sent": "Einladung verschickt",
+      "failed": "Die Einladung konnte nicht verschickt werden",
+      "done": "Fertig"
+    },
+    "personalInvite": {
+      "signedOut": "Das ist eine persönliche Einladung. Melde dich mit dem Konto an, für das sie gedacht ist, dann trittst du direkt danach bei.",
+      "notYours": "Das ist eine persönliche Einladung für jemand anderen. Nur das Konto, für das sie gedacht ist, kann damit beitreten."
     }
   },
   "clubSettings": {

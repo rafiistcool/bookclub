@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT coalesce(jsonb_agg(jsonb_build_object(\n                      'username', u.username, 'created_at', b.created_at)\n                  ORDER BY b.created_at, u.username), '[]') AS \"rows!\"\n           FROM user_blocks b JOIN users u ON u.id = b.blocked_user_id\n           WHERE b.user_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "rows!",
+        "type_info": "Jsonb",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "0a5eb5aca4cb9f5e0bad60cecf86a36fe0eb87af23fcb029aaf7beca2af3971c"
+}

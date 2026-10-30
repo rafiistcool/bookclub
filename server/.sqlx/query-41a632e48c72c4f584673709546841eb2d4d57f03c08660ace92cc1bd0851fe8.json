@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.user_id AS \"user_id!\", r.work_id AS \"work_id!\", r.edition_id, r.progress,\n                  r.total AS \"total!\"\n           FROM (\n               SELECT s.user_id, s.work_id, s.edition_id, s.progress,\n                      row_number() OVER (PARTITION BY s.user_id ORDER BY s.position, s.id) AS rn,\n                      count(*) OVER (PARTITION BY s.user_id) AS total\n               FROM bc_visible_shelf($1) s\n               JOIN bc_friends($1) f ON f.user_id = s.user_id\n               WHERE s.status = 'currently_reading'\n           ) r\n           WHERE r.rn <= $2\n           ORDER BY r.user_id, r.rn",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "work_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "edition_id",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "progress",
+        "type_info": "Int4",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "total!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "41a632e48c72c4f584673709546841eb2d4d57f03c08660ace92cc1bd0851fe8"
+}

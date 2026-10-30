@@ -190,9 +190,17 @@ async function share(invite: Invite) {
   }
 }
 
+/** A friend invite names its friend to its creator only; other admins see that it is personal. */
+function inviteKind(invite: Invite): string {
+  if (invite.personal) {
+    return invite.invitee ? t("invites.personalFor", { name: invite.invitee }) : t("invites.personal");
+  }
+  return invite.max_uses === 1 ? t("invites.singleUse") : t("invites.link");
+}
+
 function inviteLine(invite: Invite): string {
   const parts: string[] = [];
-  parts.push(invite.max_uses === 1 ? t("invites.singleUse") : t("invites.link"));
+  parts.push(inviteKind(invite));
   if (invite.max_uses == null || invite.max_uses > 1) parts.push(tp("invites.uses", invite.use_count));
   if (invite.expires_at) {
     const day = formatDay(invite.expires_at, club.value.timezone, locale.locale);
@@ -524,8 +532,10 @@ onMounted(() => {
   flex: 1;
   min-width: 0;
   display: flex;
+  /* On a phone, three covers and the Manage button leave no room for the name: the covers go below. */
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2) var(--space-3);
   color: inherit;
   text-decoration: none;
 }
@@ -534,7 +544,7 @@ onMounted(() => {
   display: grid;
   gap: 2px;
   min-width: 0;
-  flex: 1;
+  flex: 1 1 7rem;
 }
 
 .member-meta strong {
@@ -600,7 +610,13 @@ onMounted(() => {
 .invite-meta {
   display: grid;
   gap: 2px;
-  min-width: 0;
+  /* What the actions leave, but never less than the code. */
+  flex: 1 1 0;
+  min-width: min-content;
+}
+
+.invite-meta .finer {
+  overflow-wrap: anywhere;
 }
 
 .invite-meta code {
@@ -608,9 +624,15 @@ onMounted(() => {
   letter-spacing: 0.05em;
 }
 
+/*
+ * The actions wrap onto two lines when they do not fit beside the code: at
+ * 360 px, German "Kopieren" and "Zurückziehen" are wider than what is left.
+ */
 .invite-actions {
   display: flex;
-  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  flex: 0 1 auto;
 }
 
 .past-invites {

@@ -242,6 +242,8 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 | Retention | invites until revoked or used up; the record of uses with the account |
 | Source | `server/src/admin/invites.rs`, the `make-admin` and `beta-invite` commands of `server/src/main.rs` (`MakeAdmin`, `BetaInvite`) |
 
+### 16. Friends (written with #53)
+
 ## Tables with personal data
 
 Every table that references `users`, and the activities that use it.
@@ -262,13 +264,15 @@ Every table that references `users`, and the activities that use it.
 | `clubs` | 6 |
 | `club_memberships` | 6 |
 | `club_removals` | 6 |
-| `club_invites` | 6, 15 |
+| `club_invites` | 6, 15, 16 |
 | `club_invite_uses` | 6, 15 |
 | `club_picks` | 6 |
 | `milestones` | 6 |
 | `next_up_nominations` | 6 |
 | `next_up_ballots` | 6 |
 | `events` | 6 |
+| `friendships` | 16 |
+| `user_blocks` | 16 |
 | `media` | 7, 8, 9 |
 | `works` | 8, 9 |
 | `editions` | 8, 9 |

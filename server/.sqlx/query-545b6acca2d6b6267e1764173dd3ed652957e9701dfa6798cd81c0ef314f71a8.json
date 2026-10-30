@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (SELECT 1 FROM club_invites\n                              WHERE invitee_id = $1 AND club_id <> ALL($2))\n               AS \"invited_elsewhere!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "invited_elsewhere!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "545b6acca2d6b6267e1764173dd3ed652957e9701dfa6798cd81c0ef314f71a8"
+}

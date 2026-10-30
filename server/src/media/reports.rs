@@ -1,7 +1,7 @@
 //! Notice and takedown (endpoint-map §6): any signed-in reader reports a cover, or the profile
-//! picture of someone they can see (they share a club, ADM2, Q11 option B); an instance admin
-//! removes or dismisses it. Reports on works and editions readers added are filed in
-//! `catalog::reports` and decided here, in the same queue ([`resolve_report`]).
+//! picture of someone they can see (they share a club or are friends, ADM2, Q11 option B); an
+//! instance admin removes or dismisses it. Reports on works and editions readers added are filed
+//! in `catalog::reports` and decided here, in the same queue ([`resolve_report`]).
 //!
 //! **A report** names a picture, not a book, and the queue holds one open report per reader and
 //! picture: a repeat answers with the reader's open report, and a report of a picture already
@@ -301,8 +301,8 @@ where
 
 /// Reports a cover (`cover_public_id` of a book or edition) or a profile picture (the public id
 /// in an `avatar_url`): copyright, the wrong book, offensive, or something else. A profile
-/// picture can be reported by whoever can see its owner (they share a club), else it is 404
-/// like an unknown picture. 20 new reports per day, and 30 requests per minute, repeats
+/// picture can be reported by whoever can see its owner (they share a club or are friends), else
+/// it is 404 like an unknown picture. 20 new reports per day, and 30 requests per minute, repeats
 /// included. Idempotent per reader and picture: a repeat answers with the reader's open report,
 /// and a picture already taken down gets a closed record (`status` `removed`); neither counts
 /// against the daily limit again.
@@ -341,7 +341,8 @@ pub async fn report(
     // and a takedown or dismissal would wait for its turn until the request deadline. One that
     // races a takedown may still answer `open`; the takedown then resolves that report.
     // A profile picture only when the reader can see its owner (`bc_can_see_user`: they share a
-    // club, or it is their own); otherwise it is as unknown as a picture that does not exist.
+    // club, are friends, or it is their own); otherwise it is as unknown as a picture that does
+    // not exist.
     let found = sqlx::query!(
         r#"SELECT m.id, m.kind, m.uploaded_by, m.removed_at IS NOT NULL AS "removed!",
                   (SELECT r.id FROM reports r
