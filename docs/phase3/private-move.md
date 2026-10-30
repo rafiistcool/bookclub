@@ -12,7 +12,7 @@ Counts, statuses and exit codes only. No command whose output holds a secret, a 
 
 - The restic password is generated straight into its file (section 4), and **[Rafael]** copies it from his own SSH session. **[Rafael]** runs `docker login` himself when the registry needs it (section 2.3). No token or password passes through my terminal.
 - `set-password`, if needed, writes to a root-only file (`umask 077`) that **[Rafael]** reads and deletes (section 10).
-- The import reports and `compare.sh`'s output stay on the host, in root-only files. I read `compare.sh`'s exit status and result lines, and the reports through `summary` (section 0): the entity lines, `lookup wait` and `cover search`, and the other sections as line counts. Never the `isbn keys` or `without a cover` sections, which name books; what I need from them I count on the host with `grep -c`.
+- The import reports and `compare.sh`'s output stay on the host, in root-only files. I read `compare.sh`'s exit status and result lines, and the reports through `summary` (section 0): the entity lines, `lookup wait` and `cover search`, and the sections as line counts. `summary` prints a line only when it looks like one of those, and none after the first section title: a book's title with a line break cannot reach my terminal. Never the `isbn keys` or `without a cover` sections, which name books; what I need from them I count on the host with `grep -c`. `other lines` in a summary is a line `summary` does not know: Rafael reads the report on the host.
 - The app's log only through `grep '^error:'`: its request lines carry paths. The log of `import-legacy` and `rematch-legacy` goes to a root-only file next to its report, and I read only its `error:` lines and a count of warnings: a throttled or failed lookup logs its ISBN.
 - The proxy's address for `TRUSTED_PROXIES` is not a client's. `host-facts.sh` prints the peers of the old app, which behind a proxy is the proxy.
 
@@ -51,15 +51,21 @@ DATA=/srv/bookclub              # /srv/bookclub-server likewise
 IMPORT=$DATA/import             # the legacy copy: mode 700, uid 1000
 R=/root/bookclub-move           # deploy/ of the release, copied from the agents VM (section 3.1)
 
-# The report without what names people or books: entity lines, lookup wait, cover search, and each
-# section as its title and a line count.
+# The report without what names people or books. Before the first section it prints only the
+# lines it knows (entity lines, normalised, lookup wait, cover search, a dry run's header); from
+# the first section title on it prints each section as its title and a line count. A section's
+# lines are never printed, also one that a title with a line break starts without indentation.
+# Any other line is counted as "other lines".
 summary() {
-    awk '/^  / { n++; next }
-         title != "" { printf "%s %d lines\n", title, n }
-         { title = ""; n = 0 }
-         /:$/ { title = $0; next }
-         { print }
-         END { if (title != "") printf "%s %d lines\n", title, n }' "$@"
+    awk 'BEGIN { split("merges:|differences:|isbn keys:|without a cover:|notes:", t, "|")
+                 for (i in t) known[t[i]] = 1 }
+         $0 in known { if (title != "") printf "%s %d lines\n", title, n; title = $0; n = 0; next }
+         title != "" { n++; next }
+         /^[a-z_ ]+ (-|[0-9]+) → / || /^(normalised|lookup wait|cover search) / ||
+             /^DRY RUN: / || /^The cover search looked at / { print; next }
+         { other++ }
+         END { if (title != "") printf "%s %d lines\n", title, n
+               if (other) printf "other lines %d\n", other }' "$@"
 }
 ```
 
