@@ -78,7 +78,9 @@
 	# log: the query (search terms, `?code=`, `/login?next=/join/<code>`) becomes `?{redacted}`,
 	# invite codes in the path become `/join/{redacted}` and `/api/invites/{redacted}/…`, and
 	# a looked-up or scanned ISBN, which says what someone reads, `/api/books/isbn/{redacted}`.
-	# The Referer, which repeats such URLs, is dropped.
+	# That hides the ISBN, not the book: covers (`/media/<id>/…`) and book paths
+	# (`/book/<id>`, `/api/books/works/<id>…`) keep their ids, also the cover that a scan's
+	# result card loads right after the lookup. The Referer, which repeats such URLs, is dropped.
 	log {
 		output file /var/log/caddy/bookclub-access.log {
 			roll_disabled
