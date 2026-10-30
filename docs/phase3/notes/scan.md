@@ -278,3 +278,29 @@ All green in the worktree, against `bookclub-pg-scan` on 5461:
 - `npm run typecheck`, `npm test` (80 files, 588 tests; 577 before the round), `npm run build` (the main entry has no `zxing`, `dist/assets/` holds one `zxing_reader-<hash>.wasm`), `npm run check:api` (`generated.ts` unchanged).
 - shellcheck on `deploy/hosted/*.sh deploy/cutover/*.sh`, and `caddy validate` on `Caddyfile.example`.
 - The plan's acceptance set (`npx vitest run src/isbn.test.ts src/scan …`, as in Part 2): 11 files, 126 tests passed.
+
+## Checks (2026-10-30)
+
+### The fake-camera browser run
+
+The branch's built SPA in Chromium with a fake camera, as §3.9's browser run (the zxing path; a known ISBN to the hit card, a valid unknown one to the miss flow; no `securitypolicyviolation`). Result: pass, no failed step, no bug. Nothing failed for the environment, so nothing was run again.
+
+### Security review
+
+One candidate, confirmed; none rejected.
+
+| # | Candidate | Verdict | Commit |
+|---|---|---|---|
+| 1 | The ISBN redaction does not hide which book a scan found: the hit card's cover request is logged by the proxy with the client's IP address (`deploy/hosted/Caddyfile.example`, low) | Confirmed (all three verifiers: real), with the limits below | 50e6507 (documented); the wider filter is Rafael's choice |
+
+- Checked against the code: the Caddy filter and `loggable_path` redact `/api/invites/`, `/join/` and `/api/books/isbn/` only. `ScanPage.vue` renders the hit's cover `eager`, `covers.ts` asks for `/media/<public_id>/s` first, and `/media/{public_id}/{variant}` needs no session. So the next `/media` line from the address after a redacted ISBN line names the book.
+- Limits: no cover request when the hit has none or the browser holds it already (`immutable`, a year); "Open book" is a client-side link, so `/book/<id>` reaches the server only on a full page load, but `/api/books/works/<id>` always does; the match is by time and address only; and every book page and cover view was logged like this before SCAN.
+- No behaviour changed, so no new test: the plan's filter (§3.6.4, answer 10) is built as written. 50e6507 makes the Caddyfile comment, `deploy/hosted/README.md:285` and the #53 facts (Part 1, "For #53 only"; Part 2, the camera) say that the redaction hides the ISBN, not the book.
+- Not built: the wider filter (`/media/`, `/book/`, `/api/books/works/`, `/api/books/editions/`), checked with `caddy:2.10` and recorded under Part 1, "For the integrator". It goes beyond §3.6.4 and changes what the proxy logs for every book page, so Rafael decides; #53's text follows the choice.
+
+### The gate (2026-10-30, on 50e6507)
+
+All green in the worktree, against `bookclub-pg-scan` on 5461:
+- `cargo sqlx database reset -y`, `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked` (94 test binaries, 1494 passed, 0 failed), `cargo sqlx prepare --check -- --all-targets`. The round changed no server code.
+- `npm run typecheck`, `npm test` (80 files, 588 tests), `npm run build`, `npm run check:api`.
+- shellcheck on `deploy/hosted/*.sh deploy/cutover/*.sh`, and `caddy validate` on `Caddyfile.example`.
