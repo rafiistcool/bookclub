@@ -25,7 +25,8 @@
 #   - `curl -sI https://HOSTNAME/`: the status line, Strict-Transport-Security and
 #     Permissions-Policy;
 #   - free disk under /srv and Docker's root, the disks, and mounted NAS shares (for backups);
-#   - whether sqlite3 is installed, and whether /opt/bookclub and /srv/bookclub exist;
+#   - whether sqlite3 is installed, whether /opt/bookclub and /srv/bookclub exist, and whether
+#     the old data directory holds a path of the new layout (M6 deletes it whole);
 #   - the checks that stop the move, and the notes for the runbook.
 #
 # Exit status: 0 when no check stops the move, 1 when one does, 2 on a usage error.
@@ -343,6 +344,17 @@ for path in /opt/bookclub /srv/bookclub; do
 		echo "$path: absent"
 	fi
 done
+# M6 deletes the old data directory whole, so the new stack, its data and its backups must lie
+# outside it: an old BOOKCLUB_DATA of /srv holds /srv/bookclub (private-move.md 2.3).
+if [[ -n $data ]]; then
+	real_data=$(realpath -m -- "$data" 2>/dev/null) || real_data=$data
+	for path in /opt/bookclub /srv/bookclub /opt/bookclub-server /srv/bookclub-server /srv/bookclub-backup; do
+		real=$(realpath -m -- "$path" 2>/dev/null) || real=$path
+		if [[ $real == "${real_data%/}"/* ]]; then
+			notes+=("the old data directory $data holds $path: the new stack, its data and the backups go outside it, since M6 deletes it whole (private-move.md 2.3)")
+		fi
+	done
+fi
 
 section "Checks"
 for note in "${notes[@]}"; do

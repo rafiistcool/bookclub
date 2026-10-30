@@ -116,6 +116,7 @@ The facts go into the notes without secrets or usernames: OS, Docker and compose
 ### 2.3 What the facts decide
 
 - **Layout.** `/opt/bookclub` and `/srv/bookclub` free: `NEW=/opt/bookclub`, `DATA=/srv/bookclub`. If the old app holds either (the script's note says so), the new stack goes to `/opt/bookclub-server` and `/srv/bookclub-server`: `BOOKCLUB_DATA_DIR` in `.env`, `COMPOSE_DIR`, `MEDIA_DIR` and `RESTIC_PASSWORD_FILE` in `backup.env`, and the three units' `ExecStart` (section 4).
+- **Outside the old data directory.** M6 deletes `$OLD_DATA` whole (section 11), so `NEW`, `DATA` and the backup repository must not lie inside it. When the facts' note says the old data directory holds one of the new paths (an old `BOOKCLUB_DATA=/srv` holds `/srv/bookclub`), `DATA` goes to `/var/lib/bookclub` (and `NEW` to `/opt/bookclub-server` if the old data directory holds `/opt/bookclub` too); sections 3.1 and 4 take both from `vars.sh`. The M6 block checks it again before it deletes.
 - **Project name.** `compose.yaml` says `name: bookclub`. If `docker compose ls` shows the old project under that name (a directory named `bookclub` is enough), the new `.env` sets `COMPOSE_PROJECT_NAME=bookclub-server`. Otherwise the stopped Python container becomes an orphan of the new project, and a `down` or `--remove-orphans` could remove it.
 - **The binding.** The old container's published binding and port (Python's default `0.0.0.0:8000`) become `BOOKCLUB_LISTEN` and `BOOKCLUB_PORT`: the port takeover. `BOOKCLUB_LISTEN=127.0.0.1` only when the proxy's upstream is `127.0.0.1:<old port>` or `localhost:<old port>`. That takes a proxy that runs as a process on this host: "Listening on 80 and 443" names nginx, caddy, haproxy, apache2 or traefik, not `docker-proxy` and not nothing. Its upstream, read as addresses only (or Rafael names it):
 
@@ -141,7 +142,7 @@ The facts go into the notes without secrets or usernames: OS, Docker and compose
   echo "${base:-club}-$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 4)"
   ```
 
-- **Backups.** `RESTIC_REPOSITORY` is an absolute path: a mounted NAS share if the facts list one; otherwise a directory on another physical disk; otherwise `/srv/bookclub-backup` on the same disk. In the last case I tell Rafael that the backups then guard against mistakes, not against losing the disk, until the Storage Box comes with the public launch. Never under `/tmp` (the units use `PrivateTmp`). restic runs as root: on an NFS share with root squashing, root cannot write, so the directory must take a `touch` as root first.
+- **Backups.** `RESTIC_REPOSITORY` is an absolute path: a mounted NAS share if the facts list one; otherwise a directory on another physical disk; otherwise `/srv/bookclub-backup` on the same disk. In the last case I tell Rafael that the backups then guard against mistakes, not against losing the disk, until the Storage Box comes with the public launch. Never under `/tmp` (the units use `PrivateTmp`), and never inside `$OLD_DATA` (M6 deletes it). restic runs as root: on an NFS share with root squashing, root cannot write, so the directory must take a `touch` as root first.
 - **Auto-updaters.** If one runs, the new stack is excluded before section 3 (watchtower: the label in `compose.override.yaml`, section 3.1), and it must not revive stopped containers (watchtower: no `--include-stopped`, `--revive-stopped`, `WATCHTOWER_INCLUDE_STOPPED` or `WATCHTOWER_REVIVE_STOPPED`), or the stopped Python app would come back during the move. Otherwise I stop it. Its flags, by name only, since its command line and environment can hold tokens (`--http-api-token`, notification URLs): `docker inspect -f '{{range .Config.Cmd}}{{println .}}{{end}}' <name> | grep -E '^(--label-enable|--include-stopped|-S|--revive-stopped)(=.*)?$'` and `docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' <name> | grep -E '^WATCHTOWER_(LABEL_ENABLE|INCLUDE_STOPPED|REVIVE_STOPPED)='`. `update.sh`, which backs up first, is the new stack's only updater.
 - **Registry.** The package is private. If root's Docker config does not name `git.tillhome.de`, **[Rafael]** creates a Forgejo token with only `read:package` (Settings → Applications) and runs `docker login git.tillhome.de` with it as root on the host.
 - **The scanner.** If the proxy sends `Permissions-Policy` with `camera=()`, I send Rafael the exact line with `camera=(self)`, or the scanner waits. Not a stop.
@@ -602,7 +603,7 @@ The file holds a new random password of 20 characters (capital letters and digit
 
 ## 11. After 30 days (M6): the cleanup block
 
-**[Rafael]** pastes this on the host as root, with the three values filled in at the move. It deletes only when the last 8 days hold a passing restore test from the timer, the newest snapshot is from last night, and a restore test run right then passes (about a minute): a pass from last week says nothing about this week's run. Otherwise it stops and deletes nothing.
+**[Rafael]** pastes this on the host as root, with the three values filled in at the move. It deletes only when the last 8 days hold a passing restore test from the timer, the newest snapshot is from last night, the old data directory holds none of the new stack's paths (`$NEW`, the paths in `backup.env`, Docker's root), and a restore test run right then passes (about a minute): a pass from last week says nothing about this week's run. Otherwise it stops and deletes nothing.
 
 ```bash
 bash -s <<'CLEANUP'
@@ -622,6 +623,22 @@ if [[ -z $latest ]] || (( $(date +%s) - $(date -d "$latest" +%s) > 36 * 3600 ));
     exit 1
 fi
 [[ -f $OLD_DATA/bookclub.db ]] || { echo "stop: $OLD_DATA holds no bookclub.db; nothing was deleted"; exit 1; }
+# The rm below takes OLD_DATA whole: it must hold nothing of the new stack (its directory, its
+# pictures, the backups and their password) or of Docker's volumes.
+old=$(realpath -e -- "$OLD_DATA")
+# The defaults are backup-lib.sh's.
+keep=$(set -a; . "$NEW/backup.env"; printf '%s\n' "$NEW" "${COMPOSE_DIR:-/opt/bookclub}" \
+    "${MEDIA_DIR:-/srv/bookclub/media}" "${BACKUP_DIR:-/var/lib/bookclub-backup}" \
+    "${RESTIC_REPOSITORY-}" "${RESTIC_PASSWORD_FILE-}")
+keep+=$'\n'$(docker info -f '{{.DockerRootDir}}')
+while IFS= read -r path; do
+    [[ $path == /* ]] || continue       # an sftp: or s3: repository
+    real=$(realpath -m -- "$path")
+    if [[ $real == "$old" || $real == "${old%/}"/* ]]; then
+        echo "stop: $OLD_DATA holds $path; nothing was deleted"
+        exit 1
+    fi
+done <<<"$keep"
 if ! systemctl start bookclub-restore-test; then
     echo "stop: the restore test failed just now (journalctl -u bookclub-restore-test); nothing was deleted"
     exit 1

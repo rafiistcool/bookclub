@@ -1,6 +1,6 @@
 //! The private move's runbook (MOVE #52, `docs/phase3/private-move.md`) where its blocks are code
-//! that runs as root on the production host. Each test reads the block from the runbook as it
-//! stands:
+//! that runs as root on the production host, and the layout note of
+//! `deploy/cutover/host-facts.sh`. Each test reads the block from the runbook as it stands:
 //! - `summary` (section 0) prints a report's lines before the first section only when it knows
 //!   them, and each section as its title and a count: no line of a section reaches the terminal,
 //!   also one that a title with a line break starts without indentation.
@@ -8,9 +8,13 @@
 //!   signed in to the new app, by a live session or by one that ended.
 //! - The rollback's delete block stops before it touches anything when the move's variables are
 //!   missing or `$NEW` is not the new stack, and deletes nothing when the backup fails.
+//! - The M6 cleanup block (section 11) deletes the old data directory only when it holds nothing
+//!   of the new stack, its backups or Docker's volumes.
+//! - `host-facts.sh` notes an old data directory that holds a path of the new layout.
 //!
-//! `bash`, `awk` and `find` are the real ones. `docker` is a bash function imported from the
-//! environment that logs its calls, and `backup.sh` is a stub script.
+//! `bash`, `awk`, `find` and `realpath` are the real ones. `docker`, `journalctl`, `systemctl`
+//! and `curl` are bash functions imported from the environment that log their calls, and
+//! `backup.sh` is a stub script.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -409,4 +413,267 @@ fn the_rollback_deletes_only_the_new_stack_and_only_after_its_backup() {
         assert!(calls.is_empty(), "{case}: {calls:?}");
         assert!(rig.picture_kept(), "{case}");
     }
+}
+
+// ---- M6 -------------------------------------------------------------------------------------
+
+/// A host for the M6 cleanup block: the new stack in `opt/bookclub` (`backup.env`, a stub
+/// `backup.sh` whose newest snapshot is from now), the old data directory with `bookclub.db`,
+/// and `docker`, `journalctl` (a passing restore test) and `systemctl` stood in for.
+struct CleanupRig {
+    dir: tempfile::TempDir,
+}
+
+const CLEANUP_DOCKER: &str = r#"() {
+    printf 'docker %s\n' "$*" >>"$RIG/calls.log"
+    case "$*" in
+        "info -f {{.DockerRootDir}}") cat "$RIG/docker-root" ;;
+        "compose ps -aq bookclub") echo old-container ;;
+        "inspect -f {{.Image}} old-container") echo sha256:old ;;
+        "image inspect -f "*) printf 'registry.test/bookclub:0.10\n\n' ;;
+        "compose rm --stop --force bookclub" | "image rm "*) ;;
+        *) echo "unexpected: docker $*" >&2; return 99 ;;
+    esac
+}"#;
+
+const JOURNALCTL: &str = r#"() { echo "restore test passed: 31 tables, 2 pictures"; }"#;
+const SYSTEMCTL: &str = r#"() { printf 'systemctl %s\n' "$*" >>"$RIG/calls.log"; }"#;
+
+impl CleanupRig {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        executable(
+            &dir.path().join("opt/bookclub/backup.sh"),
+            "#!/usr/bin/env bash\nprintf 'backup.sh %s\\n' \"$*\" >>\"$RIG/calls.log\"\n\
+             printf '[{\"time\":\"%s\",\"hostname\":\"bookclub\"}]\\n' \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"\n",
+        );
+        write(&dir.path().join("opt/bookclub/restic-password"), "x\n");
+        Self { dir }
+    }
+
+    fn path(&self, relative: &str) -> PathBuf {
+        self.dir.path().join(relative)
+    }
+
+    /// Runs the block with `OLD_DATA` (which gets a `bookclub.db`), the stack's `MEDIA_DIR` and
+    /// `RESTIC_REPOSITORY`, and Docker's root, each relative to the rig unless absolute.
+    fn run(
+        &self,
+        old_data: &str,
+        media: &str,
+        repository: &str,
+        docker_root: &str,
+    ) -> (Output, Vec<String>) {
+        let rooted = |path: &str| {
+            if path.contains(':') {
+                path.to_owned()
+            } else {
+                self.path(path).display().to_string()
+            }
+        };
+        write(&self.path(old_data).join("bookclub.db"), "old");
+        std::fs::create_dir_all(self.path(media)).unwrap();
+        write(
+            &self.path("opt/bookclub/backup.env"),
+            &format!(
+                "COMPOSE_DIR={0}/opt/bookclub\nMEDIA_DIR={1}\nBACKUP_DIR={0}/var/lib/bookclub-backup\n\
+                 RESTIC_REPOSITORY={2}\nRESTIC_PASSWORD_FILE={0}/opt/bookclub/restic-password\n",
+                self.dir.path().display(),
+                rooted(media),
+                rooted(repository)
+            ),
+        );
+        write(
+            &self.path("docker-root"),
+            &format!("{}\n", rooted(docker_root)),
+        );
+        std::fs::create_dir_all(self.path("old")).unwrap();
+        let block = heredoc("CLEANUP")
+            .replace("<NEW>", &rooted("opt/bookclub"))
+            .replace("<OLD>", &rooted("old"))
+            .replace("<OLD_DATA>", &rooted(old_data));
+        let _ = std::fs::remove_file(self.path("calls.log"));
+        let output = bash_s(
+            &block,
+            self.dir.path(),
+            &[
+                ("RIG", self.dir.path().as_os_str()),
+                ("BASH_FUNC_docker%%", CLEANUP_DOCKER.as_ref()),
+                ("BASH_FUNC_journalctl%%", JOURNALCTL.as_ref()),
+                ("BASH_FUNC_systemctl%%", SYSTEMCTL.as_ref()),
+            ],
+        );
+        (output, calls(self.dir.path()))
+    }
+}
+
+/// M6 deletes the old data directory whole, after its checks. An old data directory that holds
+/// the new stack's directory, its pictures, the backup repository or Docker's root (an old
+/// `BOOKCLUB_DATA=/srv` holds `/srv/bookclub`) stops the block before the restore test and before
+/// anything is removed. A repository that is no local path (`sftp:`) is not compared.
+#[test]
+fn the_cleanup_keeps_an_old_data_directory_that_holds_the_new_stack() {
+    let rig = CleanupRig::new();
+    let (output, calls) = rig.run("old/data", "srv/bookclub/media", "repo", "docker");
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(!rig.path("old/data").exists());
+    assert!(rig.path("srv/bookclub/media").is_dir());
+    assert!(rig.path("opt/bookclub/backup.env").exists());
+    let start = calls
+        .iter()
+        .position(|call| call == "systemctl start bookclub-restore-test")
+        .unwrap_or_else(|| panic!("{calls:#?}"));
+    let rm = calls
+        .iter()
+        .position(|call| call == "docker compose rm --stop --force bookclub")
+        .unwrap_or_else(|| panic!("{calls:#?}"));
+    assert!(start < rm, "{calls:#?}");
+    assert!(calls.contains(&"docker image rm registry.test/bookclub:0.10".to_owned()));
+
+    let rig = CleanupRig::new();
+    let (output, _) = rig.run(
+        "old/data",
+        "srv/bookclub/media",
+        "sftp:bookclub-backup:bookclub",
+        "docker",
+    );
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(!rig.path("old/data").exists());
+
+    for (case, old_data, media, repository, docker_root, held) in [
+        (
+            "the pictures",
+            "srv",
+            "srv/bookclub/media",
+            "repo",
+            "docker",
+            "srv/bookclub/media",
+        ),
+        (
+            "the repository",
+            "old/data",
+            "srv/bookclub/media",
+            "old/data/restic",
+            "docker",
+            "old/data/restic",
+        ),
+        (
+            "the new stack",
+            "opt",
+            "srv/bookclub/media",
+            "repo",
+            "docker",
+            "opt/bookclub",
+        ),
+        (
+            "the backups' scratch directory",
+            "var",
+            "srv/bookclub/media",
+            "repo",
+            "docker",
+            "var/lib/bookclub-backup",
+        ),
+        (
+            "Docker's root",
+            "old/data",
+            "srv/bookclub/media",
+            "repo",
+            "old/data/docker",
+            "old/data/docker",
+        ),
+        (
+            "everything",
+            ".",
+            "srv/bookclub/media",
+            "repo",
+            "docker",
+            "opt/bookclub",
+        ),
+    ] {
+        let rig = CleanupRig::new();
+        let (output, calls) = rig.run(old_data, media, repository, docker_root);
+        assert!(!output.status.success(), "{case}");
+        let printed = stdout(&output);
+        let held = rig.path(held).display().to_string();
+        assert!(
+            printed.contains("stop: ") && printed.contains(&format!("holds {held};")),
+            "{case}: {printed}"
+        );
+        assert!(rig.path(old_data).join("bookclub.db").exists(), "{case}");
+        assert!(
+            !calls
+                .iter()
+                .any(|call| call.starts_with("systemctl start") || call.contains(" rm ")),
+            "{case}: {calls:#?}"
+        );
+    }
+}
+
+// ---- host-facts.sh --------------------------------------------------------------------------
+
+/// `docker` for `host-facts.sh`: a recent engine and compose, one old container whose `/data`
+/// mount is `$FAKE_DATA`, and nothing else.
+const FACTS_DOCKER: &str = r#"() {
+    case "$*" in
+        "version --format "*) echo 27.3.1 ;;
+        "compose version --short") echo 2.29.7 ;;
+        "info --format "*) echo /var/lib/docker ;;
+        "ps -aq "*) echo c0ffee ;;
+        *'"/data"'*) printf '%s\n' "$FAKE_DATA" ;;
+        *State.Pid*) echo 0 ;;
+    esac
+}"#;
+
+const FACTS_CURL: &str = r#"() { printf 'HTTP/2 200\r\n'; }"#;
+
+fn host_facts_notes(data: &str) -> Vec<String> {
+    let old = tempfile::tempdir().unwrap();
+    let output = Command::new("bash")
+        .arg(repo().join("deploy/cutover/host-facts.sh"))
+        .arg(old.path())
+        .arg("books.example.test")
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("PEER_SECONDS", "0")
+        .env("FAKE_DATA", data)
+        .env("BASH_FUNC_docker%%", FACTS_DOCKER)
+        .env("BASH_FUNC_curl%%", FACTS_CURL)
+        .output()
+        .unwrap();
+    let printed = stdout(&output);
+    assert!(
+        printed.contains("== Checks =="),
+        "{printed}{}",
+        stderr(&output)
+    );
+    printed
+        .lines()
+        .filter_map(|line| line.strip_prefix("note: the old data directory "))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// An old data directory that holds a path of the new layout gets a note, so 2.3 picks another
+/// one before anything is installed; a directory of its own gets none.
+#[test]
+fn host_facts_notes_an_old_data_directory_that_holds_the_new_layout() {
+    let notes = host_facts_notes("/srv");
+    let held: Vec<&str> = notes
+        .iter()
+        .map(|note| {
+            note.strip_prefix("/srv holds ")
+                .and_then(|rest| rest.split(':').next())
+                .unwrap_or_else(|| panic!("{note}"))
+        })
+        .collect();
+    assert_eq!(
+        held,
+        [
+            "/srv/bookclub",
+            "/srv/bookclub-server",
+            "/srv/bookclub-backup"
+        ]
+    );
+    assert_eq!(host_facts_notes("/").len(), 5);
+    assert!(host_facts_notes("/opt/python-bookclub/data").is_empty());
 }
