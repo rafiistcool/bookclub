@@ -476,7 +476,7 @@ Then **[Rafael]** sends "done" (section 6). The rollback window closes when the 
 
 The window lasts until the other member writes to the new app. Until then the old app's data is untouched (stopped, and the importer read a copy), and the only writes on the new app are Rafael's checks, which a rollback discards (step 4 backs them up first).
 
-Each step is one block on the host as root that loads `vars.sh` and changes into its own directory, so it runs as written in a fresh SSH session. A block whose variables are missing stops before it touches anything (`${NEW:?}`, or `set -u` in the `bash -s` blocks).
+Each step is one block on the host as root that loads `vars.sh` and changes into its own directory, so it runs as written in a fresh SSH session. A block whose variables are missing stops before it touches anything (`${NEW:?}`, or `set -u` in step 4's `bash -s` block).
 
 1. **Is the window still open?** Counts only: the accounts other than the club's owner (Rafael) that signed in to the new app, by a live session or by one that ended (`last_seen_at`). Every write needs a sign-in.
 
