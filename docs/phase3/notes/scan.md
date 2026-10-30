@@ -256,3 +256,11 @@ Six findings, each checked against the code first. All six were real; none was r
 
 1. **`camera.ts`'s interface:** §3.4 has `openCamera(video): Promise<MediaStream>`, which attaches the stream itself. It is now `openCamera(): Promise<MediaStream>` plus `showCamera(video, stream)`, so the scanner can drop a stale stream before it touches the video. The intent (rear camera, about 720p, stopped on a failed `play()`) is unchanged.
 2. **The add forms' events:** §3.5 has `added: [book: BookDetailOut]`; `AddBookSheet`'s is now `added: [book, isbn]`, and `AddEditionForm`'s `existing` gains the ISBN. §3.5's "the ISBN is looked up again" became "the ISBN that was saved is looked up", which keeps its intent (the hit card after a save) when the reader changed the ISBN.
+
+### The gate (2026-10-30, on b0942df)
+
+All green in the worktree, against `bookclub-pg-scan` on 5461:
+- `cargo sqlx database reset -y`, `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked` (94 test binaries, 1494 passed, 0 failed), `cargo sqlx prepare --check -- --all-targets`. The round changed no server code. The first run's log shared its file name with another package's run in the shared scratchpad, so the server half ran again into a file of its own; the numbers are from that run.
+- `npm run typecheck`, `npm test` (80 files, 588 tests; 577 before the round), `npm run build` (the main entry has no `zxing`, `dist/assets/` holds one `zxing_reader-<hash>.wasm`), `npm run check:api` (`generated.ts` unchanged).
+- shellcheck on `deploy/hosted/*.sh deploy/cutover/*.sh`, and `caddy validate` on `Caddyfile.example`.
+- The plan's acceptance set (`npx vitest run src/isbn.test.ts src/scan …`, as in Part 2): 11 files, 126 tests passed.
