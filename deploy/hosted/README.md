@@ -2,6 +2,8 @@
 
 This directory runs the hosted service on one VM: `compose.yaml` starts the app and its Postgres, and `env.example` lists every setting. `backup.sh` and `restore-test.sh` back it up with restic, and `update.sh` follows the release tag, all from the systemd timers in `systemd/`. The commands below run as root on the VM, in `/opt/bookclub`, unless a step says otherwise.
 
+The private move (#52) runs this stack on the Python app's existing host, with mail off and without legal texts: `docs/phase3/private-move.md` is its runbook and says which steps here it takes.
+
 ## What runs where
 
 - **`app`:** the image `git.tillhome.de/rafiistcool/bookclub-server:<BOOKCLUB_TAG>`, built from the repo's root `Dockerfile`. It holds the server binary and the web app (`/app/static`), runs as uid 1000 on a read-only root file system, and listens on 8080 inside the container. It applies the database migrations at startup.
@@ -24,6 +26,7 @@ This directory runs the hosted service on one VM: `compose.yaml` starts the app 
 - Debian 13 with Docker Engine 25 or newer and the compose plugin 2.24 or newer, and `curl` for the heartbeats.
 - `docker login git.tillhome.de` with a read-only package token, as root: the update timer pulls with it.
 - **An SMTP account, for staging too.** Without `DEV_MODE` the server does not start without `SMTP_URL` and `EMAIL_FROM`, and `EMAIL_TRANSPORT=log` needs `DEV_MODE`, which this setup never sets. Until the mail provider is chosen, staging uses an interim account. `SMTP_URL` must use TLS: `smtps://…:465`, or `smtp://…:587?tls=required`.
+- **Or mail off,** while sign-up is invite-only and the members know the operator (the private move): `EMAIL_TRANSPORT=none` needs no SMTP settings. No mail leaves, reset links are voided (a verification link stays open, unreceived, until it expires), password resets go through `set-password` (see "The first account"), and `SIGNUP_MODE=open` is refused.
 - The reverse proxy (Caddy) terminates TLS and forwards to `BOOKCLUB_LISTEN:BOOKCLUB_PORT`. Only the proxy may reach that port (see "The VM's network").
 
 ## First boot
@@ -65,7 +68,7 @@ This directory runs the hosted service on one VM: `compose.yaml` starts the app 
    docker compose exec app bookclub-server send-test-mail you@example.com
    ```
 
-   It sends one mail through `SMTP_URL` and exits non-zero with the SMTP server's answer if that fails. The mail carries a `Message-ID` on the domain of `EMAIL_FROM`.
+   It sends one mail through `SMTP_URL` and exits non-zero with the SMTP server's answer if that fails. The mail carries a `Message-ID` on the domain of `EMAIL_FROM`. With `EMAIL_TRANSPORT=none` it exits 1 with `mail is off (EMAIL_TRANSPORT=none)`: skip this step.
 
 6. Set up the backups (see "Backups") before the first real data arrives.
 
@@ -91,7 +94,15 @@ In production, only after the legacy import, which needs an empty database (see 
 
    The admin mints further invites on the Invites tab of `/admin`, and withdraws one there. `bookclub-server revoke-admin <username>` ends an admin's rights, and `bookclub-server unsuspend <username>` lifts a suspension, both from the host, for when no admin can use the admin page (an only admin suspended by another, for one).
 
-The admin page `/admin` holds the catalog requests and the reports, each with its age, an "Overdue" mark after 72 hours, and a "Decided" view with the history and the 90-day figures. Readers report covers, the profile pictures of people they share a club with, and books and editions readers added: "Take down" removes a picture for good, "Remove the text" withdraws what a reader typed and keeps the book on everyone's shelves (`docs/legal/takedown.md` §4). "Edit as admin", on a book page and in the queue, changes a book's facts at once. "Take down a picture by URL", above the open reports, records an emailed notice with its arrival time. Each decision mails the reporters the outcome and, when something was removed, whoever uploaded or added it a statement of reasons. The "Accounts" tab suspends an account (no sign-in, every session ended, admin rights ended for good, the invites it knows revoked, content kept) and lifts a suspension. A suspended account cannot export or delete its data in the app: its owner writes to `CONTACT_EMAIL`, and the operator follows `docs/legal/takedown.md` §7. Instance admins with a verified address get a mail when new reports arrive (at most one an hour) and a digest of new catalog requests (at most one a day), through `SMTP_URL`.
+**A forgotten password while mail is off** (`EMAIL_TRANSPORT=none`): "Forgot password" says a link is on its way, but none leaves. The member asks the operator, who runs
+
+```sh
+(umask 077 && docker compose exec -T app bookclub-server set-password <username> > /root/new-password)
+```
+
+It writes a new random password of 20 characters (capital letters and digits, no I, L, O or U) and nothing else to the file, ends every session and app token of the account, and voids its open reset and verification links; an unknown name exits 1 with `No account with that name`. Pass the password on, delete the file, and have the member change it in Settings the same day. A suspended account gets the password and stays suspended. The app keeps failed sign-ins in memory, so a member it locked out still waits up to 10 minutes.
+
+The admin page `/admin` holds the catalog requests and the reports, each with its age, an "Overdue" mark after 72 hours, and a "Decided" view with the history and the 90-day figures. Readers report covers, the profile pictures of people they share a club with, and books and editions readers added: "Take down" removes a picture for good, "Remove the text" withdraws what a reader typed and keeps the book on everyone's shelves (`docs/legal/takedown.md` §4). "Edit as admin", on a book page and in the queue, changes a book's facts at once. "Take down a picture by URL", above the open reports, records an emailed notice with its arrival time. Each decision mails the reporters the outcome and, when something was removed, whoever uploaded or added it a statement of reasons. The "Covers" tab lists the cover suggestions ("Use this cover" or "Not this book", which keeps that Open Library book out for good) and the catalog and imported books without a cover, each with "Search now" and "Upload a picture"; an admin also sets any book's or edition's cover on its book page. The server looks for covers by itself: every 10 minutes it searches Open Library by title and author for a few books without one (books readers use first, one request every 2 seconds, pausing while Open Library is down) and fetches again Open Library pictures that failed to load; a clear match becomes the cover, the rest waits on the Covers tab. No setting turns it on or off, and it never replaces a cover a reader or an admin set. The "Accounts" tab suspends an account (no sign-in, every session ended, admin rights ended for good, the invites it knows revoked, content kept) and lifts a suspension. A suspended account cannot export or delete its data in the app: its owner writes to `CONTACT_EMAIL`, and the operator follows `docs/legal/takedown.md` §7. Instance admins with a verified address get a mail when new reports arrive (at most one an hour) and a digest of new catalog requests (at most one a day), through `SMTP_URL`.
 
 The app deletes old records itself, every hour, with nothing to configure (Q14, `docs/legal/privacy-facts.md` §7): decided reports and catalog requests 3 years after the decision, the photo of a rejected cover request with its request, and sign-ups that stayed empty (no verified address, no data, not an admin, not suspended) 30 days after their last sign-in or the lifting of a suspension. Open reports and requests stay until they are decided. The app log shows only the counts.
 
@@ -270,19 +281,19 @@ TLS ends at the Caddy that already serves git.tillhome.de, which forwards to `BO
 3. Install the logrotate rule from the comment above the block's `log` as `/etc/logrotate.d/bookclub-access` (root-owned, mode 0644; logrotate ignores a group- or world-writable file), on the host that holds `/var/log/caddy`. If Caddy runs in a container, bind-mount that directory from the host. Check it with `logrotate -d /etc/logrotate.d/bookclub-access`. If logrotate refuses the directory's permissions, add `su <caddy user> <caddy group>` to the rule.
 4. Check and load: `caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`, then `caddy reload`.
 5. From home, run `verify-limits.sh` (next section), then make one sign-up attempt from a second network, such as a phone on mobile data. That attempt must not get 429.
-6. Open `https://<host>/login?next=/join/TEST` and `https://<host>/join/TEST` in a browser, then check that `grep -c TEST /var/log/caddy/bookclub-access.log` prints 0.
+6. Open `https://<host>/login?next=/join/TEST`, `https://<host>/join/TEST` and `https://<host>/api/books/isbn/9780306406157` in a browser (signed out, the last answers 401, which is enough), then check that `grep -cE 'TEST|9780306406157' /var/log/caddy/bookclub-access.log` prints 0.
 
 What the block does:
 
 - `request_body max_size 51MiB` (53,477,376 bytes). The app answers 413 itself, from `Content-Length` and before reading the body, above 52,432,896 bytes, so a client always gets the app's JSON 413. Caddy's limit is the backstop for bodies it has to read, such as chunked ones. Caddy's `50MB` (50,000,000 bytes) would cut off uploads the app accepts.
-- HSTS `max-age=31536000` without `includeSubDomains` (add it, and consider `preload`, once the final domain is in place), a `Permissions-Policy` that denies camera, microphone, location, payment and motion sensors (clipboard and Web Share keep their defaults, because the invite pages use them), and no `Server` header.
+- HSTS `max-age=31536000` without `includeSubDomains` (add it, and consider `preload`, once the final domain is in place), a `Permissions-Policy` that allows the camera on the app's own origin only, for barcode scanning (`camera=(self)`, #56; `camera=()` makes every camera request fail without a prompt), and denies microphone, location, payment and motion sensors (clipboard and Web Share keep their defaults, because the invite pages use them), and no `Server` header.
 - It does not repeat the headers the app sets: CSP, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Cache-Control`.
 - zstd and gzip for `/assets/*` only. API answers mix personal data with text a client sent, the pattern compression side channels need.
 - `reverse_proxy` with an active health check on `/api/health` every 15 s. While the app is down or restarting, Caddy answers 503 for up to one interval after the app is back.
 - An access log in `/var/log/caddy/bookclub-access.log`, kept at most 7 days. It holds client addresses, which the privacy text must state.
   - Caddy 2.10 rolls a log file only by size (it has no `roll_interval`), and `roll_keep_for` counts from the roll, not from the oldest line. At beta traffic a 50 MiB file would hold lines for weeks. So the block sets `roll_disabled`, and logrotate on the host rolls the file every day, empty or not (`daily`, `rotate 5`, `maxage 7`, `copytruncate`). The live file holds at most a day, the 5 old files the 5 days before, so no line is older than 6 days plus the timer's delay.
   - `copytruncate`, because Caddy keeps the file open. Caddy opens it in append mode, so after the truncate it writes at the start of the empty file. Lines written between the copy and the truncate can be lost.
-  - The URI keeps only the path, as in the app's own log, which logs the path without the query. A query becomes `?{redacted}`: search terms, `/signup?code=…`, and `/login?next=/join/<code>`, which the app sends a signed-out reader to from an invite. Invite codes in the path become `/join/{redacted}` and `/api/invites/{redacted}/…`.
+  - The URI keeps only the path, as in the app's own log, which logs the path without the query. A query becomes `?{redacted}`: search terms, `/signup?code=…`, and `/login?next=/join/<code>`, which the app sends a signed-out reader to from an invite. Invite codes in the path become `/join/{redacted}` and `/api/invites/{redacted}/…`, and an ISBN lookup (a scan, #56) `/api/books/isbn/{redacted}`: an ISBN says what someone reads, like a search term. The app's own log writes it as `/api/books/isbn/{isbn}`. This hides the ISBN, not the book: covers (`/media/<id>/…`) and book paths (`/book/<id>`, `/api/books/works/<id>…`) keep their ids in both logs, also the cover that a scan's result card loads right after the lookup, and the proxy's line has the client's address.
   - `Referer`, which repeats such URLs, is dropped. Caddy leaves out `Cookie` and `Authorization` by default.
 - A commented `rate_limit` block for Q16 option B. It needs a Caddy built with `github.com/mholt/caddy-ratelimit` (xcaddy) and `order rate_limit before basicauth` in the global options.
 - Caddy replaces any `X-Forwarded-For` an untrusted client sends with the client's address. The app reads it only from `TRUSTED_PROXIES` and takes the right-most untrusted address.
@@ -340,7 +351,7 @@ The cutover (#52) imports the Python app's SQLite database once, into an empty d
        --allow-unmatched --dry-run > dry-run.txt
    ```
 
-   `--owner` is the legacy username that becomes the club owner, `--club-name` and `--timezone` are `BOOKCLUB_NAME` and `BOOKCLUB_TZ` of the old `.env`, and `--club-slug` is the slug the rehearsal used, so the club's URL never changes. Read `dry-run.txt`, then run the same command without `--dry-run` and start the app:
+   `--owner` is the legacy username that becomes the club owner, `--club-name` and `--timezone` are `BOOKCLUB_NAME` and `BOOKCLUB_TZ` of the old `.env`, and `--club-slug` is the slug the rehearsal used, so the club's URL never changes. The import also searches Open Library for covers of the imported books that have none (at most 5 minutes a run; an outage stops the search, never the import). The report's `cover search` line counts them, and its `without a cover` section names each book still without one with its title, so the report stays as private as the rest of it. Read `dry-run.txt`, then run the same command without `--dry-run` and start the app:
 
    ```sh
    docker compose run --rm -T -v /srv/bookclub/import:/import:ro app \
@@ -351,7 +362,7 @@ The cutover (#52) imports the Python app's SQLite database once, into an empty d
    systemctl start bookclub-update.timer
    ```
 
-3. `--allow-unmatched` keeps going when the DNB or Open Library cannot answer, and keeps those ISBN rows as bare facts. Resolve them later, with the app running:
+3. `--allow-unmatched` keeps going when the DNB or Open Library cannot answer, and keeps those ISBN rows as bare facts. Resolve them later, with the app running. `rematch-legacy` then searches covers again for the imported books still without one, 2 seconds apart (the books an outage or the time budget left "not searched" too), and prints the same cover line and section; decide its suggestions on the admin page's Covers tab:
 
    ```sh
    docker compose run --rm -T app bookclub-server rematch-legacy --dry-run
@@ -558,7 +569,7 @@ When the repository itself is gone or damaged, for example because someone delet
 
 5. Go on with steps 2 to 4 of "Restoring for real": step 3 left the restore where they expect it, and step 4's `backup.sh` takes the first backup into the new repository. Do not start the app yet.
 
-6. End what the attacker can reuse from the database: every session and app token (a session is the SHA-256 of its token, with no secret of the server's, so a planted one works on the new VM too), every open club and sign-up invite, and every email link not used yet. `revoke-access.sql`, from the checkout the new VM was set up from, does it in one transaction and prints how many rows each statement changed. Everyone signs in again with their password; club admins create new invites:
+6. End what the attacker can reuse from the database: every session and app token (a session is the SHA-256 of its token, with no secret of the server's, so a planted one works on the new VM too), every open club and sign-up invite, every email link not used yet, and every pending friend request (one click by the account it is for makes it a friendship). `revoke-access.sql`, from the checkout the new VM was set up from, does it in one transaction and prints how many rows each statement changed. Everyone signs in again with their password; club admins create new invites:
 
    ```sh
    cd /opt/bookclub
@@ -566,7 +577,7 @@ When the repository itself is gone or damaged, for example because someone delet
        < <checkout>/deploy/hosted/revoke-access.sql
    ```
 
-7. Check what they could have changed: the instance admins, the accounts created and the addresses verified or passwords changed since the intrusion may have begun, the club memberships since then, and the moderation decisions. `<date>` is that day; when in doubt, the day of the oldest snapshot of the old box:
+7. Check what they could have changed: the instance admins, the accounts created and the addresses verified or passwords changed since the intrusion may have begun, the club memberships and friendships since then (a planted friendship shows as much as a planted membership), and the moderation decisions. `<date>` is that day; when in doubt, the day of the oldest snapshot of the old box:
 
    ```sh
    docker compose exec -T postgres psql -X -U bookclub -d bookclub -v since="'<date>'" <<'SQL'
@@ -576,6 +587,10 @@ When the repository itself is gone or damaged, for example because someone delet
    SELECT c.name AS club, u.username, m.role, m.joined_at FROM club_memberships m
      JOIN clubs c ON c.id = m.club_id JOIN users u ON u.id = m.user_id
     WHERE m.joined_at >= :since ORDER BY m.joined_at;
+   SELECT r.username AS requester, a.username AS addressee, f.created_at, f.accepted_at
+     FROM friendships f
+     JOIN users r ON r.id = f.requester_id JOIN users a ON a.id = f.addressee_id
+    WHERE greatest(f.created_at, f.accepted_at) >= :since ORDER BY f.accepted_at;
    SELECT username, suspended_at, unsuspended_at FROM users
     WHERE suspended_at IS NOT NULL OR unsuspended_at IS NOT NULL ORDER BY username;
    SELECT public_id, kind, removed_at FROM media WHERE removed_at IS NOT NULL ORDER BY removed_at;
@@ -584,7 +599,7 @@ When the repository itself is gone or damaged, for example because someone delet
 
    A direct write leaves no trace in these columns: `UPDATE users SET suspended_at = NULL` lifts a suspension without setting `unsuspended_at` (only the admin page and `bookclub-server unsuspend` do), and a cleared `removed_at` brings a picture back. So compare the suspensions and takedowns with the record in the contact mailbox (`docs/legal/takedown.md` §6), which is off the VM and out of the attacker's reach, not with the database's own timestamps. The same holds for the timestamps of the other queries: a direct write can change an address or a password hash without them, so ask the owners of the accounts that matter (the admins, the owners of clubs) to check their address once the app runs.
 
-   Anything nobody can explain goes before the app starts: an admin flag with `UPDATE users SET is_admin = false WHERE username = '<name>'`; an address its owner did not set with `UPDATE users SET email = NULL, email_verified_at = NULL WHERE username = '<name>'`, so that no reset link goes there (tell the owner, who sets it again); every account the record lists as suspended that is not, with `UPDATE users SET suspended_at = now(), is_admin = false WHERE username = '<name>'` (step 6 already ended its sessions and the invites); a picture the record lists as taken down whose `removed_at` is empty again, with `UPDATE media SET removed_at = now(), storage_key = NULL WHERE public_id = '<id>'` and `INSERT INTO media_removed_hashes (sha256, media_id) SELECT sha256, id FROM media WHERE public_id = '<id>' AND sha256 IS NOT NULL ON CONFLICT DO NOTHING` (the hash of the file as received, so the same file cannot be uploaded again; delete its files under `/srv/bookclub/media` by hand); an account or a membership through the club's owner or, once the app runs, the admin page.
+   Anything nobody can explain goes before the app starts: an admin flag with `UPDATE users SET is_admin = false WHERE username = '<name>'`; an address its owner did not set with `UPDATE users SET email = NULL, email_verified_at = NULL WHERE username = '<name>'`, so that no reset link goes there (tell the owner, who sets it again); every account the record lists as suspended that is not, with `UPDATE users SET suspended_at = now(), is_admin = false WHERE username = '<name>'` (step 6 already ended its sessions and the invites); a friendship with `DELETE FROM friendships f USING users a, users b WHERE a.username = '<name>' AND b.username = '<other name>' AND f.requester_id IN (a.id, b.id) AND f.addressee_id IN (a.id, b.id)` (step 6 already revoked the invites either made for the other); a picture the record lists as taken down whose `removed_at` is empty again, with `UPDATE media SET removed_at = now(), storage_key = NULL WHERE public_id = '<id>'` and `INSERT INTO media_removed_hashes (sha256, media_id) SELECT sha256, id FROM media WHERE public_id = '<id>' AND sha256 IS NOT NULL ON CONFLICT DO NOTHING` (the hash of the file as received, so the same file cannot be uploaded again; delete its files under `/srv/bookclub/media` by hand); an account or a membership through the club's owner or, once the app runs, the admin page.
 
 8. Back up again, so that the newest snapshot holds the database as it is now, then start the app as in step 5 of "Restoring for real", and the timers, which this VM does not have yet. Their first runs ping the new checks:
 
@@ -657,6 +672,7 @@ The answer holds `"signup":"open"` (the address is `BOOKCLUB_LISTEN` and `BOOKCL
 - `bind source path does not exist: …` (from `docker compose up`): create the directory as in "First boot".
 - `TRUSTED_PROXIES entry "CHANGE_ME" is not a CIDR or an IP address`: a value in `.env` is still the placeholder.
 - `SMTP_URL must use TLS without DEV_MODE: …`: use `smtps://` or `?tls=required`.
+- `SIGNUP_MODE=open needs mail: set EMAIL_TRANSPORT=smtp`: open sign-up needs a mail provider (see "Requirements").
 - `SIGNUP_MODE=open needs the legal texts outside DEV_MODE: …` or `LEGAL_DIR/…`: see "Legal texts".
 - `cannot reach the database (gave up after 60 s)`: check `docker compose ps postgres` and `POSTGRES_PASSWORD`.
 - `cannot apply the database migrations: migration <N> was previously applied but is missing in the resolved migrations`: a version older than the database; see "Rollback".

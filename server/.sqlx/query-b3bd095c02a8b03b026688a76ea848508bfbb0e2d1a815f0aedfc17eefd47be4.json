@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE media SET fetch_failed_at = now()\n                 WHERE id = $1 AND storage_key IS NULL AND fetch_failed_at IS NOT NULL\n                   AND removed_at IS NULL AND ol_gone_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b3bd095c02a8b03b026688a76ea848508bfbb0e2d1a815f0aedfc17eefd47be4"
+}

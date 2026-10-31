@@ -16,6 +16,9 @@ import type {
   ClubPickOut,
   ClubPickPatchIn,
   ClubPickSetIn,
+  CoverSearchOut,
+  CoverSuggestionList,
+  CoverSuggestionOut,
   CustomBookIn,
   DiaryEntryIn,
   DiaryFeedOut,
@@ -26,11 +29,13 @@ import type {
   EditionList,
   EditionOut,
   FavoritesOut,
+  FriendsOut,
   ImportJobOut,
   InviteIn,
   InviteList,
   InviteOut,
   InvitePreview,
+  IsbnHitOut,
   LegalDoc,
   LegalDocumentOut,
   LoginIn,
@@ -39,6 +44,7 @@ import type {
   MilestoneIn,
   MilestoneListOut,
   MilestoneOut,
+  MissingCoverList,
   NewEditionIn,
   NotificationsIn,
   NotificationsOut,
@@ -265,6 +271,14 @@ export const api = {
     request<BookDetailOut>(`${workPath(workId)}/refresh`, { method: "POST" }),
   createCustomBook: (body: CustomBookIn) =>
     request<BookDetailOut>("/api/books/custom", json("POST", body)),
+  /**
+   * The edition of an ISBN (ISBN-10 or ISBN-13), from the catalog or, when it
+   * is not there yet, from the DNB or Open Library, stored on the way. Counts
+   * as a catalog request of the account (429 `Slow down a little…`).
+   * 404 `No book found for that ISBN` is a miss, not an error.
+   */
+  lookupIsbn: (isbn: string, signal?: AbortSignal) =>
+    request<IsbnHitOut>(`/api/books/isbn/${enc(isbn)}`, { signal }),
   /** Notice-and-takedown for a cover, by `cover_public_id`. */
   reportCover: (publicId: string, body: ReportIn) =>
     request<ReportCreated>(`/api/media/${enc(publicId)}/reports`, json("POST", body)),
@@ -476,6 +490,34 @@ export const api = {
   /** The same for one edition. */
   adminEditEdition: (editionId: number, fields: EditFields) =>
     request<EditionOut>(`/api/admin/editions/${editionId}`, json("PATCH", { fields })),
+  /**
+   * A page of the cover search's suggestions (#74): `open` oldest first (the
+   * server hides those nobody needs to decide any more), `resolved` newest
+   * decision first; 50 a page.
+   */
+  adminCoverSuggestionPage: (status: "open" | "resolved", page = 1) =>
+    request<CoverSuggestionList>(`/api/admin/cover-suggestions?status=${status}&page=${page}`),
+  /** Uses the suggested picture as the book's cover; that Open Library work is not suggested again. */
+  approveCoverSuggestion: (id: number) =>
+    request<CoverSuggestionOut>(`/api/admin/cover-suggestions/${id}/approve`, { method: "POST" }),
+  /** "Not this book": that Open Library work never comes back for the book. */
+  rejectCoverSuggestion: (id: number) =>
+    request<CoverSuggestionOut>(`/api/admin/cover-suggestions/${id}/reject`, { method: "POST" }),
+  /** Catalog and imported books without a usable cover: `in_use` (readers use them) or `all`; 50 a page. */
+  adminMissingCovers: (scope: "in_use" | "all", page = 1) =>
+    request<MissingCoverList>(`/api/admin/missing-covers?scope=${scope}&page=${page}`),
+  /** Searches Open Library for this book's cover now (never for a book a reader added). */
+  adminSearchCover: (workId: number | string) =>
+    request<CoverSearchOut>(`/api/admin/works/${enc(String(workId))}/cover-search`, { method: "POST" }),
+  /**
+   * The admin's picture becomes the cover of the book, or of `editionId`, at
+   * once, replacing any cover (provenance `admin`).
+   */
+  adminSetCover: (workId: number | string, file: File, editionId?: number | null) => {
+    const body = upload(file);
+    if (editionId != null) body.append("edition_id", String(editionId));
+    return request<CoverSet>(`/api/admin/works/${enc(String(workId))}/cover`, { method: "PUT", body });
+  },
   /** Club-less sign-up invites, newest first. */
   adminInvites: () => request<InviteList>("/api/admin/invites"),
   createSignupInvite: (body: SignupInviteIn) =>
@@ -501,4 +543,27 @@ export const api = {
   },
   clubStats: (slug: string, year?: number) =>
     request<ClubStatsOut>(`${clubPath(slug)}/stats${year ? `?year=${year}` : ""}`),
+
+  // Friends (#57). Every write answers with the caller's whole `FriendsOut`.
+  /** The caller's friends, requests both ways, blocks and personal club invitations. */
+  friends: () => request<FriendsOut>("/api/friends"),
+  /** Asks `username` (exact; case and spaces do not matter). Their request to the caller makes it a friendship. */
+  sendFriendRequest: (username: string) =>
+    request<FriendsOut>("/api/friends/requests", json("POST", { username })),
+  acceptFriendRequest: (username: string) =>
+    request<FriendsOut>(`/api/friends/requests/${enc(username)}/accept`, { method: "POST" }),
+  /** Declines a request from `username`, or withdraws the caller's own request to them. */
+  deleteFriendRequest: (username: string) =>
+    request<FriendsOut>(`/api/friends/requests/${enc(username)}`, { method: "DELETE" }),
+  removeFriend: (username: string) =>
+    request<FriendsOut>(`/api/friends/list/${enc(username)}`, { method: "DELETE" }),
+  /** Silent: ends a friendship or request between the two, and hides their later requests. */
+  blockAccount: (username: string) =>
+    request<FriendsOut>(`/api/friends/blocks/${enc(username)}`, { method: "PUT" }),
+  /** Always 200, for a name the caller never blocked too. */
+  unblockAccount: (username: string) =>
+    request<FriendsOut>(`/api/friends/blocks/${enc(username)}`, { method: "DELETE" }),
+  /** Declines a friend's invitation into a club (`FriendClubInviteOut.id`). */
+  declineClubInvite: (id: number) =>
+    request<FriendsOut>(`/api/friends/club-invites/${id}`, { method: "DELETE" }),
 };

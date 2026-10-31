@@ -1,7 +1,8 @@
 //! The #46 matrix (docs/phase1/conventions.md §6.5): the SQL policy functions and
-//! `crate::visibility` across viewer types (self, co-member, member of another club, stranger,
-//! former co-member, unknown name), item visibility, a diary tombstone of a deleted account,
-//! and NULL owners.
+//! `crate::visibility` across viewer types (self, co-member, friend, member of another club,
+//! stranger, former co-member, both sides of a pending friend request, former friend, blocked
+//! friend, friend of a friend, unknown name), item visibility, a diary tombstone of a deleted
+//! account, and NULL owners; and that the planner still inlines the set-returning functions.
 
 mod common;
 
@@ -64,9 +65,17 @@ async fn relation_and_can_see_user_follow_shared_clubs(db: PgPool) {
     let cases = [
         (&v.owner, Relation::Myself),
         (&v.co_member, Relation::Audience),
+        (&v.friend, Relation::Audience),
         (&v.other_club, Relation::Stranger),
+        // In no club, and a friend of the owner's friend.
         (&v.stranger, Relation::Stranger),
         (&v.former, Relation::Stranger),
+        // A pending request grants nothing, in either direction; neither does an ended or
+        // blocked friendship.
+        (&v.asked, Relation::Stranger),
+        (&v.requested, Relation::Stranger),
+        (&v.exfriend, Relation::Stranger),
+        (&v.blocked, Relation::Stranger),
     ];
     for (viewer, expected) in cases {
         let relation = visibility::relation(&mut conn, viewer.id(), owner)
@@ -79,14 +88,48 @@ async fn relation_and_can_see_user_follow_shared_clubs(db: PgPool) {
         )
         .await;
         assert_eq!(sees, expected.sees_profile(), "{}", viewer.username());
+        // Both directions: the owner sees the viewer exactly when the viewer sees the owner.
+        let back = visibility::relation(&mut conn, owner, viewer.id())
+            .await
+            .unwrap();
+        assert_eq!(back, expected, "the owner's view of {}", viewer.username());
+        let owners = ids(
+            &app,
+            format!("SELECT user_id FROM bc_visible_owners({})", viewer.id()),
+        )
+        .await;
+        assert_eq!(
+            owners.contains(&owner),
+            expected.sees_profile(),
+            "bc_visible_owners({})",
+            viewer.username()
+        );
     }
-    // Not transitive: otherclub shares a club with comember, who shares one with the owner.
+    // Not transitive: otherclub shares a club with comember, who shares one with the owner;
+    // stranger is a friend of the owner's friend.
     assert_eq!(
         visibility::relation(&mut conn, v.other_club.id(), v.co_member.id())
             .await
             .unwrap(),
         Relation::Audience
     );
+    assert_eq!(
+        visibility::relation(&mut conn, v.stranger.id(), v.friend.id())
+            .await
+            .unwrap(),
+        Relation::Audience
+    );
+    // The friend branch keeps a NULL owner or viewer false, never NULL.
+    for sql in [
+        format!("SELECT bc_can_see_user({}, NULL)", v.friend.id()),
+        format!("SELECT bc_can_see_user(NULL, {})", v.friend.id()),
+        format!(
+            "SELECT bc_can_see_item({}, NULL, 'audience')",
+            v.friend.id()
+        ),
+    ] {
+        assert!(!flag(&app, sql.clone()).await, "{sql}");
+    }
     // An unknown owner is a stranger.
     assert_eq!(
         visibility::relation(&mut conn, v.co_member.id(), 999_999)
@@ -138,9 +181,14 @@ async fn only_me_items_are_for_the_owner_alone(db: PgPool) {
     let expectations = [
         (&v.owner, true, true),
         (&v.co_member, true, false),
+        (&v.friend, true, false),
         (&v.other_club, false, false),
         (&v.stranger, false, false),
         (&v.former, false, false),
+        (&v.asked, false, false),
+        (&v.requested, false, false),
+        (&v.exfriend, false, false),
+        (&v.blocked, false, false),
     ];
     for (viewer, audience, only_me) in expectations {
         let id = viewer.id();
@@ -250,33 +298,37 @@ async fn visible_shelf_redacts_only_me_ratings_for_others(db: PgPool) {
             ),
         ]
     );
-    let audience = rows(&app, v.co_member.id(), owner).await;
-    assert_eq!(
-        audience,
-        vec![
-            (
-                a.id,
-                Some(4),
-                None,
-                some("Fine"),
-                some(""),
-                None,
-                Some(false)
-            ),
-            (b.id, None, None, some(""), some(""), None, Some(false)),
-            // dnf_reason and progress are shelf state: the audience sees them.
-            (
-                c.id,
-                None,
-                None,
-                some(""),
-                some("Boring"),
-                None,
-                Some(false)
-            ),
-            (d.id, None, None, some(""), some(""), Some(40), Some(false)),
-        ]
-    );
+    for viewer in v.audience() {
+        let audience = rows(&app, viewer.id(), owner).await;
+        assert_eq!(
+            audience,
+            vec![
+                (
+                    a.id,
+                    Some(4),
+                    None,
+                    some("Fine"),
+                    some(""),
+                    None,
+                    Some(false)
+                ),
+                (b.id, None, None, some(""), some(""), None, Some(false)),
+                // dnf_reason and progress are shelf state: the audience sees them.
+                (
+                    c.id,
+                    None,
+                    None,
+                    some(""),
+                    some("Boring"),
+                    None,
+                    Some(false)
+                ),
+                (d.id, None, None, some(""), some(""), Some(40), Some(false)),
+            ],
+            "{}",
+            viewer.username()
+        );
+    }
     for viewer in v.strangers() {
         assert!(
             rows(&app, viewer.id(), owner).await.is_empty(),
@@ -317,12 +369,19 @@ async fn visible_quotes_hide_only_me_quotes_from_others(db: PgPool) {
         )
     };
     assert_eq!(seen(owner).await, vec![public, private]);
-    assert_eq!(seen(v.co_member.id()).await, vec![public]);
+    for viewer in v.audience() {
+        assert_eq!(
+            seen(viewer.id()).await,
+            vec![public],
+            "{}",
+            viewer.username()
+        );
+    }
     for viewer in v.strangers() {
         assert!(seen(viewer.id()).await.is_empty(), "{}", viewer.username());
     }
     // The owner's quote count includes the private quote; nobody else's does.
-    for (viewer, expected) in [(owner, 2), (v.co_member.id(), 1)] {
+    for (viewer, expected) in [(owner, 2), (v.co_member.id(), 1), (v.friend.id(), 1)] {
         let count = app
             .scalar_i64(&format!(
                 "SELECT count(*) FROM bc_visible_quotes({viewer}) WHERE user_id = {owner}"
@@ -350,6 +409,7 @@ async fn visible_owners_and_member_clubs(db: PgPool) {
     ];
     expected.sort_unstable();
     assert_eq!(rows, expected);
+    // In no club: themselves and their friend, the owner's friend; not the owner.
     let alone: Vec<(i64, bool)> = sqlx::query_as(AssertSqlSafe(format!(
         "SELECT user_id, is_self FROM bc_visible_owners({}) ORDER BY user_id",
         v.stranger.id()
@@ -357,7 +417,31 @@ async fn visible_owners_and_member_clubs(db: PgPool) {
     .fetch_all(&app.db)
     .await
     .unwrap();
-    assert_eq!(alone, vec![(v.stranger.id(), true)]);
+    let mut expected = vec![(v.stranger.id(), true), (v.friend.id(), false)];
+    expected.sort_unstable();
+    assert_eq!(alone, expected);
+    // The owner's: themselves, the co-member and the friend; no pending, ended or blocked
+    // friendship, and no former co-member.
+    let owners: Vec<(i64, bool)> = sqlx::query_as(AssertSqlSafe(format!(
+        "SELECT user_id, is_self FROM bc_visible_owners({}) ORDER BY user_id",
+        v.owner.id()
+    )))
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    let mut expected = vec![
+        (v.owner.id(), true),
+        (v.co_member.id(), false),
+        (v.friend.id(), false),
+    ];
+    expected.sort_unstable();
+    assert_eq!(owners, expected);
+    let friends: Vec<i64> = ids(
+        &app,
+        format!("SELECT user_id FROM bc_friends({})", v.owner.id()),
+    )
+    .await;
+    assert_eq!(friends, vec![v.friend.id()]);
 
     let clubs = ids(
         &app,
@@ -402,11 +486,13 @@ async fn diary_roots_and_replies(db: PgPool) {
     let by_other_club = reply(&app, work, open, v.other_club.id()).await;
     let all = [open, private, answer, by_former, by_other_club];
 
-    let expectations: [(&TestClient, &[i64]); 5] = [
+    let expectations: [(&TestClient, &[i64]); 6] = [
         // The root's author sees every reply, also from people outside their audience.
         (&v.owner, &all),
         // comember sees otherclub (club `other`), but former is in none of their clubs.
         (&v.co_member, &[open, answer, by_other_club]),
+        // The friend sees the root, but none of the repliers.
+        (&v.friend, &[open]),
         // otherclub can see comember, but not the owner's root, so no reply either, not even
         // their own.
         (&v.other_club, &[]),
@@ -484,10 +570,12 @@ async fn tombstone_of_a_deleted_account(db: PgPool) {
         1
     );
 
-    let expectations: [(&TestClient, &[i64]); 5] = [
+    let expectations: [(&TestClient, &[i64]); 6] = [
         // The owner sees comember (shared club), so the root and comember's reply.
         (&v.owner, &[root, by_co_member]),
         (&v.co_member, &[root, by_co_member]),
+        // The friend sees stranger (friends), so the root and stranger's reply.
+        (&v.friend, &[root, by_stranger]),
         // otherclub shares a club with comember.
         (&v.other_club, &[root, by_co_member]),
         (&v.stranger, &[root, by_stranger]),
@@ -572,7 +660,8 @@ async fn club_posts_are_for_members_of_that_club(db: PgPool) {
         assert_eq!(access.club_role, Some(role));
         assert!(!access.deleted);
     }
-    for viewer in v.strangers() {
+    // Club posts are club data: the owner's friend is no member.
+    for viewer in v.strangers().into_iter().chain([&v.friend]) {
         let error = visibility::post_access(&mut conn, viewer.id(), post, true)
             .await
             .unwrap_err();
@@ -650,6 +739,101 @@ async fn club_members_see_each_others_shelves(db: PgPool) {
                 format!("SELECT bc_can_see_user({}, {})", mallory.id(), owner.id())
             )
             .await
+        );
+    }
+}
+
+/// A friend who is also a co-member is one owner in `bc_visible_owners` (its `DISTINCT` covers
+/// both sources), so reader lists, rating counts and reaction names do not double.
+#[sqlx::test]
+async fn a_friend_who_is_also_a_co_member_counts_once(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let v = Viewers::new(&app).await;
+    let (owner, co_member) = (v.owner.id(), v.co_member.id());
+    app.exec(&format!(
+        "INSERT INTO friendships (requester_id, addressee_id, accepted_at)
+         VALUES ({co_member}, {owner}, now())"
+    ))
+    .await;
+    let seen = app
+        .scalar_i64(&format!(
+            "SELECT count(*) FROM bc_visible_owners({co_member}) WHERE user_id = {owner}"
+        ))
+        .await;
+    assert_eq!(seen, 1);
+
+    let circe = app.work("Circe").await;
+    v.owner
+        .post(
+            "/api/shelf",
+            serde_json::json!({"work_id": circe.id, "status": "finished", "rating": 5}),
+        )
+        .await
+        .assert_status(201);
+    let page = v
+        .co_member
+        .get(&format!("/api/books/works/{}", circe.id))
+        .await;
+    page.assert_status(200);
+    let page = page.json();
+    assert_eq!(page["readers"].as_array().unwrap().len(), 1, "{page}");
+    assert_eq!(page["rating_count"], 1);
+
+    let entry = v
+        .co_member
+        .post(
+            &format!("/api/books/works/{}/posts", circe.id),
+            serde_json::json!({"body": "Loved the island"}),
+        )
+        .await;
+    entry.assert_status(201);
+    let id = entry.json()["id"].as_i64().unwrap();
+    v.owner
+        .post(
+            &format!("/api/posts/{id}/reactions"),
+            serde_json::json!({"emoji": "🔥"}),
+        )
+        .await
+        .assert_status(200);
+    let thread = v
+        .co_member
+        .get(&format!("/api/books/works/{}/posts", circe.id))
+        .await;
+    thread.assert_status(200);
+    let reaction = thread.json()["items"][0]["reactions"][0].clone();
+    assert_eq!(reaction["users"], serde_json::json!(["owner"]));
+    assert_eq!(reaction["count"], 1);
+}
+
+/// The set-returning policy functions stay single SQL statements the planner inlines into the
+/// calling query (0001_init.sql's visibility section): `bc_visible_owners` gained the friend
+/// branch through `bc_friends`, and every list of other people's data joins it. A
+/// `Function Scan` node would mean the function runs as a black box per call.
+#[sqlx::test]
+async fn policy_functions_still_inline(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await.id();
+    for function in [
+        "bc_visible_shelf",
+        "bc_visible_owners",
+        "bc_friends",
+        "bc_visible_quotes",
+        "bc_visible_posts",
+    ] {
+        let plan: serde_json::Value = sqlx::query_scalar(AssertSqlSafe(format!(
+            "EXPLAIN (FORMAT JSON) SELECT count(*) FROM {function}({ada})"
+        )))
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        let text = plan.to_string();
+        assert!(
+            !text.contains("\"Function Scan\""),
+            "{function} is not inlined: {text}"
+        );
+        assert!(
+            text.contains("\"Node Type\""),
+            "{function}: no plan: {text}"
         );
     }
 }

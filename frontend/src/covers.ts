@@ -48,3 +48,17 @@ export function bookColorKey(book: { id?: number; ol_work_key?: string | null; t
   if (book.id != null) return `work:${book.id}`;
   return `${book.title}:${book.authors ?? ""}`;
 }
+
+/**
+ * The book page asks for a photo of the reader's copy (#74): a catalog or
+ * imported book (not one a reader added, which may keep its cloth) that has no
+ * cover and is on the viewer's shelf, in any status.
+ */
+export function asksForCoverPhoto(book: {
+  custom: boolean;
+  on_shelf: string | null;
+  cover_url: string | null;
+  cover_thumb_url: string | null;
+}): boolean {
+  return !book.custom && book.on_shelf != null && !book.cover_url && !book.cover_thumb_url;
+}

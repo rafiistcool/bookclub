@@ -4,6 +4,7 @@
     "discover": "Discover",
     "shelf": "Shelf",
     "club": "Club",
+    "friends": "Friends",
     "settings": "Settings",
     "settingsAndTheme": "Settings and theme",
     "settingsFor": "Settings for {name}",
@@ -25,7 +26,12 @@
     "photoUploading": "Uploading…",
     "photoSet": "Your photo is the cover now",
     "photoQueued": "Thanks. An admin will look at your photo.",
-    "photoFailed": "Could not upload the photo"
+    "photoFailed": "Could not upload the photo",
+    "prompt": {
+      "title": "This book has no cover yet",
+      "body": "It's on your shelf. If you have your copy at hand, a photo of its front gives the book a cover for everyone. Photograph only the cover.",
+      "action": "Add a photo of the cover"
+    }
   },
   "report": {
     "action": {
@@ -421,6 +427,45 @@
     "releaseUpcoming": "Out {date}",
     "releaseOut": "Out since {date}"
   },
+  "scan": {
+    "entry": "Scan a barcode",
+    "title": "Scan a barcode",
+    "lede": "Hold a book's barcode up to the camera. The picture stays in your browser; only the ISBN is looked up.",
+    "back": "← Discover",
+    "starting": "Starting the camera…",
+    "hold": "Hold the barcode 15–20 cm away",
+    "insecure": "The camera needs a secure connection.",
+    "noCamera": "No camera here.",
+    "denied": "The camera is blocked for this site.",
+    "deniedIphone": "iPhone: Settings → Safari → Camera, or “aA” in the address bar → Website Settings → Camera.",
+    "deniedAndroid": "Android Chrome: the icon left of the address → Permissions → Camera.",
+    "busy": "The camera is in use by another app.",
+    "failed": "The camera did not start.",
+    "noDecoder": "This browser cannot read barcodes.",
+    "manualLabel": "Or type the ISBN",
+    "manualHint": "ISBN-10 or ISBN-13, on the back cover or the copyright page.",
+    "lookUp": "Look up",
+    "lookingUp": "Looking up ISBN {isbn}…",
+    "stillLooking": "Still looking… {n}s so far.",
+    "isbn": "ISBN {isbn}",
+    "addTo": "Add to your shelf",
+    "added": "On your shelf: {status}",
+    "onShelf": "On your shelf",
+    "useEdition": "Use this edition",
+    "editionIsYours": "This edition is on your shelf.",
+    "noCover": "This edition has no cover yet.",
+    "photo": "Add a photo of the cover",
+    "openBook": "Open book",
+    "again": "Scan another",
+    "missTitle": "This ISBN is not in the catalog yet",
+    "missBody": "If the catalog knows another edition of the book, add this one to it. Otherwise add it as a new book.",
+    "findByTitle": "Find the book by title",
+    "addNew": "Add it as a new book",
+    "findLabel": "Title and author",
+    "find": "Search",
+    "noWorks": "Nothing found. Add it as a new book instead.",
+    "editionOf": "Add ISBN {isbn} as an edition of “{title}”"
+  },
   "book": {
     "stillLoading": "Still loading this book… {n}s so far.",
     "loadFailedTitle": "Could not load that book",
@@ -583,6 +628,7 @@
     "add": "Add book",
     "isbn": "ISBN",
     "isbnHint": "Optional. The catalog checks it first.",
+    "isbnFilled": "The ISBN you looked up. The catalog checks it first.",
     "openExisting": "Open that book"
   },
   "card": {
@@ -639,7 +685,13 @@
     "clubNameRequired": "Give the club a name",
     "clubNameTooLong": "Keep the club name to 80 characters",
     "noSuchInvite": "That invite no longer exists",
-    "noMember": "Nobody with that name shares a club with you",
+    "noMember": "Nobody by that name in your clubs or among your friends",
+    "selfAccount": "That is your own account",
+    "youBlocked": "You blocked this account. Unblock it first.",
+    "noFriendRequest": "That request no longer exists",
+    "noFriend": "None of your friends has that name",
+    "friendInClub": "That friend is already in this club",
+    "onlyFriendInviteNames": "Only a personal invite names a person",
     "percentMax": "Percent milestones go up to 100",
     "rangeNeedsUnit": "A range needs a unit",
     "repliesNotPrivate": "Replies and club posts cannot be private",
@@ -649,6 +701,7 @@
     "isbnInCatalog": "That ISBN is already in the catalog",
     "invalidIsbn": "That is not a valid ISBN-10 or ISBN-13",
     "isbnLookupFailed": "Could not look that ISBN up right now. Try again.",
+    "isbnNotFound": "No book found for that ISBN",
     "addedByReader": "This book was added by a reader, not Open Library.",
     "mergeIntoItself": "A book cannot be merged into itself",
     "titleRequired": "A title is required",
@@ -704,7 +757,8 @@
     "reportResolved": "Someone already closed this report",
     "invalidValueFor": "That value of “{field}” cannot be used",
     "reportedBookMerged": "This book was merged into another one since it was reported. Close the report, and correct the other book with “Edit as admin” if it took over the reported text.",
-    "pictureGone": "The reported picture is no longer online: its owner replaced or deleted it. Close the report."
+    "pictureGone": "The reported picture is no longer online: its owner replaced or deleted it. Close the report.",
+    "coverExists": "This book has a cover now."
   },
   "physicalShelf": {
     "title": "Your real bookshelf",
@@ -877,6 +931,8 @@
     "past": "{n} used or withdrawn invite | {n} used or withdrawn invites",
     "singleUse": "Single use",
     "link": "Link",
+    "personal": "Personal invite",
+    "personalFor": "Personal invite for {name}",
     "uses": "used once | used {n} times",
     "expires": "expires {day}",
     "expired": "ended {day}",
@@ -892,6 +948,94 @@
       "revoked": "Withdrawn",
       "used_up": "Used",
       "expired": "Expired"
+    }
+  },
+  "friends": {
+    "title": "Friends",
+    "lede": "Friends see each other's shelves, quotes and notes, as club mates do. Only you see this page.",
+    "loadFailed": "Could not load your friends",
+    "actionFailed": "That did not work",
+    "waiting": "{n} request or invitation waiting | {n} requests or invitations waiting",
+    "homeAdd": "Add friends",
+    "add": {
+      "heading": "Add a friend",
+      "label": "Their username",
+      "hint": "Type their exact username.",
+      "send": "Send request",
+      "sending": "Sending…",
+      "sent": "Request sent to {name}",
+      "nowFriends": "You and {name} are friends now",
+      "alreadyFriends": "{name} is already your friend"
+    },
+    "incoming": {
+      "heading": "Requests to you",
+      "empty": "No requests right now.",
+      "asked": "asked {day}",
+      "accept": "Accept",
+      "decline": "Decline",
+      "declined": "Request declined"
+    },
+    "invites": {
+      "heading": "Invitations to clubs",
+      "empty": "No invitations right now.",
+      "from": "{name} invited you to {club}",
+      "fromGone": "You were invited to {club}",
+      "until": "valid until {day}",
+      "join": "Join",
+      "decline": "Decline",
+      "declined": "Invitation declined"
+    },
+    "list": {
+      "heading": "Your friends",
+      "empty": "No friends yet. Send a request to someone's exact username above.",
+      "since": "Friends since {day}",
+      "notReading": "Not reading anything right now",
+      "more": "+{n} more",
+      "options": "Options",
+      "optionsFor": "Options for {name}",
+      "invite": "Invite to a club…",
+      "remove": "Remove from friends"
+    },
+    "outgoing": {
+      "heading": "Requests you sent",
+      "empty": "No open requests.",
+      "sentOn": "sent {day}",
+      "withdraw": "Withdraw",
+      "withdrawn": "Request withdrawn"
+    },
+    "blocked": {
+      "heading": "Blocked",
+      "empty": "You have not blocked anyone.",
+      "since": "blocked {day}",
+      "unblock": "Unblock",
+      "unblocked": "{name} is no longer blocked",
+      "note": "Blocking ends the friendship and hides their requests. It does not hide anything in clubs you share now or join later. To stop that, leave the club or ask its admin to remove them."
+    },
+    "block": {
+      "action": "Block",
+      "title": "Block {name}?",
+      "blurb": "{name} is not told. Blocking ends your friendship or request, withdraws the invitations between you, and hides their requests from now on. It does not hide anything in clubs you share: there you still see each other.",
+      "confirm": "Yes, block",
+      "done": "{name} is blocked"
+    },
+    "remove": {
+      "title": "Remove {name} from your friends?",
+      "blurb": "You stop seeing each other's shelves and notes outside shared clubs, and open invitations between you are withdrawn. Either of you can ask again later.",
+      "confirm": "Yes, remove",
+      "done": "You and {name} are no longer friends"
+    },
+    "inviteSheet": {
+      "title": "Invite {name} to a club",
+      "blurb": "{name} finds the invitation on their Friends page and joins from there. Only {name} can use it, for 30 days.",
+      "none": "You do not run a club. Only a club's admins can invite people into it.",
+      "invite": "Invite",
+      "sent": "Invitation sent",
+      "failed": "Could not send the invitation",
+      "done": "Done"
+    },
+    "personalInvite": {
+      "signedOut": "This is a personal invite. Sign in with the account it was made for, and you join right after.",
+      "notYours": "This is a personal invite for someone else. Only the account it was made for can join with it."
     }
   },
   "clubSettings": {
@@ -1067,6 +1211,7 @@
     "notListed": "My edition is not listed",
     "addBlurb": "Add the edition you have. What you leave empty stays empty. An ISBN is looked up in the catalog first.",
     "isbnHint": "On the back cover or the copyright page. Optional.",
+    "isbnFilled": "The ISBN you looked up.",
     "noFormat": "Not given",
     "noLanguage": "Not given",
     "ownTitle": "Title of this edition",
@@ -1216,11 +1361,12 @@
   },
   "admin": {
     "title": "Admin",
-    "lede": "What readers asked to change or reported, invites for the closed beta, and suspended accounts.",
+    "lede": "What readers asked to change or reported, covers the search could not settle, invites for the closed beta, and suspended accounts.",
     "sections": "Admin sections",
     "tabs": {
       "requests": "Requests",
       "reports": "Reports",
+      "covers": "Covers",
       "invites": "Invites",
       "users": "Accounts"
     },
@@ -1250,6 +1396,16 @@
     "noChange": "already so",
     "editAsAdmin": "Edit as admin",
     "editEditionAsAdmin": "Edit your edition as admin",
+    "setCover": "Set cover as admin",
+    "setEditionCover": "Set an edition's cover as admin",
+    "editionCover": {
+      "title": "An edition's cover",
+      "blurb": "The picture becomes that edition's cover for everyone at once, in place of any it has. The book's own cover stays as it is; a book without one takes this picture too.",
+      "upload": "Upload",
+      "yours": "Your edition",
+      "none": "This book has no editions yet."
+    },
+    "coverSet": "The cover is set for everyone",
     "mergeInto": "Merge into:",
     "bookN": "book {id}",
     "approve": "Approve",
@@ -1376,7 +1532,84 @@
       "work": "Merged into this book since it was reported, so the reported text no longer shows on its own. If this book took some of it over, correct it with “Edit as admin”."
     },
     "closeReport": "Close the report",
-    "closedBy": "Closed by {name} · {when}"
+    "closedBy": "Closed by {name} · {when}",
+    "covers": {
+      "title": "Covers",
+      "blurb": "Every catalog and imported book should have a real cover. The search attaches clear matches from Open Library on its own; the uncertain ones wait here for you. Books a reader added keep their cloth until someone uploads a photo.",
+      "views": "Suggestions or books without a cover",
+      "suggestions": "Suggestions",
+      "missing": "Without a cover",
+      "suggestionsBlurb": "Covers the search found but did not attach on its own. “Use this cover” makes the picture the book's cover for everyone; “Not this book” keeps that Open Library book out for good, and the search looks for the next one.",
+      "noSuggestions": "No suggestion waits for you.",
+      "found": "found {when}",
+      "ourBook": "Our book",
+      "candidate": "On Open Library",
+      "noCandidatePicture": "The picture is no longer online",
+      "viewOpenLibrary": "View on Open Library",
+      "reason": {
+        "single_record": "The only book of this title by this author on Open Library, but a record with a single edition: anyone can create one.",
+        "title_differs": "The titles differ in a subtitle or a series or volume name.",
+        "number_differs": "A number in the title differs: maybe another volume.",
+        "several_works": "Open Library has more than one book of this title by this author.",
+        "generic_title": "A collection title the author has many books of.",
+        "no_author": "Our book names no author.",
+        "after_takedown": "This book's cover was taken down, so a person decides from now on."
+      },
+      "use": "Use this cover",
+      "useConfirm": "Use it for everyone",
+      "useBlurb": "The picture becomes this book's cover for everyone at once, and no catalog source replaces it later.",
+      "reject": "Not this book",
+      "rejectConfirm": "Not this book, for good",
+      "rejectBlurb": "This Open Library book is never suggested for this book again, and the search looks for the next one.",
+      "used": "The cover is set",
+      "rejected": "It won't be suggested again",
+      "status": {
+        "open": "Open",
+        "approved": "Used",
+        "rejected": "Not this book",
+        "closed": "Closed"
+      },
+      "decided": {
+        "approved": "Used as the cover · {when}",
+        "rejected": "Not this book · {when}",
+        "closed": "Closed by the search · {when}: the book got a cover, was merged, or the picture went offline"
+      },
+      "scope": "Books readers use, or all of them",
+      "scopeInUse": "Readers use them",
+      "scopeAll": "All",
+      "missingBlurb": "Catalog and imported books without a usable cover. The search tries them on its own; “Search now” asks Open Library at once, and an upload sets the cover directly.",
+      "noMissing": "Every book here has a cover.",
+      "inUse": "Readers use it",
+      "imported": "Imported",
+      "searchNow": "Search now",
+      "searching": "Searching…",
+      "upload": "Upload a picture",
+      "uploadEdition": "Upload for edition {id}",
+      "openBook": "Open the book",
+      "searchFailed": "Could not search right now",
+      "result": {
+        "attached": "Found it: Open Library's cover is the book's cover now.",
+        "inherited": "The book took the cover of one of its editions.",
+        "isbn": "Open Library had the cover of an edition's ISBN.",
+        "suggested": "Found a possible cover. It waits under Suggestions.",
+        "no_match": "No match on Open Library.",
+        "failing": "Open Library's picture still does not load. Upload a picture instead."
+      },
+      "state": {
+        "photoWaiting": "A reader's photo waits in the Requests tab.",
+        "failing": "Open Library's picture failed to load on {date}.",
+        "failingUndated": "Open Library's picture failed to load.",
+        "failingEdition": "Open Library's picture of edition {id} failed to load on {date}.",
+        "failingEditionUndated": "Open Library's picture of edition {id} failed to load.",
+        "suggestion": "A suggestion waits under Suggestions.",
+        "failures": "Open Library did not answer the last search. | Open Library did not answer the last {n} searches.",
+        "notSearched": "Not searched yet.",
+        "noMatch": "No match on Open Library on {date}.",
+        "searched": "Last searched on {date}.",
+        "nextTry": "Next try on {date}.",
+        "afterTakedown": "After a takedown, the search only suggests."
+      }
+    }
   },
   "notFound": {
     "title": "Page not found",

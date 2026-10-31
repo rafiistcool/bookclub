@@ -15,7 +15,7 @@ use crate::error::{ApiResult, AppError, msg};
 pub enum Relation {
     /// The viewer is the owner.
     Myself,
-    /// They share at least one club.
+    /// They share at least one club or are friends.
     Audience,
     /// Anyone else.
     Stranger,
@@ -37,8 +37,8 @@ impl Relation {
     }
 }
 
-/// The viewer's relation to `owner`: `Myself`, `Audience` when they share a club
-/// (`bc_can_see_user`), else `Stranger` (also for an unknown owner).
+/// The viewer's relation to `owner`: `Myself`, `Audience` when they share at least one club or
+/// are friends (`bc_can_see_user`), else `Stranger` (also for an unknown owner).
 pub async fn relation(conn: &mut PgConnection, viewer: i64, owner: i64) -> sqlx::Result<Relation> {
     if viewer == owner {
         return Ok(Relation::Myself);

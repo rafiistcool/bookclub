@@ -33,15 +33,18 @@
 		# A year. No includeSubDomains until the final domain: other hosts of the domain may
 		# still need plain HTTP.
 		Strict-Transport-Security "max-age=31536000"
-		# The app uses no camera, microphone, location, payment or motion sensors. Clipboard
-		# and Web Share keep their defaults: the invite pages use them.
-		Permissions-Policy "accelerometer=(), browsing-topics=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+		# The app uses the camera on its own origin, for barcode scanning (#56); camera=() would
+		# make every request for it fail without a prompt. It uses no microphone, location,
+		# payment or motion sensors. Clipboard and Web Share keep their defaults: the invite
+		# pages use them.
+		Permissions-Policy "accelerometer=(), browsing-topics=(), camera=(self), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
 		-Server
 	}
 
-	# Only the hashed JS and CSS bundle is compressed, to about a third. API answers mix
-	# personal data with text a client sent, which compression side channels (BREACH) need,
-	# and pictures are compressed already.
+	# Only the hashed build output under /assets is compressed: the JS and CSS to about a third,
+	# the barcode decoder's wasm (#56) to under half. API answers mix personal data with text a
+	# client sent, which compression side channels (BREACH) need, and pictures are compressed
+	# already.
 	@assets path /assets/*
 	encode @assets zstd gzip
 
@@ -73,14 +76,17 @@
 	#
 	# Caddy leaves out Cookie and Authorization. The URI keeps only the path, as in the app's own
 	# log: the query (search terms, `?code=`, `/login?next=/join/<code>`) becomes `?{redacted}`,
-	# and invite codes in the path become `/join/{redacted}` and `/api/invites/{redacted}/…`.
-	# The Referer, which repeats such URLs, is dropped.
+	# invite codes in the path become `/join/{redacted}` and `/api/invites/{redacted}/…`, and
+	# a looked-up or scanned ISBN, which says what someone reads, `/api/books/isbn/{redacted}`.
+	# That hides the ISBN, not the book: covers (`/media/<id>/…`) and book paths
+	# (`/book/<id>`, `/api/books/works/<id>…`) keep their ids, also the cover that a scan's
+	# result card loads right after the lookup. The Referer, which repeats such URLs, is dropped.
 	log {
 		output file /var/log/caddy/bookclub-access.log {
 			roll_disabled
 		}
 		format filter {
-			request>uri regexp "^(/(?:api/invites|join)/)[^/?]+|([?]).*$" "${1}${2}{redacted}"
+			request>uri regexp "^(/(?:api/invites|api/books/isbn|join)/)[^/?]+|([?]).*$" "${1}${2}{redacted}"
 			request>headers>Referer delete
 		}
 	}

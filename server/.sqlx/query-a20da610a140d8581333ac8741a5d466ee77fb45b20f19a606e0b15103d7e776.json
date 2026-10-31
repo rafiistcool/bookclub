@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n               SELECT 1 FROM cover_search cs JOIN works w ON w.id = cs.work_id\n               WHERE cs.takedown_at IS NOT NULL AND (w.id = $1 OR w.merged_into_id = $1)\n           ) AS \"takedown!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "takedown!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "a20da610a140d8581333ac8741a5d466ee77fb45b20f19a606e0b15103d7e776"
+}

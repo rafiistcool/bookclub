@@ -68,6 +68,8 @@ const router = createRouter({
       children: [
         { path: "", component: () => import("./pages/HomePage.vue") },
         { path: "discover", component: () => import("./pages/DiscoverPage.vue") },
+        // The barcode scanner (#56), opened from Discover; Back closes it.
+        { path: "scan", component: () => import("./pages/ScanPage.vue") },
         { path: "shelf", component: () => import("./pages/ShelfPage.vue") },
         { path: "shelf/physical", component: () => import("./pages/PhysicalShelfPage.vue") },
         { path: "diary", component: () => import("./pages/DiaryPage.vue") },
@@ -108,6 +110,8 @@ const router = createRouter({
           path: "book/:id",
           component: () => import("./pages/BookDetailPage.vue"),
         },
+        // Friends, requests, blocks and invitations into clubs (#57). In the sidebar and on Home.
+        { path: "friends", component: () => import("./pages/FriendsPage.vue") },
         { path: "settings", component: () => import("./pages/SettingsPage.vue") },
         // Instance admins only (`UserOut.is_admin`); linked from Settings.
         { path: "admin", component: () => import("./pages/AdminPage.vue"), meta: { admin: true } },
@@ -115,7 +119,6 @@ const router = createRouter({
         // Paths from the pre-redesign IA, kept so bookmarks and the PWA's
         // stored start URL keep resolving.
         { path: "library", redirect: "/discover" },
-        { path: "friends", redirect: "/club" },
         { path: "friends/:username", redirect: (to) => `/u/${to.params.username}` },
         { path: "club/:username/shelf", redirect: (to) => `/u/${to.params.username}/shelf` },
         { path: "club/:username", redirect: (to) => `/u/${to.params.username}` },

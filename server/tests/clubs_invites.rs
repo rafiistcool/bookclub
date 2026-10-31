@@ -101,6 +101,8 @@ async fn admins_create_single_use_codes_and_links(db: PgPool) {
             "used_by": [],
             "revoked": false,
             "active": true,
+            "personal": false,
+            "invitee": null,
         })
     );
     assert!((days_from_now(&single["expires_at"]) - 30.0).abs() < 0.01);
@@ -252,11 +254,14 @@ async fn the_preview_shows_what_a_valid_code_leads_to(db: PgPool) {
         res.assert_status(200);
         assert_eq!(
             res.json(),
-            json!({"club": {"slug": club.slug, "name": "Readers"}, "kind": "club"})
+            json!({"club": {"slug": club.slug, "name": "Readers"}, "kind": "club", "personal": false})
         );
     }
     let res = anon.get("/api/invites/beta-2026").await;
-    assert_eq!(res.json(), json!({"club": null, "kind": "signup"}));
+    assert_eq!(
+        res.json(),
+        json!({"club": null, "kind": "signup", "personal": false})
+    );
     for code in ["NOPE", "USEDUP", "EXPIRED", "REVOKED", "%20"] {
         anon.get(&format!("/api/invites/{code}"))
             .await
@@ -954,7 +959,10 @@ async fn instance_admins_mint_sign_up_invites(db: PgPool) {
     assert_eq!(ids, expected, "only sign-up invites, newest first");
 
     let res = app.anon().get(&format!("/api/invites/{code}")).await;
-    assert_eq!(res.json(), json!({"club": null, "kind": "signup"}));
+    assert_eq!(
+        res.json(),
+        json!({"club": null, "kind": "signup", "personal": false})
+    );
     let res = app
         .anon()
         .post(

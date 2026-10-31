@@ -62,7 +62,7 @@ async fn a_club_and_an_invite_make_two_users_each_others_audience(db: PgPool) {
     let preview = grace.get(&format!("/api/invites/{code}")).await;
     assert_eq!(
         preview.json(),
-        json!({"club": {"slug": slug, "name": "Thursday Readers"}, "kind": "club"})
+        json!({"club": {"slug": slug, "name": "Thursday Readers"}, "kind": "club", "personal": false})
     );
     let res = grace
         .post(&format!("/api/invites/{code}/accept"), json!({}))

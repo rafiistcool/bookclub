@@ -87,7 +87,8 @@ async fn an_empty_instance_has_nothing_waiting(db: PgPool) {
                 "median_hours": null,
                 "max_hours": null,
                 "over_target": 0
-            }
+            },
+            "covers": {"suggestions": 0, "missing": 0}
         })
     );
 }

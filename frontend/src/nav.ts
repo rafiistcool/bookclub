@@ -1,4 +1,4 @@
-export type NavIconName = "home" | "discover" | "shelf" | "club" | "settings";
+export type NavIconName = "home" | "discover" | "shelf" | "club" | "friends" | "settings";
 
 export type NavItem = {
   to: string;
@@ -17,6 +17,8 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { to: "/shelf", labelKey: "nav.shelf", icon: "shelf", bottomBar: true, also: ["/diary", "/quotes", "/stats"] },
   // `/club` leads to the last-used club, the only club, or the club list (router.ts).
   { to: "/club", labelKey: "nav.club", icon: "club", bottomBar: true, also: ["/c", "/clubs"] },
+  // The sidebar only: the phone's tab bar has its five tabs, and Home has a Friends row.
+  { to: "/friends", labelKey: "nav.friends", icon: "friends", bottomBar: false },
   { to: "/settings", labelKey: "nav.settings", shortLabelKey: "nav.settingsShort", icon: "settings", bottomBar: true, also: ["/admin"] },
 ];
 

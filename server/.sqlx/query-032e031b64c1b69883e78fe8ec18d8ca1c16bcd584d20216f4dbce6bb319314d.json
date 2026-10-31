@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE friendships SET accepted_at = clock_timestamp()\n         WHERE requester_id = $1 AND addressee_id = $2 AND accepted_at IS NULL\n           AND NOT EXISTS (SELECT 1 FROM user_blocks\n                           WHERE user_id = $2 AND blocked_user_id = $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "032e031b64c1b69883e78fe8ec18d8ca1c16bcd584d20216f4dbce6bb319314d"
+}

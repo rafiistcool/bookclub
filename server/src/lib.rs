@@ -13,6 +13,7 @@ pub mod dto;
 pub mod email;
 pub mod error;
 pub mod extract;
+pub mod friends;
 pub mod harvest;
 mod health;
 pub mod importer;
@@ -94,6 +95,7 @@ impl AppState {
         let email: Arc<dyn email::EmailSender> = match config.email_transport {
             EmailTransport::Log => Arc::new(email::LogEmail),
             EmailTransport::Smtp => Arc::new(email::SmtpEmail::new(&config)?),
+            EmailTransport::None => Arc::new(email::NoEmail),
         };
         let catalog = Arc::new(catalog::CatalogService::new(&config, outbound.clone()));
         let media_service = Arc::new(media::MediaService::new(
@@ -133,6 +135,7 @@ fn api_router() -> OpenApiRouter<AppState> {
         .merge(overlap::routes())
         .merge(activity::routes())
         .merge(legal::routes())
+        .merge(friends::routes())
 }
 
 /// Every `/api/admin/*` route.
@@ -257,13 +260,20 @@ fn cors_layer(config: &Config) -> Option<CorsLayer> {
     )
 }
 
-/// The path for the access log, without invite codes: a code is a credential (§19), and
-/// `/api/invites/{code}`, `/api/invites/{code}/accept` and the SPA's `/join/{code}` carry one.
+/// The path for the access log, without invite codes and ISBNs:
+/// - a code is a credential (§19), and `/api/invites/{code}`, `/api/invites/{code}/accept` and
+///   the SPA's `/join/{code}` carry one;
+/// - an ISBN says what someone reads, like a search query (which the log never holds), and
+///   `/api/books/isbn/{isbn}` carries one (#56).
 fn loggable_path(path: &str) -> Cow<'_, str> {
-    for prefix in ["/api/invites/", "/join/"] {
+    for (prefix, placeholder) in [
+        ("/api/invites/", "{code}"),
+        ("/join/", "{code}"),
+        ("/api/books/isbn/", "{isbn}"),
+    ] {
         if let Some(rest) = path.strip_prefix(prefix) {
             let tail = rest.find('/').map_or("", |slash| &rest[slash..]);
-            return Cow::Owned(format!("{prefix}{{code}}{tail}"));
+            return Cow::Owned(format!("{prefix}{placeholder}{tail}"));
         }
     }
     Cow::Borrowed(path)
@@ -315,6 +325,11 @@ mod tests {
                 "/api/clubs/readers-x1y2/invites/7",
             ),
             ("/api/books/works/42", "/api/books/works/42"),
+            // #56: an ISBN says what someone reads, like a search query.
+            ("/api/books/isbn/9780316556347", "/api/books/isbn/{isbn}"),
+            ("/api/books/isbn/3-694-05079-5", "/api/books/isbn/{isbn}"),
+            ("/api/books/isbn/", "/api/books/isbn/{isbn}"),
+            ("/api/books/search", "/api/books/search"),
         ] {
             assert_eq!(loggable_path(path), logged);
         }

@@ -1111,26 +1111,35 @@ async fn browsing_stores_every_hit(db: PgPool) {
 }
 
 /// Security review 2026-10-28 #5: every user shares Open Library's 3 requests a second, so one
-/// account gets 60 catalog requests a minute (search, trending, subjects); another account is
-/// not affected.
+/// account gets 60 catalog requests a minute (search, trending, subjects, ISBN lookups); another
+/// account is not affected. An ISBN lookup takes its turn even when the edition is local (#56: a
+/// scan is one lookup), but only after its ISBN is valid.
 #[sqlx::test]
 async fn catalog_requests_are_limited_per_account(db: PgPool) {
     let (app, _fake, ada) = setup(db).await;
+    let work = app.work("A Reader's Own Book").await;
+    let edition = app.edition(&work, "9780306406157").await;
+    let local = format!("/api/books/isbn/{}", edition.isbn13);
     let long = "x".repeat(201);
-    for _ in 0..60 {
+    for _ in 0..59 {
         search(&ada, &long)
             .await
             .assert_detail(400, "Search is too long");
     }
+    ada.get(&local).await.assert_status(200);
     for path in [
         "/api/books/search?q=circe",
         "/api/books/trending",
         "/api/books/subjects/fiction",
+        local.as_str(),
     ] {
         let refused = ada.get(path).await;
         refused.assert_detail(429, "Slow down a little. Try again later.");
         assert!(refused.header("retry-after").is_some());
     }
+    ada.get("/api/books/isbn/9780306406158")
+        .await
+        .assert_detail(400, "That is not a valid ISBN-10 or ISBN-13");
     let grace = app.user("grace").await;
     search(&grace, "circe").await.assert_status(200);
 }

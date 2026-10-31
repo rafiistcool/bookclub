@@ -10,6 +10,9 @@
 //! Unlike `import-legacy`, this runs on the live server, so every edition gets its own short
 //! transaction: ingest's advisory and row locks are held for one edition's lookup only, never
 //! across another lookup or a throttle wait, and one edition's failure does not undo the others.
+//!
+//! After the ISBN pass, every imported catalog book without a cover is searched on Open Library
+//! (#74, `importer::covers`), paced like the server's cover job.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,6 +20,7 @@ use std::time::Duration;
 use sqlx::{PgConnection, PgPool};
 
 use super::books::DEFAULT_RETRY_WAIT;
+use super::covers::rematch_covers;
 use super::report::ReportBuilder;
 use super::{ImportError, RematchArgs, Report};
 use crate::catalog::shared::isbn::{Isbn13, parse_isbn};
@@ -141,6 +145,7 @@ pub async fn rematch(
              {elsewhere} under another work, {failed} with a database error)"
         ),
     );
+    rematch_covers(&db, lookup.as_ref(), &args, &mut report).await?;
     Ok(Report::from_rematch(report, args.dry_run))
 }
 

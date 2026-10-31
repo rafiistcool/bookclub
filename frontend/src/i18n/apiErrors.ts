@@ -86,6 +86,14 @@ const API_ERROR_KEYS: Record<string, string> = {
   "No open next-up vote": "errors.noOpenVote",
   "No nomination with that id": "errors.noNomination",
 
+  // Friends ("No account with that name" is under Pictures, from the admin's suspension)
+  "That is your own account": "errors.selfAccount",
+  "You blocked this account": "errors.youBlocked",
+  "No such friend request": "errors.noFriendRequest",
+  "No friend with that name": "errors.noFriend",
+  "That friend is already in this club": "errors.friendInClub",
+  "Only a friend invite names a person": "errors.onlyFriendInviteNames",
+
   // Catalog
   "No such book.": "errors.noSuchBook",
   "That book is not in the catalog": "errors.bookNotInCatalog",
@@ -93,8 +101,10 @@ const API_ERROR_KEYS: Record<string, string> = {
   "That ISBN is already in the catalog": "errors.isbnInCatalog",
   "A book cannot be merged into itself": "errors.mergeIntoItself",
   "This request was already decided": "errors.requestDecided",
+  "This book has a cover now": "errors.coverExists",
   "That is not a valid ISBN-10 or ISBN-13": "errors.invalidIsbn",
   "Could not look that ISBN up right now. Try again.": "errors.isbnLookupFailed",
+  "No book found for that ISBN": "errors.isbnNotFound",
   "This book was added by a reader, not Open Library.": "errors.addedByReader",
   "A title is required": "errors.titleRequired",
   "Need at least 3 characters. Add the author, or paste an ISBN.": "errors.searchTooShort",

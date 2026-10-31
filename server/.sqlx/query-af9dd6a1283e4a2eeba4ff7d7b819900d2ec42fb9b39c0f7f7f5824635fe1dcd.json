@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT m.id FROM media m\n           WHERE m.source = 'openlibrary' AND m.storage_key IS NULL AND m.fetch_failed_at IS NULL\n             AND m.removed_at IS NULL AND m.ol_gone_at IS NULL\n             AND (m.id IN (SELECT w.cover_media_id FROM works w\n                           WHERE w.id IN (SELECT u.work_id FROM cover_in_use u))\n                  OR m.id IN (SELECT e.cover_media_id FROM editions e\n                              WHERE e.work_id IN (SELECT u.work_id FROM cover_in_use u)))\n           ORDER BY m.id\n           LIMIT $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "af9dd6a1283e4a2eeba4ff7d7b819900d2ec42fb9b39c0f7f7f5824635fe1dcd"
+}

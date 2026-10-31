@@ -47,6 +47,62 @@ pub struct IsbnLine {
     pub outcome: IsbnOutcome,
 }
 
+/// The cover search of an import or rematch (#74, docs/phase2/notes/cover.md §6). Not an
+/// entity line: its name has a space and no `→`, so `compare.sh` and `cutover_counts.rs` skip
+/// it; the counts depend on Open Library, not on the legacy data.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CoverSearchLine {
+    /// `--offline`: nothing was searched.
+    pub offline: bool,
+    /// Imported catalog books without a cover when the step began.
+    pub candidates: u64,
+    /// Of those, still without a cover at the end (the database's count).
+    pub without: u64,
+    /// Of those without: a suggestion waits, no match, not searched.
+    pub suggested: u64,
+    pub no_match: u64,
+    pub not_searched: u64,
+    /// Imported books readers added, without a cover: never searched.
+    pub readers: u64,
+    /// Imported books whose Open Library cover was never fetched (the import cannot check it).
+    pub unfetched: u64,
+}
+
+impl CoverSearchLine {
+    fn render(&self) -> String {
+        if self.offline {
+            return format!(
+                "{:<NAME_WIDTH$} skipped (--offline): {} without a cover; rematch-legacy searches \
+                 them",
+                "cover search", self.without
+            );
+        }
+        let parts = super::detail(&[
+            (self.suggested, "suggested"),
+            (self.no_match, "no match"),
+            (self.not_searched, "not searched"),
+        ]);
+        let mut line = format!(
+            "{:<NAME_WIDTH$} {} searched: {} attached, {} still without a cover",
+            "cover search",
+            self.candidates,
+            self.candidates.saturating_sub(self.without),
+            self.without
+        );
+        if !parts.is_empty() {
+            line.push(' ');
+            line.push_str(&parts);
+        }
+        let _ = write!(
+            line,
+            "; {} books readers added left as they are; {} imported cover ids not fetched yet \
+             (checked once the server runs)",
+            self.readers, self.unfetched
+        );
+        line
+    }
+}
+
 /// Accumulates the report while the import runs.
 #[derive(Debug, Clone, Default)]
 pub struct ReportBuilder {
@@ -57,6 +113,10 @@ pub struct ReportBuilder {
     pub isbns: Vec<IsbnLine>,
     pub lookup_wait: Duration,
     pub notes: Vec<String>,
+    /// The cover search, when one ran (or was skipped with `--offline`).
+    pub covers: Option<CoverSearchLine>,
+    /// The imported books still without a cover, with titles: only in the private report.
+    pub without_cover: Vec<String>,
 }
 
 impl ReportBuilder {
@@ -121,10 +181,14 @@ impl ReportBuilder {
         let mut wait = String::new();
         let _ = write!(wait, "{:<NAME_WIDTH$} {secs:.1} s", "lookup wait");
         lines.push(wait);
+        if let Some(covers) = &self.covers {
+            lines.push(covers.render());
+        }
         section(&mut lines, "merges", &self.merges);
         section(&mut lines, "differences", &self.differences);
         let isbns: Vec<String> = self.isbns.iter().map(isbn_line).collect();
         section(&mut lines, "isbn keys", &isbns);
+        section(&mut lines, "without a cover", &self.without_cover);
         section(&mut lines, "notes", &self.notes);
         lines
     }
@@ -188,6 +252,50 @@ mod tests {
                 "isbn keys:",
                 "  /works/ISBN9780000000019 (book 10, isbn 9780000000019): unmatched (bare facts)",
             ]
+        );
+    }
+
+    #[test]
+    fn the_cover_search_has_a_line_and_a_section() {
+        let mut r = ReportBuilder {
+            covers: Some(CoverSearchLine {
+                candidates: 20,
+                without: 8,
+                suggested: 3,
+                no_match: 4,
+                not_searched: 1,
+                readers: 2,
+                unfetched: 9,
+                ..CoverSearchLine::default()
+            }),
+            ..ReportBuilder::default()
+        };
+        r.without_cover.push(
+            "book 12 \"Momo\" by Michael Ende: suggested, review it on the admin page".into(),
+        );
+        let lines = r.lines();
+        assert_eq!(
+            lines[2],
+            "cover search           20 searched: 12 attached, 8 still without a cover \
+             (3 suggested, 4 no match, 1 not searched); 2 books readers added left as they are; \
+             9 imported cover ids not fetched yet (checked once the server runs)"
+        );
+        assert_eq!(
+            &lines[3..],
+            [
+                "without a cover:",
+                "  book 12 \"Momo\" by Michael Ende: suggested, review it on the admin page"
+            ]
+        );
+        r.covers = Some(CoverSearchLine {
+            offline: true,
+            without: 20,
+            ..CoverSearchLine::default()
+        });
+        assert_eq!(
+            r.lines()[2],
+            "cover search           skipped (--offline): 20 without a cover; rematch-legacy \
+             searches them"
         );
     }
 

@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT 1 AS \"one!\" FROM friendships\n           WHERE least(requester_id, addressee_id) = least($1::int8, $2::int8)\n             AND greatest(requester_id, addressee_id) = greatest($1::int8, $2::int8)\n             AND accepted_at IS NOT NULL\n           FOR SHARE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "one!",
+        "type_info": "Int4",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "38689d350835e816ffebd2e79583aaf684987f2d2671e0d394848fc1be4746c6"
+}

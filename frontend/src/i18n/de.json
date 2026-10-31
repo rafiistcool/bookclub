@@ -4,6 +4,7 @@
     "discover": "Entdecken",
     "shelf": "Regal",
     "club": "Club",
+    "friends": "Freunde",
     "settings": "Einstellungen",
     "settingsAndTheme": "Einstellungen und Design",
     "settingsFor": "Einstellungen für {name}",
@@ -25,7 +26,12 @@
     "photoUploading": "Wird hochgeladen …",
     "photoSet": "Dein Foto ist jetzt das Cover",
     "photoQueued": "Danke. Ein Admin sieht sich dein Foto an.",
-    "photoFailed": "Das Foto konnte nicht hochgeladen werden"
+    "photoFailed": "Das Foto konnte nicht hochgeladen werden",
+    "prompt": {
+      "title": "Dieses Buch hat noch kein Cover",
+      "body": "Es steht in deinem Regal. Wenn du dein Exemplar zur Hand hast, gibt ein Foto der Vorderseite dem Buch ein Cover – für alle. Fotografiere nur das Cover.",
+      "action": "Foto vom Cover hinzufügen"
+    }
   },
   "report": {
     "action": {
@@ -421,6 +427,45 @@
     "releaseUpcoming": "Erscheint am {date}",
     "releaseOut": "Erschienen am {date}"
   },
+  "scan": {
+    "entry": "Barcode scannen",
+    "title": "Barcode scannen",
+    "lede": "Halte den Barcode eines Buchs vor die Kamera. Das Bild bleibt in deinem Browser, nur die ISBN wird nachgeschlagen.",
+    "back": "← Entdecken",
+    "starting": "Kamera startet…",
+    "hold": "Halte den Barcode 15–20 cm entfernt",
+    "insecure": "Die Kamera braucht eine sichere Verbindung.",
+    "noCamera": "Hier gibt es keine Kamera.",
+    "denied": "Die Kamera ist für diese Seite gesperrt.",
+    "deniedIphone": "iPhone: Einstellungen → Safari → Kamera, oder „aA“ in der Adressleiste → Website-Einstellungen → Kamera.",
+    "deniedAndroid": "Android Chrome: das Symbol links neben der Adresse → Berechtigungen → Kamera.",
+    "busy": "Eine andere App benutzt gerade die Kamera.",
+    "failed": "Die Kamera ist nicht gestartet.",
+    "noDecoder": "Dieser Browser kann keine Barcodes lesen.",
+    "manualLabel": "Oder tipp die ISBN ein",
+    "manualHint": "ISBN-10 oder ISBN-13, auf der Rückseite oder im Impressum.",
+    "lookUp": "Nachschlagen",
+    "lookingUp": "ISBN {isbn} wird nachgeschlagen…",
+    "stillLooking": "Suche läuft noch… {n} s bisher.",
+    "isbn": "ISBN {isbn}",
+    "addTo": "In dein Regal stellen",
+    "added": "In deinem Regal: {status}",
+    "onShelf": "In deinem Regal",
+    "useEdition": "Diese Ausgabe nehmen",
+    "editionIsYours": "Diese Ausgabe steht in deinem Regal.",
+    "noCover": "Diese Ausgabe hat noch kein Cover.",
+    "photo": "Foto vom Cover hinzufügen",
+    "openBook": "Buch öffnen",
+    "again": "Nächsten scannen",
+    "missTitle": "Diese ISBN ist noch nicht im Katalog",
+    "missBody": "Kennt der Katalog schon eine andere Ausgabe des Buchs, füg diese ISBN dort als Ausgabe hinzu. Sonst leg es als neues Buch an.",
+    "findByTitle": "Buch über den Titel finden",
+    "addNew": "Als neues Buch hinzufügen",
+    "findLabel": "Titel und Autor",
+    "find": "Suchen",
+    "noWorks": "Nichts gefunden. Füg es stattdessen als neues Buch hinzu.",
+    "editionOf": "ISBN {isbn} als Ausgabe von „{title}“ hinzufügen"
+  },
   "book": {
     "stillLoading": "Buch lädt noch… {n} s bisher.",
     "loadFailedTitle": "Buch konnte nicht geladen werden",
@@ -583,6 +628,7 @@
     "add": "Buch hinzufügen",
     "isbn": "ISBN",
     "isbnHint": "Optional. Der Katalog prüft sie zuerst.",
+    "isbnFilled": "Die ISBN, die du nachgeschlagen hast. Der Katalog prüft sie zuerst.",
     "openExisting": "Dieses Buch öffnen"
   },
   "card": {
@@ -639,7 +685,13 @@
     "clubNameRequired": "Gib dem Club einen Namen",
     "clubNameTooLong": "Der Clubname darf höchstens 80 Zeichen haben",
     "noSuchInvite": "Diese Einladung gibt es nicht mehr",
-    "noMember": "Niemand mit diesem Namen ist mit dir in einem Club",
+    "noMember": "Niemand mit diesem Namen in deinen Clubs oder unter deinen Freunden",
+    "selfAccount": "Das ist dein eigenes Konto",
+    "youBlocked": "Du hast dieses Konto blockiert. Gib es zuerst frei.",
+    "noFriendRequest": "Diese Anfrage gibt es nicht mehr",
+    "noFriend": "Keiner deiner Freunde hat diesen Namen",
+    "friendInClub": "Diese Person ist schon in diesem Club",
+    "onlyFriendInviteNames": "Nur eine persönliche Einladung nennt eine Person",
     "percentMax": "Prozent-Etappen gehen höchstens bis 100",
     "rangeNeedsUnit": "Ein Bereich braucht eine Einheit",
     "repliesNotPrivate": "Antworten und Club-Beiträge können nicht privat sein",
@@ -649,6 +701,7 @@
     "isbnInCatalog": "Diese ISBN ist schon im Katalog",
     "invalidIsbn": "Das ist keine gültige ISBN-10 oder ISBN-13",
     "isbnLookupFailed": "Die ISBN lässt sich gerade nicht nachschlagen. Versuch es nochmal.",
+    "isbnNotFound": "Zu dieser ISBN wurde kein Buch gefunden",
     "addedByReader": "Dieses Buch hat jemand von Hand angelegt, es kommt nicht von Open Library.",
     "mergeIntoItself": "Ein Buch kann nicht mit sich selbst zusammengeführt werden",
     "titleRequired": "Ein Titel ist nötig",
@@ -704,7 +757,8 @@
     "reportResolved": "Diese Meldung wurde schon geschlossen",
     "invalidValueFor": "Dieser Wert für „{field}“ geht nicht",
     "reportedBookMerged": "Dieses Buch wurde seit der Meldung mit einem anderen zusammengeführt. Schließ die Meldung und korrigiere das andere Buch mit „Als Admin bearbeiten“, falls es den gemeldeten Text übernommen hat.",
-    "pictureGone": "Das gemeldete Bild ist nicht mehr online: Wer es hochgeladen hat, hat es ersetzt oder gelöscht. Schließ die Meldung."
+    "pictureGone": "Das gemeldete Bild ist nicht mehr online: Wer es hochgeladen hat, hat es ersetzt oder gelöscht. Schließ die Meldung.",
+    "coverExists": "Dieses Buch hat inzwischen ein Cover."
   },
   "physicalShelf": {
     "title": "Dein Bücherregal",
@@ -877,6 +931,8 @@
     "past": "{n} benutzte oder zurückgezogene Einladung | {n} benutzte oder zurückgezogene Einladungen",
     "singleUse": "Einmalig",
     "link": "Link",
+    "personal": "Persönliche Einladung",
+    "personalFor": "Persönliche Einladung für {name}",
     "uses": "einmal benutzt | {n}-mal benutzt",
     "expires": "gilt bis {day}",
     "expired": "endete am {day}",
@@ -892,6 +948,94 @@
       "revoked": "Zurückgezogen",
       "used_up": "Benutzt",
       "expired": "Abgelaufen"
+    }
+  },
+  "friends": {
+    "title": "Freunde",
+    "lede": "Freunde sehen gegenseitig ihre Regale, Zitate und Notizen, so wie Clubmitglieder. Diese Seite siehst nur du.",
+    "loadFailed": "Deine Freunde konnten nicht geladen werden",
+    "actionFailed": "Das hat nicht geklappt",
+    "waiting": "{n} Anfrage oder Einladung wartet | {n} Anfragen oder Einladungen warten",
+    "homeAdd": "Freunde hinzufügen",
+    "add": {
+      "heading": "Jemanden hinzufügen",
+      "label": "Benutzername",
+      "hint": "Gib den genauen Benutzernamen ein.",
+      "send": "Anfrage senden",
+      "sending": "Wird gesendet…",
+      "sent": "Anfrage an {name} gesendet",
+      "nowFriends": "Du und {name} seid jetzt befreundet",
+      "alreadyFriends": "Du bist schon mit {name} befreundet"
+    },
+    "incoming": {
+      "heading": "Anfragen an dich",
+      "empty": "Gerade keine Anfragen.",
+      "asked": "angefragt am {day}",
+      "accept": "Annehmen",
+      "decline": "Ablehnen",
+      "declined": "Anfrage abgelehnt"
+    },
+    "invites": {
+      "heading": "Einladungen in Clubs",
+      "empty": "Gerade keine Einladungen.",
+      "from": "{name} hat dich zu {club} eingeladen",
+      "fromGone": "Du wurdest zu {club} eingeladen",
+      "until": "gilt bis {day}",
+      "join": "Beitreten",
+      "decline": "Ablehnen",
+      "declined": "Einladung abgelehnt"
+    },
+    "list": {
+      "heading": "Deine Freunde",
+      "empty": "Noch keine Freunde. Schick oben eine Anfrage an einen genauen Benutzernamen.",
+      "since": "Befreundet seit {day}",
+      "notReading": "Liest gerade nichts",
+      "more": "+{n} weitere",
+      "options": "Optionen",
+      "optionsFor": "Optionen für {name}",
+      "invite": "In einen Club einladen…",
+      "remove": "Aus den Freunden entfernen"
+    },
+    "outgoing": {
+      "heading": "Deine Anfragen",
+      "empty": "Keine offenen Anfragen.",
+      "sentOn": "gesendet am {day}",
+      "withdraw": "Zurückziehen",
+      "withdrawn": "Anfrage zurückgezogen"
+    },
+    "blocked": {
+      "heading": "Blockiert",
+      "empty": "Du hast niemanden blockiert.",
+      "since": "blockiert am {day}",
+      "unblock": "Freigeben",
+      "unblocked": "{name} ist nicht mehr blockiert",
+      "note": "Blockieren beendet die Freundschaft und blendet die Anfragen der Person aus. In Clubs, die ihr jetzt teilt oder später teilt, verbirgt es nichts. Wenn du das nicht willst, verlass den Club oder bitte seine Admins, die Person zu entfernen."
+    },
+    "block": {
+      "action": "Blockieren",
+      "title": "{name} blockieren?",
+      "blurb": "{name} erfährt davon nichts. Blockieren beendet eure Freundschaft oder Anfrage, zieht die Einladungen zwischen euch zurück und blendet ab jetzt Anfragen der Person aus. In gemeinsamen Clubs verbirgt es nichts: Dort seht ihr euch weiterhin.",
+      "confirm": "Ja, blockieren",
+      "done": "{name} ist blockiert"
+    },
+    "remove": {
+      "title": "{name} aus deinen Freunden entfernen?",
+      "blurb": "Außerhalb gemeinsamer Clubs seht ihr eure Regale und Notizen dann nicht mehr, und offene Einladungen zwischen euch werden zurückgezogen. Ihr könnt euch später wieder anfragen.",
+      "confirm": "Ja, entfernen",
+      "done": "Du und {name} seid nicht mehr befreundet"
+    },
+    "inviteSheet": {
+      "title": "{name} in einen Club einladen",
+      "blurb": "{name} findet die Einladung auf der Freunde-Seite und tritt von dort bei. Nur {name} kann sie benutzen, 30 Tage lang.",
+      "none": "Du leitest keinen Club. Nur die Admins eines Clubs können in ihn einladen.",
+      "invite": "Einladen",
+      "sent": "Einladung verschickt",
+      "failed": "Die Einladung konnte nicht verschickt werden",
+      "done": "Fertig"
+    },
+    "personalInvite": {
+      "signedOut": "Das ist eine persönliche Einladung. Melde dich mit dem Konto an, für das sie gedacht ist, dann trittst du direkt danach bei.",
+      "notYours": "Das ist eine persönliche Einladung für jemand anderen. Nur das Konto, für das sie gedacht ist, kann damit beitreten."
     }
   },
   "clubSettings": {
@@ -1067,6 +1211,7 @@
     "notListed": "Meine Ausgabe fehlt",
     "addBlurb": "Trag die Ausgabe ein, die du hast. Was du leer lässt, bleibt leer. Eine ISBN wird zuerst im Katalog nachgeschlagen.",
     "isbnHint": "Auf der Rückseite oder im Impressum. Optional.",
+    "isbnFilled": "Die ISBN, die du nachgeschlagen hast.",
     "noFormat": "Keine Angabe",
     "noLanguage": "Keine Angabe",
     "ownTitle": "Titel dieser Ausgabe",
@@ -1216,11 +1361,12 @@
   },
   "admin": {
     "title": "Verwaltung",
-    "lede": "Was Leser:innen ändern lassen oder gemeldet haben, Einladungen für die geschlossene Beta und gesperrte Konten.",
+    "lede": "Was Leser:innen ändern lassen oder gemeldet haben, Cover, die die Suche nicht klären konnte, Einladungen für die geschlossene Beta und gesperrte Konten.",
     "sections": "Bereiche der Verwaltung",
     "tabs": {
       "requests": "Anfragen",
       "reports": "Meldungen",
+      "covers": "Cover",
       "invites": "Einladungen",
       "users": "Konten"
     },
@@ -1250,6 +1396,16 @@
     "noChange": "schon so",
     "editAsAdmin": "Als Admin bearbeiten",
     "editEditionAsAdmin": "Deine Ausgabe als Admin bearbeiten",
+    "setCover": "Cover als Admin setzen",
+    "setEditionCover": "Cover einer Ausgabe als Admin setzen",
+    "editionCover": {
+      "title": "Cover einer Ausgabe",
+      "blurb": "Das Bild wird sofort für alle zum Cover dieser Ausgabe und ersetzt ein vorhandenes. Das Cover des Buchs selbst bleibt, wie es ist; hat das Buch noch keins, bekommt es dieses Bild auch.",
+      "upload": "Hochladen",
+      "yours": "Deine Ausgabe",
+      "none": "Dieses Buch hat noch keine Ausgaben."
+    },
+    "coverSet": "Das Cover gilt jetzt für alle",
     "mergeInto": "Zusammenführen mit:",
     "bookN": "Buch {id}",
     "approve": "Freigeben",
@@ -1376,7 +1532,84 @@
       "work": "Seit der Meldung mit diesem Buch zusammengeführt, der gemeldete Text erscheint nicht mehr für sich. Hat dieses Buch etwas davon übernommen, korrigiere es mit „Als Admin bearbeiten“."
     },
     "closeReport": "Meldung schließen",
-    "closedBy": "Geschlossen von {name} · {when}"
+    "closedBy": "Geschlossen von {name} · {when}",
+    "covers": {
+      "title": "Cover",
+      "blurb": "Jedes Buch aus dem Katalog oder dem Import soll ein echtes Cover haben. Eindeutige Treffer von Open Library hängt die Suche selbst an; die unsicheren warten hier auf dich. Bücher, die Leser:innen angelegt haben, behalten ihren Einband, bis jemand ein Foto hochlädt.",
+      "views": "Vorschläge oder Bücher ohne Cover",
+      "suggestions": "Vorschläge",
+      "missing": "Ohne Cover",
+      "suggestionsBlurb": "Cover, die die Suche gefunden, aber nicht selbst angehängt hat. „Dieses Cover nehmen“ macht das Bild für alle zum Cover des Buchs; „Nicht dieses Buch“ schließt dieses Open-Library-Buch für immer aus, und die Suche sucht das nächste.",
+      "noSuggestions": "Kein Vorschlag wartet auf dich.",
+      "found": "gefunden {when}",
+      "ourBook": "Unser Buch",
+      "candidate": "Bei Open Library",
+      "noCandidatePicture": "Das Bild ist nicht mehr online",
+      "viewOpenLibrary": "Bei Open Library ansehen",
+      "reason": {
+        "single_record": "Das einzige Buch mit diesem Titel von dieser Person bei Open Library, aber ein Eintrag mit nur einer Ausgabe: Den kann jede Person anlegen.",
+        "title_differs": "Die Titel unterscheiden sich im Untertitel oder im Namen einer Reihe oder eines Bands.",
+        "number_differs": "Eine Zahl im Titel unterscheidet sich: vielleicht ein anderer Band.",
+        "several_works": "Open Library hat mehr als ein Buch mit diesem Titel von dieser Person.",
+        "generic_title": "Ein Sammeltitel, unter dem die Person viele Bücher hat.",
+        "no_author": "Unser Buch nennt niemanden als Autor:in.",
+        "after_takedown": "Das Cover dieses Buchs wurde entfernt, deshalb entscheidet ab jetzt ein Mensch."
+      },
+      "use": "Dieses Cover nehmen",
+      "useConfirm": "Für alle übernehmen",
+      "useBlurb": "Das Bild wird sofort für alle zum Cover dieses Buchs, und keine Katalogquelle ersetzt es später.",
+      "reject": "Nicht dieses Buch",
+      "rejectConfirm": "Endgültig nicht dieses Buch",
+      "rejectBlurb": "Dieses Open-Library-Buch wird für dieses Buch nie wieder vorgeschlagen, und die Suche sucht das nächste.",
+      "used": "Das Cover ist gesetzt",
+      "rejected": "Wird nicht wieder vorgeschlagen",
+      "status": {
+        "open": "Offen",
+        "approved": "Übernommen",
+        "rejected": "Nicht dieses Buch",
+        "closed": "Geschlossen"
+      },
+      "decided": {
+        "approved": "Als Cover übernommen · {when}",
+        "rejected": "Nicht dieses Buch · {when}",
+        "closed": "Von der Suche geschlossen · {when}: Das Buch hat ein Cover bekommen, wurde zusammengeführt, oder das Bild ist nicht mehr online"
+      },
+      "scope": "Genutzte Bücher oder alle",
+      "scopeInUse": "Genutzte",
+      "scopeAll": "Alle",
+      "missingBlurb": "Bücher aus dem Katalog oder dem Import ohne brauchbares Cover. Die Suche versucht sie von selbst; „Jetzt suchen“ fragt Open Library sofort, und ein Upload setzt das Cover direkt.",
+      "noMissing": "Jedes Buch hier hat ein Cover.",
+      "inUse": "Wird genutzt",
+      "imported": "Importiert",
+      "searchNow": "Jetzt suchen",
+      "searching": "Wird gesucht …",
+      "upload": "Bild hochladen",
+      "uploadEdition": "Für Ausgabe {id} hochladen",
+      "openBook": "Buch öffnen",
+      "searchFailed": "Die Suche hat gerade nicht geklappt",
+      "result": {
+        "attached": "Gefunden: Das Cover von Open Library ist jetzt das Cover des Buchs.",
+        "inherited": "Das Buch hat das Cover einer seiner Ausgaben übernommen.",
+        "isbn": "Open Library hatte das Cover zur ISBN einer Ausgabe.",
+        "suggested": "Ein mögliches Cover gefunden. Es wartet unter „Vorschläge“.",
+        "no_match": "Kein Treffer bei Open Library.",
+        "failing": "Das Bild von Open Library lässt sich weiterhin nicht laden. Lade stattdessen ein Bild hoch."
+      },
+      "state": {
+        "photoWaiting": "Das Foto einer Leserin oder eines Lesers wartet im Tab „Anfragen“.",
+        "failing": "Das Bild von Open Library ließ sich am {date} nicht laden.",
+        "failingUndated": "Das Bild von Open Library ließ sich nicht laden.",
+        "failingEdition": "Das Bild von Open Library zu Ausgabe {id} ließ sich am {date} nicht laden.",
+        "failingEditionUndated": "Das Bild von Open Library zu Ausgabe {id} ließ sich nicht laden.",
+        "suggestion": "Ein Vorschlag wartet unter „Vorschläge“.",
+        "failures": "Open Library hat bei der letzten Suche nicht geantwortet. | Open Library hat bei den letzten {n} Suchen nicht geantwortet.",
+        "notSearched": "Noch nicht gesucht.",
+        "noMatch": "Kein Treffer bei Open Library am {date}.",
+        "searched": "Zuletzt gesucht am {date}.",
+        "nextTry": "Nächster Versuch am {date}.",
+        "afterTakedown": "Nach einer Entfernung macht die Suche nur noch Vorschläge."
+      }
+    }
   },
   "notFound": {
     "title": "Seite nicht gefunden",

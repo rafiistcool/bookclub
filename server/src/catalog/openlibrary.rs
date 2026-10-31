@@ -1,5 +1,6 @@
 //! The Open Library client (docs/phase1/spec/catalog.md §2.4–§2.16): search, trending, subjects,
-//! works, authors, search by work key, ISBN search and the `/isbn/{isbn}.json` cover check. Every
+//! works, authors, search by work key, ISBN search, the `/isbn/{isbn}.json` cover check and the
+//! cover search by title and author (#74, docs/phase2/notes/cover.md §2.1). Every
 //! call goes through `outbound::get_json` (the 3 req/s throttle, cooldown after a 429, one retry
 //! on 502/503/504) and the 18-hour response cache with request coalescing.
 //!
@@ -8,16 +9,18 @@
 
 use std::sync::Arc;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use url::Url;
 
 use super::cache::Fetch;
+use super::covers::matching::escape;
 use super::service::CatalogService;
 use super::shared::ingest::{
-    AuthorRecord, EditionRecord, Source, WorkRecord, clean_description, clean_subjects,
+    AuthorRecord, EditionRecord, Source, WorkRecord, clean_description, clean_line, clean_subjects,
 };
 use super::shared::isbn::{Isbn13, parse_isbn};
-use crate::outbound::{RetryPolicy, get_json};
+use super::shared::lookup::{CoverAnswer, CoverDoc, CoverEdition, CoverQuery};
+use crate::outbound::{RetryPolicy, UpstreamError, get_json};
 use crate::text::{py_strip, round_half_even};
 
 /// `fields` of a search or trending page. `isbn` is left out on purpose: Open Library would
@@ -35,6 +38,21 @@ pub const TEXT_SEARCH_FIELDS: &str = "key,title,author_name,cover_i,first_publis
 pub const TEXT_SEARCH_LIMIT: u32 = 5;
 /// At most this many author records are fetched for one work.
 pub const MAX_DETAIL_AUTHORS: usize = 3;
+/// `fields` of the cover search (#74): both subtitles, the edition count and the languages, and
+/// the best edition for the query and `lang`.
+pub const COVER_SEARCH_FIELDS: &str = "key,title,subtitle,author_name,cover_i,edition_count,\
+     first_publish_year,language,editions,editions.key,editions.title,editions.subtitle,\
+     editions.cover_i,editions.language";
+/// Works per cover search: enough to see Open Library's duplicate records of one book.
+pub const COVER_SEARCH_LIMIT: u32 = 10;
+/// The marker of a refused cover search inside the response cache (never cached itself).
+const REFUSED: &str = "__bookclub_refused";
+/// The statuses with which Open Library refuses one cover search's query (a bad or too long
+/// query): no match for that book, and the run goes on. Every other 4xx (401, 403, 404, 410: a
+/// block, a wrong `OPENLIBRARY_URL`) refuses every search alike, so it is an outage: the book
+/// backs off by the hour and the job's breaker opens, rather than every book in the queue
+/// recording a miss (security review of the branch).
+pub const COVER_SEARCH_REFUSED: [u16; 3] = [400, 414, 422];
 
 /// Search sort orders (`sort` query parameter); `relevance` is Open Library's default and is
 /// not sent.
@@ -255,6 +273,101 @@ fn map_works(items: &Value, map: impl Fn(&Value) -> OlDoc) -> Vec<OlDoc> {
             ol_work_id: id,
             title,
             ..map(item)
+        });
+    }
+    out
+}
+
+/// A cleaned single-line value of a payload (NFC, no control characters, whitespace collapsed,
+/// cut to `max` characters); `""` when nothing is left.
+fn clean_text(value: Option<&Value>, max: usize) -> String {
+    clean_line(Some(&text(value)), max).unwrap_or_default()
+}
+
+/// The MARC language codes of a payload's `language` list (three lowercase letters only).
+fn languages(value: Option<&Value>) -> Vec<String> {
+    let codes: Vec<&Value> = match value {
+        Some(Value::Array(items)) => items.iter().collect(),
+        Some(single @ Value::String(_)) => vec![single],
+        _ => Vec::new(),
+    };
+    let mut out: Vec<String> = Vec::new();
+    for code in codes.into_iter().filter_map(Value::as_str) {
+        let code = code.trim().to_ascii_lowercase();
+        if code.len() == 3 && code.bytes().all(|b| b.is_ascii_lowercase()) && !out.contains(&code) {
+            out.push(code);
+        }
+    }
+    out
+}
+
+/// The `OL…M` id of a `/books/OL…M` key.
+fn edition_id_of(key: &str) -> Option<String> {
+    let id = key.strip_prefix("/books/")?;
+    let digits = id.strip_prefix("OL")?.strip_suffix('M')?;
+    (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())).then(|| id.to_owned())
+}
+
+/// The best edition of a cover search doc (`editions.docs[0]`), if it is a usable record.
+fn cover_edition(editions: Option<&Value>) -> Option<CoverEdition> {
+    let first = editions?.get("docs")?.as_array()?.first()?;
+    if !first.is_object() {
+        return None;
+    }
+    Some(CoverEdition {
+        ol_edition_id: edition_id_of(&text(first.get("key")))?,
+        title: clean_text(first.get("title"), 1000),
+        subtitle: clean_text(first.get("subtitle"), 1000),
+        cover_id: first.get("cover_i").and_then(positive_cover_id),
+        languages: languages(first.get("language")),
+    })
+}
+
+/// Maps the docs of a cover search (notes §2.1), leniently like every payload: non-objects,
+/// keys that are not `/works/OL…W`, docs whose cleaned title is empty and duplicates are
+/// skipped; cover ids must be positive; a missing `edition_count` stays unknown; a year outside
+/// −5000..3000 is dropped.
+pub fn map_cover_docs(docs: &Value) -> Vec<CoverDoc> {
+    let Value::Array(items) = docs else {
+        return Vec::new();
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for item in items.iter().filter(|item| item.is_object()) {
+        let Some(id) = work_id_of(&text(item.get("key"))) else {
+            continue;
+        };
+        let title = clean_text(item.get("title"), 1000);
+        if title.is_empty() || !seen.insert(id.clone()) {
+            continue;
+        }
+        let authors = match item.get("author_name") {
+            Some(Value::Array(names)) => names
+                .iter()
+                .map(|name| clean_text(Some(name), 300))
+                .collect(),
+            Some(name @ Value::String(_)) => vec![clean_text(Some(name), 300)],
+            _ => Vec::new(),
+        }
+        .into_iter()
+        .filter(|name: &String| !name.is_empty())
+        .collect();
+        out.push(CoverDoc {
+            ol_work_id: id,
+            title,
+            subtitle: clean_text(item.get("subtitle"), 1000),
+            authors,
+            cover_id: item.get("cover_i").and_then(positive_cover_id),
+            edition_count: item
+                .get("edition_count")
+                .and_then(py_i32)
+                .filter(|n| *n >= 0),
+            first_publish_year: item
+                .get("first_publish_year")
+                .and_then(py_i32)
+                .filter(|year| (-5000..=3000).contains(year)),
+            languages: languages(item.get("language")),
+            edition: cover_edition(item.get("editions")),
         });
     }
     out
@@ -486,6 +599,80 @@ impl CatalogService {
             .await?;
         let docs = payload.get("docs").map(map_search_docs).unwrap_or_default();
         Ok(docs.into_iter().next())
+    }
+
+    /// The cover search (#74, notes §2.1): `search.json?q=title:(…) author:(…)&limit=10` with
+    /// [`COVER_SEARCH_FIELDS`] and `lang` when the book's language is known. Both values are
+    /// escaped ([`escape`]). A 200 without a `docs` array (or with an `error` key) is a failure;
+    /// a [`COVER_SEARCH_REFUSED`] status is an answer without docs ([`CoverAnswer::refused`]),
+    /// any other status an error. Empty and refused answers are not cached.
+    pub async fn ol_cover_search(&self, query: &CoverQuery) -> Result<CoverAnswer, Fetch> {
+        let title = escape(&query.title);
+        let author = query
+            .author
+            .as_deref()
+            .map(escape)
+            .filter(|author| !author.is_empty());
+        let mut q = format!("title:({title})");
+        if let Some(author) = &author {
+            q.push_str(&format!(" author:({author})"));
+        }
+        let mut url = self.ol_url("search.json");
+        {
+            let mut pairs = url.query_pairs_mut();
+            pairs
+                .append_pair("q", &q)
+                .append_pair("limit", &COVER_SEARCH_LIMIT.to_string())
+                .append_pair("fields", COVER_SEARCH_FIELDS);
+            if let Some(language) = &query.language {
+                pairs.append_pair("lang", language);
+            }
+        }
+        let key = format!(
+            "cover|{}|{}|{}",
+            normalize_search_query(&title),
+            normalize_search_query(author.as_deref().unwrap_or_default()),
+            query.language.as_deref().unwrap_or_default()
+        );
+        let outbound = self.outbound.clone();
+        let payload = self
+            .json
+            .get_or_fetch(
+                key,
+                false,
+                |payload| has_items(payload, "docs"),
+                || async move {
+                    match get_json(&outbound, &outbound.ol_api, url, &RetryPolicy::REQUEST).await {
+                        Ok(value) => {
+                            let has_docs = value.get("docs").is_some_and(Value::is_array);
+                            if !has_docs || value.get("error").is_some() {
+                                return Err(Fetch::Failed("a search answer without docs".into()));
+                            }
+                            object(value)
+                        }
+                        // A query Open Library refuses: no match, not an outage. Any other
+                        // status (429 is `Throttled` already) is an error.
+                        Err(UpstreamError::Status(status))
+                            if COVER_SEARCH_REFUSED.contains(&status) =>
+                        {
+                            Ok(Arc::new(json!({ REFUSED: status })))
+                        }
+                        Err(error) => Err(Fetch::from(error)),
+                    }
+                },
+            )
+            .await?;
+        if let Some(status) = payload.get(REFUSED).and_then(py_int) {
+            return Ok(CoverAnswer {
+                refused: u16::try_from(status).ok(),
+                ..CoverAnswer::default()
+            });
+        }
+        Ok(CoverAnswer {
+            num_found: num_found(&payload),
+            docs: payload.get("docs").map(map_cover_docs).unwrap_or_default(),
+            refused: None,
+        })
     }
 
     /// `/isbn/{isbn}.json` (Open Library redirects it to the edition): the first positive

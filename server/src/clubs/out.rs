@@ -88,11 +88,17 @@ pub struct InviteOut {
     /// Null for a link without a use limit.
     pub max_uses: Option<i32>,
     pub use_count: i32,
-    /// Who redeemed it, oldest first, one entry per use (deleted accounts are left out).
+    /// Who redeemed it, oldest first, one entry per use (deleted accounts are left out). Empty
+    /// for a personal invite another admin made, as `invitee` is null for it.
     pub used_by: Vec<String>,
     pub revoked: bool,
     /// Not revoked, not expired and not used up: it can still be redeemed.
     pub active: bool,
+    /// A friend invite (`kind: "friend"`): only the friend it was made for can redeem it.
+    pub personal: bool,
+    /// The username of the friend a personal invite is for, shown only to the invite's creator
+    /// (another admin would learn whom the creator is friends with); null otherwise.
+    pub invitee: Option<String>,
 }
 
 /// Invites, newest first.
@@ -252,10 +258,26 @@ pub async fn member_outs(
 }
 
 /// Invites as [`InviteOut`], newest first (`created_at DESC, id DESC`): the club's invites
-/// for `Some(club_id)`, the sign-up invites for `None`; with `only`, just that invite.
+/// for `Some(club_id)`, the sign-up invites for `None`; with `only`, just that invite. For the
+/// sign-up invites of the instance admins, which are never personal: [`club_invite_outs`] names
+/// a personal invite's friend to its creator.
 pub async fn invite_outs(
     conn: &mut PgConnection,
     config: &Config,
+    club_id: Option<i64>,
+    only: Option<i64>,
+) -> sqlx::Result<Vec<InviteOut>> {
+    club_invite_outs(conn, config, None, club_id, only).await
+}
+
+/// [`invite_outs`] as `viewer` sees them: a personal invite names its friend, as `invitee` and
+/// once redeemed in `used_by`, only to `viewer` when `viewer` created it; everyone else's show
+/// null and an empty `used_by` (answer 24: a co-admin would learn whom the creator is friends
+/// with). `use_count` stays, so a used one still reads as used.
+pub async fn club_invite_outs(
+    conn: &mut PgConnection,
+    config: &Config,
+    viewer: Option<i64>,
     club_id: Option<i64>,
     only: Option<i64>,
 ) -> sqlx::Result<Vec<InviteOut>> {
@@ -264,16 +286,22 @@ pub async fn invite_outs(
                   i.max_uses, i.use_count, i.revoked_at IS NOT NULL AS "revoked!",
                   (i.revoked_at IS NULL AND (i.expires_at IS NULL OR i.expires_at > now())
                    AND (i.max_uses IS NULL OR i.use_count < i.max_uses)) AS "active!",
-                  ARRAY(SELECT v.username
-                        FROM club_invite_uses x JOIN users v ON v.id = x.user_id
-                        WHERE x.invite_id = i.id
-                        ORDER BY x.used_at, x.id) AS "used_by!"
+                  CASE WHEN i.invitee_id IS NULL OR i.created_by = $3
+                       THEN ARRAY(SELECT v.username
+                                  FROM club_invite_uses x JOIN users v ON v.id = x.user_id
+                                  WHERE x.invite_id = i.id
+                                  ORDER BY x.used_at, x.id)
+                       ELSE '{}' END AS "used_by!",
+                  i.invitee_id IS NOT NULL AS "personal!",
+                  CASE WHEN i.created_by = $3 THEN f.username END AS "invitee?"
            FROM club_invites i
            LEFT JOIN users u ON u.id = i.created_by
+           LEFT JOIN users f ON f.id = i.invitee_id
            WHERE i.club_id IS NOT DISTINCT FROM $1 AND ($2::int8 IS NULL OR i.id = $2)
            ORDER BY i.created_at DESC, i.id DESC"#,
         club_id,
-        only
+        only,
+        viewer
     )
     .fetch_all(conn)
     .await?;
@@ -291,6 +319,8 @@ pub async fn invite_outs(
             used_by: row.used_by,
             revoked: row.revoked,
             active: row.active,
+            personal: row.personal,
+            invitee: row.invitee,
         })
         .collect())
 }
@@ -302,7 +332,18 @@ pub async fn invite_out(
     club_id: Option<i64>,
     invite_id: i64,
 ) -> ApiResult<InviteOut> {
-    invite_outs(conn, config, club_id, Some(invite_id))
+    club_invite_out(conn, config, None, club_id, invite_id).await
+}
+
+/// One invite as `viewer` sees it (see [`club_invite_outs`]).
+pub async fn club_invite_out(
+    conn: &mut PgConnection,
+    config: &Config,
+    viewer: Option<i64>,
+    club_id: Option<i64>,
+    invite_id: i64,
+) -> ApiResult<InviteOut> {
+    club_invite_outs(conn, config, viewer, club_id, Some(invite_id))
         .await?
         .pop()
         .ok_or_else(|| AppError::internal(format!("invite {invite_id} vanished")))

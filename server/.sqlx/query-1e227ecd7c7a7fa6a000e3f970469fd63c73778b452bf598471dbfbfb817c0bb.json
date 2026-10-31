@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE club_invites SET revoked_at = clock_timestamp()\n         WHERE revoked_at IS NULL\n           AND ((created_by = $1 AND invitee_id = $2) OR (created_by = $2 AND invitee_id = $1))\n           AND (expires_at IS NULL OR expires_at > now())\n           AND (max_uses IS NULL OR use_count < max_uses)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1e227ecd7c7a7fa6a000e3f970469fd63c73778b452bf598471dbfbfb817c0bb"
+}

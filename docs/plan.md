@@ -28,7 +28,7 @@ Self-hosting ends. The only existing instance, on the homelab, is replaced in pl
 
 - **Accounts are global.** Personal data belongs to the user: shelf, ratings, diary, quotes, favourites, physical shelf, search history. Club data belongs to a club: picks, milestones, pick posts, events, next-up votes, invites. With zero clubs the app is a complete solo reading tracker.
 - **Clubs are private and invite-only.** Roles are owner, admin and member. At most 20 members per club, and at most 10 clubs created per user. Invites are single-use or expiring. Ownership must be transferred before the owner leaves. There is no public directory, and non-members get 404 for anything in a club.
-- **Friends are mutual** (request and accept). They see each other's reading and can invite each other into clubs. No public profiles and no followers.
+- **Friends are mutual** (request and accept). They see each other's reading and can invite each other into clubs they administer. No public profiles and no followers.
 - **Visibility:**
   - Friends and members of a shared club see a user's shelf, ratings, currently reading, stats, diary entries and quotes.
   - Diary entries, quotes and ratings can each be set to "only me".
@@ -73,11 +73,15 @@ Self-hosting ends. The only existing instance, on the homelab, is replaced in pl
 
 ## Phases
 
-| Milestone | Issues |
+In this order since 2026-10-29 (Rafael: build the app first, then move the current users, then the legal part). The private move and the public launch are tracked in the Phase 2 milestone; `docs/phase3/work-plan.md` has the details.
+
+| Step | Issues |
 |---|---|
-| **Phase 1: Rust backend** | #36 scaffold, #37 schema, #38 legacy importer, #39 auth, #40 clubs, #41 catalog core, #42 DNB harvester, #43 media store, #44 personal features, #45 club features, #46 visibility, #47 OpenAPI types, #48 frontend, #49 parity checklist |
-| **Phase 2: Beta and launch** | #50 name and domain, #51 deployment, #52 cutover, #53 legal texts, #54 admin queue, #55 open sign-up |
+| **Phase 1: Rust backend** (done) | #36 scaffold, #37 schema, #38 legacy importer, #39 auth, #40 clubs, #41 catalog core, #42 DNB harvester, #43 media store, #44 personal features, #45 club features, #46 visibility, #47 OpenAPI types, #48 frontend, #49 parity checklist |
+| **Phase 2: Beta and launch**, the parts built so far | #54 admin queue, the code of #51 deployment, the import rehearsal (#38), #74 covers |
 | **Phase 3: Scanning and friends** | #56 web barcode scanning, #57 friends |
+| **Private move** | #52 cutover: the current users move onto the Rust server on the existing host and hostname, invite-only, with mail off; the parts of #51 it needs |
+| **Public launch** | #50 name and domain, #53 legal texts, #55 open sign-up, the rest of #51. The current hostname then redirects to the new one |
 | **Phase 4: Apps (iOS first)** | #58 Capacitor, #59 iOS pipeline, #60 native features, #61 App Store, #62 Android |
 | **Phase 5: Later** | #63 dump backfill, #64 paid feeds, #65 VPS and S3, #66 supporter payments, #67 librarians |
 

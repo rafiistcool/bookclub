@@ -144,10 +144,10 @@ struct PostRow {
 }
 
 /// The rows of the posts among `ids` the viewer may see. The author's profile picture only when
-/// the viewer can see the author (`bc_can_see_user`: they share a club), as the report route
-/// accepts it: a member removed from the club, or who left it, keeps their name on their old
-/// posts, but a picture they set since would show to people who could not report it (security
-/// review, ADM2 merge). Reactions hide the names of such people the same way.
+/// the viewer can see the author (`bc_can_see_user`: they share a club or are friends), as the
+/// report route accepts it: a member removed from the club, or who left it, keeps their name on
+/// their old posts, but a picture they set since would show to people who could not report it
+/// (security review, ADM2 merge). Reactions hide the names of such people the same way.
 async fn load_rows(
     conn: &mut PgConnection,
     viewer: i64,

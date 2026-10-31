@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO cover_search AS cs (work_id, outcome, attached_ol_work_id,\n                                         attached_ol_cover_id)\n         VALUES ($1, 'attached', $2, $3)\n         ON CONFLICT (work_id) DO UPDATE SET\n             outcome = 'attached', misses = 0, failures = 0, next_search_at = NULL,\n             last_error = NULL, attached_ol_work_id = $2, attached_ol_cover_id = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7fd4d69b6c1bc0086f5bc5d0218833f0e5ec2392628f61c291cd08591c1c3ecd"
+}

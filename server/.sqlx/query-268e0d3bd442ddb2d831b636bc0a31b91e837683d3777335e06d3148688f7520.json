@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO cover_search AS cs (work_id, searched_at, searched_key, outcome, misses,\n                                             failures, next_search_at, last_error,\n                                             attached_ol_work_id, attached_ol_cover_id)\n             VALUES ($1, clock_timestamp(), $2, $3, 0, 0, NULL, NULL, $4, $5)\n             ON CONFLICT (work_id) DO UPDATE SET\n                 searched_at = clock_timestamp(), searched_key = $2, outcome = $3, misses = 0,\n                 failures = 0, next_search_at = NULL, last_error = NULL,\n                 attached_ol_work_id = COALESCE($4, cs.attached_ol_work_id),\n                 attached_ol_cover_id = COALESCE($5, cs.attached_ol_cover_id)\n             WHERE cs.searched_at IS NULL OR cs.searched_at < $6",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "268e0d3bd442ddb2d831b636bc0a31b91e837683d3777335e06d3148688f7520"
+}

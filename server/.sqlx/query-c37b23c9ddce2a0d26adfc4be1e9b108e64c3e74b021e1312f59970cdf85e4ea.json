@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id,\n                  removed_at IS NOT NULL OR ol_gone_at IS NOT NULL\n                  OR EXISTS (SELECT 1 FROM media_removed_hashes h\n                             WHERE h.sha256 = m.sha256 AND h.blocks_covers) AS \"unusable!\"\n           FROM media m WHERE ol_cover_id = $1 FOR SHARE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "unusable!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "c37b23c9ddce2a0d26adfc4be1e9b108e64c3e74b021e1312f59970cdf85e4ea"
+}

@@ -566,6 +566,7 @@ async fn run_rematch(app: &TestApp, dry_run: bool) -> Report {
         RematchArgs {
             dry_run,
             retry_wait_ms: Some(0),
+            cover_pace_ms: Some(0),
         },
     )
     .await
@@ -857,6 +858,7 @@ async fn rematch_legacy_commits_each_edition_on_its_own(db: PgPool) {
         RematchArgs {
             dry_run: false,
             retry_wait_ms: Some(0),
+            cover_pace_ms: Some(0),
         },
     )
     .await

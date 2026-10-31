@@ -1,10 +1,17 @@
 import { afterEach, describe, expect, it } from "vitest";
+import type { MissingCoverOut } from "./api/generated";
 import {
+  coverCandidateUrl,
+  coverFound,
+  coverReasonLabel,
+  coverSearchMessage,
+  coverStatusLabel,
   formatAge,
   fromLocalInput,
   hoursBetween,
   isOverdue,
   mergeTarget,
+  missingCoverNotes,
   nextQueuePage,
   pictureRef,
   proposedFields,
@@ -132,5 +139,113 @@ describe("the admin queue", () => {
     expect(fromLocalInput("2026-10-28T09:05")).toBe(date.toISOString());
     expect(fromLocalInput("")).toBeNull();
     expect(fromLocalInput("soon")).toBeNull();
+  });
+});
+
+describe("the cover search for an admin", () => {
+  afterEach(() => {
+    i18n.global.locale.value = "en";
+  });
+
+  type Notes = Parameters<typeof missingCoverNotes>[0];
+  const NOW = Date.parse("2026-10-29T12:00:00Z");
+  const day = (iso: string) => iso.slice(0, 10);
+  const row = (overrides: Partial<MissingCoverOut> = {}): Notes => ({
+    state: "none",
+    failing_edition_id: null,
+    failed_at: null,
+    searched_at: null,
+    outcome: null,
+    next_search_at: null,
+    failures: 0,
+    after_takedown: false,
+    suggestion_id: null,
+    ...overrides,
+  });
+
+  it("says why a candidate waits for an admin, in both languages", () => {
+    expect(coverReasonLabel("number_differs")).toBe("A number in the title differs: maybe another volume.");
+    expect(coverReasonLabel("after_takedown")).toBe("This book's cover was taken down, so a person decides from now on.");
+    expect(coverReasonLabel("single_record")).toBe(
+      "The only book of this title by this author on Open Library, but a record with a single edition: anyone can create one.",
+    );
+    expect(coverReasonLabel("something_new")).toBe("something_new");
+    expect(coverStatusLabel("approved")).toBe("Used");
+    expect(coverStatusLabel("rejected")).toBe("Not this book");
+    expect(coverStatusLabel("later")).toBe("later");
+    i18n.global.locale.value = "de";
+    expect(coverReasonLabel("several_works")).toBe("Open Library hat mehr als ein Buch mit diesem Titel von dieser Person.");
+    expect(coverStatusLabel("closed")).toBe("Geschlossen");
+  });
+
+  it("links the candidate's edition, else its work, and nothing that is not an Open Library id", () => {
+    expect(coverCandidateUrl({ ol_work_id: "OL16809803W", ol_edition_id: "OL27198433M" })).toBe(
+      "https://openlibrary.org/books/OL27198433M",
+    );
+    expect(coverCandidateUrl({ ol_work_id: "OL16809803W", ol_edition_id: null })).toBe(
+      "https://openlibrary.org/works/OL16809803W",
+    );
+    expect(coverCandidateUrl({ ol_work_id: "OL1W", ol_edition_id: "OL2W" })).toBe("https://openlibrary.org/works/OL1W");
+    expect(coverCandidateUrl({ ol_work_id: "javascript:alert(1)", ol_edition_id: "//evil.example" })).toBeNull();
+  });
+
+  it("words what Search now came to, and which outcomes gave the book a cover", () => {
+    expect(coverSearchMessage("suggested")).toBe("Found a possible cover. It waits under Suggestions.");
+    expect(coverSearchMessage("no_match")).toBe("No match on Open Library.");
+    expect(coverSearchMessage("whatever")).toBe("No match on Open Library.");
+    expect(coverSearchMessage("failing")).toBe("Open Library's picture still does not load. Upload a picture instead.");
+    expect(["attached", "inherited", "isbn", "suggested", "no_match", "failing"].filter(coverFound)).toEqual([
+      "attached",
+      "inherited",
+      "isbn",
+    ]);
+  });
+
+  it("tells a book that was never searched, and one Open Library had no match for", () => {
+    expect(missingCoverNotes(row(), day, NOW)).toEqual(["Not searched yet."]);
+    expect(
+      missingCoverNotes(
+        row({ searched_at: "2026-10-20T08:00:00Z", outcome: "no_match", next_search_at: "2026-11-19T08:00:00Z" }),
+        day,
+        NOW,
+      ),
+    ).toEqual(["No match on Open Library on 2026-10-20.", "Next try on 2026-11-19."]);
+    // Uncertain and blocked read as no match; a past retry date is no news.
+    expect(
+      missingCoverNotes(row({ searched_at: "2026-09-01T08:00:00Z", outcome: "uncertain", next_search_at: "2026-10-01T08:00:00Z" }), day, NOW),
+    ).toEqual(["No match on Open Library on 2026-09-01."]);
+    expect(missingCoverNotes(row({ searched_at: "2026-09-01T08:00:00Z", outcome: "attached" }), day, NOW)).toEqual([
+      "Last searched on 2026-09-01.",
+    ]);
+  });
+
+  it("names a waiting suggestion or photo, a failing picture, outages and a takedown", () => {
+    expect(missingCoverNotes(row({ suggestion_id: 4, searched_at: "2026-10-20T08:00:00Z", outcome: "suggested" }), day, NOW)).toEqual([
+      "A suggestion waits under Suggestions.",
+    ]);
+    expect(missingCoverNotes(row({ state: "photo_waiting" }), day, NOW)).toEqual([
+      "A reader's photo waits in the Requests tab.",
+      "Not searched yet.",
+    ]);
+    expect(missingCoverNotes(row({ state: "failing", failed_at: "2026-10-28T03:00:00Z" }), day, NOW)[0]).toBe(
+      "Open Library's picture failed to load on 2026-10-28.",
+    );
+    expect(missingCoverNotes(row({ state: "failing", failing_edition_id: 13, failed_at: null }), day, NOW)[0]).toBe(
+      "Open Library's picture of edition 13 failed to load.",
+    );
+    expect(
+      missingCoverNotes(row({ failures: 3, next_search_at: "2026-10-29T16:00:00Z", after_takedown: true }), day, NOW),
+    ).toEqual([
+      "Open Library did not answer the last 3 searches.",
+      "Next try on 2026-10-29.",
+      "After a takedown, the search only suggests.",
+    ]);
+    i18n.global.locale.value = "de";
+    expect(missingCoverNotes(row({ failures: 1 }), day, NOW)).toEqual([
+      "Open Library hat bei der letzten Suche nicht geantwortet.",
+    ]);
+    expect(
+      missingCoverNotes(row({ state: "failing", failing_edition_id: 13, failed_at: "2026-10-28T03:00:00Z" }), day, NOW)[0],
+    ).toBe("Das Bild von Open Library zu Ausgabe 13 ließ sich am 2026-10-28 nicht laden.");
   });
 });

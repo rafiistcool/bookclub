@@ -77,11 +77,22 @@ fn policies(res: &TestResponse) -> Vec<&str> {
 }
 
 /// The policy of the SPA's answers (`spa::SHELL_CSP`, #55): nothing from another origin, no
-/// inline script, the `blob:` manifest and pictures of the app, and no framing.
-const SHELL_CSP: &str = "default-src 'self'; script-src 'self'; \
+/// inline script, WebAssembly from our own files for the barcode decoder (#56), the `blob:`
+/// manifest and pictures of the app, and no framing.
+const SHELL_CSP: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; \
     style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; \
     connect-src 'self'; manifest-src 'self' blob:; object-src 'none'; base-uri 'self'; \
     form-action 'self'; frame-ancestors 'none'";
+
+/// The sources of a policy's `script-src` directive.
+fn script_sources(policy: &str) -> Vec<&str> {
+    policy
+        .split(';')
+        .find_map(|directive| directive.trim().strip_prefix("script-src "))
+        .expect("the policy has a script-src directive")
+        .split_whitespace()
+        .collect()
+}
 
 #[tokio::test]
 async fn every_response_has_referrer_policy_and_a_request_id() {
@@ -245,6 +256,15 @@ async fn the_spa_carries_the_shell_policy() {
     }
     let res = send(app(spa_state(&dir)), request(Method::HEAD, "/discover")).await;
     assert_eq!(policies(&res), [SHELL_CSP]);
+
+    // The barcode decoder (#56) needs WebAssembly, which `'wasm-unsafe-eval'` allows on its
+    // own: scripts still never come from a string or an inline element.
+    let shell = get(app(spa_state(&dir)), "/scan").await;
+    let scripts = script_sources(policies(&shell)[0]);
+    assert!(scripts.contains(&"'wasm-unsafe-eval'"), "{scripts:?}");
+    for unsafe_source in ["'unsafe-eval'", "'unsafe-inline'"] {
+        assert!(!scripts.contains(&unsafe_source), "{scripts:?}");
+    }
 
     for path in ["/api/health", "/api/nope", "/media/abc/l"] {
         assert_security_headers(&get(app(spa_state(&dir)), path).await);

@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT coalesce(jsonb_agg(jsonb_build_object(\n                      'club_name', c.name, 'invited_by', u.username,\n                      'created_at', i.created_at, 'expires_at', i.expires_at,\n                      'used', i.use_count > 0, 'revoked', i.revoked_at IS NOT NULL)\n                  ORDER BY i.created_at, i.id), '[]') AS \"rows!\"\n           FROM club_invites i\n           JOIN clubs c ON c.id = i.club_id\n           LEFT JOIN users u ON u.id = i.created_by\n           WHERE i.invitee_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "rows!",
+        "type_info": "Jsonb",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "dbdae86c7fa41e69ff40395f9638c1f81c305379375b80c7824ed843d762ba30"
+}

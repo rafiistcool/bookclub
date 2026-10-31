@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE friendships SET accepted_at = clock_timestamp()\n             WHERE requester_id = $1 AND addressee_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f654eb211984d6e6865acd08749e699316d296f754df69e43afcae25f848cd96"
+}

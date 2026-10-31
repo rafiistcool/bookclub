@@ -32,8 +32,9 @@ impl Validate for AccountDeleteIn {}
 /// - Posts that others replied to become anonymous tombstones; every other post is deleted.
 /// - Every avatar the user uploaded is deleted with its bytes; cover photos stay as catalog
 ///   contributions, without the uploader.
-/// - Personal data, sessions, memberships and the user's activity events go with the account;
-///   picks, nominations, invites and catalog rows keep existing without the name.
+/// - Personal data, sessions, memberships, friendships and requests, blocks, the friend invites
+///   bound to the user and the user's activity events go with the account; picks, nominations,
+///   invites and catalog rows keep existing without the name.
 ///
 /// The password is checked under the current-password limits (10 checks per session in ten
 /// minutes, 30 per account an hour; then 429).
@@ -87,7 +88,9 @@ pub async fn delete_account(
 ///
 /// The hourly purge of empty sign-ups (`super::purge_empty_sign_ups`, Q14) deletes through here
 /// too, with the hash it read under its own lock of the account. Such an account has no row in
-/// a club, so taking its lock first locks no club out of order.
+/// a club but, at most, friend invites bound to it. The purge locks their clubs before the
+/// account and leaves the account to its next run when one appears in another club meanwhile,
+/// so [`lock_clubs`] then takes no new club after the account.
 ///
 /// Locks are taken in the order of every membership write (§5.3): every club the deletion writes
 /// in ([`lock_clubs`]), then the account, then the user's posts. A removal, a club delete or a
@@ -136,9 +139,10 @@ pub async fn delete_user(
 ///
 /// Those are the clubs that hold a row of the user or a reference to them, which the cascade of
 /// `DELETE FROM users` deletes or clears: memberships (also those the user invited), removals,
-/// `clubs.created_by`, invites and invite uses, picks, milestones, posts, reactions,
-/// nominations, ballots and events. A user who left a club can still have such rows in it. A
-/// new table that references both a club and a user belongs in this list.
+/// `clubs.created_by`, invites (created by the user or bound to them) and invite uses, picks,
+/// milestones, posts, reactions, nominations, ballots and events. A user who left a club can
+/// still have such rows in it. A new table that references both a club and a user belongs in
+/// this list. Friendships and blocks reference no club and cascade without a lock.
 async fn lock_clubs(conn: &mut PgConnection, user_id: i64) -> sqlx::Result<Vec<i64>> {
     let locked = sqlx::query_scalar!(
         "SELECT id FROM clubs
@@ -147,6 +151,7 @@ async fn lock_clubs(conn: &mut PgConnection, user_id: i64) -> sqlx::Result<Vec<i
                 SELECT club_id FROM club_memberships WHERE user_id = $1 OR invited_by = $1
                 UNION ALL SELECT club_id FROM club_removals WHERE user_id = $1
                 UNION ALL SELECT club_id FROM club_invites WHERE created_by = $1
+                UNION ALL SELECT club_id FROM club_invites WHERE invitee_id = $1
                 UNION ALL SELECT i.club_id FROM club_invite_uses u
                           JOIN club_invites i ON i.id = u.invite_id
                           WHERE u.user_id = $1

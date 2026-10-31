@@ -13,6 +13,22 @@ describe("navigation", () => {
     expect(isActive("/discover", club)).toBe(false);
   });
 
+  it("puts Friends in the sidebar after Club, and keeps the phone's tab bar at five", () => {
+    expect(NAV_ITEMS.map((item) => item.to)).toEqual(["/", "/discover", "/shelf", "/club", "/friends", "/settings"]);
+    const friends = NAV_ITEMS.find((item) => item.to === "/friends")!;
+    expect(friends).toMatchObject({ labelKey: "nav.friends", icon: "friends", bottomBar: false });
+    expect(NAV_ITEMS.filter((item) => item.bottomBar).map((item) => item.to)).toEqual([
+      "/",
+      "/discover",
+      "/shelf",
+      "/club",
+      "/settings",
+    ]);
+    expect(isActive("/friends", friends)).toBe(true);
+    expect(isActive("/friendship", friends)).toBe(false);
+    expect(isActive("/c/readers-ab12/members", friends)).toBe(false);
+  });
+
   it("keeps Home to the root and other tabs to their prefix", () => {
     expect(isActive("/", "/")).toBe(true);
     expect(isActive("/discover", "/")).toBe(false);

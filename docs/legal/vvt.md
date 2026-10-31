@@ -20,7 +20,7 @@ Shared by every activity below. Sources are in `privacy-facts.md` and `docs/phas
 
 - **Transport:** TLS at the reverse proxy with HSTS (DEP, #51). Mail to the provider only over TLS: `smtps://` or STARTTLS that must succeed (`server/src/config.rs`, `check_smtp_tls`).
 - **Authentication:** passwords hashed with argon2id (conventions §5.4); session secrets and mail-link tokens stored only as SHA-256 hashes (§5.1, §5.5); the session cookie is `__Host-`, `HttpOnly`, `Secure`, `SameSite=Lax`; cross-site writes are refused (§5.8); a password change ends every other session.
-- **Abuse limits:** sign-up, login, reset, search, upload, report and export are rate limited in memory (`server/src/ratelimit.rs:273-302`).
+- **Abuse limits:** sign-up, login, reset, search, upload, report and export are rate limited in memory (`server/src/ratelimit.rs` (`RateLimits`)).
 - **Access control:** strangers see nothing of a user in the app (pictures are served to whoever has their unguessable URL, `privacy-facts.md` §2); the audience sees only what the user did not mark "only me"; club data only the club's members (conventions §6). Instance-admin routes sit behind one guard (`server/src/lib.rs`, `InstanceAdmin`).
 - **Data minimisation:** no IP addresses in the app log or database; no third-party requests from the browser; pictures re-encoded without metadata; the Goodreads rows are emptied after the import.
 - **Isolation:** the app VM sits in its own VLAN, accepts connections only from the reverse proxy, and cannot reach the LAN (work plan §5 step 10; to confirm at #51 acceptance).
@@ -83,7 +83,7 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 | Data subjects | users |
 | Data | the entries and their visibility; search texts (newest 20); the rows of an uploaded Goodreads CSV while it is imported, then counts and up to 25 skipped titles |
 | Tables | `shelf_entries`, `user_favorites`, `quotes`, `physical_shelf_layouts`, `search_history`, `import_jobs` |
-| Recipients | the user's audience (people who share a club), except "only me" items; search texts and imported titles and ISBNs go to Open Library and the DNB without the user's identity (`processors.md`) |
+| Recipients | the user's audience (people who share a club), except "only me" items; search texts and imported titles and ISBNs go to Open Library and the DNB without the user's identity, and so do the title and first author of a catalog or imported book without a cover, for the cover search (never a book a reader added; `processors.md`) |
 | Third countries | Open Library (Internet Archive, USA) receives search texts, titles and ISBNs, but no personal reference (`processors.md`; to confirm that this is no transfer of personal data) |
 | Retention | until the user deletes them or the account |
 | Source | `server/src/shelf/`, `server/src/catalog/search.rs` |
@@ -106,7 +106,7 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 
 | | |
 |---|---|
-| Purpose | Reading clubs of up to 20 members (`server/src/clubs/mod.rs:29`): membership and roles, invites, the current pick and its milestones, voting on the next book, the activity feed |
+| Purpose | Reading clubs of up to 20 members (`server/src/clubs/mod.rs` (`MAX_MEMBERS`)): membership and roles, invites, the current pick and its milestones, voting on the next book, the activity feed |
 | Legal basis | Art. 6 (1) (b) |
 | Data subjects | users who create, join or are invited to clubs |
 | Data | membership, role, who invited whom, removals, invite codes and their uses, picks with meeting notes, milestones, nominations and ballots, activity events |
@@ -242,6 +242,8 @@ Each activity lists its tables. "Retention" refers to `privacy-facts.md` §7.
 | Retention | invites until revoked or used up; the record of uses with the account |
 | Source | `server/src/admin/invites.rs`, the `make-admin` and `beta-invite` commands of `server/src/main.rs` (`MakeAdmin`, `BetaInvite`) |
 
+### 16. Friends (written with #53)
+
 ## Tables with personal data
 
 Every table that references `users`, and the activities that use it.
@@ -262,13 +264,15 @@ Every table that references `users`, and the activities that use it.
 | `clubs` | 6 |
 | `club_memberships` | 6 |
 | `club_removals` | 6 |
-| `club_invites` | 6, 15 |
+| `club_invites` | 6, 15, 16 |
 | `club_invite_uses` | 6, 15 |
 | `club_picks` | 6 |
 | `milestones` | 6 |
 | `next_up_nominations` | 6 |
 | `next_up_ballots` | 6 |
 | `events` | 6 |
+| `friendships` | 16 |
+| `user_blocks` | 16 |
 | `media` | 7, 8, 9 |
 | `works` | 8, 9 |
 | `editions` | 8, 9 |

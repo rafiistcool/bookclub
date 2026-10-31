@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE media SET ol_gone_at = now()\n         WHERE id = $1 AND ol_cover_id IS NOT NULL AND storage_key IS NULL\n           AND removed_at IS NULL AND ol_gone_at IS NULL\n         RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b25ebdbed29fc3f4221f3ef889c4bc1391c4718386af8f7f73438ddc152f64e3"
+}

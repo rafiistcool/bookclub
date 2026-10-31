@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO friendships (requester_id, addressee_id) VALUES ($1, $2)\n         ON CONFLICT ((least(requester_id, addressee_id)), (greatest(requester_id, addressee_id)))\n         DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5bb5d55404c8bdaa5aafd8b59978fd4a5f541ed25ad1254df1db9ec22552b457"
+}

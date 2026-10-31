@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id FROM club_invites\n         WHERE club_id = $1 AND created_by = $2 AND invitee_id = $3 AND revoked_at IS NULL\n           AND (expires_at IS NULL OR expires_at > now())\n           AND (max_uses IS NULL OR use_count < max_uses)\n         ORDER BY created_at DESC, id DESC\n         LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "club_invites",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0fed81edc48765aee4be946310dc8a71fd64fec84cbbff06058d11e46bb22a8f"
+}

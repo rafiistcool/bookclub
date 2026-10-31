@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE cover_search SET next_search_at = NULL, misses = 0 WHERE work_id = ANY($1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4922edee3eb4328d1e5c4a6339584b1f1f457f0fcc55c11366c5fb6eea56f14a"
+}

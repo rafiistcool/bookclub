@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE cover_suggestions SET status = 'rejected', decided_at = now() WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6a6cccb48b1a3787769f3196193cdc59624562001ecdafde3eff2bd31f5bcc44"
+}

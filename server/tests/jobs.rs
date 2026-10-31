@@ -555,7 +555,7 @@ async fn lifting_a_suspension_starts_the_30_days_of_an_empty_sign_up_again(db: P
 /// Every foreign key to `users` whose row means the account holds data, with SQL that gives the
 /// account `{u}` such a row. The other names are the fixture rows of
 /// [`every_reference_to_an_account_is_data_or_a_trace_of_signing_in`].
-const DATA: [(&str, &str); 27] = [
+const DATA: [(&str, &str); 30] = [
     (
         "shelf_entries.user_id",
         "INSERT INTO shelf_entries (user_id, work_id, status) VALUES ({u}, {work}, 'finished')",
@@ -675,12 +675,26 @@ const DATA: [(&str, &str); 27] = [
         "reports.target_user_id",
         "INSERT INTO reports (target_kind, reason, target_user_id) VALUES ('avatar', 'offensive', {u})",
     ),
+    (
+        "friendships.requester_id",
+        "INSERT INTO friendships (requester_id, addressee_id) VALUES ({u}, {keeper})",
+    ),
+    (
+        "friendships.addressee_id",
+        "INSERT INTO friendships (requester_id, addressee_id, accepted_at)
+         VALUES ({keeper}, {u}, now())",
+    ),
+    (
+        "user_blocks.user_id",
+        "INSERT INTO user_blocks (user_id, blocked_user_id) VALUES ({u}, {keeper})",
+    ),
 ];
 
-/// The foreign keys to `users` that only record signing up or signing in, why, and SQL that
-/// gives the account `{u}` such a row more than 30 days old: an account with nothing else is
-/// still an empty sign-up.
-const TRACES: [(&str, &str, &str); 3] = [
+/// The foreign keys to `users` that only record signing up or signing in, or another account's
+/// act the account never answered, why, and SQL that gives the account `{u}` such a row (more
+/// than 30 days old where the purge reads its date): an account with nothing else is still an
+/// empty sign-up. `friendships.addressee_id` is in [`DATA`] too: an accepted request is data.
+const TRACES: [(&str, &str, &str); 6] = [
     (
         "sessions.user_id",
         "signing in; the purge reads `last_used_at`",
@@ -702,12 +716,30 @@ const TRACES: [(&str, &str, &str); 3] = [
          of a club invite is data",
         "INSERT INTO club_invite_uses (invite_id, user_id) VALUES ({beta}, {u})",
     ),
+    (
+        "friendships.addressee_id",
+        "another account's act, never answered: a friend request the account received and did \
+         not accept",
+        "INSERT INTO friendships (requester_id, addressee_id) VALUES ({keeper}, {u})",
+    ),
+    (
+        "user_blocks.blocked_user_id",
+        "another account's block; it goes with the account",
+        "INSERT INTO user_blocks (user_id, blocked_user_id) VALUES ({keeper}, {u})",
+    ),
+    (
+        "club_invites.invitee_id",
+        "an invite another account sent",
+        "INSERT INTO club_invites (club_id, code, created_by, max_uses, expires_at, invitee_id)
+         VALUES ({club}, 'BOUND{u}', {keeper}, 1, now() + interval '30 days', {u})",
+    ),
 ];
 
 /// The purge of empty sign-ups (`auth::empty_sign_ups`) must consider every foreign key to
 /// `users`. The schema's list comes from `pg_constraint`, as in `auth_export.rs`: a new column
 /// fails here until it is in [`DATA`] (and the purge has a `NOT EXISTS` for it, or the account
-/// below is deleted) or in [`TRACES`] with a reason.
+/// below is deleted) or in [`TRACES`] (a trace of signing in or another account's act) with a
+/// reason.
 #[sqlx::test]
 async fn every_reference_to_an_account_is_data_or_a_trace_of_signing_in(db: PgPool) {
     let in_schema: BTreeSet<String> = sqlx::query_scalar(
@@ -904,6 +936,103 @@ async fn data_written_while_the_purge_waits_keeps_the_account(db: PgPool) {
         ids(&app.db, "SELECT user_id FROM shelf_entries").await,
         [ada]
     );
+}
+
+/// A friend invite bound to an empty sign-up (a trace: its friendship ended, which revoked it)
+/// puts its club in the purge's way. The purge locks that club before the account, as every
+/// club write does: an admin of the club who holds it and then reads the account (a new friend
+/// invite for it, `friends::locked_friend`) is waited for, not deadlocked with.
+#[sqlx::test]
+async fn the_purge_locks_a_bound_invites_club_before_the_account(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let club = app.club(&ada, "Readers").await;
+    let dan = sign_up(&app.db, "dan", 31).await;
+    exec(
+        &app.db,
+        "INSERT INTO club_invites
+             (club_id, code, created_by, max_uses, expires_at, invitee_id, revoked_at)
+         VALUES ({club}, 'BOUNDCODE1', {ada}, 1, now() + interval '20 days', {dan}, now())",
+        &[("club", club.id), ("ada", ada.id()), ("dan", dan)],
+    )
+    .await;
+
+    // What a friend invite for dan holds (`clubs::invites::create_invite`), then reads.
+    let mut admin = app.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM clubs WHERE id = $1 FOR UPDATE")
+        .bind(club.id)
+        .execute(&mut *admin)
+        .await
+        .unwrap();
+    let purge = tokio::spawn({
+        let db = app.db.clone();
+        async move {
+            let mut conn = db.acquire().await.unwrap();
+            auth::purge_empty_sign_ups(&mut conn).await.unwrap()
+        }
+    });
+    wait_for_a_lock_wait(&app.db).await;
+    sqlx::query("SELECT id FROM users WHERE id = $1 FOR KEY SHARE")
+        .bind(dan)
+        .execute(&mut *admin)
+        .await
+        .expect("the admin's read of the account deadlocked with the purge");
+    admin.commit().await.unwrap();
+
+    assert_eq!(purge.await.unwrap(), 1);
+    assert!(!user_ids(&app.db).await.contains(&dan));
+    assert!(ids(&app.db, "SELECT id FROM club_invites").await.is_empty());
+}
+
+/// A friend invite bound to the account in a club the purge did not lock first (made while the
+/// purge waited for the account, its friendship ended again since) leaves the account to the
+/// next run: the purge never locks a club after the account.
+#[sqlx::test]
+async fn a_bound_invite_made_while_the_purge_waits_defers_the_account(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let club = app.club(&ada, "Readers").await;
+    let dan = sign_up(&app.db, "dan", 31).await;
+
+    // A friend invite for dan in the making: the club, then dan's row, as
+    // `friends::locked_friend` takes it.
+    let mut admin = app.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM clubs WHERE id = $1 FOR UPDATE")
+        .bind(club.id)
+        .execute(&mut *admin)
+        .await
+        .unwrap();
+    sqlx::query("SELECT id FROM users WHERE id = $1 FOR KEY SHARE")
+        .bind(dan)
+        .execute(&mut *admin)
+        .await
+        .unwrap();
+    let purge = tokio::spawn({
+        let db = app.db.clone();
+        async move {
+            let mut conn = db.acquire().await.unwrap();
+            auth::purge_empty_sign_ups(&mut conn).await.unwrap()
+        }
+    });
+    wait_for_a_lock_wait(&app.db).await;
+    sqlx::query(
+        "INSERT INTO club_invites
+             (club_id, code, created_by, max_uses, expires_at, invitee_id, revoked_at)
+         VALUES ($1, 'BOUNDCODE2', $2, 1, now() + interval '20 days', $3, now())",
+    )
+    .bind(club.id)
+    .bind(ada.id())
+    .bind(dan)
+    .execute(&mut *admin)
+    .await
+    .unwrap();
+    admin.commit().await.unwrap();
+
+    assert_eq!(purge.await.unwrap(), 0);
+    assert!(user_ids(&app.db).await.contains(&dan));
+    let mut conn = app.db.acquire().await.unwrap();
+    assert_eq!(auth::purge_empty_sign_ups(&mut conn).await.unwrap(), 1);
+    assert!(!user_ids(&app.db).await.contains(&dan));
 }
 
 #[sqlx::test]

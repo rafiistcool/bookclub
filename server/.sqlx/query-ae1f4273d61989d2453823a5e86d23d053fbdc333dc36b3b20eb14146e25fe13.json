@@ -1,0 +1,114 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT w.title, w.subtitle, w.author_names, w.ol_work_id, w.source,\n                  w.details_fetched_at IS NULL AS \"details_open!\",\n                  bc_cover_in_use(w.id) AS \"in_use!\",\n                  fa.name AS \"first_name?\", fa.sort_name AS \"first_sort?\"\n           FROM works w\n           LEFT JOIN LATERAL (\n               SELECT a.name, a.sort_name FROM work_authors wa JOIN authors a ON a.id = wa.author_id\n               WHERE wa.work_id = w.id ORDER BY wa.position, a.id LIMIT 1\n           ) fa ON true\n           WHERE w.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "title",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "subtitle",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "subtitle"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "author_names",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "author_names"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "ol_work_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "ol_work_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "source",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "works",
+            "name": "source"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "details_open!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "in_use!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "first_name?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "authors",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "first_sort?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "authors",
+            "name": "sort_name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      null,
+      null,
+      true,
+      true
+    ]
+  },
+  "hash": "ae1f4273d61989d2453823a5e86d23d053fbdc333dc36b3b20eb14146e25fe13"
+}

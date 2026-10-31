@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO cover_search AS cs (work_id, searched_at, searched_key, outcome, misses,\n                                             failures, next_search_at, last_error)\n             VALUES ($1, clock_timestamp(), $2, $3, 1, 0, now() + interval '30 days', $4)\n             ON CONFLICT (work_id) DO UPDATE SET\n                 searched_at = clock_timestamp(), searched_key = $2, outcome = $3,\n                 misses = (CASE WHEN cs.searched_key IS NOT DISTINCT FROM $2 THEN cs.misses\n                                ELSE 0 END) + 1,\n                 failures = 0,\n                 next_search_at = now() + LEAST(\n                     interval '30 days'\n                         * power(2, LEAST(CASE WHEN cs.searched_key IS NOT DISTINCT FROM $2\n                                               THEN cs.misses ELSE 0 END, 8)),\n                     interval '180 days'),\n                 last_error = $4\n             WHERE cs.searched_at IS NULL OR cs.searched_at < $5",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "567ad6c9f6233db76fc1244a9ad4e57865c61f7b92ccc1bed1234afda8ade6f7"
+}

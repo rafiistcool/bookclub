@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n               (SELECT count(*) FROM works\n                WHERE id = ANY($1) AND source = 'user' AND bc_cover_missing(cover_media_id))\n                   AS \"readers!\",\n               (SELECT count(*) FROM works w JOIN media m ON m.id = w.cover_media_id\n                WHERE w.id = ANY($1) AND NOT w.id = ANY($2) AND m.source = 'openlibrary'\n                  AND m.storage_key IS NULL AND m.removed_at IS NULL AND m.ol_gone_at IS NULL)\n                   AS \"unfetched!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "readers!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "unfetched!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "e1ec57c69e7c02edbbfc3e3534bbd854e23fb0dc6368a83acd6bf8aef4f46de3"
+}

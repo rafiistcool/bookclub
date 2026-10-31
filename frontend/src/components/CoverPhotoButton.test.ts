@@ -4,10 +4,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { bookOut } from "../test/fixtures";
 
 const uploadCover = vi.fn();
+const adminSetCover = vi.fn();
 
 vi.mock("../api/client", () => ({
   ApiError: class ApiError extends Error {},
-  api: { uploadCover: (...args: unknown[]) => uploadCover(...args) },
+  api: {
+    uploadCover: (...args: unknown[]) => uploadCover(...args),
+    adminSetCover: (...args: unknown[]) => adminSetCover(...args),
+  },
 }));
 
 import { useToast } from "../stores/toast";
@@ -24,6 +28,7 @@ describe("CoverPhotoButton", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     uploadCover.mockReset();
+    adminSetCover.mockReset();
   });
 
   it("sets the first cover at once, for the reader's edition", async () => {
@@ -54,5 +59,22 @@ describe("CoverPhotoButton", () => {
     await pick(wrapper, huge);
     expect(uploadCover).not.toHaveBeenCalled();
     expect(useToast().items.at(-1)?.message).toContain("50 MB");
+  });
+
+  it("sets an instance admin's picture as the cover at once, with its own label and look", async () => {
+    const book = bookOut({ id: 9, cover_url: "/media/adm/l", cover_thumb_url: "/media/adm/s", cover_public_id: "adm" });
+    adminSetCover.mockResolvedValue({ book });
+    const wrapper = mount(CoverPhotoButton, {
+      props: { workId: 9, editionId: 13, hasCover: true, admin: true, label: "Upload a picture", look: "ghost" },
+    });
+    expect(wrapper.text()).toBe("Upload a picture");
+    expect(wrapper.classes()).toEqual(expect.arrayContaining(["btn", "btn-ghost", "btn-sm"]));
+    expect(wrapper.classes()).not.toContain("text-btn");
+    const picture = new File(["x"], "cover.webp", { type: "image/webp" });
+    await pick(wrapper, picture);
+    expect(adminSetCover).toHaveBeenCalledWith(9, picture, 13);
+    expect(uploadCover).not.toHaveBeenCalled();
+    expect(wrapper.emitted("covered")).toEqual([[book]]);
+    expect(useToast().items.at(-1)?.message).toBe("The cover is set for everyone");
   });
 });

@@ -36,6 +36,9 @@ pub struct InvitePreview {
     /// The club it joins; null for a sign-up invite.
     pub club: Option<ClubRef>,
     pub kind: InviteTarget,
+    /// A personal invite (a club admin's invite for one friend, FRIENDS #57): only the account it
+    /// was made for can join with it, and it never makes an account. Whom it is for is not told.
+    pub personal: bool,
 }
 
 /// What a valid invite code leads to, for the join page. Public. An unknown, revoked, expired
@@ -64,7 +67,7 @@ pub async fn preview(
         .check_and_hit(&ip_key(ip))
         .map_err(|wait| wait.into_error(msg::SLOW_DOWN))?;
     let row = sqlx::query!(
-        r#"SELECT c.slug AS "slug?", c.name AS "name?"
+        r#"SELECT c.slug AS "slug?", c.name AS "name?", i.invitee_id IS NOT NULL AS "personal!"
            FROM club_invites i
            LEFT JOIN clubs c ON c.id = i.club_id
            WHERE i.code = $1 AND i.revoked_at IS NULL
@@ -79,10 +82,12 @@ pub async fn preview(
         (Some(slug), Some(name)) => InvitePreview {
             club: Some(ClubRef { slug, name }),
             kind: InviteTarget::Club,
+            personal: row.personal,
         },
         _ => InvitePreview {
             club: None,
             kind: InviteTarget::Signup,
+            personal: false,
         },
     };
     Ok(Json(preview))

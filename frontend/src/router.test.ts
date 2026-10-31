@@ -53,7 +53,14 @@ describe("club routes without a slug", () => {
     expect(await landing("/pick", [READERS])).toBe("/c/readers-ab12");
     // Without a club, the old pick page is Home.
     expect(await landing("/pick", [])).toBe("/");
-    expect(await landing("/friends", [READERS])).toBe("/c/readers-ab12");
+  });
+
+  it("opens the Friends page at the old friends path, which no longer leads into a club", async () => {
+    expect(await landing("/friends", [READERS])).toBe("/friends");
+    expect(await landing("/friends", [])).toBe("/friends");
+    const matched = router.currentRoute.value.matched;
+    expect(router.currentRoute.value.name).not.toBe("not-found");
+    expect(matched.map((record) => record.path)).toEqual(["/", "/friends"]);
   });
 
   it("ignores a last-used club the reader is no longer in", async () => {
@@ -132,6 +139,12 @@ describe("unknown paths", () => {
       expect(await landing(path, [READERS])).toBe(path);
       expect(router.currentRoute.value.name).not.toBe("not-found");
     }
+  });
+
+  it("opens the barcode scanner in the app shell", async () => {
+    expect(await landing("/scan", [READERS])).toBe("/scan");
+    expect(router.currentRoute.value.name).not.toBe("not-found");
+    expect(router.currentRoute.value.matched[0]?.path).toBe("/");
   });
 
   it("asks a signed-out visitor to sign in first", async () => {
