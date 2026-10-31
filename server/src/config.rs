@@ -89,7 +89,8 @@ pub struct Config {
     pub smtp_url: Option<String>,
     /// `EMAIL_FROM`, the sender mailbox, required for the smtp transport.
     pub email_from: Option<String>,
-    /// The public contact and takedown address (`CONTACT_EMAIL`, required unless DEV_MODE): in
+    /// The public contact and takedown address (`CONTACT_EMAIL`, required unless DEV_MODE or mail
+    /// is off, `EMAIL_TRANSPORT=none`): in
     /// `/api/config` and the outbound User-Agent.
     pub contact_email: Option<String>,
     /// The legal texts, read at startup from `LEGAL_DIR` (DEV_MODE: the placeholders when it is
@@ -203,7 +204,7 @@ impl Config {
             }
         }
         let contact_email = get("CONTACT_EMAIL");
-        if contact_email.is_none() && !dev_mode {
+        if contact_email.is_none() && !dev_mode && email_transport != EmailTransport::None {
             bail!(
                 "CONTACT_EMAIL is not set (the public contact address, also in the User-Agent of catalog requests)"
             );
@@ -580,7 +581,7 @@ mod tests {
     fn none_needs_no_smtp() {
         let pairs: Vec<(&str, &str)> = PROD
             .iter()
-            .filter(|(key, _)| !matches!(*key, "SMTP_URL" | "EMAIL_FROM"))
+            .filter(|(key, _)| !matches!(*key, "SMTP_URL" | "EMAIL_FROM" | "CONTACT_EMAIL"))
             .copied()
             .chain([("EMAIL_TRANSPORT", "none")])
             .collect();
@@ -589,6 +590,7 @@ mod tests {
         assert!(!config.dev_mode);
         assert_eq!(config.smtp_url, None);
         assert_eq!(config.email_from, None);
+        assert_eq!(config.contact_email, None);
 
         // Unset still means smtp outside DEV_MODE.
         let pairs: Vec<(&str, &str)> = PROD

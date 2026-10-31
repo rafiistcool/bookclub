@@ -167,9 +167,8 @@ set_env() {
 set_env POSTGRES_PASSWORD "$(openssl rand -hex 32)"
 set_env PUBLIC_URL "https://$HOST"
 set_env TRUSTED_PROXIES '<proxy address>/32'   # a Docker gateway as the old peer: none until section 3.2
-set_env CONTACT_EMAIL '<the address of Q-M3>'
 set_env EMAIL_TRANSPORT none
-sed -i -e 's|^SMTP_URL=|#SMTP_URL=|' -e 's|^EMAIL_FROM=|#EMAIL_FROM=|' .env
+sed -i -e 's|^SMTP_URL=|#SMTP_URL=|' -e 's|^EMAIL_FROM=|#EMAIL_FROM=|' -e 's|^CONTACT_EMAIL=|#CONTACT_EMAIL=|' .env
 set_env BOOKCLUB_LISTEN '<old binding>'
 set_env BOOKCLUB_PORT '<old port>'
 set_env BOOKCLUB_DATA_DIR "$DATA"

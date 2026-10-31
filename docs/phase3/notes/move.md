@@ -200,3 +200,7 @@ All five fail on the runbook and `host-facts.sh` of 6d5fb11 (checked by putting 
 ## M2–M6
 
 Filled in when they run: the M1 boot test on the merged `phase-3`, the release's digests, the facts found on the host (no secrets, no usernames), the layout and project name chosen, the backup target, the move's counts against the CUT2 baseline, the phone test's result, CUT-R, and the cleanup.
+
+## After the release: no contact address with mail off (2026-11-01)
+
+Rafael put everything about mail further back, so the move no longer waits for an address. `CONTACT_EMAIL` is now optional with `EMAIL_TRANSPORT=none`, as it already was in DEV_MODE: the SPA hides the contact lines (`v-if`), and the outbound User-Agent is `Bookclub/1.0 (+{PUBLIC_URL})`. The runbook comments the example address out, so it never shows on the sign-in page. `EMAIL_TRANSPORT=smtp` still needs it, and `SIGNUP_MODE=open` needs mail, so the public launch cannot start without one.

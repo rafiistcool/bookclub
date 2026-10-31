@@ -165,7 +165,7 @@ Docker 29.9.2 (containerd image store), Compose v5.6.1, buildx v0.38.1, systemd 
 - Q7 on the network: the Proxmox firewall rule, the split DNS and the pinhole, and `TRUSTED_PROXIES` with Caddy's real address. The README's checks are written for when the VM exists.
 - systemd on the production VM itself (a container with systemd 257 stood in).
 - Taking the box back after a compromise: the console's password reset, the `scp` that replaces `.ssh/authorized_keys` (OpenSSH key format, for port 23) and the read-back. Hetzner documents uploading keys over SFTP/SCP, but not this exact sequence.
-- **The first final release.** `v0.11.0` has to show that `release-tags.sh`'s `imagetools create` moves `0.11` and `stable` on Forgejo's registry: afterwards `bookclub-server` must hold `0.11.0`, `0.11` and `stable` with the same manifest digest. A pre-release does not run that step, and DEP2 pushes no tag. Check it with the forgejo MCP tools (`list_packages`, owner `rafiistcool`, `q=bookclub-server`) after the release run.
+- **The first final release** (verified 2026-11-01: `v0.11.0`'s run 18 left `0.11.0`, `0.11` and `stable` with one manifest digest, `sha256:a23898569cd2…`). `v0.11.0` had to show that `release-tags.sh`'s `imagetools create` moves `0.11` and `stable` on Forgejo's registry: afterwards `bookclub-server` must hold `0.11.0`, `0.11` and `stable` with the same manifest digest. A pre-release does not run that step, and DEP2 pushes no tag. Check it with the forgejo MCP tools (`list_packages`, owner `rafiistcool`, `q=bookclub-server`) after the release run.
 
 ## For the integrator
 
