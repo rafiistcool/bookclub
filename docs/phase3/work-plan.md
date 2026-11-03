@@ -21,7 +21,8 @@ In this plan, "I" means the implementing agent: it has the repo and a shell on t
 - **Wave 1 is merged into `phase-3`:** COVER (#74, through `phase-2`, d1583c8), SCAN (7f6497c), FRIENDS (5f77a50) and MOVE's M1 (67dc780), each with its notes applied (§2.2, §2.3).
 - Browser pass over the merged `phase-3` on 8096 (§2.1 rule 8: Discover, `/scan` with the fake camera, `/friends`, a club's members page; zero CSP violations): passed.
 - M1 boot test on the merged `phase-3` (§2.3, M2's first step): passed.
-- **Next is M2:** the PR `phase-3` → `main` for Rafael's approval, then the tag `v0.11.0` on `main`.
+- **M2 is done (2026-11-01):** PR #75 is merged (2fc06ba), and `v0.11.0` is released: `0.11.0`, `0.11` and `stable` share one manifest digest.
+- **Next is M3, when Rafael says so.** On 2026-11-01 he put the legal part and everything about mail further back; the move still needs his yes on Q-M1.
 - Production still runs the Python app (v0.10.0, SQLite) with 2 accounts.
 
 **The new order.** Rafael, on 2026-10-29: "das ist mir aktuell schon viel zu professionell. lass uns erstmal die anwendung bauen und dann meine aktuellen nutzer weiternutzen lassen und dann machen wir das rechtliche" ("This is already far too professional for me right now. Let's build the application first, then let my current users carry on using it, and then we do the legal part.").
@@ -225,7 +226,7 @@ M1, the code, is a Wave 1 package. M2–M6 are Wave 2: operations, no new code.
 
 **Status (2026-10-30):** M1 merged into `phase-3` (67dc780), with no conflicts and no regenerated files. Its notes are applied to `conventions.md` (§2's module layout, §3 `AppState::new` and "Fallbacks" for `/sw.js`, §5.5 `deliver`, §9 `NoEmail` and "Mail off", §11 `EMAIL_TRANSPORT`, `SIGNUP_MODE` and the SMTP detail, §16 `send-test-mail` and `set-password`), `endpoint-map.md` (§10's CLI lines, `/sw.js` in the SPA catch-all row) and `CLAUDE.md` (mail off and `set-password` in the dev-server notes, `private_move` among the tests that read docs, the kill switch under "Backend features without a frontend"). `README.md` and `docs/plan.md` are unchanged: the notes give them nothing, and CUT-R rewrites the README (§5.8). Deviations are in `notes/move.md` (1–11, among them: `set_password` takes the hasher and returns `anyhow::Result`; more tests than listed; more host facts; `TRUSTED_PROXIES` and the loopback binding chosen by the proxy's upstream; M6 removes only the `bookclub` container and runs a restore test itself; CUT2's counts are a floor for the go; the alias case may need a proxy reload; a six-step rollback; the second test file `server/tests/private_move.rs`). Open:
 - M1 boot test once more on the merged `phase-3` (M2's first step): passed.
-- Next is M2: the PR `phase-3` → `main` for Rafael's approval, then `v0.11.0`. Then M3–M6 (Wave 2): the host, move day, CUT-R, the cleanup.
+- M2 is done: PR #75 merged, `v0.11.0` released. Next are M3–M6 (Wave 2): the host, move day, CUT-R, the cleanup.
 - Done with FRIENDS's merge (f7ce60e): `main.rs` no longer spells `No account with that name` as a literal (`notes/move.md`, "Decisions"); `set-password` bails with `error::msg::NO_ACCOUNT`.
 - For #53's privacy text: with mail off no processor receives an address; an address entered in the prompt is stored unverified and used only once mail exists.
 
@@ -740,7 +741,7 @@ Outside `DEV_MODE` (`server/src/config.rs`):
 | `DATABASE_URL`, `POSTGRES_PASSWORD` | as in `env.example`; `openssl rand -hex 32` for the password |
 | `PUBLIC_URL` | `https://<the existing hostname>` |
 | `TRUSTED_PROXIES` | the address the app sees for the proxy, read before the move (§5.4) |
-| `CONTACT_EMAIL` | the address Rafael names (Q-M3). It is public in `/api/config` and on the sign-in page, and goes into the User-Agent that Open Library and the DNB see |
+| `CONTACT_EMAIL` | unset: mail is off (answer on Q-M3, §7). No address on the sign-in page, and the User-Agent carries only `PUBLIC_URL` |
 | `EMAIL_TRANSPORT` | `none` (§5.2); no `SMTP_URL`, no `EMAIL_FROM` |
 | `SIGNUP_MODE` | `invite` |
 | `LEGAL_DIR` | `/app/legal`, mounted from an **empty** `/srv/bookclub/legal` (it must exist: `compose.yaml` sets `create_host_path: false`). No terms, no terms prompt; `/imprint` shows "missing"; the footer links stay hidden |
@@ -982,17 +983,17 @@ Each decision with the alternative rejected.
 
 ## 7. Questions for Rafael
 
-Only facts about his hosts, and one preference. "Take the recommendations" answers all of them.
+Only Q-M1 is open.
 
 **Q-M1. May I log in to the production host over SSH for the move, and which address do your members open?**
 - The address is needed only if the old `.env` does not name it (`BOOKCLUB_PUBLIC_URL`).
 - **Recommendation:** yes. I make a key just for the move and send you one line to add to root's `authorized_keys` on the host. It works only from the agents VM (`from=`), and I remove it myself when the move is done, a few days later. Then I read the facts, install the stack and run the move day with you watching. The merges still wait for your approval.
 
-**Q-M2. Does your homelab already run a monitor that takes healthchecks.io-style pings (a self-hosted healthchecks, for example)?**
-- **Recommendation:** if yes, give me three ping URLs (backup, restore test, update) and I set them. If not, nothing: a failed backup then shows only when someone looks, until the public launch brings a monitor.
+**Q-M2. Does your homelab already run a monitor that takes healthchecks.io-style pings?**
+- **Answer (2026-11-01): no.** The heartbeat URLs stay empty. A failed backup then shows only when someone looks, until the public launch brings a monitor.
 
-**Q-M3. Which email address may show on the sign-in page?** (`CONTACT_EMAIL`; it is public in `/api/config` and goes into the User-Agent that Open Library and the DNB see.)
-- **Recommendation:** an address you pick for this; it becomes public, so an alias is better than your main mailbox. I never pick one of your addresses myself.
+**Q-M3. Which email address may show on the sign-in page?**
+- **Answer (2026-11-01): none for now.** Rafael put everything about mail further back, so with `EMAIL_TRANSPORT=none` the server starts without `CONTACT_EMAIL`. The address comes with the public launch.
 
 ---
 
@@ -1001,7 +1002,7 @@ Only facts about his hosts, and one preference. "Take the recommendations" answe
 **Wave 1:** nothing.
 
 **The move:**
-1. Answer Q-M1 to Q-M3 (or "take the recommendations"), and add the line I send to root's `authorized_keys` on the host.
+1. Answer Q-M1 (the host's address), and add the line I send to root's `authorized_keys` on the host.
 2. Only if I report that the host is not logged in to the registry: create a Forgejo token with only `read:package`, and run `docker login git.tillhome.de` with it as root on the host.
 3. When I say the backups are set up: on the host, as root, `cat` the password file I name (normally `/opt/bookclub/restic-password`) and save it in your password manager.
 4. Approve the merge into `main`. The release follows without another approval.
