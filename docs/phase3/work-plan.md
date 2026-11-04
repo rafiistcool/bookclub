@@ -23,7 +23,8 @@ In this plan, "I" means the implementing agent: it has the repo and a shell on t
 - M1 boot test on the merged `phase-3` (§2.3, M2's first step): passed.
 - **M2 is done (2026-11-01):** PR #75 is merged (2fc06ba), and `v0.11.0` is released: `0.11.0`, `0.11` and `stable` share one manifest digest.
 - **v0.11.1 is the release for the move (2026-11-03):** PR #76 (fd5b27d) lets the server start without `CONTACT_EMAIL` while mail is off (Q-M3). `0.11.1`, `0.11` and `stable` share one manifest digest (checked 2026-11-04).
-- **Next is M3, when Rafael says so.** On 2026-11-01 he put the legal part and everything about mail further back; the move still needs his yes on Q-M1.
+- **Next is M3, when Rafael says so.** On 2026-11-01 he put the legal part and everything about mail further back.
+- **Changed on 2026-11-04 (Q-M1, and the backups):** the host is the apps VM (Proxmox VM 104, `192.168.178.12`), which the agents VM cannot reach by design. **The admin** on the Proxmox host runs every host step; I prepare and read the admin's reports, with no key and no firewall opening. The move sets up **no backups of its own**: the admin's nightly vzdump of the whole VM covers the new stack, plus one by hand before and after the import. **No update timer and no WUD:** the stack pins `BOOKCLUB_TAG=0.11.1`, and updates run by hand after a VM backup. `docs/phase3/private-move.md` is the binding version; where §5 below still describes restic, `update.sh`, the timers, the SSH key or the alias case, the runbook wins.
 - Production still runs the Python app (v0.10.0, SQLite) with 2 accounts.
 
 **The new order.** Rafael, on 2026-10-29: "das ist mir aktuell schon viel zu professionell. lass uns erstmal die anwendung bauen und dann meine aktuellen nutzer weiternutzen lassen und dann machen wir das rechtliche" ("This is already far too professional for me right now. Let's build the application first, then let my current users carry on using it, and then we do the legal part.").
@@ -984,9 +985,10 @@ Each decision with the alternative rejected.
 
 ## 7. Questions for Rafael
 
-Only Q-M1 is open.
+None is open.
 
 **Q-M1. May I log in to the production host over SSH for the move, and which address do your members open?**
+- **Answer (2026-11-04): no SSH.** The firewall keeps the agents VM away from the apps VM on purpose; the admin runs the host steps from the Proxmox host. The address is `https://buchclub.tillhome.de`.
 - The address is needed only if the old `.env` does not name it (`BOOKCLUB_PUBLIC_URL`).
 - **Recommendation:** yes. I make a key just for the move and send you one line to add to root's `authorized_keys` on the host. It works only from the agents VM (`from=`), and I remove it myself when the move is done, a few days later. Then I read the facts, install the stack and run the move day with you watching. The merges still wait for your approval.
 
@@ -1003,15 +1005,13 @@ Only Q-M1 is open.
 **Wave 1:** nothing.
 
 **The move:**
-1. Answer Q-M1 (the host's address), and add the line I send to root's `authorized_keys` on the host.
-2. Only if I report that the host is not logged in to the registry: create a Forgejo token with only `read:package`, and run `docker login git.tillhome.de` with it as root on the host.
-3. When I say the backups are set up: on the host, as root, `cat` the password file I name (normally `/opt/bookclub/restic-password`) and save it in your password manager.
-4. Approve the merge into `main`. The release follows without another approval.
-5. Only if I report that your proxy blocks the camera: change `camera=()` to `camera=(self)` in its `Permissions-Policy` line (I send you the exact line).
-6. Pick a time and send the other member the short message from the runbook.
-7. On move day: sign in with your old password, look at your shelf and the club, and tell me it looks right. Then, on your iPhone with Wi-Fi off: sign in, scan a German book, an English book and one the app does not know, add a photo to the unknown one, and deny the camera once. Then, when I say the backup ran, send the other member the "done" message.
-8. Approve the merge that removes the Python code.
-9. After 30 days: paste the cleanup block from the runbook on the host. It checks the backups first and deletes nothing if they fail.
+1. Pass my requests to the admin, and the admin's reports back to me (the admin runs every step on the host, `docs/phase3/private-move.md`).
+2. Only if the admin reports that the registry refuses the pull: create a Forgejo token with only `read:package`, and run `docker login git.tillhome.de` with it as root on the host.
+3. Approve the merge into `main`.
+4. Pick a time and send the other member the short message from the runbook.
+5. On move day: sign in with your old password, look at your shelf and the club, and tell me it looks right. Then, on your iPhone with Wi-Fi off: sign in, scan a German book, an English book and one the app does not know, add a photo to the unknown one, and deny the camera once. Then, when the admin's VM backup ran, send the other member the "done" message.
+6. Approve the merge that removes the Python code.
+7. After 30 days: the admin checks the VM backups and runs the cleanup block from the runbook. It deletes nothing if a check fails.
 
 ---
 

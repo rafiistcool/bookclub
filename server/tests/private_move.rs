@@ -7,14 +7,13 @@
 //! - The rollback's first step (section 8) counts the accounts other than the club's owner that
 //!   signed in to the new app, by a live session or by one that ended.
 //! - The rollback's delete block stops before it touches anything when the move's variables are
-//!   missing or `$NEW` is not the new stack, and deletes nothing when the backup fails.
+//!   missing or `$NEW` is not the new stack.
 //! - The M6 cleanup block (section 11) deletes the old data directory only when it holds nothing
-//!   of the new stack, its backups or Docker's volumes.
+//!   of the new stack or Docker's volumes, and only while the new app answers.
 //! - `host-facts.sh` notes an old data directory that holds a path of the new layout.
 //!
-//! `bash`, `awk`, `find` and `realpath` are the real ones. `docker`, `journalctl`, `systemctl`
-//! and `curl` are bash functions imported from the environment that log their calls, and
-//! `backup.sh` is a stub script.
+//! `bash`, `awk`, `find` and `realpath` are the real ones. `docker` and `curl` are bash
+//! functions imported from the environment that log their calls.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -110,13 +109,6 @@ fn calls(rig: &Path) -> Vec<String> {
 fn write(path: &Path, content: &str) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, content).unwrap();
-}
-
-fn executable(path: &Path, content: &str) {
-    use std::os::unix::fs::PermissionsExt;
-
-    write(path, content);
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
 // ---- summary --------------------------------------------------------------------------------
@@ -289,9 +281,9 @@ async fn the_rollback_window_counts_sign_ins_besides_the_owner(db: PgPool) {
     assert_eq!(window(&db, &sql).await, 1, "and signed out again");
 }
 
-/// A host for the rollback's delete block: `new/` with `compose.yaml`, `backup.env` and a stub
-/// `backup.sh`, `data/media` with a picture, `data/import` with the copy, and `old/` with only
-/// a `compose.yaml` (the Python app's directory).
+/// A host for the rollback's delete block: `new/` with `compose.yaml` and `.env`, `data/media`
+/// with a picture, `data/import` with the copy, and `old/` with only a `compose.yaml` (the
+/// Python app's directory).
 struct RollbackRig {
     dir: tempfile::TempDir,
 }
@@ -302,15 +294,13 @@ impl RollbackRig {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        write(&root.join("new/compose.yaml"), "name: bookclub\n");
         write(
-            &root.join("new/backup.env"),
-            &format!("MEDIA_DIR={}/data/media\n", root.display()),
+            &root.join("new/compose.yaml"),
+            "name: bookclub\nservices:\n  app:\n    image: git.tillhome.de/rafiistcool/bookclub-server:${BOOKCLUB_TAG:-stable}\n",
         );
-        executable(
-            &root.join("new/backup.sh"),
-            "#!/usr/bin/env bash\nprintf 'backup.sh\\n' >>\"$RIG/calls.log\"\n\
-             exit \"$(cat \"$RIG/backup-status\" 2>/dev/null || echo 0)\"\n",
+        write(
+            &root.join("new/.env"),
+            &format!("BOOKCLUB_DATA_DIR={}/data\n", root.display()),
         );
         write(&root.join("data/media/covers/ab/c"), "picture");
         write(&root.join("data/import/bookclub.db"), "copy");
@@ -361,16 +351,16 @@ impl RollbackRig {
 /// A change to a [`RollbackRig`] that must stop the rollback's delete block.
 type Breakage = fn(&RollbackRig);
 
-/// The block backs up, then removes the new stack with its volume and empties its media
-/// directory; the copy in `$IMPORT` waits for step 6. It deletes nothing when the backup fails,
-/// when `vars.sh` cannot be read or misses `DATA`, when `$NEW` is not the new stack, or when
-/// the stack's `MEDIA_DIR` is not `$DATA/media`.
+/// The block removes the new stack with its volume and empties its media directory; the copy in
+/// `$IMPORT` waits for step 6. It deletes nothing when `vars.sh` cannot be read or misses
+/// `DATA`, when `$NEW` is not the new stack, or when the stack's `BOOKCLUB_DATA_DIR` is not
+/// `$DATA`.
 #[test]
-fn the_rollback_deletes_only_the_new_stack_and_only_after_its_backup() {
+fn the_rollback_deletes_only_the_new_stack() {
     let rig = RollbackRig::new();
     let (output, calls) = rig.run();
     assert!(output.status.success(), "{}", stderr(&output));
-    assert_eq!(calls, ["backup.sh", "docker compose down -v"]);
+    assert_eq!(calls, ["docker compose down -v"]);
     assert!(!rig.picture_kept());
     assert!(
         rig.root().join("data/media").is_dir(),
@@ -378,14 +368,7 @@ fn the_rollback_deletes_only_the_new_stack_and_only_after_its_backup() {
     );
     assert!(rig.root().join("data/import/bookclub.db").exists());
 
-    let rig = RollbackRig::new();
-    write(&rig.root().join("backup-status"), "1\n");
-    let (output, calls) = rig.run();
-    assert!(!output.status.success());
-    assert_eq!(calls, ["backup.sh"], "a failed backup stops the block");
-    assert!(rig.picture_kept());
-
-    let broken: [(&str, Breakage); 4] = [
+    let broken: [(&str, Breakage); 5] = [
         ("no vars.sh", |rig| {
             std::fs::remove_file(rig.root().join("vars.sh")).unwrap()
         }),
@@ -398,10 +381,16 @@ fn the_rollback_deletes_only_the_new_stack_and_only_after_its_backup() {
                 rig.root().display()
             ))
         }),
-        ("MEDIA_DIR is not $DATA/media", |rig| {
+        ("NEW holds another compose project", |rig| {
             write(
-                &rig.root().join("new/backup.env"),
-                &format!("MEDIA_DIR={}/elsewhere/media\n", rig.root().display()),
+                &rig.root().join("new/compose.yaml"),
+                "services: {bookclub: {image: git.tillhome.de/rafiistcool/bookclub:latest}}\n",
+            )
+        }),
+        ("BOOKCLUB_DATA_DIR is not $DATA", |rig| {
+            write(
+                &rig.root().join("new/.env"),
+                &format!("BOOKCLUB_DATA_DIR={}/elsewhere\n", rig.root().display()),
             )
         }),
     ];
@@ -417,9 +406,9 @@ fn the_rollback_deletes_only_the_new_stack_and_only_after_its_backup() {
 
 // ---- M6 -------------------------------------------------------------------------------------
 
-/// A host for the M6 cleanup block: the new stack in `opt/bookclub` (`backup.env`, a stub
-/// `backup.sh` whose newest snapshot is from now), the old data directory with `bookclub.db`,
-/// and `docker`, `journalctl` (a passing restore test) and `systemctl` stood in for.
+/// A host for the M6 cleanup block: the new stack in `opt/bookclub` (its `.env` names the data
+/// directory), the old data directory with `bookclub.db`, and `docker` stood in for, whose
+/// healthcheck passes unless `$RIG/health-status` says otherwise.
 struct CleanupRig {
     dir: tempfile::TempDir,
 }
@@ -428,6 +417,8 @@ const CLEANUP_DOCKER: &str = r#"() {
     printf 'docker %s\n' "$*" >>"$RIG/calls.log"
     case "$*" in
         "info -f {{.DockerRootDir}}") cat "$RIG/docker-root" ;;
+        "compose exec -T app bookclub-server healthcheck")
+            return "$(cat "$RIG/health-status" 2>/dev/null || echo 0)" ;;
         "compose ps -aq bookclub") echo old-container ;;
         "inspect -f {{.Image}} old-container") echo sha256:old ;;
         "image inspect -f "*) printf 'registry.test/bookclub:0.10\n\n' ;;
@@ -436,52 +427,29 @@ const CLEANUP_DOCKER: &str = r#"() {
     esac
 }"#;
 
-const JOURNALCTL: &str = r#"() { echo "restore test passed: 31 tables, 2 pictures"; }"#;
-const SYSTEMCTL: &str = r#"() { printf 'systemctl %s\n' "$*" >>"$RIG/calls.log"; }"#;
+const HEALTHCHECK: &str = "docker compose exec -T app bookclub-server healthcheck";
+const REMOVE: &str = "docker compose rm --stop --force bookclub";
 
 impl CleanupRig {
     fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
-        executable(
-            &dir.path().join("opt/bookclub/backup.sh"),
-            "#!/usr/bin/env bash\nprintf 'backup.sh %s\\n' \"$*\" >>\"$RIG/calls.log\"\n\
-             printf '[{\"time\":\"%s\",\"hostname\":\"bookclub\"}]\\n' \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"\n",
-        );
-        write(&dir.path().join("opt/bookclub/restic-password"), "x\n");
-        Self { dir }
+        Self {
+            dir: tempfile::tempdir().unwrap(),
+        }
     }
 
     fn path(&self, relative: &str) -> PathBuf {
         self.dir.path().join(relative)
     }
 
-    /// Runs the block with `OLD_DATA` (which gets a `bookclub.db`), the stack's `MEDIA_DIR` and
-    /// `RESTIC_REPOSITORY`, and Docker's root, each relative to the rig unless absolute.
-    fn run(
-        &self,
-        old_data: &str,
-        media: &str,
-        repository: &str,
-        docker_root: &str,
-    ) -> (Output, Vec<String>) {
-        let rooted = |path: &str| {
-            if path.contains(':') {
-                path.to_owned()
-            } else {
-                self.path(path).display().to_string()
-            }
-        };
+    /// Runs the block with `OLD_DATA` (which gets a `bookclub.db`), the stack's data directory
+    /// and Docker's root, each relative to the rig.
+    fn run(&self, old_data: &str, data: &str, docker_root: &str) -> (Output, Vec<String>) {
+        let rooted = |path: &str| self.path(path).display().to_string();
         write(&self.path(old_data).join("bookclub.db"), "old");
-        std::fs::create_dir_all(self.path(media)).unwrap();
+        std::fs::create_dir_all(self.path(data).join("media")).unwrap();
         write(
-            &self.path("opt/bookclub/backup.env"),
-            &format!(
-                "COMPOSE_DIR={0}/opt/bookclub\nMEDIA_DIR={1}\nBACKUP_DIR={0}/var/lib/bookclub-backup\n\
-                 RESTIC_REPOSITORY={2}\nRESTIC_PASSWORD_FILE={0}/opt/bookclub/restic-password\n",
-                self.dir.path().display(),
-                rooted(media),
-                rooted(repository)
-            ),
+            &self.path("opt/bookclub/.env"),
+            &format!("BOOKCLUB_PORT=8000\nBOOKCLUB_DATA_DIR={}\n", rooted(data)),
         );
         write(
             &self.path("docker-root"),
@@ -499,8 +467,6 @@ impl CleanupRig {
             &[
                 ("RIG", self.dir.path().as_os_str()),
                 ("BASH_FUNC_docker%%", CLEANUP_DOCKER.as_ref()),
-                ("BASH_FUNC_journalctl%%", JOURNALCTL.as_ref()),
-                ("BASH_FUNC_systemctl%%", SYSTEMCTL.as_ref()),
             ],
         );
         (output, calls(self.dir.path()))
@@ -508,90 +474,69 @@ impl CleanupRig {
 }
 
 /// M6 deletes the old data directory whole, after its checks. An old data directory that holds
-/// the new stack's directory, its pictures, the backup repository or Docker's root (an old
-/// `BOOKCLUB_DATA=/srv` holds `/srv/bookclub`) stops the block before the restore test and before
-/// anything is removed. A repository that is no local path (`sftp:`) is not compared.
+/// the new stack's directory, its data directory or Docker's root (an old `BOOKCLUB_DATA=/srv`
+/// holds `/srv/bookclub`) stops the block before the healthcheck and before anything is removed,
+/// and so does a new app that does not answer.
 #[test]
 fn the_cleanup_keeps_an_old_data_directory_that_holds_the_new_stack() {
     let rig = CleanupRig::new();
-    let (output, calls) = rig.run("old/data", "srv/bookclub/media", "repo", "docker");
+    let (output, calls) = rig.run("old/data", "srv/bookclub", "docker");
     assert!(output.status.success(), "{}", stderr(&output));
     assert!(!rig.path("old/data").exists());
     assert!(rig.path("srv/bookclub/media").is_dir());
-    assert!(rig.path("opt/bookclub/backup.env").exists());
-    let start = calls
+    assert!(rig.path("opt/bookclub/.env").exists());
+    let check = calls
         .iter()
-        .position(|call| call == "systemctl start bookclub-restore-test")
+        .position(|call| call == HEALTHCHECK)
         .unwrap_or_else(|| panic!("{calls:#?}"));
     let rm = calls
         .iter()
-        .position(|call| call == "docker compose rm --stop --force bookclub")
+        .position(|call| call == REMOVE)
         .unwrap_or_else(|| panic!("{calls:#?}"));
-    assert!(start < rm, "{calls:#?}");
+    assert!(check < rm, "{calls:#?}");
     assert!(calls.contains(&"docker image rm registry.test/bookclub:0.10".to_owned()));
 
     let rig = CleanupRig::new();
-    let (output, _) = rig.run(
-        "old/data",
-        "srv/bookclub/media",
-        "sftp:bookclub-backup:bookclub",
-        "docker",
+    write(&rig.path("health-status"), "1\n");
+    let (output, calls) = rig.run("old/data", "srv/bookclub", "docker");
+    assert!(!output.status.success());
+    assert!(
+        stdout(&output).contains("stop: the new app does not answer"),
+        "{}",
+        stdout(&output)
     );
-    assert!(output.status.success(), "{}", stderr(&output));
-    assert!(!rig.path("old/data").exists());
+    assert!(rig.path("old/data/bookclub.db").exists());
+    assert!(
+        !calls.iter().any(|call| call.contains(" rm ")),
+        "{calls:#?}"
+    );
 
-    for (case, old_data, media, repository, docker_root, held) in [
+    for (case, old_data, data, docker_root, held) in [
         (
-            "the pictures",
+            "the data directory",
             "srv",
-            "srv/bookclub/media",
-            "repo",
+            "srv/bookclub",
             "docker",
-            "srv/bookclub/media",
-        ),
-        (
-            "the repository",
-            "old/data",
-            "srv/bookclub/media",
-            "old/data/restic",
-            "docker",
-            "old/data/restic",
+            "srv/bookclub",
         ),
         (
             "the new stack",
             "opt",
-            "srv/bookclub/media",
-            "repo",
+            "srv/bookclub",
             "docker",
             "opt/bookclub",
-        ),
-        (
-            "the backups' scratch directory",
-            "var",
-            "srv/bookclub/media",
-            "repo",
-            "docker",
-            "var/lib/bookclub-backup",
         ),
         (
             "Docker's root",
             "old/data",
-            "srv/bookclub/media",
-            "repo",
+            "srv/bookclub",
             "old/data/docker",
             "old/data/docker",
         ),
-        (
-            "everything",
-            ".",
-            "srv/bookclub/media",
-            "repo",
-            "docker",
-            "opt/bookclub",
-        ),
+        ("everything", ".", "srv/bookclub", "docker", "opt/bookclub"),
     ] {
         let rig = CleanupRig::new();
-        let (output, calls) = rig.run(old_data, media, repository, docker_root);
+        let (output, calls) = rig.run(old_data, data, docker_root);
         assert!(!output.status.success(), "{case}");
         let printed = stdout(&output);
         let held = rig.path(held).display().to_string();
@@ -603,7 +548,7 @@ fn the_cleanup_keeps_an_old_data_directory_that_holds_the_new_stack() {
         assert!(
             !calls
                 .iter()
-                .any(|call| call.starts_with("systemctl start") || call.contains(" rm ")),
+                .any(|call| call == HEALTHCHECK || call.contains(" rm ")),
             "{case}: {calls:#?}"
         );
     }
