@@ -8,7 +8,7 @@ It is built on `docs/phase2/cutover.md` as COVER (#74) left it (the cover search
 
 - **[Admin]** runs every block on the host, as root, over SSH from the Proxmox host (`ssh root@192.168.178.12`), and reports back what the next section allows.
 - "I" is the agent on the agents VM: I prepare the files and this runbook, read what the admin reports, decide the go/no-go, and run the few steps that need no host (the release check, `verify-limits.sh`).
-- **[Rafael]** marks what only he does. He has no account in the old app: the club's owner is Anni (`anni`), and the second account is the other member. On move day Rafael checks the data and runs the phone test **with Anni's account**; she gives him her password herself, never through the admin's or my terminal. After the import he gets **an account of his own** as the instance admin, outside the club (section 7.5).
+- **[Rafael]** marks what only he does. He has no account in the old app: the club's owner is Anni (`anni`), and the second account is the other member. On move day Rafael looks at the data **with Anni's account**, without changing anything; she gives him her password herself, never through the admin's or my terminal. After the import he gets **an account of his own** as the instance admin, outside the club (section 7.5), and runs the rate-limit check and the phone test with it: the test books then land on his shelf, not on Anni's or in the club's feed.
 
 Every block says where it runs: on the host as root (the admin), on the Proxmox host, or on the agents VM.
 
@@ -429,15 +429,15 @@ Then, on the agents VM, in the checkout:
 deploy/hosted/verify-limits.sh "https://<HOST>"; echo "exit $?"
 ```
 
-It must get its 429s (exit 0). It creates nothing and uses up only the budgets of the address the proxy sees for the agents VM. The agents VM reaches `https://$HOST` over the router's public address, so `edge` may see the router, as for every device at home: then signing in from home answers 429 for up to 10 minutes, and Rafael waits that long. Then **[Rafael]** signs in as `anni` on his phone **with Wi-Fi off** (mobile data). A 429 on the phone means `TRUSTED_PROXIES` or the proxy's `X-Forwarded-For` is wrong: the admin fixes `.env`, runs `docker compose up -d --wait app`, and he tries again.
+It must get its 429s (exit 0). It creates nothing and uses up only the budgets of the address the proxy sees for the agents VM. The agents VM reaches `https://$HOST` over the router's public address, so `edge` may see the router, as for every device at home: then signing in from home answers 429 for up to 10 minutes, and Rafael waits that long. Then **[Rafael]** signs in with his own account on his phone **with Wi-Fi off** (mobile data). A 429 on the phone means `TRUSTED_PROXIES` or the proxy's `X-Forwarded-For` is wrong: the admin fixes `.env`, runs `docker compose up -d --wait app`, and he tries again.
 
-Then **the phone test** (`work-plan.md` §5.8): **[Rafael]**, signed in as `anni`, on his iPhone with Wi-Fi off (and an Android phone with Chrome if one is at hand): open `https://$HOST`, sign in, scan a German book, an English book and one the app does not know, add a photo to the unknown one, and deny the camera once to see manual entry. An iPhone older than iOS 16 shows manual entry only. The result goes into the notes; a failure becomes a patch release, never a rollback.
+Then **the phone test** (`work-plan.md` §5.8): **[Rafael]**, signed in with his own account, on his iPhone with Wi-Fi off (and an Android phone with Chrome if one is at hand): open `https://$HOST`, sign in, scan a German book, an English book and one the app does not know, add a photo to the unknown one, and deny the camera once to see manual entry. An iPhone older than iOS 16 shows manual entry only. The result goes into the notes; a failure becomes a patch release, never a rollback.
 
 ### 7.6 Open
 
 No proxy step: the port takeover was the switch. The admin starts one backup of VM 104 by hand on the Proxmox host (section 4) and reports its exit status: from now on a backup holds the imported data.
 
-**[Rafael]** signs out of Anni's account in his browser and on his phone (Settings → Sign out). Then the admin notes the moment, which section 8's first step counts from:
+**[Rafael]** signs out of Anni's account in his browser (Settings → Sign out); his own account may stay signed in. He removes the test books from his shelf whenever it suits him; the unknown book he added, with its photo, stays in the catalog. Then the admin notes the moment, which section 8's first step counts from:
 
 ```bash
 echo "DONE_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> /root/bookclub-move/vars.sh
