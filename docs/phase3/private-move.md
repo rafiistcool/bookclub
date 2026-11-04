@@ -8,7 +8,7 @@ It is built on `docs/phase2/cutover.md` as COVER (#74) left it (the cover search
 
 - **[Admin]** runs every block on the host, as root, over SSH from the Proxmox host (`ssh root@192.168.178.12`), and reports back what the next section allows.
 - "I" is the agent on the agents VM: I prepare the files and this runbook, read what the admin reports, decide the go/no-go, and run the few steps that need no host (the release check, `verify-limits.sh`).
-- **[Rafael]** marks what only he does.
+- **[Rafael]** marks what only he does. He has no account in the old app: the club's owner is Anni (`anni`), and the second account is the other member. On move day Rafael checks the data and runs the phone test **with Anni's account**; she gives him her password herself, never through the admin's or my terminal. After the import he gets **an account of his own** as the instance admin, outside the club (section 7.5).
 
 Every block says where it runs: on the host as root (the admin), on the Proxmox host, or on the agents VM.
 
@@ -36,7 +36,7 @@ The notes (`docs/phase3/notes/move.md`) get the facts found on the host without 
 | §3.2 transfer | `cp` of `bookclub.db` (and `-wal` if present) into `$IMPORT`, `chown 1000:1000`, `chmod 600`: the same host, no `scp` (section 7.2) |
 | §3.3 dry run, go/no-go, real run | As COVER leaves it; WUD leaves the new stack alone. The go: `users 2 → 2` and the club with 2 members exactly; every other entity line carries its source over or names the difference, with counts at CUT2's (50 works, 36 editions, 146 events) or above, since CUT2 read an older copy and the club kept writing. Each run takes about 20 s plus about a minute of cover search (at most 5 minutes). `lookup wait` may be above 0 from the cover pass, and the `cover search` line and `without a cover` section may differ between the runs; neither is a no-go (section 7.3) |
 | §3.4 `compare.sh` | Unchanged; exit 0 is the go (section 7.4) |
-| §3.5 start and check | No gate. Start the app on the old port, `healthcheck`, `make-admin "$OWNER"`, Rafael's check, `rematch-legacy` if needed, `/sw.js`, `verify-limits.sh` from the agents VM, the phone test. No email step. COVER's review of cover suggestions waits until after "done" (section 7.5) |
+| §3.5 start and check | No gate. Start the app on the old port, `healthcheck`, Rafael's check with Anni's account, Rafael's own admin account (`beta-invite`, sign-up, `make-admin`), `rematch-legacy` if needed, `/sw.js`, `verify-limits.sh` from the agents VM, the phone test. No email step. COVER's review of cover suggestions waits until after "done" (section 7.5) |
 | §3.6 open | No Caddy step: the port takeover was the switch. One VM backup, then Rafael sends "done" (section 7.6) |
 | §4 rollback | Section 8 |
 | §5 afterwards | Section 9 |
@@ -50,10 +50,10 @@ Once the facts are in (section 2), I send the admin the filled-in block, and the
 HOST=buchclub.tillhome.de                     # BOOKCLUB_PUBLIC_URL of the old app
 OLD=/opt/stacks/buchclub-anni                 # the Python app's compose project (service bookclub)
 OLD_DATA=/srv/appdata/buchclub-anni/data      # its mount on /data (host facts, "mounts")
-OWNER=<username>                # Rafael's username in the old app (CUT2: the user with id 1; he confirms it)
-CLUB_NAME='Bookclub'            # BOOKCLUB_NAME of the old app (host facts)
-CLUB_TZ=<zone>                  # BOOKCLUB_TZ of the old app (host facts: .env, else the container's; UTC when never set)
-SLUG=bookclub-8rqp              # CUT2's slug; a new one when CLUB_NAME is not "Bookclub" (section 2.3)
+OWNER=anni                      # the club's owner in the old app (Rafael, 2026-11-04); Rafael has no account there
+CLUB_NAME='Bookclub'            # BOOKCLUB_NAME of the old app (host facts, 2026-11-04)
+CLUB_TZ=Europe/Berlin           # the old app's BOOKCLUB_TZ is CET (host facts); see below
+SLUG=bookclub-8rqp              # CUT2's slug, since CLUB_NAME is "Bookclub" (section 2.3)
 NEW=/opt/bookclub               # the new stack: free, the old app lives under /opt/stacks
 DATA=/srv/bookclub              # its data directory: free, the old app's is under /srv/appdata
 IMPORT=$DATA/import             # the legacy copy: mode 700, uid 1000
@@ -77,7 +77,7 @@ summary() {
 }
 ```
 
-`CLUB_TZ` sets the club's and both imported accounts' time zone (`docs/phase1/legacy-mapping.md`). The old app's value keeps the times as they were; both can be changed in the app afterwards (club settings, Settings).
+`CLUB_TZ` sets the club's and both imported accounts' time zone (`docs/phase1/legacy-mapping.md`). The old app's value is `CET`. The server accepts it, but stores the zone it links to in tzdb 2026e, `Europe/Brussels` (`server/src/tz.rs`, `LINKS`), and that name would show in the club's settings. `Europe/Berlin` has the same offsets and the same summer time as `CET` for every date the club has, so the times stay as they were, under the name the members expect. Both can be changed in the app afterwards (club settings, Settings).
 
 ## 1. Before: the release (M2)
 
@@ -113,7 +113,9 @@ Already known from the admin (2026-11-04, read only):
 - Root's Docker on apps is logged in to `git.tillhome.de` (no `credsStore`) and can pull the private `bookclub-server`; anonymous pulls get 401.
 - The VM backup: section 4.
 
-`host-facts.sh` confirms them and adds what is still open: the old settings (name and time zone), `sqlite3`, and the size of the data files. Run it while someone uses the app (its peers sample takes 10 s; `PEER_SECONDS` changes that):
+`host-facts.sh` confirms them and adds what is still open: the old settings (name and time zone), `sqlite3`, and the size of the data files.
+
+**Ran on 2026-11-04, exit 0, no stop:** Debian 13, x86_64, systemd 257; no compose project named `bookclub`; port 8000 published on `0.0.0.0`; the only peer `192.168.178.10` (requests through Caddy on `edge`); `BOOKCLUB_NAME=Bookclub`, `BOOKCLUB_TZ=CET`; root's Docker config names `git.tillhome.de`; `sqlite3` 3.46.1 installed; `bookclub.db` 0.4 MB and its `-wal` 4.1 MB, far below the app's 64 MB `/tmp`; `/opt/bookclub` and `/srv/bookclub` absent; 16 GB free on `/`. `https://$HOST/` answered `405` to the script's `HEAD`: the Python app refuses `HEAD`, and `GET` gets 200. WUD (`nas-monitoring-wud-1`) watches only running containers (`WUD_WATCHER_LOCAL_WATCHALL` unset), and its trigger `eigeneapps` acts only on labelled containers (`INCLUDEBYDEFAULT=false`), so it does not start the stopped Python app. Run it while someone uses the app (its peers sample takes 10 s; `PEER_SECONDS` changes that):
 
 ```bash
 # On the host as root:
@@ -140,7 +142,7 @@ The facts go into the notes without secrets or usernames.
   echo "${base:-club}-$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 4)"
   ```
 
-- **WUD.** It auto-deploys new images. The new stack carries `wud.watch: "false"` on `app` and `postgres` from its first start (section 3.1), so WUD never replaces the app behind the move's back; updates run by hand (section 9). No new Python image is published any more, so WUD has nothing to roll out to the stopped Python container. The admin confirms that WUD does not start stopped containers, or the old app would come back during the move.
+- **WUD.** It auto-deploys new images. The new stack carries `wud.watch: "false"` on `app` and `postgres` from its first start (section 3.1), so WUD never replaces the app behind the move's back; updates run by hand (section 9). No new Python image is published any more, so WUD has nothing to roll out to the stopped Python container. WUD watches only running containers and does not start stopped ones (2.2), so the Python app stays stopped during the move.
 - **Registry.** Root's login pulls `bookclub-server` (2.2). Should `docker compose pull` in section 3.2 still fail with `denied` or `unauthorized`, **[Rafael]** creates a Forgejo token with only `read:package` (Settings → Applications) and runs `docker login git.tillhome.de` with it as root on the host.
 - **The scanner.** Caddy sends no `Permissions-Policy` for the site, so the camera works. Should one be added later, it says `camera=(self)`.
 - **`sqlite3`.** Missing: install it for `compare.sh` (`apt-get install -y sqlite3`), or use the stand-in of section 7.4.
@@ -240,20 +242,20 @@ Checked the day before: the admin runs the commands on the host and reports, I t
 - [ ] WUD: `wud.watch` is `false` on both new containers (section 3.2), and WUD does not start stopped containers (section 2.3).
 - [ ] `$IMPORT` exists, mode 700, owner 1000.
 - [ ] Room in the app's `/tmp` (a 64 MB tmpfs) for `bookclub.db` and its `-wal`: the facts' "data files" sizes together are well below 64 MB; otherwise set `TMPDIR` as README "The legacy import" says.
-- [ ] `sqlite3` is installed, or the stand-in of section 7.4 is ready.
+- [ ] `sqlite3` is installed (3.46.1 on 2026-11-04).
 - [ ] The message went out (section 6).
 
 ## 6. The message
 
-**[Rafael]** picks the time and sends it a few days ahead, in the chat he shares with the other member.
+**[Rafael]** picks the time and sends it a few days ahead to both members, Anni and the other member. Anni also hears from him in person that he signs in once with her account on move day to check it, and gives him her password for that.
 
 **Deutsch**
 
-> Bookclub bekommt am \<Tag\> ab \<Uhrzeit\> ein großes Update, etwa eine Stunde Pause. Adresse, Benutzername und Passwort bleiben gleich, alles zieht mit. Danach einmal neu anmelden. Nicht abgeschickte Notizen bitte vorher abschicken. Die App fragt nach einer E-Mail-Adresse: eintragen oder überspringen, Mails verschickt sie vorerst keine. Passwort vergessen? Sag mir Bescheid. Neue Leute lade ab jetzt ich ein. Ich melde mich, wenn es fertig ist.
+> Bookclub bekommt am \<Tag\> ab \<Uhrzeit\> ein großes Update, etwa eine Stunde Pause. Adresse, Benutzername und Passwort bleiben gleich, alles zieht mit. Danach einmal neu anmelden. Nicht abgeschickte Notizen bitte vorher abschicken. Die App fragt nach einer E-Mail-Adresse: eintragen oder überspringen, Mails verschickt sie vorerst keine. Passwort vergessen? Sag mir Bescheid. Neue Leute laden ab jetzt nur Club-Admins ein: Anni, und wen sie dazu macht. Ich melde mich, wenn es fertig ist.
 
 **English**
 
-> Bookclub gets a big update on \<day\> from \<time\>, with a break of about an hour. The address, your username and your password stay the same, and everything moves with you. Afterwards, sign in once more. Please send any unsent notes before then. The app asks for an email address: add one or skip it, it sends no mail for now. Forgot your password? Tell me. From now on, I invite new people. I'll let you know when it's done.
+> Bookclub gets a big update on \<day\> from \<time\>, with a break of about an hour. The address, your username and your password stay the same, and everything moves with you. Afterwards, sign in once more. Please send any unsent notes before then. The app asks for an email address: add one or skip it, it sends no mail for now. Forgot your password? Tell me. From now on only club admins invite new people: Anni, and whoever she makes one. I'll let you know when it's done.
 
 **Done** (section 7.6):
 
@@ -361,21 +363,36 @@ Section 9 removes the image (`docker image rm bookclub-sqlite3`).
 
 ### 7.5 Start and check
 
-No gate: the other member waits for "done". The Python container is stopped, so its port is free.
+No gate: both members wait for "done". The Python container is stopped, so its port is free.
 
 ```bash
 cd "$NEW"
 docker compose up -d --wait app                          # on the old binding and port now
 docker compose exec app bookclub-server healthcheck      # … answered 200 OK
-docker compose exec app bookclub-server make-admin "$OWNER"
 curl -s -o /dev/null -w '%{http_code}\n' "https://$HOST/api/health"     # 200: the proxy reaches the new app
 ```
 
 A 502 or 504 means `edge` does not reach the new app: the binding does not fit the proxy's upstream. Back to the old binding in `.env` (section 2.3) and `docker compose up -d --wait app`. Rafael signs in only after a 200.
 
-**[Rafael]**, in his browser on `https://$HOST`: sign in with the old password (everyone signs in again once: the cookie is new). The email prompt may be skipped. Then the club, the shelves, the physical shelf layouts, the pick and its notes, the votes, the quotes and the activity feed are there, and an old `/works/OL…W` link from a chat opens.
+**[Rafael]**, in his browser on `https://$HOST`: sign in as `anni` with her old password (everyone signs in again once: the cookie is new). He skips the email prompt, so Anni enters her address herself later. Then the club, the shelves, the physical shelf layouts, the pick and its notes, the votes, the quotes and the activity feed are there, and an old `/works/OL…W` link from a chat opens. He changes nothing.
 
-If he cannot sign in with the old password: section 10, then the check.
+If the old password does not work: section 10 for `anni` (Anni then gets the new one and changes it in Settings), then the check.
+
+**Rafael's own account**, the instance admin, outside the club. The invite goes to a root-only file, as `set-password`'s password does (section 10):
+
+```bash
+cd "$NEW"
+(umask 077 && docker compose exec -T app bookclub-server beta-invite > /root/bookclub-invite); echo "exit $?"
+```
+
+**[Rafael]** reads it from his own session (`cat /root/bookclub-invite && rm /root/bookclub-invite`), opens the join link, and signs up with a username of his choice. He tells the admin the name, and the admin runs:
+
+```bash
+cd "$NEW"
+docker compose exec app bookclub-server make-admin '<his username>'
+```
+
+Rafael's account joins no club: he sees the admin area (covers, reports, invites, accounts), not the club's shelves.
 
 If `isbn unmatched` or `isbn error` in the report's `books` line is not 0, rematch now (it commits per edition and per step of each book's cover search, and is safe on the running app):
 
@@ -387,7 +404,7 @@ grep '^error:' rematch-dry.log; grep -c ' WARN ' rematch-dry.log
 grep '^error:' rematch.log; grep -c ' WARN ' rematch.log
 ```
 
-COVER's review of cover suggestions (Admin → Covers) waits until after "done": a missing cover is no no-go, and Rafael decides them later (answer 45).
+COVER's review of cover suggestions (Admin → Covers, with Rafael's own account) waits until after "done": a missing cover is no no-go, and Rafael decides them later (answer 45).
 
 The old worker's kill switch, from anywhere:
 
@@ -412,34 +429,41 @@ Then, on the agents VM, in the checkout:
 deploy/hosted/verify-limits.sh "https://<HOST>"; echo "exit $?"
 ```
 
-It must get its 429s (exit 0). It creates nothing and uses up only the budgets of the address the proxy sees for the agents VM. The agents VM reaches `https://$HOST` over the router's public address, so `edge` may see the router, as for every device at home: then signing in from home answers 429 for up to 10 minutes, and Rafael waits that long. Then **[Rafael]** signs in on his phone **with Wi-Fi off** (mobile data). A 429 on the phone means `TRUSTED_PROXIES` or the proxy's `X-Forwarded-For` is wrong: the admin fixes `.env`, runs `docker compose up -d --wait app`, and he tries again.
+It must get its 429s (exit 0). It creates nothing and uses up only the budgets of the address the proxy sees for the agents VM. The agents VM reaches `https://$HOST` over the router's public address, so `edge` may see the router, as for every device at home: then signing in from home answers 429 for up to 10 minutes, and Rafael waits that long. Then **[Rafael]** signs in as `anni` on his phone **with Wi-Fi off** (mobile data). A 429 on the phone means `TRUSTED_PROXIES` or the proxy's `X-Forwarded-For` is wrong: the admin fixes `.env`, runs `docker compose up -d --wait app`, and he tries again.
 
-Then **the phone test** (`work-plan.md` §5.8): **[Rafael]** on his iPhone with Wi-Fi off (and an Android phone with Chrome if one is at hand): open `https://$HOST`, sign in, scan a German book, an English book and one the app does not know, add a photo to the unknown one, and deny the camera once to see manual entry. An iPhone older than iOS 16 shows manual entry only. The result goes into the notes; a failure becomes a patch release, never a rollback.
+Then **the phone test** (`work-plan.md` §5.8): **[Rafael]**, signed in as `anni`, on his iPhone with Wi-Fi off (and an Android phone with Chrome if one is at hand): open `https://$HOST`, sign in, scan a German book, an English book and one the app does not know, add a photo to the unknown one, and deny the camera once to see manual entry. An iPhone older than iOS 16 shows manual entry only. The result goes into the notes; a failure becomes a patch release, never a rollback.
 
 ### 7.6 Open
 
 No proxy step: the port takeover was the switch. The admin starts one backup of VM 104 by hand on the Proxmox host (section 4) and reports its exit status: from now on a backup holds the imported data.
 
-Then **[Rafael]** sends "done" (section 6). The rollback window closes when the other member writes to the new app; section 8's first step tells whether they have signed in.
+**[Rafael]** signs out of Anni's account in his browser and on his phone (Settings → Sign out). Then the admin notes the moment, which section 8's first step counts from:
+
+```bash
+echo "DONE_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> /root/bookclub-move/vars.sh
+```
+
+Then **[Rafael]** sends "done" to both members (section 6). The rollback window closes when a member uses the new app; section 8's first step tells whether one has.
 
 ## 8. Rollback
 
-The window lasts until the other member writes to the new app. Until then the old app's data is untouched (stopped, and the importer read a copy), and the only writes on the new app are the import and Rafael's checks: a rollback discards them, and the next attempt imports again from the old data.
+The window lasts until a member uses the new app after "done". Until then the old app's data is untouched (stopped, and the importer read a copy), and the only writes on the new app are the import, Rafael's checks with Anni's account and his own admin account: a rollback discards them, and the next attempt imports again from the old data.
 
 Each step is one block on the host as root (the admin) that loads `vars.sh` and changes into its own directory, so it runs as written in a fresh SSH session. A block whose variables are missing stops before it touches anything (`${NEW:?}`, or `set -u` in step 4's `bash -s` block).
 
-1. **Is the window still open?** Counts only: the accounts other than the club's owner (Rafael) that signed in to the new app, by a live session or by one that ended (`last_seen_at`). Every write needs a sign-in.
+1. **Is the window still open?** Counts only: the club's members, Anni included, that used the new app after `DONE_AT` (section 7.6), by a live session or by one that ended (`last_seen_at`). Every write needs a sign-in. Rafael's checks with Anni's account came before `DONE_AT`, and his own account is in no club, so neither counts. Before "done", `DONE_AT` is unset and the count is 0.
 
    ```bash
    . /root/bookclub-move/vars.sh
-   cd "${NEW:?}" && docker compose exec -T postgres psql -U bookclub -d bookclub -At <<'SQL'
+   cd "${NEW:?}" && docker compose exec -T postgres psql -U bookclub -d bookclub -At -v done="${DONE_AT:-infinity}" <<'SQL'
    SELECT count(*) FROM users u
-   WHERE NOT EXISTS (SELECT 1 FROM club_memberships m WHERE m.user_id = u.id AND m.role = 'owner')
-     AND (u.last_seen_at IS NOT NULL OR EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.id));
+   WHERE EXISTS (SELECT 1 FROM club_memberships m WHERE m.user_id = u.id)
+     AND (u.last_seen_at > :'done'
+          OR EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.id AND s.last_used_at > :'done'));
    SQL
    ```
 
-   `0`: on to step 2 (before the import it prints 0 too). Anything else: the other member has signed in, and what they wrote exists only on the new app. Then no rollback without **[Rafael]**: he asks them. If they wrote nothing, the rollback goes on; otherwise problems are fixed forward.
+   `0`: on to step 2. Anything else: a member has used the new app, and what they wrote exists only there. Then no rollback without **[Rafael]**: he asks them. If they wrote nothing, the rollback goes on; otherwise problems are fixed forward.
 2. **The new app stops.**
 
    ```bash
@@ -473,7 +497,7 @@ Each step is one block on the host as root (the admin) that loads `vars.sh` and 
    ```
 
    Before the next attempt, section 3.2 again (`up -d --wait postgres`, the check on 18080).
-5. Rafael tells the other member the update is postponed, and I record why in #52 (counts only).
+5. Rafael tells both members the update is postponed, and I record why in #52 (counts only).
 6. **The leftovers go**, once the reason is in #52 and Rafael has read on the host what he needs: the import copy holds every password hash, the reports and logs name people and books.
 
    ```bash
