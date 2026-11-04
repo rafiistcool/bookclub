@@ -4,8 +4,8 @@
 //! - `summary` (section 0) prints a report's lines before the first section only when it knows
 //!   them, and each section as its title and a count: no line of a section reaches the terminal,
 //!   also one that a title with a line break starts without indentation.
-//! - The rollback's first step (section 8) counts the accounts other than the club's owner that
-//!   signed in to the new app, by a live session or by one that ended.
+//! - The rollback's first step (section 8) counts the club's members that used the new app after
+//!   "done", by a live session or by one that ended.
 //! - The rollback's delete block stops before it touches anything when the move's variables are
 //!   missing or `$NEW` is not the new stack.
 //! - The M6 cleanup block (section 11) deletes the old data directory only when it holds nothing
@@ -207,34 +207,55 @@ fn summary_prints_no_line_of_a_section() {
 
 // ---- the rollback ---------------------------------------------------------------------------
 
-async fn window(db: &PgPool, sql: &str) -> i64 {
-    sqlx::query_scalar(AssertSqlSafe(sql.to_owned()))
+/// The block's count with `DONE_AT` as `done` (`infinity` before "done"), as `psql -v` puts it in.
+async fn window(db: &PgPool, sql: &str, done: &str) -> i64 {
+    assert!(sql.contains(":'done'"), "{sql}");
+    let sql = sql.replace(":'done'", &format!("'{done}'::timestamptz"));
+    sqlx::query_scalar(AssertSqlSafe(sql.clone()))
         .fetch_one(db)
         .await
         .unwrap_or_else(|error| panic!("{sql}: {error}"))
 }
 
-/// The rollback's first step: 0 while only the club's owner (Rafael) signed in, and above 0
-/// once another account signed in, also after its session ended (a logout leaves
-/// `last_seen_at`).
-#[sqlx::test]
-async fn the_rollback_window_counts_sign_ins_besides_the_owner(db: PgPool) {
-    let sql = heredoc("SQL");
-    assert_eq!(window(&db, &sql).await, 0, "an empty target");
+async fn account(db: &PgPool, name: &str) -> i64 {
+    sqlx::query_scalar("INSERT INTO users (username, password_hash) VALUES ($1, 'x') RETURNING id")
+        .bind(name)
+        .fetch_one(db)
+        .await
+        .unwrap()
+}
 
+/// A session of `user` last used at `used`.
+async fn session(db: &PgPool, user: i64, token: &str, used: &str) {
+    sqlx::query(
+        "INSERT INTO sessions (user_id, kind, token_hash, expires_at, created_at, last_used_at)
+         VALUES ($1, 'cookie', decode(repeat($2, 32), 'hex'), now() + interval '30 days',
+                 $3::timestamptz, $3::timestamptz)",
+    )
+    .bind(user)
+    .bind(token)
+    .bind(used)
+    .execute(db)
+    .await
+    .unwrap();
+}
+
+/// The rollback's first step counts the club's members, the owner included, that used the new
+/// app after "done": a session used after `DONE_AT`, live or ended (a logout leaves
+/// `last_seen_at`). Rafael's checks with the owner's account before "done" and his own admin
+/// account, which is in no club, do not count; before "done" (`infinity`) nothing does.
+#[sqlx::test]
+async fn the_rollback_window_counts_members_after_done(db: PgPool) {
+    const BEFORE: &str = "2026-11-10T10:00:00Z";
+    const DONE: &str = "2026-11-10T11:00:00Z";
+    const AFTER: &str = "2026-11-10T12:00:00Z";
+    let sql = heredoc("SQL");
+    assert_eq!(window(&db, &sql, "infinity").await, 0, "an empty target");
+
+    let owner = account(&db, "owner1").await;
+    let member = account(&db, "member1").await;
+    // One transaction: the club's owner check is deferred to the commit.
     let mut tx = db.begin().await.unwrap();
-    let owner: i64 = sqlx::query_scalar(
-        "INSERT INTO users (username, password_hash) VALUES ('owner1', 'x') RETURNING id",
-    )
-    .fetch_one(&mut *tx)
-    .await
-    .unwrap();
-    let member: i64 = sqlx::query_scalar(
-        "INSERT INTO users (username, password_hash) VALUES ('member1', 'x') RETURNING id",
-    )
-    .fetch_one(&mut *tx)
-    .await
-    .unwrap();
     let club: i64 = sqlx::query_scalar(
         "INSERT INTO clubs (slug, name, created_by) VALUES ('bookclub-8rqp', 'Bookclub', $1)
          RETURNING id",
@@ -253,32 +274,56 @@ async fn the_rollback_window_counts_sign_ins_besides_the_owner(db: PgPool) {
             .unwrap();
     }
     tx.commit().await.unwrap();
-    assert_eq!(window(&db, &sql).await, 0, "imported, nobody signed in");
+    assert_eq!(
+        window(&db, &sql, DONE).await,
+        0,
+        "imported, nobody signed in"
+    );
 
-    let session = "INSERT INTO sessions (user_id, kind, token_hash, expires_at)
-                   VALUES ($1, 'cookie', decode(repeat($2, 32), 'hex'), now() + interval '30 days')";
-    sqlx::query(session)
-        .bind(owner)
-        .bind("ab")
-        .execute(&db)
-        .await
-        .unwrap();
-    assert_eq!(window(&db, &sql).await, 0, "Rafael's checks");
+    session(&db, owner, "ab", BEFORE).await;
+    assert_eq!(
+        window(&db, &sql, "infinity").await,
+        0,
+        "Rafael's checks, before done"
+    );
+    assert_eq!(
+        window(&db, &sql, DONE).await,
+        0,
+        "Rafael's checks, after done"
+    );
 
-    sqlx::query(session)
-        .bind(member)
-        .bind("cd")
-        .execute(&db)
-        .await
-        .unwrap();
-    assert_eq!(window(&db, &sql).await, 1, "the other member signed in");
+    let admin = account(&db, "rafael").await;
+    session(&db, admin, "ef", AFTER).await;
+    assert_eq!(
+        window(&db, &sql, DONE).await,
+        0,
+        "Rafael's own account, in no club"
+    );
 
+    session(&db, member, "cd", AFTER).await;
+    assert_eq!(
+        window(&db, &sql, DONE).await,
+        1,
+        "the other member signed in"
+    );
     sqlx::query("DELETE FROM sessions WHERE user_id = $1")
         .bind(member)
         .execute(&db)
         .await
         .unwrap();
-    assert_eq!(window(&db, &sql).await, 1, "and signed out again");
+    assert_eq!(window(&db, &sql, DONE).await, 1, "and signed out again");
+
+    session(&db, owner, "01", AFTER).await;
+    assert_eq!(
+        window(&db, &sql, DONE).await,
+        2,
+        "the owner herself, after done"
+    );
+    assert_eq!(
+        window(&db, &sql, "infinity").await,
+        0,
+        "before done, nothing counts"
+    );
 }
 
 /// A host for the rollback's delete block: `new/` with `compose.yaml` and `.env`, `data/media`

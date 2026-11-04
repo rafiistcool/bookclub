@@ -24,7 +24,7 @@ In this plan, "I" means the implementing agent: it has the repo and a shell on t
 - **M2 is done (2026-11-01):** PR #75 is merged (2fc06ba), and `v0.11.0` is released: `0.11.0`, `0.11` and `stable` share one manifest digest.
 - **v0.11.1 is the release for the move (2026-11-03):** PR #76 (fd5b27d) lets the server start without `CONTACT_EMAIL` while mail is off (Q-M3). `0.11.1`, `0.11` and `stable` share one manifest digest (checked 2026-11-04).
 - **Next is M3, when Rafael says so.** On 2026-11-01 he put the legal part and everything about mail further back.
-- **Changed on 2026-11-04 (Q-M1, and the backups):** the host is the apps VM (Proxmox VM 104, `192.168.178.12`), which the agents VM cannot reach by design. **The admin** on the Proxmox host runs every host step; I prepare and read the admin's reports, with no key and no firewall opening. The move sets up **no backups of its own**: the admin's nightly vzdump of the whole VM covers the new stack, plus one by hand before and after the import. **No update timer and no WUD:** the stack pins `BOOKCLUB_TAG=0.11.1`, and updates run by hand after a VM backup. `docs/phase3/private-move.md` is the binding version; where §5 below still describes restic, `update.sh`, the timers, the SSH key or the alias case, the runbook wins.
+- **Changed on 2026-11-04 (Q-M1, and the backups):** the host is the apps VM (Proxmox VM 104, `192.168.178.12`), which the agents VM cannot reach by design. **The admin** on the Proxmox host runs every host step; I prepare and read the admin's reports, with no key and no firewall opening. The move sets up **no backups of its own**: the admin's nightly vzdump of the whole VM covers the new stack, plus one by hand before and after the import. **No update timer and no WUD:** the stack pins `BOOKCLUB_TAG=0.11.1`, and updates run by hand after a VM backup. **The owner is Anni (`anni`), not Rafael:** Rafael has no account in the old app. On move day he checks the data and runs the phone test with Anni's account (she gives him her password), and after the import he gets an account of his own as the instance admin, outside the club. The rollback window counts the club's members that use the app after "done". `docs/phase3/private-move.md` is the binding version; where §5 below still describes restic, `update.sh`, the timers, the SSH key or the alias case, the runbook wins.
 - Production still runs the Python app (v0.10.0, SQLite) with 2 accounts.
 
 **The new order.** Rafael, on 2026-10-29: "das ist mir aktuell schon viel zu professionell. lass uns erstmal die anwendung bauen und dann meine aktuellen nutzer weiternutzen lassen und dann machen wir das rechtliche" ("This is already far too professional for me right now. Let's build the application first, then let my current users carry on using it, and then we do the legal part.").
@@ -41,8 +41,8 @@ In this plan, "I" means the implementing agent: it has the repo and a shell on t
 - Your to-dos are in §8, the three questions in §7. Wave 1 is merged and needed nothing from you; the next thing for you is approving the PR `phase-3` → `main` (§8, item 4).
 - What you and the other member will notice after the move (§6, answer 47):
   - Everyone signs in again once, with the old username and password.
-  - "Forgot password" says a link is on its way, but no mail leaves yet. They ask you, and you run one command from the runbook (§5.2).
-  - Only club admins invite new people: you, or whoever you make an admin on the club's members page. In the old app any member could.
+  - "Forgot password" says a link is on its way, but no mail leaves yet. They ask you, and the admin runs one command from the runbook (§5.2).
+  - Only club admins invite new people: Anni as the owner, or whoever she makes an admin on the club's members page. In the old app any member could.
   - Nobody can create a new club until mail exists: a new club needs a confirmed address.
   - New: scanning a barcode, and friends.
 
@@ -223,7 +223,7 @@ M1, the code, is a Wave 1 package. M2–M6 are Wave 2: operations, no new code.
     - `curl -sI …/sw.js` shows a JavaScript content type;
     - `SIGNUP_MODE=open` in the env file stops the app at startup with the mail message;
     - then `down -v`, `docker image rm` of the `move-test` tag, the data directory removed, and `docker builder prune -f`.
-  - M4: the counts match (`compare.sh` exit 0), Rafael signs in with his old password and sees his data, `verify-limits.sh` gets its 429s while Rafael's phone signs in, the phone test is recorded, the other member signs in.
+  - M4: the counts match (`compare.sh` exit 0), Rafael signs in with Anni's account and sees the club's data, `verify-limits.sh` gets its 429s while Rafael's phone signs in, the phone test is recorded, the other member signs in.
   - M5: CUT-R's acceptance (`docs/phase2/work-plan.md` §2.4) and Forgejo CI green; my key gone from root's `authorized_keys`.
 
 **Status (2026-10-30):** M1 merged into `phase-3` (67dc780), with no conflicts and no regenerated files. Its notes are applied to `conventions.md` (§2's module layout, §3 `AppState::new` and "Fallbacks" for `/sw.js`, §5.5 `deliver`, §9 `NoEmail` and "Mail off", §11 `EMAIL_TRANSPORT`, `SIGNUP_MODE` and the SMTP detail, §16 `send-test-mail` and `set-password`), `endpoint-map.md` (§10's CLI lines, `/sw.js` in the SPA catch-all row) and `CLAUDE.md` (mail off and `set-password` in the dev-server notes, `private_move` among the tests that read docs, the kill switch under "Backend features without a frontend"). `README.md` and `docs/plan.md` are unchanged: the notes give them nothing, and CUT-R rewrites the README (§5.8). Deviations are in `notes/move.md` (1–11, among them: `set_password` takes the hasher and returns `anyhow::Result`; more tests than listed; more host facts; `TRUSTED_PROXIES` and the loopback binding chosen by the proxy's upstream; M6 removes only the `bookclub` container and runs a restore test itself; CUT2's counts are a floor for the go; the alias case may need a proxy reload; a six-step rollback; the second test file `server/tests/private_move.rs`). Open:
@@ -1009,7 +1009,7 @@ None is open.
 2. Only if the admin reports that the registry refuses the pull: create a Forgejo token with only `read:package`, and run `docker login git.tillhome.de` with it as root on the host.
 3. Approve the merge into `main`.
 4. Pick a time and send the other member the short message from the runbook.
-5. On move day: sign in with your old password, look at your shelf and the club, and tell me it looks right. Then, on your iPhone with Wi-Fi off: sign in, scan a German book, an English book and one the app does not know, add a photo to the unknown one, and deny the camera once. Then, when the admin's VM backup ran, send the other member the "done" message.
+5. On move day: sign in with Anni's account (ask her for the password beforehand), look at her shelf and the club without changing anything, and tell me it looks right. Then sign up for your own admin account with the invite the admin leaves for you. Then, on your iPhone with Wi-Fi off: sign in as Anni, scan a German book, an English book and one the app does not know, add a photo to the unknown one, and deny the camera once. Then, when the admin's VM backup ran, send the other member the "done" message.
 6. Approve the merge that removes the Python code.
 7. After 30 days: the admin checks the VM backups and runs the cleanup block from the runbook. It deletes nothing if a check fails.
 
