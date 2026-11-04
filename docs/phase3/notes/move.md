@@ -199,7 +199,9 @@ All five fail on the runbook and `host-facts.sh` of 6d5fb11 (checked by putting 
 
 ## M2–M6
 
-Filled in when they run: the M1 boot test on the merged `phase-3`, the release's digests, the facts found on the host (no secrets, no usernames), the layout and project name chosen, the backup target, the move's counts against the CUT2 baseline, the phone test's result, CUT-R, and the cleanup.
+The release (M2, checked with the forgejo MCP's `list_package_files`): `v0.11.0` (2fc06ba, 2026-11-01) left `0.11.0`, `0.11` and `stable` on `sha256:a23898569cd2…`. `v0.11.1` (fd5b27d, PR #76, 2026-11-03) moved `0.11` and `stable` to its own manifest: all three name `sha256:684b3a0ae3f2…` (checked 2026-11-04). The move runs v0.11.1, because its `.env` has no `CONTACT_EMAIL`.
+
+Filled in when they run: the facts found on the host (no secrets, no usernames), the layout and project name chosen, the backup target, the move's counts against the CUT2 baseline, the phone test's result, CUT-R, and the cleanup.
 
 ## After the release: no contact address with mail off (2026-11-01)
 

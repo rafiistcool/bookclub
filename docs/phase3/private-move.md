@@ -1,6 +1,6 @@
 # The private move: runbook (#52)
 
-This runbook moves the two current members from the Python app (v0.10.0, SQLite) to the Rust server (v0.11.0, Postgres) on the **same host, under the same hostname, behind the same reverse proxy**: invite-only, the name stays "Bookclub", mail off, no legal texts, no new external accounts. The design and the decisions are `docs/phase3/work-plan.md` §5 and §6 (answers 30–50); this file is the copy-paste part.
+This runbook moves the two current members from the Python app (v0.10.0, SQLite) to the Rust server (v0.11.1, Postgres) on the **same host, under the same hostname, behind the same reverse proxy**: invite-only, the name stays "Bookclub", mail off, no legal texts, no new external accounts. The design and the decisions are `docs/phase3/work-plan.md` §5 and §6 (answers 30–50); this file is the copy-paste part.
 
 It is built on `docs/phase2/cutover.md` as COVER (#74) left it (the cover search inside `import-legacy`, its report lines, and the review of cover suggestions), and on the operator runbook `deploy/hosted/README.md`. The table below says which steps of `cutover.md` the private move keeps and which it drops. `cutover.md` stays as it is for the public launch.
 
@@ -75,7 +75,9 @@ summary() {
 
 Wave 1 (SCAN, FRIENDS, M1) is merged into `phase-3`, and M1's boot test (`work-plan.md` §2.3) passed once more on it. **[Rafael]** approved the merge of the PR `phase-3` → `main`; the tag `v0.11.0` on `main` follows without a second approval. Once the release workflow has run, the three tags must name one digest. The package is private and the agents VM has no registry login (a token would pass through my terminal), so I read Forgejo's package API with the `forgejo` MCP tools instead of `docker buildx imagetools inspect` (`docs/phase2/notes/dep2.md`, "Not verified"): `list_package_files` with owner `rafiistcool`, type `container`, name `bookclub-server`, for the versions `0.11.0`, `0.11` and `stable`. Each lists a `manifest.json` whose `sha256` is that tag's manifest digest.
 
-Three equal `sha256` values are the go. Nothing follows `stable` on the host until the update timer is on (section 9).
+Three equal `sha256` values are the go.
+
+**Done (2026-11-04):** `v0.11.0` (2fc06ba) was released on 2026-11-01. `v0.11.1` (fd5b27d, PR #76) followed: with `EMAIL_TRANSPORT=none` it starts without `CONTACT_EMAIL`, which section 3's `.env` comments out, so the move needs v0.11.1 or later. `0.11.1`, `0.11` and `stable` share the manifest digest `sha256:684b3a0ae3f2…`. Nothing follows `stable` on the host until the update timer is on (section 9).
 
 ## 2. Access and facts (M3)
 
@@ -98,7 +100,7 @@ I connect with `ssh -i ~/.ssh/bookclub-move root@<host's SSH address>`. Section 
 
 ### 2.2 The host facts
 
-From the agents VM, a checkout of `main` at `v0.11.0`: copy `deploy/` to the host and run `host-facts.sh` while someone uses the app (its peers sample takes 10 s; `PEER_SECONDS` changes that):
+From the agents VM, a checkout of `main` at `v0.11.1`: copy `deploy/` to the host and run `host-facts.sh` while someone uses the app (its peers sample takes 10 s; `PEER_SECONDS` changes that):
 
 ```bash
 # On the agents VM, in the checkout:
@@ -285,7 +287,7 @@ The update timer stays off until the day after the move (section 9). Without hea
 Checked the day before, from my SSH session:
 
 - [ ] The facts' stops are cleared; layout, project name, binding (or alias), `TRUSTED_PROXIES`, slug and time zone are in `vars.sh` and `.env`.
-- [ ] `docker compose ps -a` in `$NEW`: `postgres` healthy, `app` exited; `BOOKCLUB_TAG=stable` names v0.11.0; `SIGNUP_MODE=invite`, `DNB_HARVEST=false`, `EMAIL_TRANSPORT=none`.
+- [ ] `docker compose ps -a` in `$NEW`: `postgres` healthy, `app` exited; `BOOKCLUB_TAG=stable` names v0.11.1 or later; `SIGNUP_MODE=invite`, `DNB_HARVEST=false`, `EMAIL_TRANSPORT=none`.
 - [ ] The target is empty, in `$NEW`: `docker compose exec -T postgres psql -U bookclub -d bookclub -Atc 'SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM club_invites)'` prints `0|0`.
 - [ ] `backup.sh` and `restore-test.sh` passed once; both timers are listed; Rafael has the restic password.
 - [ ] No auto-updater touches either stack (section 2.3).
@@ -568,7 +570,7 @@ From then on `stable` reaches the host within minutes of a release, each time af
 
 **CUT-R** (`docs/phase2/work-plan.md` §2.4):
 
-- The branch `cutover/remove-python`, cut from `main` after v0.11.0. The deletes are exactly §2.4's.
+- The branch `cutover/remove-python`, cut from `main` after v0.11.1. The deletes are exactly §2.4's.
 - Docs: the README describes the private invite-only instance and drops `README.md:162` (that closes #35's README criterion); `SELFHOST.md` goes; CLAUDE.md loses "In transition" and the Python commands; `docs/plan.md` gets a status line with the move's date.
 - **[Rafael]** approves the merge after the move is verified, once Forgejo CI is green.
 
