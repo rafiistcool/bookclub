@@ -21,6 +21,7 @@ const DEFAULT_OPENLIBRARY_URL: &str = "https://openlibrary.org";
 const DEFAULT_OPENLIBRARY_COVERS_URL: &str = "https://covers.openlibrary.org";
 const DEFAULT_DNB_SRU_URL: &str = "https://services.dnb.de/sru/dnb";
 const DEFAULT_DNB_OAI_URL: &str = "https://services.dnb.de/oai/repository";
+const DEFAULT_DNB_PORTAL_URL: &str = "https://portal.dnb.de/opac/mvb/cover";
 const DEFAULT_HARVEST_INTERVAL_MINUTES: u64 = 240;
 const MIN_HARVEST_INTERVAL_MINUTES: u64 = 30;
 const DEFAULT_HARVEST_SETS: &str = "dnb-all:reiheN,dnb:reiheA";
@@ -112,6 +113,12 @@ pub struct Config {
     pub dnb_harvest_sets: Vec<String>,
     /// How many days back the first run of a set starts (`DNB_HARVEST_START_DAYS`, default 90).
     pub dnb_harvest_start_days: u32,
+    /// The cover search fetches publisher covers from the DNB portal (`DNB_PORTAL_COVERS`,
+    /// default false; docs/phase3/notes/publisher-covers.md). Their terms for third parties are
+    /// unclear, so it is for the private instance only: `SIGNUP_MODE=open` refuses it.
+    pub dnb_portal_covers: bool,
+    /// The DNB portal's cover endpoint (`DNB_PORTAL_URL`), asked with `?isbn=`.
+    pub dnb_portal_url: Url,
 }
 
 impl Config {
@@ -189,6 +196,14 @@ impl Config {
         // legal texts, so a stack without either names mail first.
         if email_transport == EmailTransport::None && signup_mode == SignupMode::Open {
             bail!("SIGNUP_MODE=open needs mail: set EMAIL_TRANSPORT=smtp");
+        }
+        // Before the legal texts too: the portal's terms for third parties are unclear.
+        let dnb_portal_covers =
+            parse_bool("DNB_PORTAL_COVERS", get("DNB_PORTAL_COVERS"))?.unwrap_or(false);
+        if dnb_portal_covers && signup_mode == SignupMode::Open {
+            bail!(
+                "SIGNUP_MODE=open refuses DNB_PORTAL_COVERS=true: the portal's covers are for a private instance"
+            );
         }
         let smtp_url = get("SMTP_URL");
         let email_from = get("EMAIL_FROM");
@@ -283,6 +298,12 @@ impl Config {
             dnb_harvest_interval: Duration::from_secs(interval_minutes * 60),
             dnb_harvest_sets,
             dnb_harvest_start_days,
+            dnb_portal_covers,
+            dnb_portal_url: parse_url(
+                "DNB_PORTAL_URL",
+                get("DNB_PORTAL_URL"),
+                DEFAULT_DNB_PORTAL_URL,
+            )?,
         })
     }
 
@@ -489,6 +510,11 @@ mod tests {
         assert_eq!(config.dnb_harvest_interval, Duration::from_secs(240 * 60));
         assert_eq!(config.dnb_harvest_sets, ["dnb-all:reiheN", "dnb:reiheA"]);
         assert_eq!(config.dnb_harvest_start_days, 90);
+        assert!(!config.dnb_portal_covers);
+        assert_eq!(
+            config.dnb_portal_url.as_str(),
+            "https://portal.dnb.de/opac/mvb/cover"
+        );
         assert_eq!(config.openlibrary_url.as_str(), "https://openlibrary.org/");
         assert_eq!(
             config.dnb_sru_url.as_str(),
@@ -626,6 +652,19 @@ mod tests {
         )
         .unwrap();
         assert_eq!(config.signup_mode, SignupMode::Invite);
+    }
+
+    /// The portal's covers are for a private instance: open sign-up refuses them.
+    #[test]
+    fn open_signup_refuses_portal_covers() {
+        let config = with(PROD, &[("DNB_PORTAL_COVERS", "true")]).unwrap();
+        assert!(config.dnb_portal_covers);
+        let error = with(
+            PROD,
+            &[("DNB_PORTAL_COVERS", "true"), ("SIGNUP_MODE", "open")],
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("DNB_PORTAL_COVERS"), "{error}");
     }
 
     #[test]

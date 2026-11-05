@@ -380,6 +380,7 @@ async fn the_cli_exits_with_2_on_a_non_empty_target(db: PgPool) {
             .env("OPENLIBRARY_COVERS_URL", UNREACHABLE)
             .env("DNB_SRU_URL", UNREACHABLE)
             .env("DNB_OAI_URL", UNREACHABLE)
+            .env("DNB_PORTAL_URL", UNREACHABLE)
             .output()
             .unwrap()
     };

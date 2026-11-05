@@ -286,6 +286,7 @@ impl Importer {
                 forced: false,
                 // The import's dry run rolls back the whole transaction.
                 rollback: false,
+                media: None,
             };
             match search_one(&mut savepoint, &mut ctx, work_id).await {
                 Ok(Outcome::Throttled) => {
@@ -422,6 +423,7 @@ async fn rematch_one(
             always_suggest: true,
             forced: false,
             rollback: dry_run,
+            media: None,
         };
         match search_one(conn, &mut ctx, work_id).await {
             Ok(Outcome::Throttled) => {

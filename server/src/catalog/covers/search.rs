@@ -4,7 +4,9 @@
 //! 1. **facts** (read): the work's titles, first author, language, the Open Library works
 //!    decided for it, an open suggestion (the takedown flag is read under the lock in step 3). A work that is no candidate is skipped.
 //!    A work whose edition has a usable cover takes it (inherit, no request); a DNB work whose
-//!    one ISBN cover check never ran gets that check first.
+//!    one ISBN cover check never ran gets that check first. With `DNB_PORTAL_COVERS`, a work
+//!    with German-group ISBNs then asks the DNB portal for the publisher's cover
+//!    (docs/phase3/notes/publisher-covers.md).
 //! 2. **remote:** `CatalogLookup::cover_candidates`, outside any transaction of ours (the
 //!    import's own transaction aside): every step before it has committed (or, with
 //!    [`Context::rollback`], rolled back), so no lock is held across the request or the pace.
@@ -28,6 +30,8 @@ use crate::catalog::service::attach_checked_cover;
 use crate::catalog::shared::ingest::{self, CoverTarget, Source};
 use crate::catalog::shared::isbn::{Isbn13, is_german_group};
 use crate::catalog::shared::lookup::{CatalogLookup, CoverAnswer, LookupError};
+use crate::media::MediaService;
+use crate::media::shared::register;
 use crate::text::truncate_chars;
 
 /// What one search of one work came to.
@@ -40,7 +44,8 @@ pub enum Outcome {
     },
     /// The work took its edition's cover.
     Inherited,
-    /// The exact ISBN cover check gave the edition (and the work) its cover.
+    /// The exact ISBN cover check gave the edition (and the work) its cover: Open Library's, or
+    /// the publisher's from the DNB portal.
     Isbn {
         media_id: i64,
     },
@@ -147,6 +152,9 @@ pub struct Context<'a> {
     /// nothing stays. Each step still ends its own transaction before the next request, so no
     /// lock is held across Open Library's answer.
     pub rollback: bool,
+    /// Where a publisher cover from the DNB portal is stored (the job and an admin's search).
+    /// `None` skips the portal (the import and `rematch-legacy`).
+    pub media: Option<&'a MediaService>,
 }
 
 /// Ends one step's transaction: commits it, or rolls it back with [`Context::rollback`].
@@ -179,6 +187,9 @@ pub struct Facts {
     /// The edition the one DNB check asks about: the first with a German-group ISBN that no DNB
     /// record has told its original title yet, when no edition has one.
     dnb_check: Option<(i64, Isbn13)>,
+    /// The editions the DNB portal is asked about: those with a German-group ISBN, at most
+    /// [`PORTAL_EDITIONS`].
+    portal: Vec<(i64, Isbn13)>,
     edition_cover: Option<EditionCover>,
     blocked: HashSet<String>,
     open_suggestion: Option<i64>,
@@ -351,6 +362,18 @@ pub async fn facts(conn: &mut PgConnection, work_id: i64) -> sqlx::Result<Option
     } else {
         None
     };
+    let mut portal: Vec<(i64, Isbn13)> = Vec::new();
+    for (edition_id, isbn) in editions
+        .iter()
+        .filter_map(|e| e.isbn13.clone().map(|isbn| (e.id, Isbn13(isbn))))
+    {
+        if is_german_group(&isbn)
+            && portal.len() < PORTAL_EDITIONS
+            && !portal.iter().any(|(_, seen)| *seen == isbn)
+        {
+            portal.push((edition_id, isbn));
+        }
+    }
     let author = match work.first_name {
         Some(name) => Some((name, work.first_sort)),
         None => work
@@ -395,6 +418,7 @@ pub async fn facts(conn: &mut PgConnection, work_id: i64) -> sqlx::Result<Option
         details_open: work.details_open,
         first_isbn,
         dnb_check,
+        portal,
         edition_cover: edition_cover(conn, work_id).await?,
         blocked,
         open_suggestion: open_suggestion(conn, work_id).await?,
@@ -471,6 +495,25 @@ pub async fn search_one(
             Err(LookupError::Db(error)) => return Err(error),
         }
     }
+    if let Some(media) = ctx.media {
+        for (edition_id, isbn) in std::mem::take(&mut facts.portal) {
+            if ctx.pacer.cancelled() {
+                return Ok(Outcome::Stopped);
+            }
+            // The portal is a source on top: without an answer the search goes on without it.
+            let bytes = match ctx.lookup.publisher_cover(&isbn).await {
+                Ok(Some(bytes)) => bytes,
+                Ok(None) => continue,
+                Err(LookupError::Db(error)) => return Err(error),
+                Err(LookupError::Throttled | LookupError::Unavailable) => break,
+            };
+            if let Some(outcome) =
+                attach_publisher_cover(conn, ctx, media, &facts, edition_id, bytes, started).await?
+            {
+                return Ok(outcome);
+            }
+        }
+    }
     if let Some((edition_id, isbn)) = facts.dnb_check.take() {
         // The one DNB check (notes "original-title"): without an answer it stays open for the
         // next attempt, and this one goes on without.
@@ -528,6 +571,97 @@ pub async fn search_one(
         }
     }
     apply(conn, ctx, &facts, verdict, refused, started).await
+}
+
+/// German-group editions of one work the DNB portal is asked about at most per attempt.
+pub const PORTAL_EDITIONS: usize = 3;
+
+/// The source of a publisher cover's media row.
+const PORTAL_SOURCE: &str = "dnb_portal";
+
+/// A publisher cover the DNB portal sent for one edition: stored, then (one transaction, media
+/// first) the edition's and the work's cover under the provenance rules (`dnb`), re-checked under
+/// the work's lock. `None` when nothing came of it (no usable picture, a taken-down one, a
+/// takedown on the book, or a cover the provenance rules keep), so the search goes on.
+async fn attach_publisher_cover(
+    conn: &mut PgConnection,
+    ctx: &Context<'_>,
+    media: &MediaService,
+    facts: &Facts,
+    edition_id: i64,
+    bytes: bytes::Bytes,
+    started: OffsetDateTime,
+) -> sqlx::Result<Option<Outcome>> {
+    let stored = match media.store_found_cover(conn, PORTAL_SOURCE, bytes).await {
+        Ok(Some(stored)) => stored,
+        Ok(None) => return Ok(None),
+        Err(error) => {
+            tracing::warn!(error = %error, "cannot store a publisher cover");
+            return Ok(None);
+        }
+    };
+    let (public_id, new_media) = stored;
+    let applied = async {
+        let mut tx = conn.begin().await?;
+        let media_id = register(&mut tx, &public_id, &new_media).await?;
+        let Some(now) = candidate_state(&mut tx, facts.work_id, true).await? else {
+            tx.rollback().await?;
+            return Ok((Some(Outcome::Skipped), false));
+        };
+        if !now.candidate(ctx.forced) || now.match_key != facts.match_key {
+            tx.rollback().await?;
+            return Ok((Some(Outcome::Skipped), false));
+        }
+        // A takedown cleared this book's cover: no picture goes on it without an admin.
+        if under_takedown(&mut tx, facts.work_id).await? {
+            tx.rollback().await?;
+            return Ok((None, false));
+        }
+        ingest::set_cover(
+            &mut tx,
+            CoverTarget::Edition(edition_id),
+            media_id,
+            Source::Dnb,
+            false,
+        )
+        .await?;
+        ingest::set_cover(
+            &mut tx,
+            CoverTarget::Work(facts.work_id),
+            media_id,
+            Source::Dnb,
+            false,
+        )
+        .await?;
+        let covered = sqlx::query_scalar!(
+            r#"SELECT cover_media_id IS NOT DISTINCT FROM $2 AS "covered!"
+               FROM works WHERE id = $1"#,
+            facts.work_id,
+            media_id
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        if !covered {
+            tx.rollback().await?;
+            return Ok((None, false));
+        }
+        let outcome = Outcome::Isbn { media_id };
+        record(&mut tx, facts, outcome, started, Written::default()).await?;
+        finish(tx, ctx.rollback).await?;
+        sqlx::Result::Ok((Some(outcome), !ctx.rollback))
+    }
+    .await;
+    match applied {
+        Ok((outcome, true)) => Ok(outcome),
+        Ok((outcome, false)) => {
+            media.discard_cover(&public_id).await;
+            Ok(outcome)
+        }
+        Err(error) => {
+            media.discard_cover(&public_id).await;
+            Err(error)
+        }
+    }
 }
 
 /// The cover ids of the answer whose media row is removed or gone, or holds the bytes of a cover

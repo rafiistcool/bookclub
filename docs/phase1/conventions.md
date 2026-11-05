@@ -1094,6 +1094,9 @@ pub trait CatalogLookup: Send + Sync {
     /// The cover search's one DNB check (docs/phase3/notes/original-title.md): the original title (MARC 240) of
     /// the DNB record of a German-group ISBN, or None (no record, or none named). Persists nothing. Default: Ok(None).
     async fn original_title(&self, isbn: &Isbn13) -> Result<Option<String>, LookupError> { … }
+    /// The publisher's cover of a German-group ISBN from the DNB portal (docs/phase3/notes/publisher-covers.md):
+    /// the image bytes, or None (no cover, `DNB_PORTAL_COVERS` off, not German-group). Persists nothing. Default: Ok(None).
+    async fn publisher_cover(&self, isbn: &Isbn13) -> Result<Option<bytes::Bytes>, LookupError> { … }
 }
 pub struct Resolved { pub work_id: i64, pub edition_id: Option<i64> }
 pub struct CoverQuery { pub title: String /* the main title as stored, not folded or escaped */,
@@ -1459,6 +1462,8 @@ pub async fn get_text(o: &Outbound, t: &HostThrottle, url: Url, policy: &RetryPo
 | `DNB_HARVEST_INTERVAL_MINUTES` | `240` | values below 30 are rejected at startup |
 | `DNB_HARVEST_SETS` | `dnb-all:reiheN,dnb:reiheA` | comma list of OAI setSpecs (checked against ListSets on 2026-10-27): the VLB announcements and the published titles of the book trade (Reihe A) |
 | `DNB_HARVEST_START_DAYS` | `90` | the first run of a set (no `harvested_until` yet) starts this many days back; bulk history is #63 |
+| `DNB_PORTAL_COVERS` | `false` | the cover search stores publisher covers from the DNB portal for German-group ISBNs (media source `dnb_portal`, `docs/phase3/notes/publisher-covers.md`). Private instance only: `SIGNUP_MODE=open` refuses to start with it |
+| `DNB_PORTAL_URL` | `https://portal.dnb.de/opac/mvb/cover` | asked with `?isbn=`; 1 request a second |
 | `RUST_LOG` | `info` | |
 
 `Config::from_lookup` (public) stays testable (the scaffold pattern). Invalid values fail startup with the variable name in the message. Details fixed in Wave 1:
@@ -1778,6 +1783,9 @@ impl FakeCatalog {
     // Original titles (docs/phase3/notes/original-title.md), add-only, recorded apart from both lists above.
     pub fn on_original_title(&self, isbn13: &str, answer: Result<Option<&str>, FakeError>);  // original_title
     pub fn original_calls(&self) -> Vec<String>;                                               // ISBN-13s
+    // Publisher covers (docs/phase3/notes/publisher-covers.md), add-only.
+    pub fn on_publisher_cover(&self, isbn13: &str, answer: Result<Option<Vec<u8>>, FakeError>);  // publisher_cover
+    pub fn publisher_calls(&self) -> Vec<String>;                                                 // ISBN-13s
 }
 // The tests/cover_*.rs files share tests/common_cover/mod.rs (included with #[path], like the legacy harness):
 // Open Library answers, works in use, covers, the job without its pace, and `Hook`, a lookup that acts during

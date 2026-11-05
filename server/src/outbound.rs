@@ -39,15 +39,18 @@ pub struct UpstreamUrls {
     pub openlibrary_covers: Url,
     pub dnb_sru: Url,
     pub dnb_oai: Url,
+    /// The DNB portal's cover endpoint (`DNB_PORTAL_URL`, docs/phase3/notes/publisher-covers.md).
+    pub dnb_portal: Url,
 }
 
 impl UpstreamUrls {
-    fn all(&self) -> [&Url; 4] {
+    fn all(&self) -> [&Url; 5] {
         [
             &self.openlibrary,
             &self.openlibrary_covers,
             &self.dnb_sru,
             &self.dnb_oai,
+            &self.dnb_portal,
         ]
     }
 }
@@ -65,6 +68,8 @@ pub struct Outbound {
     pub dnb_sru: HostThrottle,
     /// DNB OAI-PMH: 1 request per second.
     pub dnb_oai: HostThrottle,
+    /// The DNB portal's covers: 1 request per second.
+    pub dnb_portal: HostThrottle,
     pub urls: UpstreamUrls,
 }
 
@@ -84,11 +89,13 @@ impl Outbound {
             ol_covers: HostThrottle::per_second(5.0),
             dnb_sru: HostThrottle::per_second(1.0),
             dnb_oai: HostThrottle::per_second(1.0),
+            dnb_portal: HostThrottle::per_second(1.0),
             urls: UpstreamUrls {
                 openlibrary: config.openlibrary_url.clone(),
                 openlibrary_covers: config.openlibrary_covers_url.clone(),
                 dnb_sru: config.dnb_sru_url.clone(),
                 dnb_oai: config.dnb_oai_url.clone(),
+                dnb_portal: config.dnb_portal_url.clone(),
             },
         })
     }

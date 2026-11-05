@@ -1590,7 +1590,7 @@
       "result": {
         "attached": "Found it: Open Library's cover is the book's cover now.",
         "inherited": "The book took the cover of one of its editions.",
-        "isbn": "Open Library had the cover of an edition's ISBN.",
+        "isbn": "Found the cover by an edition's ISBN.",
         "suggested": "Found a possible cover. It waits under Suggestions.",
         "no_match": "No match on Open Library.",
         "failing": "Open Library's picture still does not load. Upload a picture instead."

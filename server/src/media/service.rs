@@ -38,7 +38,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use futures::FutureExt;
 use futures::future::{BoxFuture, Shared};
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 use tokio::sync::{Semaphore, mpsc};
 use tokio_util::sync::CancellationToken;
 use url::Url;
@@ -48,8 +48,9 @@ use super::pipeline::{self, PictureError, PictureKind, Processed};
 use crate::AppState;
 use crate::catalog::shared::ingest;
 use crate::config::Config;
-use crate::media::shared::MediaStore;
-use crate::media::shared::urls::{object_key, storage_prefix};
+use crate::media::delete_prefixes;
+use crate::media::shared::urls::{new_public_id, object_key, storage_prefix};
+use crate::media::shared::{MediaStore, NewMedia};
 use crate::outbound::{Outbound, RetryPolicy, UpstreamError, get_bytes};
 
 /// Ids the prefetch queue holds at most; further ids are dropped until the worker catches up.
@@ -271,6 +272,68 @@ impl MediaService {
             }
         }
         false
+    }
+
+    /// Stores a cover picture a background search found (a publisher cover,
+    /// docs/phase3/notes/publisher-covers.md) under a new public id, through the pipeline. Not
+    /// registered: the caller registers it in its transaction, or [`MediaService::discard_cover`]s
+    /// it. `None` when the bytes are no usable picture, or are a taken-down picture's (as
+    /// received, or one of the variants it was served as): nothing is stored then.
+    pub async fn store_found_cover(
+        &self,
+        conn: &mut PgConnection,
+        source: &'static str,
+        data: Bytes,
+    ) -> anyhow::Result<Option<(String, NewMedia<'static>)>> {
+        let processed = match self.process(PictureKind::Cover, data).await {
+            Ok(processed) => processed,
+            Err(PictureError::Encode(error)) => anyhow::bail!("cannot encode a cover: {error}"),
+            Err(refused) => {
+                tracing::info!(source, ?refused, "a found cover is no usable picture");
+                return Ok(None);
+            }
+        };
+        let removed = sqlx::query_scalar!(
+            r#"SELECT EXISTS (SELECT 1 FROM media_removed_hashes WHERE sha256 = $1)
+                      OR EXISTS (SELECT 1 FROM media WHERE sha256 = $1 AND removed_at IS NOT NULL)
+                   AS "removed!""#,
+            &processed.sha256[..]
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        if removed {
+            tracing::info!(source, "a found cover is a taken-down picture; not stored");
+            return Ok(None);
+        }
+        let public_id = new_public_id();
+        store_variants(
+            self.inner.store.as_ref(),
+            PictureKind::Cover,
+            &public_id,
+            &processed,
+        )
+        .await?;
+        let media = NewMedia {
+            kind: PictureKind::Cover.as_str(),
+            source,
+            content_type: "image/webp",
+            variants: PictureKind::Cover.variants(),
+            width: processed.width as i32,
+            height: processed.height as i32,
+            byte_size: processed.byte_size(),
+            sha256: processed.sha256,
+            dominant_color: processed.dominant_color.clone(),
+            uploaded_by: None,
+            created_at: None,
+        };
+        Ok(Some((public_id, media)))
+    }
+
+    /// Deletes the bytes [`MediaService::store_found_cover`] stored, when the transaction that
+    /// would register them did not commit.
+    pub async fn discard_cover(&self, public_id: &str) {
+        let prefix = storage_prefix(PictureKind::Cover.as_str(), public_id);
+        delete_prefixes(self.inner.store.as_ref(), &[prefix]).await;
     }
 }
 
