@@ -916,7 +916,9 @@ pub struct WorkRecord { pub source: Source, pub ol_work_id: Option<String>, pub 
     pub ol_cover_id: Option<i64>, pub full_details: bool, pub created_by: Option<i64> }
 pub struct EditionRecord { pub source: Source, pub isbn13: Option<Isbn13>, pub ol_edition_id: Option<String>,
     pub dnb_idn: Option<String>, pub dnb_record_idn: Option<String> /* None = dnb_idn; added by INT, migration 1200 */,
-    pub title: Option<String>, pub subtitle: Option<String>, pub publisher: Option<String>,
+    pub title: Option<String>, pub subtitle: Option<String>,
+    pub original_title: Option<String> /* DNB 240 $a; only a DNB record writes it (one without clears it); migration 3900 */,
+    pub publisher: Option<String>,
     pub language: Option<String>, pub format: Option<Format>, pub pages: Option<i32>,
     pub publication_year: Option<i32>, pub planned_publication_date: Patch<time::Date>,
     pub ol_cover_id: Option<i64>, pub contributors: Vec<(AuthorRecord, ContributorRole)>, pub created_by: Option<i64> }
@@ -1059,7 +1061,7 @@ pub fn match_key(title: &str, surname: &str) -> String;  pub fn search_extra(wor
 - **Covers from sources never replace a user's or an admin's cover.** A cover set by a first upload has provenance `user`; an approved `cover_replace` has `admin`. A Refresh only sets `cover_media_id` when it is NULL or has source rank (an Open Library cover may replace an older Open Library cover).
 - **Covers from the cover search** (COVER #74, `catalog::covers`, `docs/phase2/notes/cover.md`): the search looks for a picture only for a work that is not a reader's own (`source <> 'user'`), has no cover (`bc_cover_missing`), is not merged away, has no admin-cleared cover field and no reader's work-level `cover_replace` waiting. In this order it inherits the cover of the work's lowest-id edition with a usable picture (outcome `inherited`, the edition's provenance), runs the one Open Library ISBN cover check of a DNB work whose `details_fetched_at` is NULL (outcome `isbn`: the exact picture goes on that edition and fills the work), then searches Open Library by title and first author. A clear match attaches **to the work only**, never to one of our editions (it shows another edition of the same book), with provenance `openlibrary` and `set_cover(…, only_if_empty = true)`, so it fills only an empty field and never replaces a `user` or `admin` cover. An uncertain match becomes a `cover_suggestions` row; an admin's approval attaches it with provenance `admin` (`set_cover(…, Source::Admin, false)`, only while the work still has no cover), and a rejection keeps that Open Library work out for this book (and every book merged into it) for good. After a takedown of a book's cover (`cover_search.takedown_at`, written by `clear_media`) the search only suggests for it, also when the takedown lands during the search. `rematch-legacy --dry-run` runs the search with `search::Context::rollback`: every step rolls back instead of committing, and no failure is recorded.
 - **NULL work fields are filled from editions.** After any edition write, a NULL `works.pages`, `first_publish_year` (from `publication_year`, else the year of `planned_publication_date` when it is within -5000..=3000) and `cover_media_id` are filled from that edition, with the edition's provenance. So a work built from DNB or legacy facts, or a work whose only cover is a user photo of one edition, shows year, pages and cover outside an edition context too.
-- **Search sees edition titles.** `works.search_extra` is rebuilt from the work's edition titles that differ (by case fold) from the work title.
+- **Search sees edition titles and original titles.** `works.search_extra` is rebuilt from the work's edition titles and the editions' original titles (`editions.original_title`, migration 3900) that differ (by case fold) from the work title.
 - **`works.match_key`** = `casefold(collapse_ws(title))` + U+001F + `casefold(surname of the first author)`, where the surname is the part before the comma of an inverted name (`authors.sort_name`), else the last word of the name (up to its first comma). A work without author records uses the first name in `author_names`. A record without any author still gets a match key, but `DnbTitleAuthor` never groups by it (each such record makes its own work; its other ISBNs join through `upsert_dnb_record`). Rust computes it; Postgres `lower()` is not a case fold. `search_extra` joins the distinct edition titles with " / " (at most 5000 characters).
 - **Authors without an external id** (no OL id, no GND id) are deduplicated by `authors.name_key` (`casefold(collapse_ws(name))`); rows with an id are deduplicated by the id.
 - **Never overwrite from client input.** Client requests reference works and editions by id; the only client-entered values are user-added works and editions (provenance `user`) and edit requests (provenance `admin` once approved).
@@ -1089,6 +1091,9 @@ pub trait CatalogLookup: Send + Sync {
     /// The one Open Library cover check by ISBN (`/isbn/{isbn}.json`): a cover id, or None when Open Library
     /// has no such edition or no cover. Default: Ok(None).
     async fn cover_by_isbn(&self, isbn: &Isbn13) -> Result<Option<i64>, LookupError> { … }
+    /// The cover search's one DNB check (docs/phase3/notes/original-title.md): the original title (MARC 240) of
+    /// the DNB record of a German-group ISBN, or None (no record, or none named). Persists nothing. Default: Ok(None).
+    async fn original_title(&self, isbn: &Isbn13) -> Result<Option<String>, LookupError> { … }
 }
 pub struct Resolved { pub work_id: i64, pub edition_id: Option<i64> }
 pub struct CoverQuery { pub title: String /* the main title as stored, not folded or escaped */,
@@ -1128,7 +1133,7 @@ pub enum MarcError { #[error("malformed MARC21-xml: {0}")] Xml(String), #[error(
 pub fn map_record(record_xml: &str) -> Result<DnbRecord, MarcError>;
 ```
 
-- **CC0 fields only:** 001 IDN; 020 ISBNs (with the $c binding); 245 $a/$b title and subtitle; 100/700 names with $4 relator (`aut` → authors, `trl` → translator, `ill` → illustrator, `edt` → editor) and $0 GND ids; 264/260 publisher and year; 041/008 language; 300 pages; 263 planned date (`YYYYMM` → first of the month); 653 `(Produktform)…`; 337/338. **Never** 520, 856 or any other VLB text or URL.
+- **CC0 fields only:** 001 IDN; 020 ISBNs (with the $c binding); 240 $a original title (a translation's; `EditionRecord.original_title` on every edition of the record); 245 $a/$b title and subtitle; 100/700 names with $4 relator (`aut` → authors, `trl` → translator, `ill` → illustrator, `edt` → editor) and $0 GND ids; 264/260 publisher and year; 041/008 language; 300 pages; 263 planned date (`YYYYMM` → first of the month); 653 `(Produktform)…`; 337/338. **Never** 520, 856 or any other VLB text or URL.
 - **Text:** DNB's non-filing markers (U+0098 … U+009C around "Die", "The") are dropped, and the decomposed Unicode DNB delivers ("o" + U+0308) is composed to NFC; trailing ISBD separators (` /`, ` :`, ` ;`, ` =`, `,`) are trimmed.
 - **Title:** 245 `$a`, plus `$n` (". " + part number) and `$p` (". " + part name, ", " after a `$n`), so the volumes of a series ("Gesammelte Werke. Bd. 21.") never share a match key; `$b` is the subtitle.
 - **Names** come in natural order: "Paulitz, Udo" → `name` "Udo Paulitz", `sort_name` "Paulitz, Udo". `author_names` joins the `aut` names in natural order with ", ". A 100 without `$4` counts as `aut`; other relators (`aui`, `waw`, `ctb`, …) and a 700 without `$4` are not mapped; each person appears once per role. The GND id is the `$0` with prefix `(DE-588)`.
@@ -1770,6 +1775,9 @@ impl FakeCatalog {
     pub fn on_isbn_cover(&self, isbn13: &str, cover: Option<i64>);                     // cover_by_isbn
     pub fn fail_covers(&self, err: FakeError, times: usize);                           // the next `times` cover calls
     pub fn cover_calls(&self) -> Vec<String>;
+    // Original titles (docs/phase3/notes/original-title.md), add-only, recorded apart from both lists above.
+    pub fn on_original_title(&self, isbn13: &str, answer: Result<Option<&str>, FakeError>);  // original_title
+    pub fn original_calls(&self) -> Vec<String>;                                               // ISBN-13s
 }
 // The tests/cover_*.rs files share tests/common_cover/mod.rs (included with #[path], like the legacy harness):
 // Open Library answers, works in use, covers, the job without its pace, and `Hook`, a lookup that acts during

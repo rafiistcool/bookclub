@@ -26,7 +26,7 @@ use tokio_util::sync::CancellationToken;
 use super::matching::{self, Book, Pick, Reason, Verdict, language_hint};
 use crate::catalog::service::attach_checked_cover;
 use crate::catalog::shared::ingest::{self, CoverTarget, Source};
-use crate::catalog::shared::isbn::Isbn13;
+use crate::catalog::shared::isbn::{Isbn13, is_german_group};
 use crate::catalog::shared::lookup::{CatalogLookup, CoverAnswer, LookupError};
 use crate::text::truncate_chars;
 
@@ -176,6 +176,9 @@ pub struct Facts {
     state: CandidateState,
     details_open: bool,
     first_isbn: Option<(i64, Isbn13)>,
+    /// The edition the one DNB check asks about: the first with a German-group ISBN that no DNB
+    /// record has told its original title yet, when no edition has one.
+    dnb_check: Option<(i64, Isbn13)>,
     edition_cover: Option<EditionCover>,
     blocked: HashSet<String>,
     open_suggestion: Option<i64>,
@@ -321,7 +324,9 @@ pub async fn facts(conn: &mut PgConnection, work_id: i64) -> sqlx::Result<Option
     .fetch_one(&mut *conn)
     .await?;
     let editions = sqlx::query!(
-        "SELECT id, title, subtitle, language, isbn13 FROM editions WHERE work_id = $1 ORDER BY id",
+        r#"SELECT id, title, subtitle, language, isbn13, original_title,
+                  original_title_checked_at IS NULL AS "unchecked!"
+           FROM editions WHERE work_id = $1 ORDER BY id"#,
         work_id
     )
     .fetch_all(&mut *conn)
@@ -331,6 +336,21 @@ pub async fn facts(conn: &mut PgConnection, work_id: i64) -> sqlx::Result<Option
     let first_isbn = editions
         .iter()
         .find_map(|e| e.isbn13.clone().map(|isbn| (e.id, Isbn13(isbn))));
+    let mut original_titles: Vec<String> = Vec::new();
+    for title in editions.iter().filter_map(|e| e.original_title.clone()) {
+        if !original_titles.contains(&title) {
+            original_titles.push(title);
+        }
+    }
+    let dnb_check = if original_titles.is_empty() {
+        editions
+            .iter()
+            .filter(|e| e.unchecked)
+            .filter_map(|e| e.isbn13.clone().map(|isbn| (e.id, Isbn13(isbn))))
+            .find(|(_, isbn)| is_german_group(isbn))
+    } else {
+        None
+    };
     let author = match work.first_name {
         Some(name) => Some((name, work.first_sort)),
         None => work
@@ -351,6 +371,7 @@ pub async fn facts(conn: &mut PgConnection, work_id: i64) -> sqlx::Result<Option
                     .map(|title| (title, e.subtitle.clone().unwrap_or_default()))
             })
             .collect(),
+        original_titles,
         author,
         ol_work_id: work.ol_work_id,
         language: language_hint(&languages, &isbns),
@@ -373,6 +394,7 @@ pub async fn facts(conn: &mut PgConnection, work_id: i64) -> sqlx::Result<Option
         in_use: work.in_use,
         details_open: work.details_open,
         first_isbn,
+        dnb_check,
         edition_cover: edition_cover(conn, work_id).await?,
         blocked,
         open_suggestion: open_suggestion(conn, work_id).await?,
@@ -390,7 +412,7 @@ pub async fn search_one(
     let started: OffsetDateTime = sqlx::query_scalar!(r#"SELECT clock_timestamp() AS "now!""#)
         .fetch_one(&mut *conn)
         .await?;
-    let Some(facts) = facts(conn, work_id).await? else {
+    let Some(mut facts) = facts(conn, work_id).await? else {
         return Ok(Outcome::Skipped);
     };
     if !facts.candidate(ctx.forced) {
@@ -449,6 +471,20 @@ pub async fn search_one(
             Err(LookupError::Db(error)) => return Err(error),
         }
     }
+    if let Some((edition_id, isbn)) = facts.dnb_check.take() {
+        // The one DNB check (notes "original-title"): without an answer it stays open for the
+        // next attempt, and this one goes on without.
+        match ctx.lookup.original_title(&isbn).await {
+            Ok(original) => {
+                let mut tx = conn.begin().await?;
+                ingest::record_original_title(&mut tx, edition_id, original.as_deref()).await?;
+                finish(tx, ctx.rollback).await?;
+                facts.book.original_titles.extend(original);
+            }
+            Err(LookupError::Db(error)) => return Err(error),
+            Err(LookupError::Throttled | LookupError::Unavailable) => {}
+        }
+    }
     let Some(query) = facts.book.query() else {
         let mut tx = conn.begin().await?;
         record(
@@ -462,25 +498,35 @@ pub async fn search_one(
         finish(tx, ctx.rollback).await?;
         return Ok(Outcome::NoMatch);
     };
-    if !ctx.pacer.wait().await {
-        return Ok(Outcome::Stopped);
-    }
-    let answer = match ctx.lookup.cover_candidates(&query).await {
-        Ok(answer) => answer,
-        Err(LookupError::Throttled) => return Ok(Outcome::Throttled),
-        Err(LookupError::Unavailable) => {
-            if !ctx.rollback {
-                record_failure(conn, work_id, "Open Library's search had no answer").await?;
-            }
-            return Ok(Outcome::Unavailable);
+    let mut queries = vec![query];
+    // Asked only when the one before found nothing: a translation's original title.
+    queries.extend(facts.book.original_queries());
+    let mut verdict = Verdict::NoMatch;
+    let mut refused = None;
+    for query in &queries {
+        if !ctx.pacer.wait().await {
+            return Ok(Outcome::Stopped);
         }
-        Err(LookupError::Db(error)) => return Err(error),
-    };
-    let unusable = unusable_covers(conn, &answer).await?;
-    let verdict = matching::verdict(&facts.book, &answer, &facts.blocked, &unusable);
-    let refused = answer
-        .refused
-        .map(|status| format!("Open Library refused the query ({status})"));
+        let answer = match ctx.lookup.cover_candidates(query).await {
+            Ok(answer) => answer,
+            Err(LookupError::Throttled) => return Ok(Outcome::Throttled),
+            Err(LookupError::Unavailable) => {
+                if !ctx.rollback {
+                    record_failure(conn, work_id, "Open Library's search had no answer").await?;
+                }
+                return Ok(Outcome::Unavailable);
+            }
+            Err(LookupError::Db(error)) => return Err(error),
+        };
+        let unusable = unusable_covers(conn, &answer).await?;
+        verdict = matching::verdict(&facts.book, &answer, &facts.blocked, &unusable);
+        refused = answer
+            .refused
+            .map(|status| format!("Open Library refused the query ({status})"));
+        if !matches!(verdict, Verdict::NoMatch) || refused.is_some() {
+            break;
+        }
+    }
     apply(conn, ctx, &facts, verdict, refused, started).await
 }
 

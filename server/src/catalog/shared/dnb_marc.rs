@@ -2,8 +2,8 @@
 //! (docs/phase1/conventions.md §7.5). Each caller hands it one `<record>` element; envelopes,
 //! OAI headers and deleted records stay with the caller.
 //!
-//! Only CC0 fields are read: 001, 008, 020, 041, 100/700, 245, 260/264, 263, 300, 337/338 and
-//! the `(Produktform)` 653. Every other field, notably 520 (VLB blurbs) and 856 (links to VLB
+//! Only CC0 fields are read: 001, 008, 020, 041, 100/700, 240, 245, 260/264, 263, 300, 337/338
+//! and the `(Produktform)` 653. Every other field, notably 520 (VLB blurbs) and 856 (links to VLB
 //! texts and publisher sites), is skipped while parsing and never reaches a record.
 
 use std::sync::LazyLock;
@@ -42,7 +42,7 @@ pub enum MarcError {
 
 /// The data fields the mapping reads. Everything else is dropped by the parser.
 const READ_TAGS: &[&str] = &[
-    "020", "041", "100", "245", "260", "263", "264", "300", "337", "338", "653", "700",
+    "020", "041", "100", "240", "245", "260", "263", "264", "300", "337", "338", "653", "700",
 ];
 
 /// DNB announces books a year or two ahead. A year further out than this is one of its
@@ -247,6 +247,15 @@ fn title(marc: &Marc) -> (Option<String>, Option<String>) {
     }
     let subtitle = field.first("b").map(clean).and_then(non_empty);
     (non_empty(title), subtitle)
+}
+
+/// 240 `$a`: the original title of a translation ("The name of the wind" on "Der Name des
+/// Windes").
+fn original_title(marc: &Marc) -> Option<String> {
+    marc.fields("240")
+        .find_map(|f| f.first("a"))
+        .map(clean)
+        .and_then(non_empty)
 }
 
 /// "Paulitz, Udo" → ("Udo Paulitz", Some("Paulitz, Udo")); a name without a comma is kept.
@@ -503,6 +512,7 @@ fn map_record_until(record_xml: &str, latest: i32) -> Result<DnbRecord, MarcErro
     let first_publisher = imprints.iter().find_map(|(p, _)| p.clone());
     let publication_year = imprints.iter().find_map(|(_, y)| *y);
     let language = language(&marc);
+    let original_title = original_title(&marc);
     let pages = pages(&marc);
     let planned = planned_date(&marc, latest);
     let produktform: Vec<&str> = marc
@@ -551,6 +561,7 @@ fn map_record_until(record_xml: &str, latest: i32) -> Result<DnbRecord, MarcErro
         dnb_record_idn: Some(idn.clone()),
         title: Some(title.clone()),
         subtitle: subtitle.clone(),
+        original_title: original_title.clone(),
         publisher: publisher_of(isbn.and_then(|e| e.qualifier.as_deref())),
         language: language.clone(),
         format: Some(format_of(isbn.and_then(|e| e.binding.as_deref()))),
@@ -622,6 +633,28 @@ mod tests {
             .map(|(code, value)| format!(r#"<subfield code="{code}">{value}</subfield>"#))
             .collect();
         format!(r#"<datafield tag="{tag}" ind1=" " ind2="{ind2}">{subfields}</datafield>"#)
+    }
+
+    /// 240 `$a` is a translation's original title, on every edition of the record; DNB's
+    /// non-filing markers are dropped. A record without 240 has none.
+    #[test]
+    fn the_original_title_comes_from_240() {
+        let fields = format!(
+            "{}{}{}",
+            datafield("240", "0", &[("a", "\u{98}The\u{9c} name of the wind")]),
+            isbn_field("9783608938159", "Gb."),
+            isbn_field("9783608939811", "kart."),
+        );
+        let rec = map_record(&record(&fields)).unwrap();
+        assert_eq!(rec.editions.len(), 2);
+        for edition in &rec.editions {
+            assert_eq!(
+                edition.original_title.as_deref(),
+                Some("The name of the wind")
+            );
+        }
+        let rec = map_record(&record(&isbn_field("9783608938159", "Gb."))).unwrap();
+        assert_eq!(rec.editions[0].original_title, None);
     }
 
     fn formats(rec: &DnbRecord) -> Vec<Option<Format>> {

@@ -361,4 +361,22 @@ impl CatalogLookup for CatalogService {
             .await
             .map_err(|error| lookup_error(&error))
     }
+
+    /// The DNB record's 240 by SRU (`dnb_record`), for German-group ISBNs only.
+    async fn original_title(&self, isbn: &Isbn13) -> Result<Option<String>, LookupError> {
+        if !is_german_group(isbn) {
+            return Ok(None);
+        }
+        let record = self
+            .dnb_record(isbn)
+            .await
+            .map_err(|error| lookup_error(&error))?;
+        Ok(record.and_then(|record| {
+            record
+                .editions
+                .into_iter()
+                .find(|edition| edition.isbn13.as_ref() == Some(isbn))
+                .and_then(|edition| edition.original_title)
+        }))
+    }
 }

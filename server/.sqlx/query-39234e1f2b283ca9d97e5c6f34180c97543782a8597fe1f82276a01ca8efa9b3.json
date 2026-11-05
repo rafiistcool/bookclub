@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT e.id, e.work_id, e.isbn13, e.title, e.subtitle, e.publisher, e.language,\n                  e.format, e.pages, e.publication_year, e.planned_publication_date,\n                  e.ol_edition_id, e.dnb_idn, e.dnb_record_idn, e.source, e.cover_media_id,\n                  e.field_sources AS \"field_sources: Json<Map<String, Value>>\",\n                  e.withdrawn_at IS NOT NULL AS \"withdrawn!\",\n                  (SELECT count(*) FROM edition_contributors c WHERE c.edition_id = e.id)\n                      AS \"contributor_count!\"\n           FROM editions e\n           WHERE e.isbn13 = $1 OR e.dnb_idn = $2 OR e.ol_edition_id = $3\n           ORDER BY (e.isbn13 = $1) IS TRUE DESC, (e.dnb_idn = $2) IS TRUE DESC, e.id\n           LIMIT 1\n           FOR UPDATE OF e",
+  "query": "SELECT e.id, e.work_id, e.isbn13, e.title, e.subtitle, e.original_title,\n                  e.original_title_checked_at IS NOT NULL AS \"original_checked!\",\n                  e.publisher, e.language,\n                  e.format, e.pages, e.publication_year, e.planned_publication_date,\n                  e.ol_edition_id, e.dnb_idn, e.dnb_record_idn, e.source, e.cover_media_id,\n                  e.field_sources AS \"field_sources: Json<Map<String, Value>>\",\n                  e.withdrawn_at IS NOT NULL AS \"withdrawn!\",\n                  (SELECT count(*) FROM edition_contributors c WHERE c.edition_id = e.id)\n                      AS \"contributor_count!\"\n           FROM editions e\n           WHERE e.isbn13 = $1 OR e.dnb_idn = $2 OR e.ol_edition_id = $3\n           ORDER BY (e.isbn13 = $1) IS TRUE DESC, (e.dnb_idn = $2) IS TRUE DESC, e.id\n           LIMIT 1\n           FOR UPDATE OF e",
   "describe": {
     "columns": [
       {
@@ -60,6 +60,23 @@
       },
       {
         "ordinal": 5,
+        "name": "original_title",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "original_title"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "original_checked!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
         "name": "publisher",
         "type_info": "Text",
         "origin": {
@@ -70,7 +87,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 8,
         "name": "language",
         "type_info": "Text",
         "origin": {
@@ -81,7 +98,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 9,
         "name": "format",
         "type_info": "Text",
         "origin": {
@@ -92,7 +109,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 10,
         "name": "pages",
         "type_info": "Int4",
         "origin": {
@@ -103,7 +120,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 11,
         "name": "publication_year",
         "type_info": "Int4",
         "origin": {
@@ -114,7 +131,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 12,
         "name": "planned_publication_date",
         "type_info": "Date",
         "origin": {
@@ -125,7 +142,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 13,
         "name": "ol_edition_id",
         "type_info": "Text",
         "origin": {
@@ -136,7 +153,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 14,
         "name": "dnb_idn",
         "type_info": "Text",
         "origin": {
@@ -147,7 +164,7 @@
         }
       },
       {
-        "ordinal": 13,
+        "ordinal": 15,
         "name": "dnb_record_idn",
         "type_info": "Text",
         "origin": {
@@ -158,7 +175,7 @@
         }
       },
       {
-        "ordinal": 14,
+        "ordinal": 16,
         "name": "source",
         "type_info": "Text",
         "origin": {
@@ -169,7 +186,7 @@
         }
       },
       {
-        "ordinal": 15,
+        "ordinal": 17,
         "name": "cover_media_id",
         "type_info": "Int8",
         "origin": {
@@ -180,7 +197,7 @@
         }
       },
       {
-        "ordinal": 16,
+        "ordinal": 18,
         "name": "field_sources: Json<Map<String, Value>>",
         "type_info": "Jsonb",
         "origin": {
@@ -191,13 +208,13 @@
         }
       },
       {
-        "ordinal": 17,
+        "ordinal": 19,
         "name": "withdrawn!",
         "type_info": "Bool",
         "origin": "Expression"
       },
       {
-        "ordinal": 18,
+        "ordinal": 20,
         "name": "contributor_count!",
         "type_info": "Int8",
         "origin": "Expression"
@@ -216,6 +233,8 @@
       true,
       true,
       true,
+      true,
+      null,
       false,
       true,
       true,
@@ -232,5 +251,5 @@
       null
     ]
   },
-  "hash": "c3ab8ff4131108df20cedfcadf0292b33fc816e23dd24fdbf63d2fd1dcc30664"
+  "hash": "39234e1f2b283ca9d97e5c6f34180c97543782a8597fe1f82276a01ca8efa9b3"
 }
