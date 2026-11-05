@@ -237,6 +237,7 @@ pub async fn run(
             always_suggest: false,
             forced: false,
             rollback: false,
+            media: Some(state.media_service.as_ref()),
         };
         let outcome = search_one(conn, &mut ctx, work_id).await?;
         if outcome.answered() {

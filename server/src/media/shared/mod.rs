@@ -13,7 +13,7 @@ pub use store::{FsMediaStore, MediaStore, MemMediaStore};
 pub struct NewMedia<'a> {
     /// `cover` or `avatar`.
     pub kind: &'a str,
-    /// `upload`, `openlibrary` or `legacy`.
+    /// `upload`, `openlibrary`, `legacy` or `dnb_portal` (a publisher cover, migration 3901).
     pub source: &'a str,
     /// `image/webp` or `image/jpeg`.
     pub content_type: &'a str,

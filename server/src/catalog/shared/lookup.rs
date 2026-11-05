@@ -55,6 +55,14 @@ pub trait CatalogLookup: Send + Sync {
     async fn original_title(&self, _isbn: &Isbn13) -> Result<Option<String>, LookupError> {
         Ok(None)
     }
+
+    /// The publisher's cover of a German-group ISBN from the DNB portal
+    /// (docs/phase3/notes/publisher-covers.md): the image bytes as received, or `None` when the
+    /// portal has none, `DNB_PORTAL_COVERS` is off or the ISBN is not German-group. Persists
+    /// nothing. Default: `None`.
+    async fn publisher_cover(&self, _isbn: &Isbn13) -> Result<Option<bytes::Bytes>, LookupError> {
+        Ok(None)
+    }
 }
 
 /// What the cover search asks Open Library (#74).

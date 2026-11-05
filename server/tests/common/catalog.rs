@@ -77,6 +77,9 @@ struct FakeState {
     /// The DNB original-title checks by ISBN-13: a title, none, or no answer.
     original_titles: HashMap<String, Result<Option<String>, FakeError>>,
     original_calls: Vec<String>,
+    /// The DNB portal's publisher covers by ISBN-13: the bytes, none, or no answer.
+    publisher_covers: HashMap<String, Result<Option<Vec<u8>>, FakeError>>,
+    publisher_calls: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -149,6 +152,19 @@ impl FakeCatalog {
     /// Every DNB original-title check so far, as ISBN-13s.
     pub fn original_calls(&self) -> Vec<String> {
         self.lock().original_calls.clone()
+    }
+
+    /// `publisher_cover(isbn13)` answers `answer` (image bytes, none, or no answer).
+    /// Unprogrammed ISBNs have none.
+    pub fn on_publisher_cover(&self, isbn13: &str, answer: Result<Option<Vec<u8>>, FakeError>) {
+        self.lock()
+            .publisher_covers
+            .insert(isbn13.to_owned(), answer);
+    }
+
+    /// Every DNB portal request so far, as ISBN-13s.
+    pub fn publisher_calls(&self) -> Vec<String> {
+        self.lock().publisher_calls.clone()
     }
 
     /// The next `times` cover searches and ISBN cover checks fail with `err`.
@@ -358,6 +374,17 @@ impl CatalogLookup for FakeCatalog {
         state.original_calls.push(isbn.as_str().to_owned());
         match state.original_titles.get(isbn.as_str()).cloned() {
             Some(answer) => answer.map_err(LookupError::from),
+            None => Ok(None),
+        }
+    }
+
+    async fn publisher_cover(&self, isbn: &Isbn13) -> Result<Option<bytes::Bytes>, LookupError> {
+        let mut state = self.lock();
+        state.publisher_calls.push(isbn.as_str().to_owned());
+        match state.publisher_covers.get(isbn.as_str()).cloned() {
+            Some(answer) => answer
+                .map(|bytes| bytes.map(bytes::Bytes::from))
+                .map_err(LookupError::from),
             None => Ok(None),
         }
     }

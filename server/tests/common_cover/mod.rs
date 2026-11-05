@@ -259,6 +259,7 @@ pub async fn search_on(
         always_suggest: true,
         forced,
         rollback: false,
+        media: None,
     };
     search_one(conn, &mut ctx, work_id).await.unwrap()
 }

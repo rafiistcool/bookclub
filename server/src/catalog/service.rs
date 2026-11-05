@@ -15,7 +15,7 @@ use super::shared::lookup::{
 };
 use crate::config::Config;
 use crate::error::is_deadlock;
-use crate::outbound::Outbound;
+use crate::outbound::{Outbound, RetryPolicy, UpstreamError, get_bytes};
 
 /// Entries of the Open Library response cache (search pages, trending, subjects, works,
 /// authors, ISBN searches).
@@ -30,15 +30,18 @@ pub struct CatalogService {
     pub(crate) json: JsonCache,
     /// DNB SRU `<record>` elements per ISBN.
     pub(crate) sru: ResponseCache<String, Arc<Vec<String>>>,
+    /// `DNB_PORTAL_COVERS`: [`CatalogLookup::publisher_cover`] asks the DNB portal.
+    portal_covers: bool,
 }
 
 impl CatalogService {
     /// Frozen constructor.
-    pub fn new(_config: &Config, outbound: Arc<Outbound>) -> Self {
+    pub fn new(config: &Config, outbound: Arc<Outbound>) -> Self {
         Self {
             outbound,
             json: ResponseCache::new(JSON_CACHE_ENTRIES, CACHE_TTL),
             sru: ResponseCache::new(SRU_CACHE_ENTRIES, CACHE_TTL),
+            portal_covers: config.dnb_portal_covers,
         }
     }
 
@@ -378,5 +381,143 @@ impl CatalogLookup for CatalogService {
                 .find(|edition| edition.isbn13.as_ref() == Some(isbn))
                 .and_then(|edition| edition.original_title)
         }))
+    }
+
+    /// `{DNB_PORTAL_URL}?isbn={isbn}` through the `dnb_portal` throttle, with the media policy
+    /// (1.5 MB at most). The portal answers 200 with the image, or 404 when it has none.
+    async fn publisher_cover(&self, isbn: &Isbn13) -> Result<Option<bytes::Bytes>, LookupError> {
+        if !self.portal_covers || !is_german_group(isbn) {
+            return Ok(None);
+        }
+        let mut url = self.outbound.urls.dnb_portal.clone();
+        url.query_pairs_mut().clear().append_pair("isbn", &isbn.0);
+        match get_bytes(
+            &self.outbound,
+            &self.outbound.dnb_portal,
+            url,
+            &RetryPolicy::MEDIA,
+        )
+        .await
+        {
+            Ok(upstream) => {
+                let image = upstream
+                    .headers
+                    .get(axum::http::header::CONTENT_TYPE)
+                    .and_then(|value| value.to_str().ok())
+                    .is_some_and(|value| value.trim_start().starts_with("image/"));
+                Ok(image.then_some(upstream.body))
+            }
+            Err(
+                UpstreamError::Status(404 | 410)
+                | UpstreamError::Redirect(_)
+                | UpstreamError::TooLarge(_),
+            ) => Ok(None),
+            Err(UpstreamError::Throttled) => Err(LookupError::Throttled),
+            Err(
+                UpstreamError::Status(_) | UpstreamError::Transport(_) | UpstreamError::Decode(_),
+            ) => Err(LookupError::Unavailable),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
+    use crate::catalog::shared::isbn::parse_isbn;
+
+    fn service(server: &MockServer, portal_covers: bool) -> CatalogService {
+        let portal = format!("{}/opac/mvb/cover", server.uri());
+        let pairs = [
+            ("DATABASE_URL", "postgres://x".to_owned()),
+            ("DEV_MODE", "true".to_owned()),
+            ("DNB_PORTAL_URL", portal),
+            ("DNB_PORTAL_COVERS", portal_covers.to_string()),
+        ];
+        let config = Config::from_lookup(|key| {
+            pairs
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.clone())
+        })
+        .unwrap();
+        let mut outbound = Outbound::new(&config).unwrap();
+        outbound.dnb_portal = crate::outbound::HostThrottle::per_second(1000.0);
+        CatalogService::new(&config, Arc::new(outbound))
+    }
+
+    /// The portal answers 200 with the image, or 404 (an HTML page) when it has none.
+    #[tokio::test]
+    async fn the_portal_gives_the_image_or_none() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/opac/mvb/cover"))
+            .and(query_param("isbn", "9783462050493"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "image/jpeg; charset=UTF-8")
+                    .set_body_bytes(b"\xff\xd8\xff picture".to_vec()),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/opac/mvb/cover"))
+            .and(query_param("isbn", "9783161484100"))
+            .respond_with(
+                ResponseTemplate::new(404)
+                    .insert_header("content-type", "text/html;charset=utf-8")
+                    .set_body_string("<html>Not found</html>"),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/opac/mvb/cover"))
+            .and(query_param("isbn", "9783608938159"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/html")
+                    .set_body_string("<html>maintenance</html>"),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/opac/mvb/cover"))
+            .and(query_param("isbn", "9783446264380"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        let catalog = service(&server, true);
+        let isbn = |raw: &str| parse_isbn(raw).unwrap();
+
+        let hit = catalog
+            .publisher_cover(&isbn("9783462050493"))
+            .await
+            .unwrap();
+        assert_eq!(hit.as_deref(), Some(&b"\xff\xd8\xff picture"[..]));
+        let miss = catalog.publisher_cover(&isbn("9783161484100")).await;
+        assert!(matches!(miss, Ok(None)), "{miss:?}");
+        let page = catalog.publisher_cover(&isbn("9783608938159")).await;
+        assert!(matches!(page, Ok(None)), "not an image: {page:?}");
+        let failing = catalog.publisher_cover(&isbn("9783446264380")).await;
+        assert!(
+            matches!(failing, Err(LookupError::Unavailable)),
+            "{failing:?}"
+        );
+        // Not German-group: never asked.
+        let english = catalog.publisher_cover(&isbn("9781526622433")).await;
+        assert!(matches!(english, Ok(None)), "{english:?}");
+        assert_eq!(server.received_requests().await.unwrap().len(), 4);
+    }
+
+    /// Without `DNB_PORTAL_COVERS` the portal is never asked.
+    #[tokio::test]
+    async fn the_setting_is_off_by_default() {
+        let server = MockServer::start().await;
+        let catalog = service(&server, false);
+        let isbn = parse_isbn("9783462050493").unwrap();
+        assert!(matches!(catalog.publisher_cover(&isbn).await, Ok(None)));
+        assert!(server.received_requests().await.unwrap().is_empty());
     }
 }

@@ -719,6 +719,7 @@ pub async fn search_cover(
         always_suggest: true,
         forced: true,
         rollback: false,
+        media: Some(state.media_service.as_ref()),
     };
     let outcome = search_one(&mut conn, &mut ctx, work_id).await?;
     let (name, suggestion) = match outcome {
