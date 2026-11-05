@@ -38,6 +38,22 @@ describe("BookCover", () => {
     expect(wrapper.get(".monogram").text()).toBe("C");
   });
 
+  it("stamps the title and the author on the cloth when the book has no cover", () => {
+    const wrapper = mount(BookCover, {
+      props: {
+        book: { ...circe, authors: " Madeline Miller ", cover_url: null, cover_thumb_url: null },
+        size: "md",
+      },
+    });
+    expect(wrapper.get(".binding-title").text()).toBe("Circe");
+    expect(wrapper.get(".binding-author").text()).toBe("Madeline Miller");
+    expect(wrapper.get(".binding-face").attributes("aria-hidden")).toBe("true");
+    const anonymous = mount(BookCover, {
+      props: { book: { ...circe, authors: "", cover_url: null, cover_thumb_url: null } },
+    });
+    expect(anonymous.find(".binding-author").exists()).toBe(false);
+  });
+
   it("never renders a cover from another host", () => {
     const wrapper = mount(BookCover, {
       props: {
