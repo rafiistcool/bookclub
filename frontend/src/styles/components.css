@@ -416,37 +416,86 @@
   pointer-events: none;
 }
 
+/* The stamping, set inside the foil frame: the title from the top, a short
+   rule, the author at the foot, centred like a cloth binding. */
+.cover .binding-face {
+  position: absolute;
+  inset: 7cqw 7cqw 7cqw 14cqw;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 11cqw 7cqw 9cqw;
+  text-align: center;
+  font-family: var(--serif);
+}
+
 .cover .monogram {
   display: none;
-  font-family: var(--serif);
   font-size: 42cqw;
   line-height: 1;
 }
 
 .cover .binding-title {
   width: 100%;
-  padding: 0 13cqw 14cqw 20cqw;
-  font-family: var(--serif);
-  font-size: clamp(9px, 11.5cqw, 22px);
+  font-size: clamp(9px, 12.5cqw, 24px);
   font-weight: 600;
-  line-height: 1.16;
-  text-align: center;
+  line-height: 1.12;
+  text-wrap: balance;
+  /* Long German compounds: hyphenated in the page's language (the UI
+     locale), broken anywhere only as the last resort. */
+  -webkit-hyphens: auto;
+  hyphens: auto;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+
+.cover .binding-rule {
+  flex: none;
+  width: 16cqw;
+  height: 1px;
+  margin-top: 8cqw;
+  background: currentColor;
+  opacity: 0.55;
+}
+
+.cover .binding-author {
+  width: 100%;
+  margin-top: auto;
+  font-size: clamp(8px, 7.5cqw, 14px);
+  line-height: 1.2;
+  opacity: 0.85;
   text-wrap: balance;
   overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 5;
+  -webkit-line-clamp: 2;
   overflow: hidden;
 }
 
-/* Too small to typeset a title: fall back to the initial. */
+/* Too small to typeset a title: the initial over the rule, centred on the
+   board right of the hinge. */
+.cover.size-xs .binding-face,
+.cover.size-sm .binding-face {
+  inset: 0 0 0 8cqw;
+  justify-content: center;
+  padding: 0;
+}
 .cover.size-xs .monogram,
 .cover.size-sm .monogram {
   display: block;
-  padding-left: 6cqw;
+}
+.cover.size-xs .binding-rule,
+.cover.size-sm .binding-rule {
+  width: 26cqw;
+  margin-top: 6cqw;
 }
 .cover.size-xs .binding-title,
 .cover.size-sm .binding-title,
+.cover.size-xs .binding-author,
+.cover.size-sm .binding-author,
 .cover.size-xs::after,
 .cover.size-sm::after {
   display: none;

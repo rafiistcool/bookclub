@@ -42,6 +42,8 @@ const width = computed(() =>
   size.value === "fluid" || size.value === "tile" ? undefined : WIDTHS[size.value],
 );
 const height = computed(() => (width.value ? Math.round(width.value * 1.5) : undefined));
+// The stamped author line of the cloth: the names as the catalog writes them.
+const author = computed(() => props.book.authors?.trim() ?? "");
 
 function clearRetry() {
   if (retryTimer !== null) clearTimeout(retryTimer);
@@ -85,9 +87,14 @@ onBeforeUnmount(clearRetry);
 <template>
   <span class="cover" :class="`size-${size}`" :style="binding">
     <!-- A cloth binding sits underneath so a slow or missing cover still
-         reads as a book instead of an empty rectangle. -->
-    <span class="monogram" aria-hidden="true">{{ monogram(book.title) }}</span>
-    <span class="binding-title" aria-hidden="true">{{ book.title }}</span>
+         reads as a book: title and author stamped on it like a library
+         binding, the initial alone where a title cannot be set. -->
+    <span class="binding-face" aria-hidden="true">
+      <span class="monogram">{{ monogram(book.title) }}</span>
+      <span class="binding-title">{{ book.title }}</span>
+      <span class="binding-rule"></span>
+      <span v-if="author" class="binding-author">{{ author }}</span>
+    </span>
     <img
       v-if="src"
       :key="attempt"
