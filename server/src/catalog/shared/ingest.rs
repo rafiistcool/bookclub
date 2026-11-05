@@ -212,6 +212,9 @@ pub struct EditionRecord {
     /// Stored only when it differs (by case fold) from the work title.
     pub title: Option<String>,
     pub subtitle: Option<String>,
+    /// The original title of a translation (DNB 240 `$a`). Only a DNB record writes it, and a
+    /// DNB record without one clears it; other sources leave it as it is.
+    pub original_title: Option<String>,
     pub publisher: Option<String>,
     /// ISO 639-2/B, e.g. `ger`.
     pub language: Option<String>,
@@ -236,6 +239,7 @@ impl EditionRecord {
             dnb_record_idn: None,
             title: None,
             subtitle: None,
+            original_title: None,
             publisher: None,
             language: None,
             format: None,
@@ -365,8 +369,8 @@ pub fn match_key(title: &str, surname: &str) -> String {
     truncate_chars(&key, 1500).to_owned()
 }
 
-/// `works.search_extra`: the edition titles that differ by case fold from the work title,
-/// deduplicated the same way, " / "-joined.
+/// `works.search_extra`: the edition titles (and original titles) that differ by case fold from
+/// the work title, deduplicated the same way, " / "-joined.
 pub fn search_extra(work_title: &str, edition_titles: &[String]) -> String {
     let mut seen = HashSet::from([casefold(&collapse_ws(work_title))]);
     let titles: Vec<&str> = edition_titles
@@ -697,6 +701,7 @@ struct CleanEdition {
     dnb_record_idn: Option<String>,
     title: Option<String>,
     subtitle: Option<String>,
+    original_title: Option<String>,
     publisher: Option<String>,
     language: Option<String>,
     format: Option<String>,
@@ -724,6 +729,7 @@ impl CleanEdition {
             dnb_idn,
             title: clean_line(rec.title.as_deref(), 1000),
             subtitle: clean_line(rec.subtitle.as_deref(), 1000),
+            original_title: clean_line(rec.original_title.as_deref(), 1000),
             publisher: clean_line(rec.publisher.as_deref(), 300),
             language: clean_language(rec.language.as_deref()),
             format: rec.format.map(|f| f.as_str().to_owned()),
@@ -1477,14 +1483,15 @@ pub async fn upsert_work_stubs(
     Ok(out)
 }
 
-/// Rebuilds `search_extra` and `match_key` from the work's title, first author and edition
-/// titles.
+/// Rebuilds `search_extra` and `match_key` from the work's title, first author, and the edition
+/// titles and original titles.
 async fn refresh_derived(conn: &mut PgConnection, work_id: i64) -> sqlx::Result<()> {
     let Some(row) = sqlx::query!(
         r#"SELECT w.title, w.author_names, w.search_extra, w.match_key,
                   fa.name AS "first_name?", fa.sort_name AS "first_sort?",
-                  ARRAY(SELECT e.title FROM editions e
-                        WHERE e.work_id = w.id AND e.title IS NOT NULL ORDER BY e.id)
+                  ARRAY(SELECT t.title FROM editions e
+                        CROSS JOIN LATERAL (VALUES (1, e.title), (2, e.original_title)) t (n, title)
+                        WHERE e.work_id = w.id AND t.title IS NOT NULL ORDER BY e.id, t.n)
                       AS "edition_titles!: Vec<String>"
            FROM works w
            LEFT JOIN LATERAL (
@@ -1585,6 +1592,8 @@ struct EditionRow {
     isbn13: Option<String>,
     title: Option<String>,
     subtitle: Option<String>,
+    original_title: Option<String>,
+    original_checked: bool,
     publisher: String,
     language: Option<String>,
     format: Option<String>,
@@ -1611,7 +1620,9 @@ async fn find_edition(
     }
     sqlx::query_as!(
         EditionRow,
-        r#"SELECT e.id, e.work_id, e.isbn13, e.title, e.subtitle, e.publisher, e.language,
+        r#"SELECT e.id, e.work_id, e.isbn13, e.title, e.subtitle, e.original_title,
+                  e.original_title_checked_at IS NOT NULL AS "original_checked!",
+                  e.publisher, e.language,
                   e.format, e.pages, e.publication_year, e.planned_publication_date,
                   e.ol_edition_id, e.dnb_idn, e.dnb_record_idn, e.source, e.cover_media_id,
                   e.field_sources AS "field_sources: Json<Map<String, Value>>",
@@ -1668,12 +1679,14 @@ async fn insert_edition(
             prov.set(field, ed.source);
         }
     }
+    let from_dnb = ed.source == Source::Dnb;
     let id = sqlx::query_scalar!(
         "INSERT INTO editions (work_id, isbn13, title, subtitle, publisher, language, format,
                                pages, publication_year, planned_publication_date, ol_edition_id,
                                dnb_idn, dnb_record_idn, source, cover_media_id, created_by,
-                               field_sources)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                               field_sources, original_title, original_title_checked_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
+                 CASE WHEN $18 THEN $19 END, CASE WHEN $18 THEN now() END)
          ON CONFLICT DO NOTHING
          RETURNING id",
         work_id,
@@ -1692,7 +1705,9 @@ async fn insert_edition(
         source,
         cover,
         ed.created_by,
-        prov.to_value()
+        prov.to_value(),
+        from_dnb,
+        ed.original_title
     )
     .fetch_optional(&mut *conn)
     .await?;
@@ -1745,6 +1760,14 @@ async fn update_edition(
     );
     m.mark("contributors", contributors);
 
+    // Only the DNB tells original titles, and its records are complete: one without 240 clears.
+    let from_dnb = ed.source == Source::Dnb;
+    let original_changed =
+        from_dnb && (!row.original_checked || row.original_title != ed.original_title);
+    if from_dnb {
+        row.original_title = ed.original_title.clone();
+    }
+
     let mut identity_changed = row.withdrawn;
     if let Some(idn) = &ed.dnb_idn
         && row.dnb_idn.as_ref() != Some(idn)
@@ -1792,13 +1815,16 @@ async fn update_edition(
         identity_changed = true;
     }
     let source = upgraded_source(&row.source, ed.source);
-    if m.changed || identity_changed || source != row.source {
+    if m.changed || identity_changed || original_changed || source != row.source {
         sqlx::query!(
             "UPDATE editions SET isbn13 = $2, title = $3, subtitle = $4, publisher = $5,
                     language = $6, format = $7, pages = $8, publication_year = $9,
                     planned_publication_date = $10, ol_edition_id = $11, dnb_idn = $12,
                     dnb_record_idn = $13, source = $14, cover_media_id = $15,
-                    field_sources = $16, withdrawn_at = NULL, updated_at = now()
+                    field_sources = $16, original_title = $17,
+                    original_title_checked_at = CASE WHEN $18 THEN now()
+                                                     ELSE original_title_checked_at END,
+                    withdrawn_at = NULL, updated_at = now()
              WHERE id = $1",
             row.id,
             row.isbn13,
@@ -1815,7 +1841,9 @@ async fn update_edition(
             row.dnb_record_idn,
             source,
             row.cover_media_id,
-            m.prov.to_value()
+            m.prov.to_value(),
+            row.original_title,
+            from_dnb
         )
         .execute(&mut *conn)
         .await?;
@@ -2026,6 +2054,33 @@ pub async fn withdraw_dnb_edition(conn: &mut PgConnection, dnb_idn: &str) -> sql
     .execute(conn)
     .await?;
     Ok(())
+}
+
+/// The cover search's one DNB check of an edition by ISBN (docs/phase3/notes/original-title.md):
+/// stores what the DNB record told (`None`: no record, or one without 240) and marks the edition
+/// checked, without ingesting the rest of the record (a background job does not retitle a
+/// reader's book). A title the edition already has is kept. Then rebuilds `search_extra`.
+pub async fn record_original_title(
+    conn: &mut PgConnection,
+    edition_id: i64,
+    original_title: Option<&str>,
+) -> sqlx::Result<()> {
+    let original_title = clean_line(original_title, 1000);
+    let work_id = sqlx::query_scalar!(
+        "UPDATE editions
+         SET original_title = coalesce(original_title, $2),
+             original_title_checked_at = now(), updated_at = now()
+         WHERE id = $1
+         RETURNING work_id",
+        edition_id,
+        original_title
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+    match work_id {
+        Some(work_id) => refresh_derived(conn, work_id).await,
+        None => Ok(()),
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

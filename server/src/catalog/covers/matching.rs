@@ -520,6 +520,9 @@ pub struct Book {
     /// The (title, subtitle) of each edition whose title differs from the work's (a
     /// translation's own title).
     pub edition_titles: Vec<(String, String)>,
+    /// The original titles of translated editions (DNB 240, docs/phase3/notes/original-title.md):
+    /// Open Library often knows only the original's editions.
+    pub original_titles: Vec<String>,
     /// The first author's name and sort name.
     pub author: Option<(String, Option<String>)>,
     pub ol_work_id: Option<String>,
@@ -529,7 +532,16 @@ pub struct Book {
 impl Book {
     fn variants(&self) -> Vec<TitleKeys> {
         let mut out = vec![TitleKeys::new(&self.title, &self.subtitle)];
-        for (title, subtitle) in &self.edition_titles {
+        let titles = self
+            .edition_titles
+            .iter()
+            .map(|(title, subtitle)| (title.as_str(), subtitle.as_str()))
+            .chain(
+                self.original_titles
+                    .iter()
+                    .map(|title| (title.as_str(), "")),
+            );
+        for (title, subtitle) in titles {
             let keys = TitleKeys::new(title, subtitle);
             if !out.contains(&keys) {
                 out.push(keys);
@@ -567,6 +579,33 @@ impl Book {
             author,
             language: self.language.map(|language| language.iso.to_owned()),
         })
+    }
+
+    /// The second requests (notes "original-title"): one per original title whose main title
+    /// differs (by fold) from the work's and from every one before it, with the same author and
+    /// language as [`Book::query`].
+    pub fn original_queries(&self) -> Vec<CoverQuery> {
+        let Some(first) = self.query() else {
+            return Vec::new();
+        };
+        let mut seen = vec![fold(&first.title)];
+        let mut out = Vec::new();
+        for original in &self.original_titles {
+            let title = segments(&strip_brackets(original))
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+            let folded = fold(&title);
+            if escape(&title).is_empty() || folded.is_empty() || seen.contains(&folded) {
+                continue;
+            }
+            seen.push(folded);
+            out.push(CoverQuery {
+                title,
+                ..first.clone()
+            });
+        }
+        out
     }
 
     /// Our main title is a collection title (`Gedichte`, `Selected Poems`).
@@ -1020,6 +1059,42 @@ mod tests {
                 language: Some("de".into()),
             })
         );
+    }
+
+    /// One more request per original title whose main title differs from the work's and from
+    /// the ones before it; same author and language.
+    #[test]
+    fn original_titles_give_further_queries() {
+        let book = Book {
+            title: "Der Name des Windes".into(),
+            original_titles: vec![
+                "The name of the wind".into(),
+                "The Name of the Wind: Kingkiller Chronicle".into(),
+                "Der Name des Windes".into(),
+            ],
+            author: Some(("Patrick Rothfuss".into(), None)),
+            language: Language::from_marc("ger"),
+            ..Book::default()
+        };
+        let queries = book.original_queries();
+        assert_eq!(
+            queries,
+            [CoverQuery {
+                title: "The name of the wind".into(),
+                author: Some("Rothfuss".into()),
+                language: Some("de".into()),
+            }]
+        );
+        assert!(Book::default().original_queries().is_empty());
+        // The original title also counts as our title when Open Library's work carries it.
+        let verdict = judge(
+            &Book {
+                language: None,
+                ..book
+            },
+            vec![doc(31, "The Name of the Wind", "", "Patrick Rothfuss")],
+        );
+        assert!(matches!(verdict, Verdict::Clear(_)), "{verdict:?}");
     }
 
     #[test]

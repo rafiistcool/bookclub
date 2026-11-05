@@ -368,10 +368,13 @@ async fn rematch_legacy_asks_each_legacy_isbn_once_along_the_real_route(db: PgPo
     // the catalog's own (source openlibrary), so it is not asked about.
     assert_eq!(lookups(&requests, GERMAN), (1, 0, 1), "{requests:?}");
     assert_eq!(lookups(&requests, ISBN_UNMATCHED), (1, 1, 0));
-    assert_eq!(lookups(&requests, &isbn10), (1, 1, 0));
+    // The ISBN-10 key's German edition, a cover search candidate, is asked twice at the DNB: by
+    // the ISBN pass, and once by the cover search for its original title
+    // (docs/phase3/notes/original-title.md; misses are not cached).
+    assert_eq!(lookups(&requests, &isbn10), (2, 1, 0));
     assert_eq!(lookups(&requests, ENGLISH), (0, 1, 0));
     assert_eq!(lookups(&requests, ISBN_MATCH), (0, 0, 0));
-    assert_eq!(requests.len(), 7, "{requests:?}");
+    assert_eq!(requests.len(), 8, "{requests:?}");
     let line = first.entity("legacy editions").unwrap();
     assert_eq!((line.source, line.target), (Some(4), Some(2)), "{line:?}");
 
@@ -444,8 +447,9 @@ async fn rematch_legacy_asks_each_legacy_isbn_once_along_the_real_route(db: PgPo
     assert_eq!(lookups(&requests, GERMAN), (1, 0, 1));
     assert_eq!(lookups(&requests, ENGLISH), (0, 1, 0));
     assert_eq!(lookups(&requests, ISBN_UNMATCHED), (2, 2, 0));
-    assert_eq!(lookups(&requests, &isbn10), (2, 2, 0));
-    assert_eq!(requests.len(), 11, "{requests:?}");
+    // Its cover search's DNB check of the first run is not repeated.
+    assert_eq!(lookups(&requests, &isbn10), (3, 2, 0));
+    assert_eq!(requests.len(), 12, "{requests:?}");
     let line = second.entity("legacy editions").unwrap();
     assert_eq!((line.source, line.target), (Some(2), Some(0)), "{line:?}");
 }

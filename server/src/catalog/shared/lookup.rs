@@ -48,6 +48,13 @@ pub trait CatalogLookup: Send + Sync {
     async fn cover_by_isbn(&self, _isbn: &Isbn13) -> Result<Option<i64>, LookupError> {
         Ok(None)
     }
+
+    /// The cover search's one DNB check (docs/phase3/notes/original-title.md): the original
+    /// title (MARC 240) of the DNB record of a German-group ISBN, or `None` when the DNB has no
+    /// record or the record names none. Persists nothing. Default: `None`.
+    async fn original_title(&self, _isbn: &Isbn13) -> Result<Option<String>, LookupError> {
+        Ok(None)
+    }
 }
 
 /// What the cover search asks Open Library (#74).

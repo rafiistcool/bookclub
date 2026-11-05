@@ -74,6 +74,9 @@ struct FakeState {
     /// The next n cover searches and ISBN cover checks fail.
     fail_covers: Option<(FakeError, usize)>,
     cover_calls: Vec<String>,
+    /// The DNB original-title checks by ISBN-13: a title, none, or no answer.
+    original_titles: HashMap<String, Result<Option<String>, FakeError>>,
+    original_calls: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -132,6 +135,20 @@ impl FakeCatalog {
     /// `cover_by_isbn(isbn13)` answers `cover` (#74). Unprogrammed ISBNs have no cover.
     pub fn on_isbn_cover(&self, isbn13: &str, cover: Option<i64>) {
         self.lock().isbn_covers.insert(isbn13.to_owned(), cover);
+    }
+
+    /// `original_title(isbn13)` answers `answer` (a title, none, or no answer). Unprogrammed
+    /// ISBNs have none.
+    pub fn on_original_title(&self, isbn13: &str, answer: Result<Option<&str>, FakeError>) {
+        self.lock().original_titles.insert(
+            isbn13.to_owned(),
+            answer.map(|title| title.map(str::to_owned)),
+        );
+    }
+
+    /// Every DNB original-title check so far, as ISBN-13s.
+    pub fn original_calls(&self) -> Vec<String> {
+        self.lock().original_calls.clone()
     }
 
     /// The next `times` cover searches and ISBN cover checks fail with `err`.
@@ -334,6 +351,15 @@ impl CatalogLookup for FakeCatalog {
         }
         let key = (query.title.clone(), query.author.clone());
         Ok(self.lock().covers.get(&key).cloned().unwrap_or_default())
+    }
+
+    async fn original_title(&self, isbn: &Isbn13) -> Result<Option<String>, LookupError> {
+        let mut state = self.lock();
+        state.original_calls.push(isbn.as_str().to_owned());
+        match state.original_titles.get(isbn.as_str()).cloned() {
+            Some(answer) => answer.map_err(LookupError::from),
+            None => Ok(None),
+        }
     }
 
     async fn cover_by_isbn(&self, isbn: &Isbn13) -> Result<Option<i64>, LookupError> {

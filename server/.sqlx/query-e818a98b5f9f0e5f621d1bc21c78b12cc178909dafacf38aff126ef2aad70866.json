@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT w.title, w.author_names, w.search_extra, w.match_key,\n                  fa.name AS \"first_name?\", fa.sort_name AS \"first_sort?\",\n                  ARRAY(SELECT e.title FROM editions e\n                        WHERE e.work_id = w.id AND e.title IS NOT NULL ORDER BY e.id)\n                      AS \"edition_titles!: Vec<String>\"\n           FROM works w\n           LEFT JOIN LATERAL (\n               SELECT a.name, a.sort_name FROM work_authors wa JOIN authors a ON a.id = wa.author_id\n               WHERE wa.work_id = w.id ORDER BY wa.position, a.id LIMIT 1\n           ) fa ON true\n           WHERE w.id = $1",
+  "query": "SELECT w.title, w.author_names, w.search_extra, w.match_key,\n                  fa.name AS \"first_name?\", fa.sort_name AS \"first_sort?\",\n                  ARRAY(SELECT t.title FROM editions e\n                        CROSS JOIN LATERAL (VALUES (1, e.title), (2, e.original_title)) t (n, title)\n                        WHERE e.work_id = w.id AND t.title IS NOT NULL ORDER BY e.id, t.n)\n                      AS \"edition_titles!: Vec<String>\"\n           FROM works w\n           LEFT JOIN LATERAL (\n               SELECT a.name, a.sort_name FROM work_authors wa JOIN authors a ON a.id = wa.author_id\n               WHERE wa.work_id = w.id ORDER BY wa.position, a.id LIMIT 1\n           ) fa ON true\n           WHERE w.id = $1",
   "describe": {
     "columns": [
       {
@@ -91,5 +91,5 @@
       null
     ]
   },
-  "hash": "131441e7795c60c09fd09c5d83f2ac9d2479a92b932ab5f3180dd5575aadd7b8"
+  "hash": "e818a98b5f9f0e5f621d1bc21c78b12cc178909dafacf38aff126ef2aad70866"
 }
