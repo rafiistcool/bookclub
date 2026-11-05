@@ -203,9 +203,9 @@ cd /opt/bookclub
 docker compose pull
 docker compose up -d --wait postgres
 BOOKCLUB_LISTEN=127.0.0.1 BOOKCLUB_PORT=18080 docker compose up -d --wait --no-deps app
-docker compose exec app bookclub-server healthcheck        # … answered 200 OK
+docker compose exec -T app bookclub-server healthcheck        # … answered 200 OK
 curl -sS http://127.0.0.1:18080/api/config; echo           # "signup":"invite", no terms version
-docker compose exec app bookclub-server send-test-mail check@example.com; echo "exit $?"
+docker compose exec -T app bookclub-server send-test-mail check@example.com; echo "exit $?"
 #   error: mail is off (EMAIL_TRANSPORT=none) / exit 1
 docker compose stop app
 docker compose ps -a
@@ -244,6 +244,8 @@ Checked the day before: the admin runs the commands on the host and reports, I t
 - [ ] Room in the app's `/tmp` (a 64 MB tmpfs) for `bookclub.db` and its `-wal`: the facts' "data files" sizes together are well below 64 MB; otherwise set `TMPDIR` as README "The legacy import" says.
 - [ ] `sqlite3` is installed (3.46.1 on 2026-11-04).
 - [ ] The message went out (section 6).
+
+**Checked after M3 (2026-11-05):** the stops, the settings, the stack's state, the empty target (`0|0`), WUD, `$IMPORT` (700, uid 1000), the room in `/tmp` (about 4.3 MB) and `sqlite3`. Left for the day before: the nightly VM backup and the message.
 
 ## 6. The message
 
@@ -368,7 +370,7 @@ No gate: both members wait for "done". The Python container is stopped, so its p
 ```bash
 cd "$NEW"
 docker compose up -d --wait app                          # on the old binding and port now
-docker compose exec app bookclub-server healthcheck      # … answered 200 OK
+docker compose exec -T app bookclub-server healthcheck      # … answered 200 OK
 curl -s -o /dev/null -w '%{http_code}\n' "https://$HOST/api/health"     # 200: the proxy reaches the new app
 ```
 
@@ -389,7 +391,7 @@ cd "$NEW"
 
 ```bash
 cd "$NEW"
-docker compose exec app bookclub-server make-admin '<his username>'
+docker compose exec -T app bookclub-server make-admin '<his username>'
 ```
 
 Rafael's account joins no club: he sees the admin area (covers, reports, invites, accounts), not the club's shelves.
