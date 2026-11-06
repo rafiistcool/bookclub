@@ -29,7 +29,7 @@ Today it runs as a private instance on the homelab for one club: invite-only, wi
 
 - **The private instance** follows [`docs/phase3/private-move.md`](docs/phase3/private-move.md). Updates are applied by hand, each after a VM backup (§9). A forgotten password is reset on the host (§10).
 - **The image and the hosted stack** (compose with Postgres, Caddy, backups, updates, the legacy import) are in [`deploy/hosted/README.md`](deploy/hosted/README.md), the operator runbook.
-- **Releases:** a `vX.Y.Z` tag on Forgejo publishes `git.tillhome.de/rafiistcool/bookclub-server:X.Y.Z` and moves `X.Y` and `stable` when it is the highest release (there is no `latest`). The registry needs a sign-in. The old Python app is kept on the branch `legacy-python` (tag `legacy-python-final`); its image `rafiistcool/bookclub` gets no new versions.
+- **Releases:** a `vX.Y.Z` tag on Forgejo publishes `git.tillhome.de/rafiistcool/bookclub-server:X.Y.Z` and moves `X.Y` when it is the highest release of that minor line and `stable` when it is the highest release of all (a pre-release `vX.Y.Z-rc.N` moves neither; there is no `latest`). The registry needs a sign-in. The old Python app is kept on the branch `legacy-python` (tag `legacy-python-final`); its image `rafiistcool/bookclub` gets no new versions.
 
 ---
 
@@ -48,12 +48,11 @@ cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --features
 cd server && cargo sqlx migrate run
 ```
 
-The `query!` macros check against the live schema at compile time, so `DATABASE_URL` must be set when you build.
+`DATABASE_URL` must be set in every terminal that runs cargo: for the build (the `query!` macros check against the live schema) and at run time (the server and every command such as `beta-invite` read it).
 
-**Server** (leave this running):
+**Server** (leave this running; in the same shell, which is in `server/` now):
 
 ```bash
-cd server
 DEV_MODE=true cargo run
 ```
 
@@ -69,7 +68,14 @@ npm run dev
 
 Open **[http://localhost:5173](http://localhost:5173)**, not port 8080.
 
-**First account.** Sign-up needs an invite. `cd server && DEV_MODE=true cargo run -- beta-invite` prints a sign-up code and its join link; `DEV_MODE=true cargo run -- make-admin <username>` makes that account an instance admin, who can mint more under **Admin → Invites**. Username: `a–z`, `0–9`, `_`, 2–32 characters. Password: 8+ characters. `cargo run -- --help` lists the other commands.
+**First account.** Sign-up needs an invite. In a third terminal, from the repository root:
+
+```bash
+export DATABASE_URL=postgres://bookclub:bookclub@127.0.0.1:5432/bookclub
+cd server && DEV_MODE=true cargo run -- beta-invite
+```
+
+It prints a sign-up code and its join link. After signing up, `DEV_MODE=true cargo run -- make-admin <username>` makes that account an instance admin, who can mint more under **Admin → Invites**. Username: `a–z`, `0–9`, `_`, 2–32 characters. Password: 8+ characters. `cargo run -- --help` lists the other commands.
 
 | You change | Where it shows up |
 |---|---|
@@ -78,9 +84,9 @@ Open **[http://localhost:5173](http://localhost:5173)**, not port 8080.
 | A `query!` macro | Run `cargo sqlx prepare -- --all-targets` in `server/` and commit `server/.sqlx/` |
 | A DTO | Run `npm run gen:api` in `frontend/` and commit `src/api/generated.ts` |
 
-**One process.** `cd frontend && npm run build` writes `frontend/dist/`; start the server with `STATIC_DIR=../frontend/dist` and open [http://127.0.0.1:8080](http://127.0.0.1:8080).
+**One process.** `cd frontend && npm run build` writes `frontend/dist/`; then from `server/` run `STATIC_DIR=../frontend/dist PUBLIC_URL=http://127.0.0.1:8080 DEV_MODE=true cargo run` and open [http://127.0.0.1:8080](http://127.0.0.1:8080). `PUBLIC_URL` must be the origin in the address bar, or every write after signing in gets 403.
 
-**Tests.** CI runs all of these on every push and pull request:
+**Tests.** CI runs all of these on pushes to `main` and on every pull request:
 
 ```bash
 cd frontend && npm run typecheck && npm test && npm run build && npm run check:api
@@ -100,7 +106,7 @@ flowchart LR
   Server -.->|"ISBN lookup, harvest, original titles"| DNB[DNB]
 ```
 
-The catalog is our own, in Postgres: works with editions, served locally first. A lookup asks Open Library, and the DNB for German ISBNs that Open Library does not know; the DNB harvester adds new German releases. Books from the old app keep their links: `/book/OL…W`, and the legacy keys `BC…`, `ISBN…` and `GB…`, still open the right work. The browser loads nothing from another origin: covers and profile photos are stored by the server and served under `/media`.
+The catalog is our own, in Postgres: works with editions, served locally first. An ISBN lookup asks the DNB first for a German ISBN (978-3), with Open Library as the fallback when the DNB has no record or does not answer, and asks Open Library alone for every other ISBN. A search by title or author asks our catalog and Open Library, with our hits first. The DNB harvester adds new German releases. Books from the old app keep their links: `/book/OL…W`, and the legacy keys `BC…`, `ISBN…` and `GB…`, still open the right work. The browser loads nothing from another origin: covers and profile photos are stored by the server and served under `/media`.
 
 Sign-up needs an invite: a club admin's invite link (`/join/<code>`), or a sign-up invite from an instance admin (Admin → Invites, or `beta-invite`). Change your password under **Settings → Password**. On the private instance mail is off, so "Forgot password" sends nothing; see [Troubleshooting](#troubleshooting).
 
@@ -178,7 +184,7 @@ Cookie session: `bookclub_session`, or `__Host-bookclub_session` when the cookie
 
 ## Troubleshooting
 
-**Forgot a password while mail is off** — "Forgot password" sends nothing, though it still says a link is on its way. The member asks the operator, who runs `docker compose exec -T app bookclub-server set-password <username>` on the host ([`private-move.md`](docs/phase3/private-move.md) §10). It prints a new password and ends every session of the account; the member changes it under **Settings → Password** the same day. After too many failed sign-ins the app still holds the account for up to 10 minutes.
+**Forgot a password while mail is off** — "Forgot password" sends nothing, though it still says a link is on its way. The member asks the operator, who resets it on the host with `bookclub-server set-password <username>` as in [`private-move.md`](docs/phase3/private-move.md) §10. The new password goes into a root-only file, not the terminal, and every session of the account ends; the member changes it under **Settings → Password** the same day. After too many failed sign-ins the app still holds the account for up to 10 minutes.
 
 **Vite loads but sign-in or search fails** — the Rust server isn't running on `127.0.0.1:8080`. Start it first (see [Develop](#develop)). Vite only proxies `/api` and `/media`.
 

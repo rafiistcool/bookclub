@@ -79,7 +79,7 @@ The Vue app always calls relative `/api` and `/media`; there is never a separate
 
 ### Catalog
 
-- The catalog is our own, in Postgres: works with editions, filled from Open Library and the DNB (a live SRU lookup for 978-3 ISBNs that Open Library does not know, and the OAI harvester with `DNB_HARVEST`). Google Books is dropped (`docs/plan.md`).
+- The catalog is our own, in Postgres: works with editions, filled from Open Library and the DNB (a live SRU lookup that is asked first for 978-3 ISBNs, with Open Library after it when the DNB has no record or fails, and Open Library alone for every other ISBN; and the OAI harvester with `DNB_HARVEST`). Google Books is dropped (`docs/plan.md`).
 - Works have numeric ids. `{work_id}` also accepts `OL…W` and the legacy keys of the import: `BC…` (a club's own book), `ISBN…` and `GB…` (once Google Books volumes; `GB…` is stored hashed). See `catalog/shared/work_ref.rs` and `conventions.md` §7.1.
 
 ### Frontend (`frontend/src/`)
