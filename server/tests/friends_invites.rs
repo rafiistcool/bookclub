@@ -134,7 +134,18 @@ async fn an_admin_invites_a_friend_who_joins(db: PgPool) {
     preview.assert_status(200);
     assert_eq!(
         preview.json(),
-        json!({"club": {"slug": club.slug, "name": "Readers"}, "kind": "club", "personal": true})
+        json!({
+            "club": {"slug": club.slug, "name": "Readers"},
+            "kind": "club",
+            "personal": true,
+            "inviter": {"username": "ada", "avatar_url": null},
+            "pick": null,
+            "member_count": 1,
+            "full": false,
+            "expires_at": invite["expires_at"],
+            "you_are_member": false,
+            "for_you": true,
+        })
     );
     let res = accept(&bob, &code).await;
     res.assert_status(200);

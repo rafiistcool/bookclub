@@ -44,6 +44,6 @@ describe("AdminLink", () => {
     api.adminSummary.mockRejectedValue(new Error("offline"));
     const wrapper = await mountLink();
     expect(wrapper.find(".admin-count").exists()).toBe(false);
-    expect(wrapper.get("a").text()).toBe("Open the admin page");
+    expect(wrapper.get("a").text()).toBe("Admin");
   });
 });

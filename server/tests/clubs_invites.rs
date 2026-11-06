@@ -252,15 +252,32 @@ async fn the_preview_shows_what_a_valid_code_leads_to(db: PgPool) {
     for typed in [code.clone(), spaced, format!("%20{code}%20")] {
         let res = anon.get(&format!("/api/invites/{typed}")).await;
         res.assert_status(200);
+        let body = res.json();
         assert_eq!(
-            res.json(),
-            json!({"club": {"slug": club.slug, "name": "Readers"}, "kind": "club", "personal": false})
+            body,
+            json!({
+                "club": {"slug": club.slug, "name": "Readers"},
+                "kind": "club",
+                "personal": false,
+                "inviter": {"username": "owner", "avatar_url": null},
+                "pick": null,
+                "member_count": 1,
+                "full": false,
+                "expires_at": body["expires_at"],
+                "you_are_member": null,
+                "for_you": null,
+            })
         );
+        assert!((days_from_now(&body["expires_at"]) - 7.0).abs() < 0.01);
     }
     let res = anon.get("/api/invites/beta-2026").await;
     assert_eq!(
         res.json(),
-        json!({"club": null, "kind": "signup", "personal": false})
+        json!({
+            "club": null, "kind": "signup", "personal": false, "inviter": null, "pick": null,
+            "member_count": null, "full": false, "expires_at": null, "you_are_member": null,
+            "for_you": null,
+        })
     );
     for code in ["NOPE", "USEDUP", "EXPIRED", "REVOKED", "%20"] {
         anon.get(&format!("/api/invites/{code}"))
@@ -959,9 +976,14 @@ async fn instance_admins_mint_sign_up_invites(db: PgPool) {
     assert_eq!(ids, expected, "only sign-up invites, newest first");
 
     let res = app.anon().get(&format!("/api/invites/{code}")).await;
+    let body = res.json();
     assert_eq!(
-        res.json(),
-        json!({"club": null, "kind": "signup", "personal": false})
+        body,
+        json!({
+            "club": null, "kind": "signup", "personal": false, "inviter": null, "pick": null,
+            "member_count": null, "full": false, "expires_at": body["expires_at"],
+            "you_are_member": null, "for_you": null,
+        })
     );
     let res = app
         .anon()

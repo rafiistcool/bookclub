@@ -59,10 +59,21 @@ async fn a_club_and_an_invite_make_two_users_each_others_audience(db: PgPool) {
         .await;
     res.assert_status(201);
     let code = res.json()["code"].as_str().unwrap().to_owned();
-    let preview = grace.get(&format!("/api/invites/{code}")).await;
+    let preview = grace.get(&format!("/api/invites/{code}")).await.json();
     assert_eq!(
-        preview.json(),
-        json!({"club": {"slug": slug, "name": "Thursday Readers"}, "kind": "club", "personal": false})
+        preview,
+        json!({
+            "club": {"slug": slug, "name": "Thursday Readers"},
+            "kind": "club",
+            "personal": false,
+            "inviter": {"username": "ada", "avatar_url": null},
+            "pick": null,
+            "member_count": 1,
+            "full": false,
+            "expires_at": preview["expires_at"],
+            "you_are_member": false,
+            "for_you": null,
+        })
     );
     let res = grace
         .post(&format!("/api/invites/{code}/accept"), json!({}))

@@ -1,6 +1,7 @@
-import { createRouter, createWebHistory, type RouteLocationRaw } from "vue-router";
+import { createRouter, createWebHistory, type RouteLocationNormalized, type RouteLocationRaw } from "vue-router";
 import { loginRoute } from "./nextPath";
 import { installSessionExpiry } from "./sessionExpiry";
+import { settingsRoutes } from "./settingsRoutes";
 import { clubLanding, useClubs } from "./stores/clubs";
 import { useSession } from "./stores/session";
 
@@ -18,6 +19,21 @@ function toClub(sub = "", withoutClub?: string) {
     if (withoutClub && !clubs.defaultSlug) return withoutClub;
     return clubLanding(clubs.items, clubs.lastSlug, sub);
   };
+}
+
+/**
+ * A link to the viewer's own name under `/u/` (feeds, readers lists, quotes)
+ * opens their own page instead of the read-only view others get: the route's
+ * `meta.ownPath`. It runs in the global guard, after the session is loaded,
+ * and so also on a move from one reader to another, where `beforeEnter`
+ * would not run. Names compare as the server does: trimmed, in lower case.
+ */
+function ownPage(to: RouteLocationNormalized): RouteLocationRaw | null {
+  const target = to.meta.ownPath;
+  const me = useSession().user?.username;
+  if (typeof target !== "string" || !me) return null;
+  if (String(to.params.username ?? "").trim().toLowerCase() !== me.toLowerCase()) return null;
+  return { path: target, query: to.query, hash: to.hash };
 }
 
 /**
@@ -158,26 +174,32 @@ const router = createRouter({
         // The Club tab: never rendered itself, it always leads on.
         { path: "club", component: ClubsPage, beforeEnter: toClub() },
         // Another reader's shelves. Personal data follows the audience, not a club.
+        // The viewer's own name leads to their own page (`ownPage`).
         {
           path: "u/:username/shelf",
           component: () => import("./pages/MemberPhysicalShelfPage.vue"),
+          meta: { ownPath: "/shelf/physical" },
         },
         {
           path: "u/:username/stats",
           component: () => import("./pages/StatsPage.vue"),
+          meta: { ownPath: "/stats" },
         },
         {
           path: "u/:username",
           component: () => import("./pages/MemberShelfPage.vue"),
+          meta: { ownPath: "/me" },
         },
         // A numeric work id. Legacy keys (OL…W, BC…, ISBN…, GB…) resolve on the page.
         {
           path: "book/:id",
           component: () => import("./pages/BookDetailPage.vue"),
         },
-        // Friends, requests, blocks and invitations into clubs (#57). In the sidebar and on Home.
+        // The Profile tab: the reader's own page, with Friends and Settings under it.
+        { path: "me", component: () => import("./pages/ProfilePage.vue") },
+        // Friends, requests, blocks and invitations into clubs (#57). From the profile, and Home while some wait.
         { path: "friends", component: () => import("./pages/FriendsPage.vue") },
-        { path: "settings", component: () => import("./pages/SettingsPage.vue") },
+        ...settingsRoutes,
         // Instance admins only (`UserOut.is_admin`); linked from Settings.
         { path: "admin", component: () => import("./pages/AdminPage.vue"), meta: { admin: true } },
 
@@ -223,7 +245,7 @@ router.beforeEach(async (to) => {
   if (to.meta.admin && !session.user?.is_admin) {
     return { path: "/" };
   }
-  return true;
+  return ownPage(to) ?? true;
 });
 
 installSessionExpiry(router);

@@ -292,7 +292,7 @@ onMounted(() => {
       <template v-else>
         <ul class="member-list">
           <li v-for="member in members" :key="member.username" class="member-card" :class="{ 'is-you': member.you }">
-            <RouterLink class="member-link" :to="member.you ? '/shelf' : `/u/${member.username}`">
+            <RouterLink class="member-link" :to="member.you ? '/me' : `/u/${member.username}`">
               <Avatar :username="member.username" :src="member.avatar_url" />
               <span class="member-meta">
                 <strong>{{ member.username }}</strong>

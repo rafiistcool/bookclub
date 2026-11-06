@@ -29,7 +29,8 @@ export function legalPath(doc: LegalDoc): string {
  * contact address.
  */
 export const useService = defineStore("service", {
-  state: (): ServiceConfig & { loaded: boolean } => ({ ...BRAND_DEFAULTS, ...LEGAL_DEFAULTS, loaded: false }),
+  // `mail` is false when the server sends none (`EMAIL_TRANSPORT=none`); until the config answers, assume it does.
+  state: (): ServiceConfig & { loaded: boolean } => ({ ...BRAND_DEFAULTS, ...LEGAL_DEFAULTS, mail: true, loaded: false }),
   getters: {
     /** Whether the operator provides `doc` (in either language). */
     hasLegal: (state) => (doc: LegalDoc) => state.legal.includes(doc),

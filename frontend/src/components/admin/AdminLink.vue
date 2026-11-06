@@ -1,13 +1,15 @@
 <script setup lang="ts">
+import { ShieldCheckIcon } from "@heroicons/vue/24/outline";
 import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api } from "../../api/client";
 import { tp } from "../../i18n";
+import SettingsRow from "../settings/SettingsRow.vue";
 
 /**
- * The way to the admin page from Settings, with the number of open reports
- * and catalog requests (`GET /api/admin/summary`), marked when one is
- * overdue. Without the summary it is the plain link.
+ * Settings' row to the admin page, with the number of open reports and
+ * catalog requests (`GET /api/admin/summary`), marked when one is overdue.
+ * Without the summary it is the plain row.
  */
 const { t } = useI18n();
 
@@ -20,19 +22,20 @@ onMounted(async () => {
     open.value = summary.reports.open + summary.edit_requests.open;
     overdue.value = summary.reports.overdue + summary.edit_requests.overdue;
   } catch {
-    // The link works without the count.
+    // The row works without the count.
   }
 });
 </script>
 
 <template>
-  <RouterLink class="btn btn-ghost admin-link" to="/admin">
-    {{ t("admin.open") }}
-    <span v-if="open" class="admin-count nums" :class="{ overdue: overdue > 0 }">
-      <span aria-hidden="true">{{ open }}</span>
-      <span class="visually-hidden">{{ tp("admin.waitingCount", open) }}</span>
-    </span>
-  </RouterLink>
+  <SettingsRow class="admin-link" :icon="ShieldCheckIcon" :label="t('admin.title')" to="/admin">
+    <template v-if="open" #value>
+      <span class="admin-count nums" :class="{ overdue: overdue > 0 }">
+        <span aria-hidden="true">{{ open }}</span>
+        <span class="visually-hidden">{{ tp("admin.waitingCount", open) }}</span>
+      </span>
+    </template>
+  </SettingsRow>
 </template>
 
 <style scoped>

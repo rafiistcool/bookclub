@@ -1,4 +1,4 @@
-export type NavIconName = "home" | "discover" | "shelf" | "club" | "friends" | "settings";
+export type NavIconName = "home" | "discover" | "shelf" | "club" | "friends" | "settings" | "profile";
 
 export type NavItem = {
   to: string;
@@ -7,8 +7,24 @@ export type NavItem = {
   /** A shorter label for the phone tab bar, where five tabs share the width. */
   shortLabelKey?: string;
   bottomBar: boolean;
+  /** False: not a row in the desktop sidebar (the profile is its account card). */
+  sidebar?: boolean;
   /** Other path prefixes that belong to this tab. */
   also?: readonly string[];
+};
+
+/**
+ * The profile: the phone's fifth tab (drawn as the reader's own picture) and
+ * the sidebar's account card. Friends, Settings and the instance admin live
+ * under it.
+ */
+export const PROFILE_ITEM: NavItem = {
+  to: "/me",
+  labelKey: "nav.profile",
+  icon: "profile",
+  bottomBar: true,
+  sidebar: false,
+  also: ["/settings", "/admin", "/friends"],
 };
 
 export const NAV_ITEMS: readonly NavItem[] = [
@@ -17,9 +33,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { to: "/shelf", labelKey: "nav.shelf", icon: "shelf", bottomBar: true, also: ["/diary", "/quotes", "/stats"] },
   // `/club` leads to the last-used club, the only club, or the club list (router.ts).
   { to: "/club", labelKey: "nav.club", icon: "club", bottomBar: true, also: ["/c", "/clubs"] },
-  // The sidebar only: the phone's tab bar has its five tabs, and Home has a Friends row.
-  { to: "/friends", labelKey: "nav.friends", icon: "friends", bottomBar: false },
-  { to: "/settings", labelKey: "nav.settings", shortLabelKey: "nav.settingsShort", icon: "settings", bottomBar: true, also: ["/admin"] },
+  PROFILE_ITEM,
 ];
 
 function under(path: string, prefix: string): boolean {

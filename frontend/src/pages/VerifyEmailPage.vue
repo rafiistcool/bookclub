@@ -90,7 +90,7 @@ async function confirm() {
       <p class="fine muted">{{ t("verify.failedHint") }}</p>
     </template>
     <div v-if="finished" class="stack auth-next">
-      <RouterLink class="btn btn-primary btn-block" :to="signedIn ? (state === 'done' ? '/' : '/settings') : '/login'">
+      <RouterLink class="btn btn-primary btn-block" :to="signedIn ? (state === 'done' ? '/' : '/settings/account') : '/login'">
         {{ signedIn ? (state === "done" ? t("verify.toHome") : t("verify.toSettings")) : t("auth.signIn") }}
       </RouterLink>
     </div>

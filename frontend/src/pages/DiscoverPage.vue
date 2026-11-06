@@ -1184,9 +1184,10 @@ defineExpose({ loadPage });
 }
 
 @media (min-width: 1024px) {
+  /* The heading comes first, so the bar keeps the phone's small top margin;
+     pulling it up by the page's padding laid it over "Entdecken". */
   .discover-search {
     top: 0;
-    margin-top: calc(-1 * var(--space-7));
     margin-left: calc(-1 * var(--space-7));
     margin-right: calc(-1 * var(--space-7));
     padding: var(--space-5) var(--space-7) var(--space-3);

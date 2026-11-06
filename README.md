@@ -108,7 +108,7 @@ flowchart LR
 
 The catalog is our own, in Postgres: works with editions, served locally first. An ISBN lookup asks the DNB first for a German ISBN (978-3), with Open Library as the fallback when the DNB has no record or does not answer, and asks Open Library alone for every other ISBN. A search by title or author asks our catalog and Open Library, with our hits first. The DNB harvester adds new German releases. Books from the old app keep their links: `/book/OL…W`, and the legacy keys `BC…`, `ISBN…` and `GB…`, still open the right work. The browser loads nothing from another origin: covers and profile photos are stored by the server and served under `/media`.
 
-Sign-up needs an invite: a club admin's invite link (`/join/<code>`), or a sign-up invite from an instance admin (Admin → Invites, or `beta-invite`). Change your password under **Settings → Password**. On the private instance mail is off, so "Forgot password" sends nothing; see [Troubleshooting](#troubleshooting).
+Sign-up needs an invite: a club admin's invite link (`/join/<code>`), or a sign-up invite from an instance admin (Admin → Invites, or `beta-invite`). Change your password under **Settings → Account → Change password**. On the private instance mail is off, so "Forgot password" sends nothing; see [Troubleshooting](#troubleshooting).
 
 | Path | What it is |
 |---|---|
@@ -126,7 +126,8 @@ Sign-up needs an invite: a club admin's invite link (`/join/<code>`), or a sign-
 | `/book/:id` | Synopsis, ratings, editions, shelf actions, diary, cover prompt |
 | `/friends` | Friends, requests, club invitations, blocks |
 | `/join/:code` | An invite link |
-| `/settings` | Profile, email, password, devices, notifications, favourites, language, time zone, theme, Goodreads import, data export, delete account |
+| `/me` | Your profile (the Profile tab): picture and favourites, edited here; the year's books, shelf and friend counts; your friends and clubs; the gear leads to Settings |
+| `/settings` | Appearance, language, time zone and the legal texts in sheets; `/settings/account` (email, password, signed-in devices under `/settings/devices`, data export, delete account) and `/settings/import` (Goodreads) |
 | `/admin` | Instance admins only: Requests, Reports, Covers, Invites, Accounts |
 | `/imprint`, `/privacy`, `/terms` | The operator's legal texts |
 
@@ -184,7 +185,7 @@ Cookie session: `bookclub_session`, or `__Host-bookclub_session` when the cookie
 
 ## Troubleshooting
 
-**Forgot a password while mail is off** — "Forgot password" sends nothing, though it still says a link is on its way. The member asks the operator, who resets it on the host with `bookclub-server set-password <username>` as in [`private-move.md`](docs/phase3/private-move.md) §10. The new password goes into a root-only file, not the terminal, and every session of the account ends; the member changes it under **Settings → Password** the same day. After too many failed sign-ins the app still holds the account for up to 10 minutes.
+**Forgot a password while mail is off** — "Forgot password" sends nothing, though it still says a link is on its way. The member asks the operator, who resets it on the host with `bookclub-server set-password <username>` as in [`private-move.md`](docs/phase3/private-move.md) §10. The new password goes into a root-only file, not the terminal, and every session of the account ends; the member changes it under **Settings → Account → Change password** the same day. After too many failed sign-ins the app still holds the account for up to 10 minutes.
 
 **Vite loads but sign-in or search fails** — the Rust server isn't running on `127.0.0.1:8080`. Start it first (see [Develop](#develop)). Vite only proxies `/api` and `/media`.
 

@@ -1,9 +1,12 @@
 <script setup lang="ts">
+import { UserPlusIcon } from "@heroicons/vue/24/outline";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRoute, useRouter } from "vue-router";
 import { ApiError } from "../api/client";
 import type { FriendOut } from "../api/generated";
 import Avatar from "../components/Avatar.vue";
+import BackLink from "../components/BackLink.vue";
 import BookCover from "../components/BookCover.vue";
 import BottomSheet from "../components/BottomSheet.vue";
 import InviteFriendSheet from "../components/InviteFriendSheet.vue";
@@ -16,14 +19,17 @@ import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 
 /**
- * `/friends`: add a friend by exact username, answer requests, open or
- * decline invitations into clubs, the friends with what they are reading,
- * the requests one sent, and the blocks. Only the friends list shows while
- * empty; the other sections appear once they hold a row. Every action
- * answers with the whole lists (the friends store), so the page only
- * renders the store.
+ * `/friends`, under the profile: the requests to answer, invitations into
+ * clubs to open or decline, the friends with what they are reading, the
+ * requests one sent, and the blocks. Only the friends list shows while
+ * empty; the other sections appear once they hold a row. Adding a friend by
+ * exact username sits behind the head's button, in a sheet (`?add=1` opens
+ * it, the profile's invitation). Every action answers with the whole lists
+ * (the friends store), so the page only renders the store.
  */
 const { t } = useI18n();
+const route = useRoute();
+const router = useRouter();
 const friends = useFriends();
 const clubs = useClubs();
 const session = useSession();
@@ -34,6 +40,8 @@ const lists = computed(() => friends.lists);
 /** Clubs the viewer may invite a friend into. */
 const canInvite = computed(() => clubs.items.some((club) => isClubAdmin(club.role)));
 
+/** The add-a-friend sheet is open. */
+const adding = ref(false);
 const name = ref("");
 const sending = ref(false);
 const sendError = ref("");
@@ -91,6 +99,7 @@ async function send() {
       toast.show(t("friends.add.sent", { name: shown }));
     }
     name.value = "";
+    adding.value = false;
   } catch (err) {
     sendError.value = failure(err);
   } finally {
@@ -151,20 +160,38 @@ const sheetTitle = computed(() => {
   return open.username;
 });
 
+function openAdd() {
+  sendError.value = "";
+  adding.value = true;
+}
+
+function closeAdd() {
+  if (!sending.value) adding.value = false;
+}
+
 onMounted(() => {
   void friends.load();
+  if (route.query.add) {
+    openAdd();
+    // Back leaves the page rather than opening the sheet again.
+    const query = { ...route.query };
+    delete query.add;
+    void router.replace({ query });
+  }
 });
 </script>
 
 <template>
   <section class="friends-page">
-    <div class="page-head">
+    <BackLink :label="t('memberShelf.back')" fallback="/me" />
+    <div class="page-head friends-head">
       <h1>{{ t("friends.title") }}</h1>
-      <p class="lede">{{ t("friends.lede") }}</p>
+      <button class="icon-btn add-btn" type="button" :aria-label="t('friends.add.heading')" @click="openAdd">
+        <UserPlusIcon aria-hidden="true" />
+      </button>
     </div>
 
-    <section class="panel add-friend" aria-labelledby="add-friend">
-      <h2 id="add-friend">{{ t("friends.add.heading") }}</h2>
+    <BottomSheet v-if="adding" class="add-friend" :title="t('friends.add.heading')" @close="closeAdd">
       <form class="add-form" @submit.prevent="send">
         <label class="field">
           <span>{{ t("friends.add.label") }}</span>
@@ -180,13 +207,11 @@ onMounted(() => {
           <span class="field-hint">{{ t("friends.add.hint") }}</span>
         </label>
         <p v-if="sendError" class="error" role="alert">{{ sendError }}</p>
-        <div class="btn-row">
-          <button class="btn btn-primary btn-sm" type="submit" :disabled="sending || !name.trim()">
-            {{ sending ? t("friends.add.sending") : t("friends.add.send") }}
-          </button>
-        </div>
+        <button class="btn btn-primary btn-block" type="submit" :disabled="sending || !name.trim()">
+          {{ sending ? t("friends.add.sending") : t("friends.add.send") }}
+        </button>
       </form>
-    </section>
+    </BottomSheet>
 
     <div v-if="!lists && friends.failed" class="section load-failed">
       <p class="error">{{ t("friends.loadFailed") }}</p>
@@ -373,15 +398,40 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.add-friend h2 {
-  font-size: var(--text-lg);
-  margin-bottom: var(--space-3);
+/* The row actions are small buttons, but each is still a full finger target. */
+.friends-page .btn-sm {
+  min-height: var(--tap);
+}
+
+.back-link {
+  margin-bottom: var(--space-4);
+}
+
+.friends-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.add-btn {
+  flex: none;
+  margin-right: calc(-1 * var(--space-2));
+  color: var(--accent);
+}
+
+.add-btn svg {
+  width: 24px;
+  height: 24px;
 }
 
 .add-form {
   display: grid;
   gap: var(--space-3);
-  max-width: 420px;
+}
+
+.add-form .error {
+  margin: 0;
 }
 
 .load-failed {
@@ -405,7 +455,16 @@ onMounted(() => {
   margin: 0;
   padding: 0;
   display: grid;
+}
+
+.friend-books {
   gap: var(--space-2);
+}
+
+/* Light rows: hairlines between them, no cards. */
+.rows,
+.friend-list {
+  border-top: 1px solid var(--border);
 }
 
 .row {
@@ -414,10 +473,8 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2) var(--space-3);
-  padding: var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
 }
 
 .person {
@@ -451,10 +508,8 @@ onMounted(() => {
 .friend-card {
   display: grid;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--border);
   min-width: 0;
 }
 
@@ -467,6 +522,12 @@ onMounted(() => {
 .friend-link {
   color: inherit;
   text-decoration: none;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.friend-link:active {
+  transform: scale(var(--press-scale));
+  transition-duration: var(--dur-press);
 }
 
 .friend-link strong {
@@ -512,8 +573,8 @@ onMounted(() => {
 }
 
 @media (min-width: 1024px) {
-  .friend-list {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .friends-page {
+    max-width: 720px;
   }
 }
 </style>

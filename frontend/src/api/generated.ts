@@ -2026,9 +2026,9 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * What a valid invite code leads to, for the join page. Public. An unknown, revoked, expired
-         *     or used-up code gets one answer: 404 `That invite code is not valid`. 60 lookups per IP
-         *     address per hour.
+         * What a valid invite code leads to, for the join page. Public; a session adds
+         *     `you_are_member` and `for_you`. An unknown, revoked, expired or used-up code gets one answer:
+         *     404 `That invite code is not valid`. 60 lookups per IP address per hour.
          */
         get: operations["clubs_preview_invite"];
         put?: never;
@@ -3406,7 +3406,24 @@ export interface components {
              */
             invitee: string | null;
         };
-        /** @description The join page's view of a valid invite. */
+        /**
+         * @description The book a club reads now, as an invite shows it: the book alone, without its id, the pick's
+         *     note, meeting or readers.
+         */
+        InvitePickOut: {
+            title: string;
+            /** @description Display string; may be empty. */
+            authors: string;
+            cover_url: string | null;
+            cover_thumb_url: string | null;
+            /** @description The cover's dominant colour, `#rrggbb`; null when there is no usable one. */
+            spine_color: string | null;
+        };
+        /**
+         * @description The join page's view of a valid invite. Whoever holds a valid code sees the club's name, its
+         *     member count, the book it reads now and the member who made the invite; nothing else of the
+         *     club (no other members, no posts, no ratings) and never whom a personal invite is for.
+         */
         InvitePreview: {
             club: components["schemas"]["ClubRef"] | null;
             kind: components["schemas"]["InviteTarget"];
@@ -3415,12 +3432,45 @@ export interface components {
              *     was made for can join with it, and it never makes an account. Whom it is for is not told.
              */
             personal: boolean;
+            inviter: components["schemas"]["InviterOut"] | null;
+            pick: components["schemas"]["InvitePickOut"] | null;
+            /**
+             * Format: int64
+             * @description How many members the club has; null for a sign-up invite.
+             */
+            member_count: number | null;
+            /**
+             * @description The club has reached the 20-member limit: joining (and signing up with the code) fails
+             *     with 409 `This club is full`. False for a sign-up invite.
+             */
+            full: boolean;
+            /**
+             * Format: date-time
+             * @description When the code stops working; null when only its uses limit it.
+             */
+            expires_at: string | null;
+            /**
+             * @description Signed in: whether the caller is already in the club. Null when signed out and for a
+             *     sign-up invite.
+             */
+            you_are_member: boolean | null;
+            /**
+             * @description Signed in, a personal invite: whether it was made for the caller. Null when signed out
+             *     and for any other invite.
+             */
+            for_you: boolean | null;
         };
         /**
          * @description What an invite leads to.
          * @enum {string}
          */
         InviteTarget: "club" | "signup";
+        /** @description The member who made a club invite. */
+        InviterOut: {
+            username: string;
+            /** @description `/media/{public_id}/a`. */
+            avatar_url: string | null;
+        };
         /** @description The edition an ISBN resolved to, with its work. */
         IsbnHitOut: {
             /** @description The normalised ISBN-13. */
@@ -4261,6 +4311,11 @@ export interface components {
             /** @description `"invite"` (sign-up needs an invite code) or `"open"`. */
             signup: string;
             /**
+             * @description The server sends mail. False with `EMAIL_TRANSPORT=none` (the private instance): no
+             *     verification or reset link ever arrives.
+             */
+            mail: boolean;
+            /**
              * @description The documents `GET /api/legal/{doc}` serves: the operator's (`LEGAL_DIR`), or the
              *     DEV_MODE placeholders. Empty when there are none.
              */
@@ -4792,8 +4847,10 @@ export type InviteIn = components['schemas']['InviteIn'];
 export type InviteKind = components['schemas']['InviteKind'];
 export type InviteList = components['schemas']['InviteList'];
 export type InviteOut = components['schemas']['InviteOut'];
+export type InvitePickOut = components['schemas']['InvitePickOut'];
 export type InvitePreview = components['schemas']['InvitePreview'];
 export type InviteTarget = components['schemas']['InviteTarget'];
+export type InviterOut = components['schemas']['InviterOut'];
 export type IsbnHitOut = components['schemas']['IsbnHitOut'];
 export type LegalDoc = components['schemas']['LegalDoc'];
 export type LegalDocumentOut = components['schemas']['LegalDocumentOut'];

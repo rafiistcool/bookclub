@@ -94,7 +94,7 @@ The Vue app always calls relative `/api` and `/media`; there is never a separate
 
 ### Push and the old service worker
 
-The editorial-redesign merge (PR #3) removed the service worker and the Web Push settings. `frontend/public/sw.js` is now only the kill switch for that old worker (MOVE #52): the SPA registers no worker, and `swKillSwitch.test.ts` keeps its code equal to `deploy/legacy-origin/sw.js`. The Rust server has no `/api/push/*` until Phase 4 (#60), which also brings Web Push back to the browser app. Settings keeps the notification switches (`/api/auth/notifications`) for that, but nothing sends a push. The password-change form is back in Settings (`PATCH /api/auth/password` on the Rust server). The README does not advertise push.
+The editorial-redesign merge (PR #3) removed the service worker and the Web Push settings. `frontend/public/sw.js` is now only the kill switch for that old worker (MOVE #52): the SPA registers no worker, and `swKillSwitch.test.ts` keeps its code equal to `deploy/legacy-origin/sw.js`. The Rust server has no `/api/push/*` until Phase 4 (#60), which also brings Web Push back to the browser app. The server keeps the notification choices (`/api/auth/notifications`) for that, but nothing sends a push, and Settings hides the switches until Phase 4: `components/settings/NotificationSwitches.vue` is kept, unmounted, for #60. The password change is under Settings → Account (`/settings/account`, `PATCH /api/auth/password` on the Rust server). The README does not advertise push.
 
 ## Cross-cutting rules enforced by tests
 

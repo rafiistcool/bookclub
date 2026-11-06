@@ -45,7 +45,7 @@ describe("FavoritesEditor", () => {
     const wrapper = mount(FavoritesEditor, {
       props: { items: [favorite(1, "Circe", 1)] },
     });
-    await wrapper.get("button.btn-ghost:not(.btn-sm)").trigger("click");
+    await wrapper.get("button.fav-clear-all").trigger("click");
     expect(wrapper.emitted("replace")?.[0]).toEqual([[]]);
   });
 });

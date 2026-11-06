@@ -8,7 +8,7 @@ import LegalLinks from "../components/LegalLinks.vue";
 import NavIcon from "../components/NavIcon.vue";
 import TermsPrompt from "../components/TermsPrompt.vue";
 import { tp } from "../i18n";
-import { NAV_ITEMS, isActive } from "../nav";
+import { NAV_ITEMS, PROFILE_ITEM, isActive } from "../nav";
 import { reloadWhenVisible, useFriends } from "../stores/friends";
 import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
@@ -20,6 +20,10 @@ const friends = useFriends();
 const route = useRoute();
 
 const bottomItems = NAV_ITEMS.filter((item) => item.bottomBar);
+const sideItems = NAV_ITEMS.filter((item) => item.sidebar !== false);
+const onProfile = computed(() => isActive(route.path, PROFILE_ITEM));
+// The gear is the link to the open page on /settings, so it, not the profile, is marked current there.
+const onSettings = computed(() => isActive(route.path, "/settings"));
 const activeTab = computed(() => bottomItems.findIndex((item) => isActive(route.path, item)));
 // The pill stays where it last was while a page outside the tabs is open.
 const pillTab = ref(Math.max(0, activeTab.value));
@@ -70,11 +74,6 @@ watch(
 const username = computed(() => session.user?.username ?? "");
 const avatarUrl = computed(() => session.user?.avatar_url ?? null);
 
-/** The Friends item's count: requests and club invitations waiting (Home shows it on the phone). */
-function badgeFor(to: string): number {
-  return to === "/friends" ? friends.badge : 0;
-}
-
 let stopReloading: (() => void) | null = null;
 
 onMounted(() => {
@@ -98,20 +97,13 @@ watch(
   <div class="shell">
     <header class="topbar">
       <RouterLink class="wordmark" to="/">{{ service.name }}</RouterLink>
-      <RouterLink
-        class="avatar-link"
-        to="/settings"
-        :aria-label="t('nav.settingsFor', { name: username })"
-      >
-        <Avatar :username="username" :src="avatarUrl" />
-      </RouterLink>
     </header>
 
     <aside class="sidebar">
       <RouterLink class="wordmark sidebar-mark" to="/">{{ service.name }}</RouterLink>
       <nav class="sidebar-nav" :aria-label="t('nav.main')">
         <RouterLink
-          v-for="item in NAV_ITEMS"
+          v-for="item in sideItems"
           :key="item.to"
           class="side-link"
           :class="{ active: isActive(route.path, item) }"
@@ -120,19 +112,35 @@ watch(
         >
           <NavIcon :name="item.icon" :size="20" />
           {{ t(item.labelKey) }}
-          <span v-if="badgeFor(item.to)" class="side-count nums">
-            <span aria-hidden="true">{{ badgeFor(item.to) }}</span>
-            <span class="visually-hidden">{{ tp("friends.waiting", badgeFor(item.to)) }}</span>
-          </span>
         </RouterLink>
       </nav>
-      <RouterLink class="side-account" to="/settings">
-        <Avatar :username="username" :src="avatarUrl" />
-        <span class="side-account-text">
-          <strong>{{ username }}</strong>
-          <span class="finer subtle">{{ t("nav.settingsAndTheme") }}</span>
-        </span>
-      </RouterLink>
+      <!-- The profile, with Friends and Settings under it; the gear goes straight to Settings. -->
+      <div class="side-account" :class="{ active: onProfile }">
+        <RouterLink
+          class="side-account-link"
+          :to="PROFILE_ITEM.to"
+          :aria-current="onProfile && !onSettings ? 'page' : undefined"
+        >
+          <Avatar :username="username" :src="avatarUrl" />
+          <span class="side-account-text">
+            <strong>{{ username }}</strong>
+            <span class="finer subtle">{{ t(PROFILE_ITEM.labelKey) }}</span>
+          </span>
+          <span v-if="friends.badge" class="side-count nums">
+            <span aria-hidden="true">{{ friends.badge }}</span>
+            <span class="visually-hidden">{{ tp("friends.waiting", friends.badge) }}</span>
+          </span>
+        </RouterLink>
+        <RouterLink
+          class="icon-btn side-settings"
+          :class="{ on: onSettings }"
+          :aria-current="onSettings ? 'page' : undefined"
+          to="/settings"
+          :aria-label="t('nav.settings')"
+        >
+          <NavIcon name="settings" :size="20" />
+        </RouterLink>
+      </div>
     </aside>
 
     <main class="main">
@@ -161,8 +169,15 @@ watch(
         :class="{ active: isActive(route.path, item) }"
         :aria-current="isActive(route.path, item) ? 'page' : undefined"
       >
-        <NavIcon :name="item.icon" />
+        <!-- The profile tab is the reader's own picture: a ring when open, a dot while friends wait. -->
+        <span v-if="item === PROFILE_ITEM" class="tab-avatar" :class="{ waiting: friends.badge > 0 }">
+          <Avatar :username="username" :src="avatarUrl" size="sm" />
+        </span>
+        <NavIcon v-else :name="item.icon" />
         {{ t(item.shortLabelKey ?? item.labelKey) }}
+        <span v-if="item === PROFILE_ITEM && friends.badge" class="visually-hidden">
+          {{ tp("friends.waiting", friends.badge) }}
+        </span>
       </RouterLink>
     </nav>
   </div>
@@ -187,15 +202,6 @@ watch(
   background: var(--bg-translucent);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
-}
-
-.avatar-link {
-  display: grid;
-  place-items: center;
-  min-width: var(--tap);
-  min-height: var(--tap);
-  border-radius: var(--radius-pill);
-  text-decoration: none;
 }
 
 .main {
@@ -247,13 +253,43 @@ watch(
   transition: color var(--dur-base) var(--ease-out);
 }
 
-.bottom-nav a :deep(svg) {
+.bottom-nav a :deep(svg),
+.tab-avatar {
   transition: transform var(--dur-fast) var(--ease-out);
 }
 
-.bottom-nav a:active :deep(svg) {
+.bottom-nav a:active :deep(svg),
+.bottom-nav a:active .tab-avatar {
   transform: scale(0.86);
   transition-duration: var(--dur-press);
+}
+
+/* 24px, in the 22px icons' slot; the ring sits outside it on the page colour. */
+.tab-avatar {
+  position: relative;
+  display: grid;
+  margin-top: -1px;
+  border-radius: var(--radius-pill);
+  box-shadow: 0 0 0 1.5px transparent;
+}
+
+.bottom-nav a.active .tab-avatar,
+.side-account.active .side-account-link :deep(.avatar) {
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 3.5px var(--accent-hover);
+}
+
+.tab-avatar.waiting::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg);
 }
 
 .bottom-nav a.active {
@@ -354,6 +390,7 @@ watch(
   }
 
   .side-count {
+    flex: none;
     margin-left: auto;
     min-width: 1.5rem;
     padding: 0 var(--space-2);
@@ -370,19 +407,44 @@ watch(
     margin-top: auto;
     display: flex;
     align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-3);
+    gap: var(--space-1);
+    padding: var(--space-1);
     border-radius: var(--radius-md);
     border: 1px solid var(--border);
+    min-width: 0;
+    transition: background var(--dur-fast) var(--ease);
+  }
+
+  .side-account.active {
+    background: var(--accent-soft);
+    border-color: var(--accent-line);
+  }
+
+  .side-account-link {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2);
+    border-radius: var(--radius-sm);
     color: inherit;
     text-decoration: none;
     min-width: 0;
   }
 
   @media (hover: hover) {
-    .side-account:hover {
+    .side-account:not(.active) .side-account-link:hover {
       background: var(--surface-2);
     }
+  }
+
+  .side-settings {
+    flex: none;
+    text-decoration: none;
+  }
+
+  .side-settings.on {
+    color: var(--accent-hover);
   }
 
   .side-account-text {

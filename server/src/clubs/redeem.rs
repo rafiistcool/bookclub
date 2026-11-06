@@ -5,19 +5,23 @@
 use axum::Json;
 use axum::extract::State;
 use serde::Serialize;
+use time::OffsetDateTime;
 use utoipa::ToSchema;
 
+use super::MAX_MEMBERS;
 use super::extract::role_in;
 use super::invites::{ALREADY_IN_CLUB, consume, join, normalize_code};
 use super::lock_club;
 use super::out::{ClubOut, club_out};
 use crate::AppState;
 use crate::auth::account::account_key;
-use crate::auth::extract::CurrentUser;
+use crate::auth::extract::{CurrentUser, MaybeUser};
+use crate::catalog::shared::books::{BookRef, book_out};
 use crate::client_ip::ClientIp;
 use crate::dto::ClubRef;
 use crate::error::{ApiResult, AppError, ErrorBody, msg};
 use crate::extract::ApiPath;
+use crate::media::shared::urls::avatar_url;
 use crate::ratelimit::ip_key;
 
 /// What an invite leads to.
@@ -30,7 +34,9 @@ pub enum InviteTarget {
     Signup,
 }
 
-/// The join page's view of a valid invite.
+/// The join page's view of a valid invite. Whoever holds a valid code sees the club's name, its
+/// member count, the book it reads now and the member who made the invite; nothing else of the
+/// club (no other members, no posts, no ratings) and never whom a personal invite is for.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct InvitePreview {
     /// The club it joins; null for a sign-up invite.
@@ -39,11 +45,51 @@ pub struct InvitePreview {
     /// A personal invite (a club admin's invite for one friend, FRIENDS #57): only the account it
     /// was made for can join with it, and it never makes an account. Whom it is for is not told.
     pub personal: bool,
+    /// The member who made a club invite, while they are still in the club and not suspended;
+    /// null otherwise, and always null for a sign-up invite.
+    pub inviter: Option<InviterOut>,
+    /// The book the club reads now; null without a current pick and for a sign-up invite.
+    pub pick: Option<InvitePickOut>,
+    /// How many members the club has; null for a sign-up invite.
+    pub member_count: Option<i64>,
+    /// The club has reached the 20-member limit: joining (and signing up with the code) fails
+    /// with 409 `This club is full`. False for a sign-up invite.
+    pub full: bool,
+    /// When the code stops working; null when only its uses limit it.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub expires_at: Option<OffsetDateTime>,
+    /// Signed in: whether the caller is already in the club. Null when signed out and for a
+    /// sign-up invite.
+    pub you_are_member: Option<bool>,
+    /// Signed in, a personal invite: whether it was made for the caller. Null when signed out
+    /// and for any other invite.
+    pub for_you: Option<bool>,
 }
 
-/// What a valid invite code leads to, for the join page. Public. An unknown, revoked, expired
-/// or used-up code gets one answer: 404 `That invite code is not valid`. 60 lookups per IP
-/// address per hour.
+/// The member who made a club invite.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct InviterOut {
+    pub username: String,
+    /// `/media/{public_id}/a`.
+    pub avatar_url: Option<String>,
+}
+
+/// The book a club reads now, as an invite shows it: the book alone, without its id, the pick's
+/// note, meeting or readers.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct InvitePickOut {
+    pub title: String,
+    /// Display string; may be empty.
+    pub authors: String,
+    pub cover_url: Option<String>,
+    pub cover_thumb_url: Option<String>,
+    /// The cover's dominant colour, `#rrggbb`; null when there is no usable one.
+    pub spine_color: Option<String>,
+}
+
+/// What a valid invite code leads to, for the join page. Public; a session adds
+/// `you_are_member` and `for_you`. An unknown, revoked, expired or used-up code gets one answer:
+/// 404 `That invite code is not valid`. 60 lookups per IP address per hour.
 #[utoipa::path(
     get,
     path = "/api/invites/{code}",
@@ -57,6 +103,7 @@ pub struct InvitePreview {
     )
 )]
 pub async fn preview(
+    MaybeUser(viewer): MaybeUser,
     State(state): State<AppState>,
     ClientIp(ip): ClientIp,
     ApiPath(code): ApiPath<String>,
@@ -66,31 +113,77 @@ pub async fn preview(
         .invite_preview_ip
         .check_and_hit(&ip_key(ip))
         .map_err(|wait| wait.into_error(msg::SLOW_DOWN))?;
+    let viewer_id = viewer.map(|user| user.id);
+    let mut conn = state.db.acquire().await?;
+    // The inviter only while they are a member of the invite's club and not suspended: leaving
+    // keeps a member's invites valid, and they no longer speak for the club.
     let row = sqlx::query!(
-        r#"SELECT c.slug AS "slug?", c.name AS "name?", i.invitee_id IS NOT NULL AS "personal!"
+        r#"SELECT c.slug AS "slug?", c.name AS "name?", i.invitee_id, i.expires_at,
+                  u.username AS "inviter?", m.public_id AS "inviter_avatar?",
+                  (SELECT count(*) FROM club_memberships cm WHERE cm.club_id = i.club_id)
+                      AS "member_count!",
+                  (SELECT p.work_id FROM club_picks p
+                   WHERE p.club_id = i.club_id AND p.ended_at IS NULL) AS pick_work_id,
+                  EXISTS (SELECT 1 FROM club_memberships cm
+                          WHERE cm.club_id = i.club_id AND cm.user_id = $2) AS "you_are_member!"
            FROM club_invites i
            LEFT JOIN clubs c ON c.id = i.club_id
+           LEFT JOIN club_memberships im ON im.club_id = i.club_id AND im.user_id = i.created_by
+           LEFT JOIN users u ON u.id = im.user_id AND u.suspended_at IS NULL
+           LEFT JOIN media m ON m.id = u.avatar_media_id AND m.removed_at IS NULL
            WHERE i.code = $1 AND i.revoked_at IS NULL
              AND (i.expires_at IS NULL OR i.expires_at > now())
              AND (i.max_uses IS NULL OR i.use_count < i.max_uses)"#,
-        normalize_code(&code)
+        normalize_code(&code),
+        viewer_id as Option<i64>
     )
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *conn)
     .await?
     .ok_or_else(|| AppError::not_found(msg::INVITE_INVALID))?;
-    let preview = match (row.slug, row.name) {
-        (Some(slug), Some(name)) => InvitePreview {
-            club: Some(ClubRef { slug, name }),
-            kind: InviteTarget::Club,
-            personal: row.personal,
-        },
-        _ => InvitePreview {
+    let (Some(slug), Some(name)) = (row.slug, row.name) else {
+        return Ok(Json(InvitePreview {
             club: None,
             kind: InviteTarget::Signup,
             personal: false,
-        },
+            inviter: None,
+            pick: None,
+            member_count: None,
+            full: false,
+            expires_at: row.expires_at,
+            you_are_member: None,
+            for_you: None,
+        }));
     };
-    Ok(Json(preview))
+    let pick = match row.pick_work_id {
+        Some(work_id) => book_out(&mut conn, BookRef::work(work_id))
+            .await?
+            .map(|book| InvitePickOut {
+                title: book.title,
+                authors: book.authors,
+                cover_url: book.cover_url,
+                cover_thumb_url: book.cover_thumb_url,
+                spine_color: book.spine_color,
+            }),
+        None => None,
+    };
+    Ok(Json(InvitePreview {
+        club: Some(ClubRef { slug, name }),
+        kind: InviteTarget::Club,
+        personal: row.invitee_id.is_some(),
+        inviter: row.inviter.map(|username| InviterOut {
+            username,
+            avatar_url: avatar_url(row.inviter_avatar.as_deref()),
+        }),
+        pick,
+        member_count: Some(row.member_count),
+        full: row.member_count >= MAX_MEMBERS,
+        expires_at: row.expires_at,
+        you_are_member: viewer_id.map(|_| row.you_are_member),
+        for_you: match (viewer_id, row.invitee_id) {
+            (Some(viewer), Some(invitee)) => Some(viewer == invitee),
+            _ => None,
+        },
+    }))
 }
 
 /// Joins the invite's club as a member. One transaction: the club lock, the "already in this

@@ -5,6 +5,7 @@ import { api, ApiError } from "../api/client";
 import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
+import { addressSavedMessage } from "./settings/addressSaved";
 
 /**
  * The one-time prompt for accounts without an email address (imported from
@@ -29,7 +30,7 @@ async function save() {
     const address = email.value.trim();
     await api.changeEmail(address, password.value);
     session.user = await api.me();
-    toast.show(t("account.emailSent", { email: address }));
+    toast.show(addressSavedMessage(t, service.mail, session.user, address));
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : t("emailPrompt.failed");
   } finally {

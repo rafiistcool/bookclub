@@ -39,6 +39,7 @@ import { translateApiError } from "../i18n/apiErrors";
 import { useLocale } from "../stores/locale";
 import { useService } from "../stores/service";
 import { isTermsChanged, TERMS_CHANGED, useSession } from "../stores/session";
+import { useToast } from "../stores/toast";
 import ForgotPasswordPage from "./ForgotPasswordPage.vue";
 import JoinPage from "./JoinPage.vue";
 import LoginPage from "./LoginPage.vue";
@@ -72,6 +73,30 @@ async function mountAt(component: object, path: string, signup = "invite", legal
   return { wrapper, router };
 }
 
+/** A club invite's preview, as the sign-up chip reads it. */
+function clubInvite() {
+  return {
+    club: { slug: "readers-ab12", name: "Readers" },
+    kind: "club",
+    personal: false,
+    inviter: { username: "lena", avatar_url: null },
+    pick: null,
+    member_count: 4,
+    full: false,
+    expires_at: null,
+    you_are_member: null,
+    for_you: null,
+  };
+}
+
+async function fillSignup(wrapper: Awaited<ReturnType<typeof mountAt>>["wrapper"]) {
+  await wrapper.get("input[name=username]").setValue("neu");
+  await wrapper.get("input[name=email]").setValue("neu@example.com");
+  await wrapper.get("input[name=password]").setValue("long enough");
+  await wrapper.get("form").trigger("submit");
+  await flushPromises();
+}
+
 describe("auth pages", () => {
   beforeEach(() => {
     for (const fn of Object.values(api)) fn.mockReset();
@@ -86,13 +111,17 @@ describe("auth pages", () => {
     vi.unstubAllGlobals();
   });
 
-  it("signs up with the invite code from the link and opens the club it joined", async () => {
+  it("signs up with the invite code from the link behind a club chip and opens the club with its welcome", async () => {
     const club: ClubSummary = { slug: "readers-ab12", name: "Readers", role: "member", timezone: "UTC", member_count: 4 };
+    api.previewInvite.mockResolvedValue(clubInvite());
     api.register.mockResolvedValue(user({ username: "neu", clubs: [club] }));
     const { wrapper, router } = await mountAt(SignupPage, "/signup?code=7K3M9QX2HD");
-    const invite = wrapper.get("input[name=invite]");
-    expect((invite.element as HTMLInputElement).value).toBe("7K3M9QX2HD");
-    expect(invite.attributes("required")).toBeDefined();
+    expect(api.previewInvite).toHaveBeenCalledWith("7K3M9QX2HD");
+    expect(wrapper.find("input[name=invite]").exists()).toBe(false);
+    expect(wrapper.get(".invite-chip-name").text()).toBe("Readers");
+    expect(wrapper.find(".lede").exists()).toBe(false);
+    expect(wrapper.findAll("form input")).toHaveLength(3);
+    expect(wrapper.get("button[type=submit]").text()).toBe("Create account and join");
     await wrapper.get("input[name=username]").setValue("neu");
     await wrapper.get("input[name=email]").setValue(" neu@example.com ");
     await wrapper.get("input[name=password]").setValue("long enough");
@@ -102,6 +131,85 @@ describe("auth pages", () => {
       expect.objectContaining({ username: "neu", email: "neu@example.com", invite_code: "7K3M9QX2HD" }),
     );
     expect(router.currentRoute.value.path).toBe("/c/readers-ab12");
+    expect(router.options.history.state.joined).toBe(true);
+    expect(useToast().items.map((toast) => toast.message)).toEqual([
+      "Welcome! Confirm your address with the link sent to neu@example.com.",
+    ]);
+  });
+
+  it("lets the reader change the code from the link", async () => {
+    api.previewInvite.mockResolvedValue(clubInvite());
+    const { wrapper } = await mountAt(SignupPage, "/signup?code=7K3M9QX2HD");
+    await wrapper.get(".invite-change").trigger("click");
+    await flushPromises();
+    const invite = wrapper.get("input[name=invite]");
+    expect((invite.element as HTMLInputElement).value).toBe("7K3M9QX2HD");
+    expect(invite.attributes("required")).toBeDefined();
+    expect(wrapper.find(".invite-chip").exists()).toBe(false);
+    expect(wrapper.get("button[type=submit]").text()).toBe("Create an account");
+  });
+
+  it("brings the code field back for a code that does not work", async () => {
+    api.previewInvite.mockRejectedValue(new ApiError("That invite code is not valid", 404, "That invite code is not valid"));
+    const { wrapper } = await mountAt(SignupPage, "/signup?code=NOPE");
+    expect((wrapper.get("input[name=invite]").element as HTMLInputElement).value).toBe("NOPE");
+    expect(wrapper.find(".invite-chip").exists()).toBe(false);
+  });
+
+  it("never promises a join that sign-up refuses: a personal invite or a full club", async () => {
+    // A personal invite is for an existing account: the way on is signing in.
+    api.previewInvite.mockResolvedValue({ ...clubInvite(), personal: true });
+    let { wrapper } = await mountAt(SignupPage, "/signup?code=7K3M9QX2HD");
+    expect(wrapper.find(".invite-chip").exists()).toBe(false);
+    expect((wrapper.get("input[name=invite]").element as HTMLInputElement).value).toBe("");
+    expect(wrapper.get("button[type=submit]").text()).toBe("Create an account");
+    const refused = wrapper.get(".invite-refused");
+    expect(refused.text()).toContain("someone who already has an account");
+    expect(refused.get("a").attributes("href")).toBe("/login?next=/join/7K3M9QX2HD");
+    wrapper.unmount();
+
+    // A full club takes nobody.
+    api.previewInvite.mockResolvedValue({ ...clubInvite(), full: true, member_count: 20 });
+    ({ wrapper } = await mountAt(SignupPage, "/signup?code=7K3M9QX2HD"));
+    expect(wrapper.find(".invite-chip").exists()).toBe(false);
+    expect((wrapper.get("input[name=invite]").element as HTMLInputElement).value).toBe("");
+    expect(wrapper.get("button[type=submit]").text()).toBe("Create an account");
+    expect(wrapper.get(".invite-refused").text()).toContain("Readers is full");
+    expect(wrapper.find(".invite-refused a").exists()).toBe(false);
+  });
+
+  it("promises no mail when the server sends none", async () => {
+    const club: ClubSummary = { slug: "readers-ab12", name: "Readers", role: "member", timezone: "UTC", member_count: 4 };
+    api.previewInvite.mockResolvedValue(clubInvite());
+    api.register.mockResolvedValue(user({ username: "neu", clubs: [club] }));
+    const joining = await mountAt(SignupPage, "/signup?code=7K3M9QX2HD", "invite", { ...LEGAL, mail: false });
+    expect(joining.wrapper.get("input[name=email]").element.parentElement?.querySelector(".field-hint")?.textContent).toBe(
+      "Only you see it.",
+    );
+    await fillSignup(joining.wrapper);
+    expect(joining.router.currentRoute.value.path).toBe("/c/readers-ab12");
+    expect(useToast().items).toEqual([]);
+
+    api.register.mockResolvedValue(user({ username: "solo", clubs: [] }));
+    const alone = await mountAt(SignupPage, "/signup", "open", { ...LEGAL, mail: false });
+    await fillSignup(alone.wrapper);
+    expect(alone.router.currentRoute.value.path).toBe("/");
+    expect(useToast().items.map((toast) => toast.message)).toEqual(["Welcome, solo!"]);
+  });
+
+  it("shows the username rule only while the name breaks it", async () => {
+    const { wrapper } = await mountAt(SignupPage, "/signup", "open");
+    const name = wrapper.get("input[name=username]");
+    expect(wrapper.find(".username-rule").exists()).toBe(false);
+    await name.setValue("Ada Lovelace");
+    expect(wrapper.get(".username-rule").text()).toBe("2–32 characters: lowercase letters, numbers, underscore.");
+    expect(name.attributes("aria-invalid")).toBe("true");
+    await name.setValue("Ada");
+    expect(wrapper.find(".username-rule").exists()).toBe(false);
+    await name.setValue("a");
+    expect(wrapper.find(".username-rule").exists()).toBe(false);
+    await name.trigger("blur");
+    expect(wrapper.find(".username-rule").exists()).toBe(true);
   });
 
   it("sends the browser's zone by its current name, and the UI language", async () => {
