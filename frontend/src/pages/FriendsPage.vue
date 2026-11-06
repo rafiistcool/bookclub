@@ -18,8 +18,10 @@ import { useToast } from "../stores/toast";
 /**
  * `/friends`: add a friend by exact username, answer requests, open or
  * decline invitations into clubs, the friends with what they are reading,
- * the requests one sent, and the blocks. Every action answers with the
- * whole lists (the friends store), so the page only renders the store.
+ * the requests one sent, and the blocks. Only the friends list shows while
+ * empty; the other sections appear once they hold a row. Every action
+ * answers with the whole lists (the friends store), so the page only
+ * renders the store.
  */
 const { t } = useI18n();
 const friends = useFriends();
@@ -193,12 +195,11 @@ onMounted(() => {
     <div v-else-if="!lists" class="section skeleton lists-skeleton" aria-hidden="true" />
 
     <template v-else>
-      <section class="section" aria-labelledby="friend-requests">
+      <section v-if="lists.incoming.length" class="section" aria-labelledby="friend-requests">
         <div class="section-head">
           <h2 id="friend-requests">{{ t("friends.incoming.heading") }}</h2>
         </div>
-        <p v-if="lists.incoming.length === 0" class="fine subtle empty-line">{{ t("friends.incoming.empty") }}</p>
-        <ul v-else class="rows">
+        <ul class="rows">
           <li v-for="request in lists.incoming" :key="request.user.id" class="row incoming-row">
             <span class="person">
               <Avatar :username="request.user.username" :src="request.user.avatar_url" />
@@ -222,12 +223,11 @@ onMounted(() => {
         </ul>
       </section>
 
-      <section class="section" aria-labelledby="club-invitations">
+      <section v-if="lists.club_invites.length" class="section" aria-labelledby="club-invitations">
         <div class="section-head">
           <h2 id="club-invitations">{{ t("friends.invites.heading") }}</h2>
         </div>
-        <p v-if="lists.club_invites.length === 0" class="fine subtle empty-line">{{ t("friends.invites.empty") }}</p>
-        <ul v-else class="rows">
+        <ul class="rows">
           <li v-for="invite in lists.club_invites" :key="invite.id" class="row club-invite-row">
             <span class="person-meta">
               <strong class="invite-line">
@@ -295,12 +295,11 @@ onMounted(() => {
         </ul>
       </section>
 
-      <section class="section" aria-labelledby="sent-requests">
+      <section v-if="lists.outgoing.length" class="section" aria-labelledby="sent-requests">
         <div class="section-head">
           <h2 id="sent-requests">{{ t("friends.outgoing.heading") }}</h2>
         </div>
-        <p v-if="lists.outgoing.length === 0" class="fine subtle empty-line">{{ t("friends.outgoing.empty") }}</p>
-        <ul v-else class="rows">
+        <ul class="rows">
           <li v-for="request in lists.outgoing" :key="request.user.id" class="row outgoing-row">
             <span class="person">
               <Avatar :username="request.user.username" :src="request.user.avatar_url" />
@@ -318,12 +317,11 @@ onMounted(() => {
         </ul>
       </section>
 
-      <section class="section" aria-labelledby="blocked-accounts">
+      <section v-if="lists.blocked.length" class="section" aria-labelledby="blocked-accounts">
         <div class="section-head">
           <h2 id="blocked-accounts">{{ t("friends.blocked.heading") }}</h2>
         </div>
-        <p v-if="lists.blocked.length === 0" class="fine subtle empty-line">{{ t("friends.blocked.empty") }}</p>
-        <ul v-else class="rows">
+        <ul class="rows">
           <li v-for="block in lists.blocked" :key="block.username" class="row blocked-row">
             <span class="person-meta">
               <strong>{{ block.username }}</strong>

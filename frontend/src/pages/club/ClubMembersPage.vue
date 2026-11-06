@@ -87,6 +87,13 @@ function actionsFor(member: Member): { role: boolean; transfer: boolean; remove:
   return { role: false, transfer: false, remove: false };
 }
 
+/** The card's one line after the badges: "Since {day}", then "· reading {n}" when they read anything. */
+function memberLine(member: Member): string {
+  const parts = [t("members.joined", { day: formatDay(member.joined_at, club.value.timezone, locale.locale) })];
+  if (member.currently_reading_count > 0) parts.push(t("club.currentlyReading", { n: member.currently_reading_count }));
+  return parts.join(" · ");
+}
+
 function openManage(member: Member) {
   managing.value = member;
   confirmAction.value = null;
@@ -289,12 +296,11 @@ onMounted(() => {
               <Avatar :username="member.username" :src="member.avatar_url" />
               <span class="member-meta">
                 <strong>{{ member.username }}</strong>
-                <span class="finer subtle">
+                <span class="finer subtle member-line">
                   <span v-if="member.role !== 'member'" class="badge role-badge">{{ t(`roles.${member.role}`) }}</span>
-                  <template v-if="member.you">{{ t("club.thatsYou") }} · </template>
-                  <span class="nums">{{ t("club.currentlyReading", { n: member.currently_reading_count }) }}</span>
+                  <span v-if="member.you" class="badge you-badge">{{ t("club.thatsYou") }}</span>
+                  <span class="member-facts nums">{{ memberLine(member) }}</span>
                 </span>
-                <span class="finer subtle">{{ t("members.joined", { day: formatDay(member.joined_at, club.timezone, locale.locale) }) }}</span>
               </span>
               <span class="preview-row">
                 <BookCover
@@ -555,8 +561,12 @@ onMounted(() => {
   overflow-wrap: anywhere;
 }
 
-.role-badge {
-  margin-right: var(--space-1);
+/* One line: the badges, then "Since {day} · reading {n}". It wraps on a narrow card. */
+.member-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px var(--space-1);
 }
 
 .preview-row {

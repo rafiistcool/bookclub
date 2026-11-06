@@ -84,7 +84,6 @@ watch(() => [route.params.username, route.query.year], load, { immediate: true }
     <div class="page-head stats-head">
       <div>
         <h1>{{ own ? t("stats.title") : t("stats.titleOf", { name: stats?.username ?? username }) }}</h1>
-        <p class="lede">{{ own ? t("stats.lede") : t("stats.ledeOf", { name: stats?.username ?? username }) }}</p>
       </div>
       <label v-if="stats && stats.years.length > 1" class="field year-field">
         <span>{{ t("stats.year") }}</span>

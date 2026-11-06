@@ -90,6 +90,44 @@ describe("ClubMembersPage", () => {
     expect(wrapper.text()).not.toContain("Delete the club");
   });
 
+  it("sums up each member in one line: badges, since when, and how many books they read", async () => {
+    const { wrapper } = await mountAs("member", "mia");
+    const card = (name: string) => wrapper.findAll(".member-card").find((row) => row.get(".member-meta strong").text() === name)!;
+    // Under the name there is exactly one line.
+    for (const row of wrapper.findAll(".member-meta")) expect(row.findAll(".finer")).toHaveLength(1);
+
+    const olga = card("olga").get(".member-line");
+    expect(olga.findAll(".badge").map((badge) => badge.text())).toEqual(["Owner"]);
+    expect(olga.get(".member-facts").text()).toMatch(/^Since .*2026$/);
+
+    const mia = card("mia").get(".member-line");
+    expect(mia.findAll(".badge").map((badge) => badge.text())).toEqual(["You"]);
+    expect(card("max").findAll(".badge")).toHaveLength(0);
+  });
+
+  it("adds the reading count to the line only when it is above zero", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const club = clubOut({ role: "member", member_count: 2 });
+    useSession().user = user({ username: "mia", clubs: [{ ...club }] });
+    useClubs().current = club;
+    api.clubMembers.mockResolvedValue({
+      items: [
+        member({ username: "adam", role: "admin", currently_reading_count: 2 }),
+        member({ username: "mia", you: true, currently_reading_count: 0 }),
+      ],
+    });
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/:rest(.*)*", component: ClubMembersPage }] });
+    await router.push(`/c/${club.slug}/members`);
+    const wrapper = mount(ClubMembersPage, { global: { plugins: [pinia, router, i18n], stubs: { BookCover: true } } });
+    await flushPromises();
+
+    const [adam, mia] = wrapper.findAll(".member-line");
+    expect(adam!.findAll(".badge").map((badge) => badge.text())).toEqual(["Admin"]);
+    expect(adam!.get(".member-facts").text()).toMatch(/^Since .* · reading 2$/);
+    expect(mia!.get(".member-facts").text()).toMatch(/^Since [^·]*$/);
+  });
+
   it("lets admins remove members only, and manage invites", async () => {
     const { wrapper } = await mountAs("admin", "adam");
     expect(manageButtonsFor(wrapper)).toEqual(["mia", "max"]);

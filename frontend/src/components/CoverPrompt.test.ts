@@ -30,7 +30,8 @@ describe("CoverPrompt", () => {
   it("asks a reader with the book on their shelf for a photo of its cover", () => {
     const wrapper = mount(CoverPrompt, { props: { book: shelved() } });
     expect(wrapper.get("h2").text()).toBe("This book has no cover yet");
-    expect(wrapper.text()).toContain("It's on your shelf.");
+    expect(wrapper.text()).toContain("becomes the cover for everyone");
+    expect(wrapper.text()).not.toContain("It's on your shelf.");
     expect(wrapper.text()).toContain("Photograph only the cover.");
     const action = wrapper.get("label.cover-photo");
     expect(action.text()).toBe("Add a photo of the cover");

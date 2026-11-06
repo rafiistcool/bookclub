@@ -77,7 +77,7 @@ async function submit() {
 <template>
   <main class="auth-page">
     <h1 class="wordmark">{{ service.name }}</h1>
-    <p class="lede">{{ inviteOnly ? t("auth.signupInviteLede") : t("auth.signupLede") }}</p>
+    <p v-if="inviteOnly" class="lede">{{ t("auth.signupInviteLede") }}</p>
     <form @submit.prevent="submit">
       <p v-if="error" class="error">{{ error }}</p>
       <label v-if="showInvite" class="field">
@@ -164,7 +164,11 @@ async function submit() {
 
 <style scoped>
 .lede {
-  margin: var(--space-2) 0 var(--space-6);
+  margin-top: var(--space-2);
+}
+
+form {
+  margin-top: var(--space-6);
 }
 
 .signup-terms {

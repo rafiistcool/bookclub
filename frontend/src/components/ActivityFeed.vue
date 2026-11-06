@@ -4,14 +4,13 @@ import { useI18n } from "vue-i18n";
 import { activityLine } from "../activity";
 import { api, ApiError } from "../api/client";
 import { bookPath } from "../constants";
-import { formatClubDate } from "../i18n/dates";
 import { isClubGone, useClubs } from "../stores/clubs";
-import { useLocale } from "../stores/locale";
 import { useSession } from "../stores/session";
 import { postTimeZone } from "../timezone";
 import type { ActivityItem } from "../types";
 import Avatar from "./Avatar.vue";
 import BookCover from "./BookCover.vue";
+import RelativeTime from "./RelativeTime.vue";
 
 /**
  * What happened: picks, votes, notes, shelves. Without `club` it is the home
@@ -26,7 +25,6 @@ const props = defineProps<{
 }>();
 
 const { t } = useI18n();
-const locale = useLocale();
 const session = useSession();
 const clubs = useClubs();
 
@@ -63,9 +61,8 @@ async function load(more = false) {
  * A club feed shows every line in the club's zone, as its labels are; the home
  * feed shows club events in their club's zone and personal ones in the viewer's.
  */
-function when(item: ActivityItem): string {
-  const zone = props.club && feedZone.value ? feedZone.value : postTimeZone(item, session.user);
-  return formatClubDate(item.created_at, zone, locale.locale) || item.created_label;
+function zoneOf(item: ActivityItem): string {
+  return props.club && feedZone.value ? feedZone.value : postTimeZone(item, session.user);
 }
 
 onMounted(() => void load());
@@ -116,7 +113,7 @@ watch(
               <template v-if="!club && item.club">
                 <RouterLink class="activity-club" :to="`/c/${item.club.slug}`">{{ item.club.name }}</RouterLink> ·
               </template>
-              {{ when(item) }}
+              <RelativeTime :iso="item.created_at" :zone="zoneOf(item)" :fallback="item.created_label" />
             </span>
           </span>
         </li>

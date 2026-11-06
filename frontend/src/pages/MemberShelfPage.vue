@@ -11,7 +11,6 @@ import FavoritePortrait from "../components/FavoritePortrait.vue";
 import ReportSheet, { picturePublicId } from "../components/ReportSheet.vue";
 import TileSkeleton from "../components/TileSkeleton.vue";
 import { STATUSES, statusShort, type Status } from "../constants";
-import { tp } from "../i18n";
 import { useSession } from "../stores/session";
 import type { Favorite, ShelfItem } from "../types";
 
@@ -81,9 +80,6 @@ watch(() => route.params.username, load);
       <Avatar :username="username" :src="avatarUrl" size="lg" />
       <div>
         <h1>{{ t("memberShelf.title", { name: username }) }}</h1>
-        <p v-if="loaded && !error" class="lede nums">
-          {{ t("memberShelf.lede", { books: tp("shelf.books", counts.all), reading: counts.currently_reading }) }}
-        </p>
         <button v-if="reportable" class="text-btn finer report-avatar" type="button" @click="reporting = true">
           {{ t("report.action.avatar") }}
         </button>
@@ -103,13 +99,13 @@ watch(() => route.params.username, load);
 
     <div v-else-if="items.length === 0" class="empty">
       <h3>{{ t("memberShelf.emptyTitle") }}</h3>
-      <p>{{ t("memberShelf.emptyBody", { name: username }) }}</p>
     </div>
 
     <template v-else>
-      <div class="segmented shelf-filter" role="group" :aria-label="t('shelf.filterByStatus')">
+      <div class="segmented stacked shelf-filter" role="group" :aria-label="t('shelf.filterByStatus')">
         <button type="button" :aria-pressed="filter === 'all'" @click="filter = 'all'">
-          {{ t("common.all") }} <span class="seg-count nums">{{ counts.all }}</span>
+          <span class="seg-label">{{ t("common.all") }}</span>
+          <span class="seg-count nums">{{ counts.all }}</span>
         </button>
         <button
           v-for="status in STATUSES"
@@ -118,7 +114,7 @@ watch(() => route.params.username, load);
           :aria-pressed="filter === status"
           @click="filter = status"
         >
-          {{ statusShort(status) }}
+          <span class="seg-label">{{ statusShort(status) }}</span>
           <span class="seg-count nums">{{ counts[status] }}</span>
         </button>
       </div>

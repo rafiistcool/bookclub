@@ -1,4 +1,5 @@
 import { t } from "./i18n";
+import { calendarDay } from "./i18n/dates";
 
 export const FAVORITE_LIMIT = 3;
 
@@ -77,22 +78,6 @@ export function starLabel(rating: number | null | undefined): string {
 export function monogram(title: string): string {
   const letter = title.trim().charAt(0);
   return letter ? letter.toUpperCase() : "?";
-}
-
-/** The calendar day of `date` in `timeZone` (the device's zone without one), as a UTC midnight. */
-function calendarDay(date: Date, timeZone?: string): number {
-  if (timeZone) {
-    try {
-      const parts = new Intl.DateTimeFormat("en-CA", {
-        timeZone, year: "numeric", month: "2-digit", day: "2-digit",
-      }).formatToParts(date);
-      const part = (type: string) => Number(parts.find((p) => p.type === type)?.value);
-      return Date.UTC(part("year"), part("month") - 1, part("day"));
-    } catch {
-      // An unknown zone: count in the device's.
-    }
-  }
-  return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
 /**

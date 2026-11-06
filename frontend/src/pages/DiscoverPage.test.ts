@@ -171,6 +171,11 @@ describe("DiscoverPage", () => {
     expect(wrapper.text()).toContain("Clear Fantasy");
     expect(wrapper.text()).toContain("Add your own book");
     expect(wrapper.text()).toContain("ISBN");
+    // The "Add your own book" button says what the catalog lacks; no sentence repeats it.
+    expect(wrapper.get(".empty p").text()).toBe(
+      "Try the title plus the author, or paste an ISBN. The Fantasy filter may be hiding it.",
+    );
+    expect(wrapper.find(".page-head .lede").exists()).toBe(false);
   });
 
   it("starts two subject shelves before waiting on the rest", async () => {

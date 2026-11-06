@@ -22,7 +22,7 @@ describe("monthly shelf", () => {
   it("shows active books together and completed months newest first in the all view", () => {
     const wrapper = render({ clubPickIds: [2] });
     expect(wrapper.findAll(".month-heading").map(node => node.text())).toEqual(["September 2026 1", "August 2026 1"]);
-    expect(wrapper.findAll(".shelf-status").map(node => node.text())).toEqual(["Want", "Reading", "Done", "Done"]);
+    expect(wrapper.findAll(".shelf-status").map(node => node.text())).toEqual(["To read", "Reading", "Read", "Read"]);
     expect(wrapper.find(".club-pick").exists()).toBe(true);
     wrapper.unmount();
   });

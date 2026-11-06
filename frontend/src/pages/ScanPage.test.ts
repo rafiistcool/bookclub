@@ -94,7 +94,7 @@ describe("ScanPage", () => {
     expect(w.text()).toContain("1951 · 277 pages · ISBN 9780316769488");
     expect(addToShelf).not.toHaveBeenCalled();
 
-    await button(w, "Want").trigger("click");
+    await button(w, "To read").trigger("click");
     await flushPromises();
     expect(addToShelf).toHaveBeenCalledWith({ work_id: 9, edition_id: 40, status: "want_to_read" });
     expect(w.text()).toContain("On your shelf: Want to read");
@@ -123,7 +123,7 @@ describe("ScanPage", () => {
     patchShelf.mockResolvedValue(shelfItem({ id: 12, status: "finished" }));
     const w = await mountPage();
     await scan(w);
-    await button(w, "Done").trigger("click");
+    await button(w, "Read").trigger("click");
     await flushPromises();
     expect(patchShelf).toHaveBeenCalledWith(12, { edition_id: 40, status: "finished", position: 0 });
     expect(w.text()).toContain("On your shelf: Finished");

@@ -253,7 +253,6 @@ defineExpose({ load });
 
 
     <BottomSheet v-if="choosing" :title="t('vote.chooseWinner')" @close="choosing = false">
-      <p class="fine subtle choose-blurb">{{ t("vote.confirmBlurb") }}</p>
       <div class="stack">
         <button
           v-for="row in nominations"
@@ -485,10 +484,6 @@ defineExpose({ load });
 
 .confirm-winner {
   margin-top: var(--space-4);
-}
-
-.choose-blurb {
-  margin-bottom: var(--space-4);
 }
 
 .winner-choice {

@@ -15,7 +15,7 @@ vi.mock("../api/client", () => ({
 }));
 
 import { useToast } from "../stores/toast";
-import CoverPhotoButton from "./CoverPhotoButton.vue";
+import CoverPhotoButton, { sendCoverPhoto } from "./CoverPhotoButton.vue";
 
 async function pick(wrapper: ReturnType<typeof mount>, file: File) {
   const input = wrapper.get("input[type=file]");
@@ -76,5 +76,38 @@ describe("CoverPhotoButton", () => {
     expect(uploadCover).not.toHaveBeenCalled();
     expect(wrapper.emitted("covered")).toEqual([[book]]);
     expect(useToast().items.at(-1)?.message).toBe("The cover is set for everyone");
+  });
+
+  it("only hands the chosen file on with pickOnly, so a closing sheet loses nothing", async () => {
+    const wrapper = mount(CoverPhotoButton, {
+      props: { workId: 9, editionId: null, hasCover: true, admin: true, pickOnly: true, look: "row", label: "Set cover as admin" },
+    });
+    expect(wrapper.element.tagName).toBe("LABEL");
+    expect(wrapper.classes()).toEqual(expect.arrayContaining(["btn", "btn-ghost", "btn-block"]));
+    const picture = new File(["x"], "cover.png", { type: "image/png" });
+    await pick(wrapper, picture);
+    expect(wrapper.emitted("picked")).toEqual([[picture]]);
+    expect(wrapper.emitted("covered")).toBeUndefined();
+    expect(adminSetCover).not.toHaveBeenCalled();
+    expect(uploadCover).not.toHaveBeenCalled();
+    // Never stuck on "Uploading…": the page uploads, not the row.
+    expect(wrapper.text()).toBe("Set cover as admin");
+  });
+
+  it("uploads for a page with sendCoverPhoto and answers with the new cover, or null", async () => {
+    const book = bookOut({ id: 9, cover_url: "/media/abc/c", cover_thumb_url: "/media/abc/t", cover_public_id: "abc" });
+    const photo = new File(["x"], "copy.jpg", { type: "image/jpeg" });
+    uploadCover.mockResolvedValueOnce({ book });
+    expect(await sendCoverPhoto({ workId: 9, editionId: 3 }, photo)).toEqual(book);
+    expect(uploadCover).toHaveBeenLastCalledWith(9, photo, 3);
+    uploadCover.mockResolvedValueOnce({ request_id: 12 });
+    expect(await sendCoverPhoto({ workId: 9, editionId: null }, photo)).toBeNull();
+    expect(useToast().items.at(-1)?.message).toBe("Thanks. An admin will look at your photo.");
+    uploadCover.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    expect(await sendCoverPhoto({ workId: 9, editionId: null }, photo)).toBeNull();
+    expect(useToast().items.at(-1)?.message).toBe("Could not upload the photo");
+    adminSetCover.mockResolvedValueOnce({ book });
+    expect(await sendCoverPhoto({ workId: 9, editionId: 13, admin: true }, photo)).toEqual(book);
+    expect(adminSetCover).toHaveBeenLastCalledWith(9, photo, 13);
   });
 });

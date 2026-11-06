@@ -66,6 +66,20 @@ describe("ClubHomePage", () => {
     expect(wrapper.text()).toContain("Bring snacks");
     expect(wrapper.get(".meeting a").attributes("href")).toBe("/api/clubs/readers-ab12/pick/meeting.ics");
     expect(wrapper.get(".next-up-card").attributes("href")).toBe("/c/readers-ab12/vote");
+    // The card is the link: no "Vote →" in it; the section head keeps its one "Vote" link.
+    expect(wrapper.get(".next-up-card").text()).not.toContain("→");
+    expect(wrapper.findAll('.next-up-section a[href="/c/readers-ab12/vote"]')).toHaveLength(2);
+    // The milestone list is the section itself, with no wrapper that would stay when it renders nothing.
+    expect(wrapper.get("milestone-list-stub").classes()).toEqual(["section", "milestone-section"]);
+    expect(wrapper.get("milestone-list-stub").element.parentElement?.classList.contains("club-home")).toBe(true);
+    // German says the club reads it now, not that it was read.
+    i18n.global.locale.value = "de";
+    try {
+      await flushPromises();
+      expect(wrapper.get(".hero .kicker").text()).toBe("Lesen wir gerade");
+    } finally {
+      i18n.global.locale.value = "en";
+    }
   });
 
   it("hides the meeting edit from members", async () => {

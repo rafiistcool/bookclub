@@ -702,7 +702,6 @@ defineExpose({ loadPage });
   <section>
     <div class="page-head">
       <h1>{{ t("discover.title") }}</h1>
-      <p class="lede">{{ t("discover.lede") }}</p>
     </div>
 
     <div class="discover-search">
@@ -990,7 +989,6 @@ defineExpose({ loadPage });
 
         <div v-else-if="items.length && hideOnShelf" class="empty">
           <h3>{{ t("discover.alreadyYoursTitle") }}</h3>
-          <p>{{ t("discover.alreadyYoursBody") }}</p>
           <div class="btn-row">
             <button class="btn btn-ghost" type="button" @click="hideOnShelf = false">
               {{ t("discover.showAnyway") }}
@@ -1005,7 +1003,6 @@ defineExpose({ loadPage });
             <template v-if="activeSubject">
               {{ t("discover.filterHiding", { label: subjectLabel(activeSubject.value) }) }}
             </template>
-            {{ t("discover.catalogMisses") }}
           </p>
           <div class="btn-row">
             <button

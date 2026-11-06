@@ -112,7 +112,7 @@ describe("InviteFriendSheet", () => {
   it("explains that only a club's admins invite, and closes", async () => {
     const sheet = mountSheet([club("night-owls-cd34", "Night owls", "member")]);
     expect(sheet.find(".invite-club").exists()).toBe(false);
-    expect(sheet.text()).toContain("You do not run a club. Only a club's admins can invite people into it.");
+    expect(sheet.text()).toContain("Only club admins can invite, and you aren't one.");
     await sheet.findAll("button").find((element) => element.text() === "Done")!.trigger("click");
     expect(sheet.emitted("close")).toHaveLength(1);
   });

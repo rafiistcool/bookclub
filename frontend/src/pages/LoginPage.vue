@@ -44,7 +44,6 @@ async function submit() {
 <template>
   <main class="auth-page">
     <h1 class="wordmark">{{ service.name }}</h1>
-    <p class="lede">{{ t("auth.signInLede") }}</p>
     <form @submit.prevent="submit">
       <p v-if="error" class="error">{{ error }}</p>
       <label class="field">
@@ -93,8 +92,8 @@ async function submit() {
 </template>
 
 <style scoped>
-.lede {
-  margin: var(--space-2) 0 var(--space-6);
+form {
+  margin-top: var(--space-6);
 }
 
 .auth-forgot {

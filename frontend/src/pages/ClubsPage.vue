@@ -39,7 +39,7 @@ onMounted(load);
   <section class="clubs-page">
     <div class="page-head">
       <h1>{{ t("clubs.title") }}</h1>
-      <p class="lede">{{ clubs.hasClubs ? t("clubs.lede") : t("clubs.soloLede") }}</p>
+      <p v-if="!clubs.hasClubs" class="lede">{{ t("clubs.soloLede") }}</p>
     </div>
 
     <p v-if="error" class="error">{{ error }}</p>
@@ -51,10 +51,9 @@ onMounted(load);
     </ul>
 
     <div class="club-ways">
-      <section class="panel">
-        <h2>{{ t("clubs.createHeading") }}</h2>
+      <section class="panel create-way">
+        <RouterLink class="btn btn-primary" to="/clubs/new">{{ t("clubs.create") }}</RouterLink>
         <p class="fine muted">{{ t("clubs.createBlurb") }}</p>
-        <RouterLink class="btn btn-primary btn-sm" to="/clubs/new">{{ t("clubs.create") }}</RouterLink>
       </section>
       <form class="panel" @submit.prevent="join">
         <h2>{{ t("clubs.joinHeading") }}</h2>
@@ -69,7 +68,7 @@ onMounted(load);
             :placeholder="t('clubs.joinPlaceholder')"
           />
         </label>
-        <button class="btn btn-ghost btn-sm" type="submit" :disabled="!code.trim()">{{ t("clubs.join") }}</button>
+        <button class="btn btn-ghost" type="submit" :disabled="!code.trim()">{{ t("clubs.join") }}</button>
       </form>
     </div>
   </section>
@@ -97,6 +96,11 @@ onMounted(load);
   display: grid;
   gap: var(--space-2);
   justify-items: start;
+}
+
+/* No heading: the button names the action, the line under it the member limit. */
+.create-way {
+  align-content: start;
 }
 
 .club-ways h2 {

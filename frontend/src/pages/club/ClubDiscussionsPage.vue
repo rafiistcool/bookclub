@@ -22,7 +22,6 @@ const pickId = computed(() => {
 <template>
   <div class="discussions">
     <section class="thread">
-      <p class="lede">{{ pickId ? t("discussions.earlierLede") : t("discussions.lede") }}</p>
       <RouterLink v-if="pickId" class="fine" :to="`/c/${slug}/discussions`">
         {{ t("discussions.toCurrent") }}
       </RouterLink>

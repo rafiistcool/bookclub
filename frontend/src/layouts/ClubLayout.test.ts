@@ -68,6 +68,8 @@ describe("ClubLayout", () => {
     expect(club).toHaveBeenCalledWith("readers-ab12");
     expect(wrapper.find(".section-vote").exists()).toBe(true);
     expect(wrapper.get(".club-name").text()).toBe("Readers");
+    // The name stands alone: no "Club" kicker above it.
+    expect(wrapper.find(".club-head .kicker").exists()).toBe(false);
     expect(wrapper.text()).toContain("Admin");
     expect(localStorage.getItem(LAST_CLUB_KEY)).toBe("readers-ab12");
     expect(wrapper.get(".club-tab.active").text()).toBe("Vote");

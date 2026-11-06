@@ -1,6 +1,6 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { activityItem, bookOut, user } from "../test/fixtures";
 
 const activity = vi.fn();
@@ -10,6 +10,7 @@ vi.mock("../api/client", () => ({
   api: { activity: (...args: unknown[]) => activity(...args) },
 }));
 
+import { useLocale } from "../stores/locale";
 import { useSession } from "../stores/session";
 import ActivityFeed from "./ActivityFeed.vue";
 
@@ -25,28 +26,60 @@ async function mountFeed(props: { club?: string }, timezone: string) {
   activity.mockResolvedValue({ items: ITEMS, has_more: false, timezone });
   const wrapper = mount(ActivityFeed, { props, global: { stubs: { BookCover: true, Avatar: true } } });
   await flushPromises();
-  return wrapper.findAll(".activity-row").map((row) => row.text());
+  return wrapper;
 }
+
+const times = (wrapper: Awaited<ReturnType<typeof mountFeed>>) =>
+  wrapper.findAll(".activity-row time").map((time) => time.text());
 
 describe("ActivityFeed times", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     activity.mockReset();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    // Monday 5 Oct, noon UTC: Friday 2 Oct is 3 days back in Tokyo, Thursday 1 Oct 4 in New York.
+    vi.setSystemTime(new Date("2026-10-05T12:00:00Z"));
     useSession().user = user({
       timezone: "America/New_York",
       clubs: [{ ...OWLS, role: "member", timezone: "Asia/Tokyo", member_count: 2 }],
     });
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("shows a club feed in the club's zone, personal events included", async () => {
-    const rows = await mountFeed({ club: OWLS.slug }, "Asia/Tokyo");
-    expect(rows[0]).toContain("Fri, 2 Oct 2026");
-    expect(rows[1]).toContain("Fri, 2 Oct 2026");
+    const wrapper = await mountFeed({ club: OWLS.slug }, "Asia/Tokyo");
+    expect(times(wrapper)).toEqual(["Friday", "Friday"]);
+    const time = wrapper.get(".activity-row time");
+    expect(time.attributes("datetime")).toBe(AT);
+    expect(time.attributes("title")).toBe("Fri, 2 Oct 2026, 07:30 GMT+9");
   });
 
   it("shows the home feed's club events in their club's zone and personal ones in the viewer's", async () => {
-    const rows = await mountFeed({}, "America/New_York");
-    expect(rows[0]).toContain("Fri, 2 Oct 2026");
-    expect(rows[1]).toContain("Thu, 1 Oct 2026");
+    const wrapper = await mountFeed({}, "America/New_York");
+    expect(times(wrapper)).toEqual(["Friday", "Thursday"]);
+    expect(wrapper.findAll(".activity-row time")[1]!.attributes("title")).toBe("Thu, 1 Oct 2026, 18:30 GMT-4");
+  });
+
+  it("counts yesterday in the row's zone, in German too", async () => {
+    // 3 Oct 06:00 in Tokyo, 2 Oct 17:00 in New York.
+    vi.setSystemTime(new Date("2026-10-02T21:00:00Z"));
+    useLocale().locale = "de";
+    const wrapper = await mountFeed({}, "America/New_York");
+    expect(times(wrapper)).toEqual(["gestern", "gestern"]);
+    vi.setSystemTime(new Date("2026-10-01T23:00:00Z"));
+    const later = await mountFeed({}, "America/New_York");
+    expect(times(later)).toEqual(["vor 30 Min.", "vor 30 Min."]);
+  });
+
+  it("shows a day and month for older lines, the year only before this one", async () => {
+    vi.setSystemTime(new Date("2026-11-20T12:00:00Z"));
+    const wrapper = await mountFeed({}, "America/New_York");
+    expect(times(wrapper)).toEqual(["2 Oct", "1 Oct"]);
+    vi.setSystemTime(new Date("2027-01-20T12:00:00Z"));
+    const nextYear = await mountFeed({}, "America/New_York");
+    expect(times(nextYear)).toEqual(["2 Oct 2026", "1 Oct 2026"]);
   });
 });

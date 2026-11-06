@@ -107,7 +107,7 @@ describe("JoinPage", () => {
     api.previewInvite.mockResolvedValue({ club: CLUB, kind: "club", personal: true });
     const { wrapper } = await mountJoin(false);
     expect(wrapper.get(".lede").text()).toBe(
-      "This is a personal invite. Sign in with the account it was made for, and you join right after.",
+      "Personal invite: sign in with the account it's for, and you join right after.",
     );
     const links = wrapper.findAllComponents(RouterLinkStub).map((link) => link.props("to"));
     expect(links).toContainEqual({ path: "/login", query: { next: "/join/7K3M9QX2HD" } });
@@ -133,7 +133,7 @@ describe("JoinPage", () => {
     const { wrapper } = await mountJoin(true);
     expect(wrapper.get(".join-club").text()).toBe("Readers");
     expect(wrapper.get(".lede").text()).toBe(
-      "This is a personal invite for someone else. Only the account it was made for can join with it.",
+      "This invite is for another account.",
     );
     expect(wrapper.find("button.btn-primary").exists()).toBe(false);
     expect(api.acceptInvite).not.toHaveBeenCalled();

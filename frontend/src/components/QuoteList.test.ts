@@ -1,6 +1,6 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bookOut, user } from "../test/fixtures";
 import type { QuoteOut } from "../types";
 
@@ -87,13 +87,42 @@ describe("QuoteList", () => {
     expect(wrapper.findAll(".quote")).toHaveLength(1);
   });
 
+  describe("dates", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("dates a quote relative to now, counting days in the reader's zone", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      // 2 Oct 00:30 in Berlin; written at 1 Oct 12:00 Berlin time.
+      vi.setSystemTime(new Date("2026-10-01T22:30:00Z"));
+      api.quotes.mockResolvedValue({ items: [quote()] });
+      const pinia = createPinia();
+      setActivePinia(pinia);
+      useSession().user = user({ timezone: "Europe/Berlin" });
+      const wrapper = mount(QuoteList, { props: { workId: 9 }, global: { plugins: [pinia, i18n], stubs: { BookCover: true } } });
+      await flushPromises();
+      const time = wrapper.get(".quote-meta time");
+      expect(time.text()).toBe("yesterday");
+      expect(time.attributes("datetime")).toBe("2026-10-01T10:00:00Z");
+      expect(time.attributes("title")).toBe("Thu, 1 Oct 2026, 12:00 CEST");
+    });
+
+    it("falls back to the server's label when the time cannot be read", async () => {
+      api.quotes.mockResolvedValue({ items: [quote({ created_at: "" })] });
+      const wrapper = await mountList({ workId: 9 });
+      expect(wrapper.find(".quote-meta time").exists()).toBe(false);
+      expect(wrapper.get(".quote-meta").text()).toContain("Thu 1 Oct 2026");
+    });
+  });
+
   it("asks for the server's maximum on a reader's list and says when it was cut", async () => {
     const many = Array.from({ length: 500 }, (_, index) => quote({ id: 1000 - index }));
     api.quotes.mockResolvedValue({ items: many });
     const wrapper = await mountList({ username: "ada", showBook: true });
     expect(wrapper.findAll(".quote")).toHaveLength(500);
     expect(wrapper.get(".quotes-capped").text()).toBe(
-      "Showing the newest 500 quotes. Older ones are kept, but this list cannot show them yet.",
+      "Showing the newest 500. Older quotes are kept.",
     );
 
     // A book's quotes keep the server's default.

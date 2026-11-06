@@ -116,10 +116,10 @@
     "inDays": "in {n} Tagen",
     "inWeeks": "in {n} Wochen",
     "daysAgo": "vor {n} Tagen",
-    "weeksAgo": "vor {n} Wochen"
+    "weeksAgo": "vor {n} Wochen",
+    "justNow": "gerade eben"
   },
   "auth": {
-    "signInLede": "Melde dich an, um dein Regal zu sehen.",
     "username": "Benutzername",
     "password": "Passwort",
     "signIn": "Anmelden",
@@ -139,7 +139,6 @@
     "haveInviteCode": "Hast du einen Einladungscode?",
     "inviteCodeOptional": "Einladungscode (optional)",
     "newHere": "Neu hier?",
-    "signupLede": "Leg ein Konto an für dein Regal, deine Notizen und deine Clubs.",
     "signupInviteLede": "Ein Konto gibt es nur mit Einladungscode.",
     "usernameHint": "2–32 Zeichen: Kleinbuchstaben, Ziffern, Unterstrich.",
     "usernameOrEmail": "Oder die E-Mail-Adresse, die du bestätigt hast."
@@ -152,7 +151,6 @@
     "title": "Einstellungen",
     "signedInAs": "Angemeldet als {name}.",
     "profile": "Profil",
-    "profileBlurb": "Erscheint an deinem Regal, im Tagebuch und beim Club-Buch.",
     "choosePhoto": "Foto wählen",
     "removePhoto": "Foto entfernen",
     "photoSaved": "Profilbild gespeichert",
@@ -161,9 +159,7 @@
     "appearance": "Erscheinungsbild",
     "colourMode": "Farbmodus",
     "followingDevice": "Gerade {mode}.",
-    "alwaysMode": "Immer {mode}.",
     "language": "Sprache",
-    "languageBlurb": "Gilt für dieses Gerät und dein Konto.",
     "importTitle": "Aus Goodreads importieren",
     "importBlurb": "Lade deinen Goodreads-Bibliotheksexport (CSV) hoch. Regale, Bewertungen und Lesedaten kommen mit.",
     "chooseCsv": "CSV wählen",
@@ -199,17 +195,13 @@
     "timezoneSaved": "Zeitzone auf {zone} gestellt",
     "timezoneFailed": "Die Zeitzone konnte nicht gespeichert werden",
     "deviceZone": "Dieses Gerät: {zone}.",
-    "useDeviceZone": "{zone} verwenden"
+    "useDeviceZone": "Übernehmen"
   },
   "theme": {
     "paper": "Papier",
-    "paperBlurb": "Warmes Elfenbein und Ziegel. Der Hausstil.",
     "slate": "Schiefer",
-    "slateBlurb": "Kühle Grautöne mit Druckblau.",
     "forest": "Wald",
-    "forestBlurb": "Sanfte Grüntöne und tiefes Immergrün.",
     "ink": "Tinte",
-    "inkBlurb": "Schwarz auf Weiß, maximaler Kontrast.",
     "light": "Hell",
     "dark": "Dunkel",
     "system": "System"
@@ -217,7 +209,6 @@
   "home": {
     "hello": "Hallo, {name}",
     "title": "Start",
-    "lede": "Deine Clubs, was du liest, und was alle geschrieben haben.",
     "loadFailed": "Das Club-Buch konnte nicht geladen werden",
     "readingNow": "Lesen wir gerade",
     "chosenBy": "Ausgewählt von {name}",
@@ -243,13 +234,11 @@
     "nextUp": "Als Nächstes",
     "leadingVotes": "Führt mit {n} Stimme | Führt mit {n} Stimmen",
     "nominatedCount": "{n} nominiert",
-    "voteArrow": "Abstimmen →",
     "noNominations": "Noch keine Nominierungen. Nominiere ein Buch auf seiner Seite.",
     "pastPicks": "Vergangene Club-Bücher",
     "meetingTitle": "Treffen",
     "saveMeeting": "Treffen speichern",
     "yourProgress": "Dein Fortschritt",
-    "soloLede": "Was du liest und was du darüber geschrieben hast.",
     "yourClubs": "Deine Clubs",
     "allClubs": "Alle Clubs",
     "soloTitle": "Gemeinsam lesen",
@@ -273,7 +262,6 @@
   },
   "shelf": {
     "title": "Mein Regal",
-    "lede": "{books} · {reading} gerade am Lesen",
     "books": "{n} Buch | {n} Bücher",
     "loadFailed": "Dein Regal konnte nicht geladen werden",
     "movedTo": "Verschoben nach {status}",
@@ -283,7 +271,6 @@
     "nominated": "Für die nächste Abstimmung nominiert",
     "nominateFailed": "Buch konnte nicht nominiert werden",
     "emptyTitle": "Dein Regal ist leer",
-    "emptyBody": "Füge ein Buch hinzu — es erscheint hier, sortiert danach, was du damit machst.",
     "importGoodreads": "Aus Goodreads importieren",
     "filterByStatus": "Nach Status filtern",
     "nothingIn": "Noch nichts in {status}.",
@@ -338,10 +325,8 @@
   "memberShelf": {
     "back": "← Zurück",
     "title": "Regal von {name}",
-    "lede": "{books} · {reading} gerade am Lesen",
     "loadFailed": "Dieses Regal konnte nicht geladen werden",
     "emptyTitle": "Noch nichts in diesem Regal",
-    "emptyBody": "{name} hat noch keine Bücher hinzugefügt.",
     "nothingIn": "Nichts in {status}."
   },
   "club": {
@@ -364,7 +349,6 @@
     "overlapBlurbReading": "Bücher, die mindestens zwei von euch lesen wollen oder gerade lesen.",
     "overlapFailed": "Die Überschneidung konnte nicht geladen werden",
     "noOverlap": "Noch keine gemeinsamen Wünsche. Legt Bücher auf „Will ich lesen“.",
-    "kicker": "Club",
     "memberCount": "{n} Mitglied | {n} Mitglieder",
     "switch": "Club wechseln",
     "allClubs": "Alle Clubs",
@@ -376,7 +360,6 @@
   },
   "discover": {
     "title": "Entdecken",
-    "lede": "Durchsuche den Katalog oder stöbere, was gerade gelesen wird.",
     "placeholder": "Titel, Autor oder ISBN",
     "searchAria": "Bücher suchen",
     "search": "Suchen",
@@ -406,12 +389,10 @@
     "backToBrowsing": "Zurück zum Stöbern",
     "addOwn": "Eigenes Buch hinzufügen",
     "alreadyYoursTitle": "Die hast du schon alle",
-    "alreadyYoursBody": "Jedes geladene Ergebnis ist schon in deinem Regal.",
     "showAnyway": "Trotzdem zeigen",
     "nothingMatched": "Nichts gefunden",
     "nothingMatchedBody": "Versuch Titel plus Autor, oder füge eine ISBN ein.",
     "filterHiding": "Der Filter {label} könnte es verbergen.",
-    "catalogMisses": "Im Katalog fehlen manche obskuren und selbstverlegten Titel — die kannst du selbst anlegen.",
     "reachFailed": "Die Bibliothek ist nicht erreichbar",
     "couldntLoadMore": "Mehr konnte nicht geladen werden.",
     "loadMoreFailed": "Mehr konnte nicht geladen werden",
@@ -485,7 +466,6 @@
     "loadFailed": "Buch konnte nicht geladen werden",
     "backToDiscover": "Zurück zu Entdecken",
     "currentPick": "Aktuelles Club-Buch",
-    "clubRating": "Bewertung · {n} Stimme | Bewertung · {n} Stimmen",
     "firstPublished": "Erstveröffentlichung {year}",
     "viewOpenLibrary": "Bei Open Library ansehen",
     "refreshDetails": "Details aktualisieren",
@@ -532,7 +512,15 @@
     "setPickIn": "In {club} als Club-Buch gesetzt",
     "ratingOnlyMe": "Meine Bewertung nur für mich",
     "ratingVisibilitySaved": "Sichtbarkeit der Bewertung gespeichert",
-    "notFound": "Dieses Buch ist nicht im Katalog."
+    "notFound": "Dieses Buch ist nicht im Katalog.",
+    "moreActions": "Mehr zu diesem Buch",
+    "groupBook": "Zu diesem Buch",
+    "groupCover": "Cover",
+    "groupAdmin": "Admin",
+    "pickBadge": "Club-Buch · {club}",
+    "pickBadgeMany": "Club-Buch in {n} Clubs",
+    "ratingVotes": "{n} Stimme | {n} Stimmen",
+    "ratingLabel": "Bewertung"
   },
   "diary": {
     "heading": "Tagebuch",
@@ -573,13 +561,11 @@
     "writeFirst": "Ersten Eintrag schreiben",
     "deletedAccount": "Gelöschtes Konto",
     "noPick": "Gerade ist kein Club-Buch gewählt.",
-    "emptyClub": "Noch nichts geschrieben.",
     "closed": "Dieses Club-Buch ist vorbei: nur noch lesen.",
     "onlyMe": "Nur ich",
     "onlyMeBadge": "Nur du",
     "onlyMeHint": "Nur du siehst diesen Eintrag",
     "clubPostIn": "Im Gespräch von {club} geschrieben",
-    "emptySolo": "Noch nichts geschrieben.",
     "placeholderSolo": "Ein Gedanke, eine Frage, etwas zum Merken"
   },
   "vote": {
@@ -614,7 +600,6 @@
     "deadlineCleared": "Frist entfernt",
     "deadlineFailed": "Die Frist konnte nicht geändert werden",
     "suggestions": "Ideen",
-    "suggestionsBlurb": "Bücher, die Mitglieder lesen wollen, danach sortiert, wie viele sie wollen und wie gut sie zu früheren Club-Büchern passen.",
     "reasonShelves": "In {n} Regalen: {names}",
     "reasonWants": "{name} will es lesen",
     "reasonLikePicks": "Wie frühere Club-Bücher: {subjects}",
@@ -810,16 +795,11 @@
     "lastRow": "Ein Regalfach bleibt immer erhalten.",
     "removeRowHint": "Inhalt ins benachbarte Fach verschieben und Brett entfernen",
     "addDecoration": "Deko hinzufügen",
-    "decorate": "Deko hinzufügen",
     "decorationHint": "Danach kannst du sie zwischen die Bücher schieben.",
     "plant": "Pflanze",
     "vase": "Vase",
     "candle": "Kerze",
     "frame": "Bilderrahmen",
-    "plantHint": "Ein bisschen Grün",
-    "vaseHint": "Schlichte Keramik",
-    "candleHint": "Warmes Licht",
-    "frameHint": "Eine kleine Erinnerung",
     "decorationLabel": "{name}. Gestalten oder verschieben.",
     "decorationColor": "Farbe",
     "saveDecoration": "Deko speichern",
@@ -837,9 +817,7 @@
     "display_cover": "Cover vorn",
     "automatic": "Automatisch",
     "bookend": "Buchstütze",
-    "bookendHint": "Hält die Reihe",
     "globe": "Globus",
-    "globeHint": "Fernweh inklusive",
     "memberTitle": "Regal von {name}",
     "memberBookSheet": "Aus dem Regal von {name}",
     "memberEmpty": "{name} hat noch keine Bücher im Regal."
@@ -861,10 +839,8 @@
   },
   "clubs": {
     "title": "Clubs",
-    "lede": "Alle Clubs, in denen du bist. Öffne einen, gründe einen weiteren, oder tritt mit einem Code bei.",
     "soloLede": "Du bist noch in keinem Club.",
     "loadFailed": "Deine Clubs konnten nicht geladen werden",
-    "createHeading": "Club gründen",
     "createBlurb": "Bis zu 20 Mitglieder.",
     "create": "Club gründen",
     "joinHeading": "Einem Club beitreten",
@@ -982,7 +958,6 @@
     },
     "incoming": {
       "heading": "Anfragen an dich",
-      "empty": "Gerade keine Anfragen.",
       "asked": "angefragt am {day}",
       "accept": "Annehmen",
       "decline": "Ablehnen",
@@ -990,7 +965,6 @@
     },
     "invites": {
       "heading": "Einladungen in Clubs",
-      "empty": "Gerade keine Einladungen.",
       "from": "{name} hat dich zu {club} eingeladen",
       "fromGone": "Du wurdest zu {club} eingeladen",
       "until": "gilt bis {day}",
@@ -1011,14 +985,12 @@
     },
     "outgoing": {
       "heading": "Deine Anfragen",
-      "empty": "Keine offenen Anfragen.",
       "sentOn": "gesendet am {day}",
       "withdraw": "Zurückziehen",
       "withdrawn": "Anfrage zurückgezogen"
     },
     "blocked": {
       "heading": "Blockiert",
-      "empty": "Du hast niemanden blockiert.",
       "since": "blockiert am {day}",
       "unblock": "Freigeben",
       "unblocked": "{name} ist nicht mehr blockiert",
@@ -1076,7 +1048,6 @@
   "milestones": {
     "heading": "Etappen",
     "add": "Hinzufügen",
-    "empty": "Keine Etappen für dieses Buch.",
     "emptyAdmin": "Noch keine Etappen, z. B. „Teil eins bis Freitag“.",
     "title": "Titel",
     "titlePlaceholder": "z. B. Teil eins",
@@ -1101,8 +1072,6 @@
     "notes": "{n} Notiz | {n} Notizen"
   },
   "discussions": {
-    "lede": "Sprecht über das aktuelle Club-Buch. Als Spoiler markierte Notizen bleiben verschwommen, bis man so weit gelesen hat.",
-    "earlierLede": "Das Gespräch zu einem früheren Club-Buch. Es ist geschlossen: Lesen geht, Schreiben nicht.",
     "toCurrent": "← Aktuelles Club-Buch",
     "heading": "Gespräch",
     "written": "Von Mitgliedern geschrieben",
@@ -1112,7 +1081,6 @@
   "activity": {
     "heading": "Aktivität",
     "clubHeading": "Was passiert ist",
-    "clubLede": "Club-Bücher, Abstimmungen, Notizen und was die Mitglieder lesen, das Neueste zuerst.",
     "empty": "Noch ist nichts passiert.",
     "loadFailed": "Die Aktivität konnte nicht geladen werden",
     "someone": "Jemand",
@@ -1142,7 +1110,6 @@
     "title": "Zitate",
     "heading": "Zitate",
     "yours": "Deine Zitate",
-    "lede": "Sätze, die du behalten hast, aus allen Büchern. Neue fügst du auf der Seite eines Buchs hinzu.",
     "empty": "Noch keine Zitate.",
     "emptyOwn": "Noch keine Zitate. Neue fügst du auf der Seite eines Buchs hinzu.",
     "emptyBook": "Noch keine Zitate aus diesem Buch. Behalte einen Satz, der dir gefallen hat.",
@@ -1162,7 +1129,6 @@
   },
   "diaryPage": {
     "title": "Tagebuch",
-    "lede": "Alles, was du über deine Bücher geschrieben hast, das Neueste zuerst. Geschrieben wird auf der Seite eines Buchs.",
     "yours": "Deine Einträge",
     "empty": "Noch nichts geschrieben. Du schreibst auf der Seite eines Buchs.",
     "toShelf": "Zu deinem Regal",
@@ -1173,8 +1139,6 @@
     "title": "Dein Lesejahr",
     "titleOf": "Das Lesejahr von {name}",
     "short": "Jahr",
-    "lede": "Was du beendet hast, wie viel du gelesen hast und was dir am besten gefiel.",
-    "ledeOf": "Was {name} beendet hat, wie viel gelesen wurde und was am besten gefiel.",
     "year": "Jahr",
     "loadFailed": "Die Zahlen konnten nicht geladen werden",
     "finished": "Beendet",
@@ -1222,7 +1186,6 @@
       "other": "Anderes Format"
     },
     "notListed": "Meine Ausgabe fehlt",
-    "addBlurb": "Trag die Ausgabe ein, die du hast. Was du leer lässt, bleibt leer. Eine ISBN wird zuerst im Katalog nachgeschlagen.",
     "isbnHint": "Auf der Rückseite oder im Impressum. Optional.",
     "isbnFilled": "Die ISBN, die du nachgeschlagen hast.",
     "noFormat": "Keine Angabe",
@@ -1239,7 +1202,7 @@
   "merge": {
     "open": "Dasselbe Buch wie ein anderes?",
     "title": "Das ist dasselbe Buch",
-    "blurb": "Wenn der Katalog „{title}“ doppelt hat, such den anderen Eintrag. Ein Admin prüft ihn und führt beide zusammen.",
+    "blurb": "Such den doppelten Eintrag. Ein Admin prüft und führt beide zusammen.",
     "other": "Der andere Eintrag",
     "otherPlaceholder": "Titel, Autor:in oder ein Link zur Seite",
     "find": "Suchen",
@@ -1349,7 +1312,7 @@
     "openBook": "Angaben falsch?",
     "title": "Angaben zum Buch korrigieren",
     "editionTitle": "Angaben zur Ausgabe korrigieren",
-    "blurb": "Ändere, was an „{title}“ nicht stimmt. Ein Admin prüft es, bevor alle es sehen.",
+    "blurb": "Ein Admin prüft deine Änderung, bevor alle sie sehen.",
     "fields": {
       "title": "Titel",
       "subtitle": "Untertitel",
@@ -1656,8 +1619,7 @@
     "failed": "Der Text konnte nicht geladen werden.",
     "back": "← Zurück",
     "contact": "Fragen zu deinen Daten oder Inhalte, die du melden willst? Schreib an {email}.",
-    "settingsTitle": "Rechtliches",
-    "settingsBlurb": "Wer {name} betreibt, was über dich gespeichert wird und die Regeln für die Nutzung."
+    "settingsTitle": "Rechtliches"
   },
   "terms": {
     "signup": "Mit dem Erstellen des Kontos akzeptierst du die {terms}.",

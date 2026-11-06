@@ -1,9 +1,54 @@
+<script lang="ts">
+import { api, ApiError } from "../api/client";
+import type { BookOut } from "../api/generated";
+import { i18n } from "../i18n";
+import { useToast } from "../stores/toast";
+
+const MAX_BYTES = 50 * 1024 * 1024;
+
+/** Where a photo goes: a reader's photo of their copy, or an instance admin's direct cover. */
+export interface CoverTarget {
+  workId: number;
+  editionId: number | null;
+  admin?: boolean;
+}
+
+/**
+ * Upload a chosen picture and say how it went in a toast. Resolves to the
+ * book when the picture is its cover now, and to null when it waits for an
+ * admin, is too large, or failed. The book page calls it too, for a file
+ * chosen in a sheet that closed as soon as the file was picked.
+ */
+export async function sendCoverPhoto(target: CoverTarget, file: File): Promise<BookOut | null> {
+  const t = i18n.global.t;
+  const toast = useToast();
+  if (file.size > MAX_BYTES) {
+    toast.show(t("errors.pictureTooLarge"));
+    return null;
+  }
+  try {
+    if (target.admin) {
+      const answer = await api.adminSetCover(target.workId, file, target.editionId);
+      toast.show(t("admin.coverSet"));
+      return answer.book;
+    }
+    const answer = await api.uploadCover(target.workId, file, target.editionId);
+    if ("book" in answer) {
+      toast.show(t("cover.photoSet"));
+      return answer.book;
+    }
+    toast.show(t("cover.photoQueued"));
+    return null;
+  } catch (err) {
+    toast.show(err instanceof ApiError ? err.message : t("cover.photoFailed"));
+    return null;
+  }
+}
+</script>
+
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { api, ApiError } from "../api/client";
-import type { BookOut } from "../api/generated";
-import { useToast } from "../stores/toast";
 
 /**
  * "Add a photo of your copy" under the book page's cover. Without a cover the
@@ -13,6 +58,11 @@ import { useToast } from "../stores/toast";
  * `admin` is an instance admin's direct cover (#74): the picture replaces any
  * cover of the book, or of `editionId`, at once. `label` and `look` let the
  * cover prompt and the admin pages show it as a button or an inline link.
+ *
+ * `pickOnly` uploads nothing: it hands the chosen file on (`picked`), for a
+ * sheet that closes at once and leaves the upload to its page (an unmounted
+ * component's emits are dropped, so the sheet could not report the cover).
+ * The tap still lands on the real file input, which iOS needs for the picker.
  */
 const props = withDefaults(
   defineProps<{
@@ -21,24 +71,24 @@ const props = withDefaults(
     hasCover: boolean;
     /** The text instead of "Add/Suggest a photo of your copy". */
     label?: string;
-    /** `fine`: the small link under a cover; `inline`: a link in running text; `primary`/`ghost`: a small button. */
-    look?: "fine" | "inline" | "primary" | "ghost";
+    /** `fine`: the small link under a cover; `inline`: a link in running text; `primary`/`ghost`: a small button; `row`: a full-width row of a sheet. */
+    look?: "fine" | "inline" | "primary" | "ghost" | "row";
     admin?: boolean;
+    pickOnly?: boolean;
   }>(),
-  { label: undefined, look: "fine", admin: false },
+  { label: undefined, look: "fine", admin: false, pickOnly: false },
 );
-const emit = defineEmits<{ covered: [book: BookOut] }>();
+const emit = defineEmits<{ covered: [book: BookOut]; picked: [file: File] }>();
 
-const MAX_BYTES = 50 * 1024 * 1024;
 const LOOKS = {
   fine: "text-btn finer",
   inline: "text-btn",
   primary: "btn btn-primary btn-sm",
   ghost: "btn btn-ghost btn-sm",
+  row: "btn btn-ghost btn-block",
 } as const;
 
 const { t } = useI18n();
-const toast = useToast();
 const busy = ref(false);
 
 const text = computed(() => {
@@ -52,27 +102,14 @@ async function onFile(event: Event) {
   const file = input.files?.[0];
   input.value = "";
   if (!file || busy.value) return;
-  if (file.size > MAX_BYTES) {
-    toast.show(t("errors.pictureTooLarge"));
+  if (props.pickOnly) {
+    emit("picked", file);
     return;
   }
   busy.value = true;
   try {
-    if (props.admin) {
-      const answer = await api.adminSetCover(props.workId, file, props.editionId);
-      emit("covered", answer.book);
-      toast.show(t("admin.coverSet"));
-      return;
-    }
-    const answer = await api.uploadCover(props.workId, file, props.editionId);
-    if ("book" in answer) {
-      emit("covered", answer.book);
-      toast.show(t("cover.photoSet"));
-    } else {
-      toast.show(t("cover.photoQueued"));
-    }
-  } catch (err) {
-    toast.show(err instanceof ApiError ? err.message : t("cover.photoFailed"));
+    const book = await sendCoverPhoto({ workId: props.workId, editionId: props.editionId, admin: props.admin }, file);
+    if (book) emit("covered", book);
   } finally {
     busy.value = false;
   }

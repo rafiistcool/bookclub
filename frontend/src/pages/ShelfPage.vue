@@ -12,7 +12,6 @@ import ShelfViewSwitch from "../components/ShelfViewSwitch.vue";
 import TileSkeleton from "../components/TileSkeleton.vue";
 import { clubsFor } from "../clubActions";
 import { STATUSES, statusLabel, statusShort, type Status } from "../constants";
-import { tp } from "../i18n";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import { clubDate, orderedShelf, readingMonth, shelfDropPosition, visibleShelf } from "../shelf";
@@ -232,9 +231,6 @@ onMounted(load);
       <Avatar :username="session.user?.username ?? ''" :src="session.user?.avatar_url" size="lg" />
       <div>
         <h1>{{ t("shelf.title") }}</h1>
-        <p class="lede">
-          {{ t("shelf.lede", { books: tp("shelf.books", counts.all), reading: counts.currently_reading }) }}
-        </p>
       </div>
       <button v-if="loaded && !error" type="button" class="icon-btn favorites-toggle"
         :aria-label="t('favorites.portraitLabel')" :aria-expanded="showFavorites" aria-controls="shelf-favorites"
@@ -263,7 +259,6 @@ onMounted(load);
 
     <div v-else-if="items.length === 0" class="empty">
       <h3>{{ t("shelf.emptyTitle") }}</h3>
-      <p>{{ t("shelf.emptyBody") }}</p>
       <div class="btn-row">
         <RouterLink class="btn btn-primary" to="/discover">{{ t("home.findBook") }}</RouterLink>
         <RouterLink class="btn btn-ghost" to="/settings">{{ t("shelf.importGoodreads") }}</RouterLink>
@@ -271,13 +266,14 @@ onMounted(load);
     </div>
 
     <template v-else>
-      <div class="segmented shelf-filter" role="group" :aria-label="t('shelf.filterByStatus')">
+      <div class="segmented stacked shelf-filter" role="group" :aria-label="t('shelf.filterByStatus')">
         <button
           type="button"
           :aria-pressed="filter === 'all'"
           @click="filter = 'all'"
         >
-          {{ t("common.all") }} <span class="seg-count nums">{{ counts.all }}</span>
+          <span class="seg-label">{{ t("common.all") }}</span>
+          <span class="seg-count nums">{{ counts.all }}</span>
         </button>
         <button
           v-for="status in STATUSES"
@@ -286,7 +282,7 @@ onMounted(load);
           :aria-pressed="filter === status"
           @click="filter = status"
         >
-          {{ statusShort(status) }}
+          <span class="seg-label">{{ statusShort(status) }}</span>
           <span class="seg-count nums">{{ counts[status] }}</span>
         </button>
       </div>
@@ -371,7 +367,6 @@ onMounted(load);
 .shelf-head { position: relative; padding-right: 42px; margin-bottom: var(--space-6); }
 .shelf-head > div { min-width: 0; }
 .shelf-head h1 { font-size: clamp(1.5rem, 6.7vw, 2rem); }
-.shelf-head .lede { font-size: var(--text-sm); line-height: var(--leading-snug); margin-top: var(--space-1); }
 .shelf-head :deep(.avatar) { width: 64px; height: 64px; }
 .favorites-toggle { position: absolute; top: 0; right: -6px; color: var(--border-strong); }
 .favorites-toggle svg { width: 26px; height: 26px; }

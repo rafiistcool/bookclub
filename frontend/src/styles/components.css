@@ -375,6 +375,46 @@
   }
 }
 
+/* Stacked: each segment's count sits under its label, so five counted
+   segments ("Alle | Geplant | Aktuell | Gelesen | Abbruch") fit a 360px
+   screen. Two lines in a pill would turn the narrow segments into upright
+   capsules, so the corners round off instead. */
+.segmented.stacked {
+  border-radius: calc(var(--radius-lg) + 2px);
+}
+
+.segmented.stacked button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-1) 6px;
+  border-radius: var(--radius-lg);
+  line-height: 1.15;
+}
+
+.segmented.stacked .seg-count {
+  margin-left: 0;
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
+.segmented.stacked button[aria-pressed="true"] .seg-count {
+  color: var(--text-muted);
+}
+
+@media (min-width: 390px) {
+  .segmented.stacked button {
+    padding-inline: var(--space-2);
+  }
+}
+
+@media (min-width: 480px) {
+  .segmented.stacked button {
+    padding-inline: var(--space-3);
+  }
+}
+
 /* ---------------------------------------------------------------- chips */
 
 .chip-row {

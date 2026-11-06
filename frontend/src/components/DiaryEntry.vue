@@ -4,18 +4,16 @@ import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import type { Status } from "../constants";
 import { REACTIONS, isShielded, positionMarker, spoilerLabel } from "../diary";
-import { formatClubDate } from "../i18n/dates";
 import { isClubAdmin } from "../stores/clubs";
 import { useSession } from "../stores/session";
 import { postTimeZone } from "../timezone";
-import { useLocale } from "../stores/locale";
 import type { DiaryEntry, Visibility } from "../types";
 import Avatar from "./Avatar.vue";
+import RelativeTime from "./RelativeTime.vue";
 import SpoilerControl from "./SpoilerControl.vue";
 
 const { t } = useI18n();
 const session = useSession();
-const locale = useLocale();
 
 const props = defineProps<{
   entry: DiaryEntry;
@@ -50,11 +48,7 @@ const shielded = computed(
   () => !revealed.value && isShielded(props.entry, props.myProgress, props.myStatus),
 );
 const marker = computed(() => positionMarker(props.entry));
-const when = computed(
-  () =>
-    formatClubDate(props.entry.created_at, postTimeZone(props.entry, session.user), locale.locale) ||
-    props.entry.created_label,
-);
+const zone = computed(() => postTimeZone(props.entry, session.user));
 /** Only a diary entry (not a reply, not a club post) can be kept to its author. */
 const isDiaryRoot = computed(() => props.entry.club == null && props.entry.parent_id == null);
 /** Admins and the owner of a post's own club may delete it (moderation). */
@@ -132,7 +126,12 @@ watch(
       />
       <strong class="entry-author">{{ entry.author ?? t("diary.deletedAccount") }}</strong>
       <span v-if="marker" class="entry-marker" :class="entry.status_at ?? ''">{{ marker }}</span>
-      <span class="finer subtle entry-time">{{ when }}</span>
+      <RelativeTime
+        class="finer subtle entry-time"
+        :iso="entry.created_at"
+        :zone="zone"
+        :fallback="entry.created_label"
+      />
       <span v-if="entry.edited" class="finer subtle">{{ t("diary.edited") }}</span>
       <RouterLink
         v-if="showClub && entry.club"

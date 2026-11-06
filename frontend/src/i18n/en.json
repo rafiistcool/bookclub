@@ -116,10 +116,10 @@
     "inDays": "in {n} days",
     "inWeeks": "in {n} weeks",
     "daysAgo": "{n} days ago",
-    "weeksAgo": "{n} weeks ago"
+    "weeksAgo": "{n} weeks ago",
+    "justNow": "just now"
   },
   "auth": {
-    "signInLede": "Sign in to your shelf.",
     "username": "Username",
     "password": "Password",
     "signIn": "Sign in",
@@ -139,7 +139,6 @@
     "haveInviteCode": "Have an invite code?",
     "inviteCodeOptional": "Invite code (optional)",
     "newHere": "New here?",
-    "signupLede": "Create an account for your shelf, your notes and your clubs.",
     "signupInviteLede": "You need an invite code to sign up.",
     "usernameHint": "2–32 characters: lowercase letters, numbers, underscore.",
     "usernameOrEmail": "Or the email address you confirmed."
@@ -152,7 +151,6 @@
     "title": "Settings",
     "signedInAs": "Signed in as {name}.",
     "profile": "Profile",
-    "profileBlurb": "Shown on your shelf, in the diary, and next to the club pick.",
     "choosePhoto": "Choose photo",
     "removePhoto": "Remove photo",
     "photoSaved": "Profile picture saved",
@@ -161,9 +159,7 @@
     "appearance": "Appearance",
     "colourMode": "Colour mode",
     "followingDevice": "Currently {mode}.",
-    "alwaysMode": "Always {mode}.",
     "language": "Language",
-    "languageBlurb": "Applies to this device and your account.",
     "importTitle": "Import from Goodreads",
     "importBlurb": "Upload your Goodreads library export (CSV). Shelves, ratings and read dates come along.",
     "chooseCsv": "Choose CSV",
@@ -199,17 +195,13 @@
     "timezoneSaved": "Time zone set to {zone}",
     "timezoneFailed": "Could not save the time zone",
     "deviceZone": "This device: {zone}.",
-    "useDeviceZone": "Use {zone}"
+    "useDeviceZone": "Use it"
   },
   "theme": {
     "paper": "Paper",
-    "paperBlurb": "Warm ivory and brick. The house style.",
     "slate": "Slate",
-    "slateBlurb": "Cool greys with a printer's blue.",
     "forest": "Forest",
-    "forestBlurb": "Soft greens and deep evergreen.",
     "ink": "Ink",
-    "inkBlurb": "Black on white, maximum contrast.",
     "light": "Light",
     "dark": "Dark",
     "system": "System"
@@ -217,7 +209,6 @@
   "home": {
     "hello": "Hello, {name}",
     "title": "Home",
-    "lede": "Your clubs, what you're reading, and what everyone wrote.",
     "loadFailed": "Could not load the club pick",
     "readingNow": "Reading now",
     "chosenBy": "Chosen by {name}",
@@ -243,13 +234,11 @@
     "nextUp": "Next up",
     "leadingVotes": "Leading with {n} vote | Leading with {n} votes",
     "nominatedCount": "{n} nominated",
-    "voteArrow": "Vote →",
     "noNominations": "No nominations yet. Nominate a book from its page.",
     "pastPicks": "Past picks",
     "meetingTitle": "Meeting",
     "saveMeeting": "Save meeting",
     "yourProgress": "Your progress",
-    "soloLede": "What you're reading and what you wrote about it.",
     "yourClubs": "Your clubs",
     "allClubs": "All clubs",
     "soloTitle": "Read together",
@@ -273,7 +262,6 @@
   },
   "shelf": {
     "title": "Your shelf",
-    "lede": "{books} · {reading} currently reading",
     "books": "{n} book | {n} books",
     "loadFailed": "Could not load your shelf",
     "movedTo": "Moved to {status}",
@@ -283,7 +271,6 @@
     "nominated": "Nominated for the next-up vote",
     "nominateFailed": "Could not nominate that book",
     "emptyTitle": "Your shelf is empty",
-    "emptyBody": "Add a book and it shows up here, sorted by what you're doing with it.",
     "importGoodreads": "Import from Goodreads",
     "filterByStatus": "Filter by status",
     "nothingIn": "Nothing in {status} yet.",
@@ -338,10 +325,8 @@
   "memberShelf": {
     "back": "← Back",
     "title": "Shelf of {name}",
-    "lede": "{books} · {reading} currently reading",
     "loadFailed": "Could not load that shelf",
     "emptyTitle": "Nothing on this shelf yet",
-    "emptyBody": "{name} has not added any books.",
     "nothingIn": "Nothing in {status}."
   },
   "club": {
@@ -364,7 +349,6 @@
     "overlapBlurbReading": "Books two or more of you want to read or are reading.",
     "overlapFailed": "Could not load the overlap",
     "noOverlap": "No shared wants yet. Put books on “Want to read”.",
-    "kicker": "Club",
     "memberCount": "{n} member | {n} members",
     "switch": "Switch club",
     "allClubs": "All clubs",
@@ -376,7 +360,6 @@
   },
   "discover": {
     "title": "Discover",
-    "lede": "Search the catalog, or browse what people are reading.",
     "placeholder": "Title, author, or ISBN",
     "searchAria": "Search books",
     "search": "Search",
@@ -406,12 +389,10 @@
     "backToBrowsing": "Back to browsing",
     "addOwn": "Add your own book",
     "alreadyYoursTitle": "All of these are already yours",
-    "alreadyYoursBody": "Every loaded result is on your shelf.",
     "showAnyway": "Show them anyway",
     "nothingMatched": "Nothing matched",
     "nothingMatchedBody": "Try the title plus the author, or paste an ISBN.",
     "filterHiding": "The {label} filter may be hiding it.",
-    "catalogMisses": "The catalog misses some obscure and self-published titles — you can add those yourself.",
     "reachFailed": "Could not reach the library",
     "couldntLoadMore": "Couldn't load more.",
     "loadMoreFailed": "Couldn't load more",
@@ -485,7 +466,6 @@
     "loadFailed": "Could not load that book",
     "backToDiscover": "Back to Discover",
     "currentPick": "Current club pick",
-    "clubRating": "rating · {n} rating | rating · {n} ratings",
     "firstPublished": "First published {year}",
     "viewOpenLibrary": "View on Open Library",
     "refreshDetails": "Refresh details",
@@ -532,7 +512,15 @@
     "setPickIn": "Set as the pick in {club}",
     "ratingOnlyMe": "Keep my rating to myself",
     "ratingVisibilitySaved": "Rating visibility saved",
-    "notFound": "That book is not in the catalog."
+    "notFound": "That book is not in the catalog.",
+    "moreActions": "More for this book",
+    "groupBook": "About this book",
+    "groupCover": "Cover",
+    "groupAdmin": "Admin",
+    "pickBadge": "Club pick · {club}",
+    "pickBadgeMany": "Club pick in {n} clubs",
+    "ratingVotes": "{n} rating | {n} ratings",
+    "ratingLabel": "Rating"
   },
   "diary": {
     "heading": "Diary",
@@ -573,13 +561,11 @@
     "writeFirst": "Write the first note",
     "deletedAccount": "Deleted account",
     "noPick": "No book is picked right now.",
-    "emptyClub": "Nothing written yet.",
     "closed": "This pick is over: read only.",
     "onlyMe": "Only me",
     "onlyMeBadge": "Only you",
     "onlyMeHint": "Only you can see this entry",
     "clubPostIn": "Written in the discussion of {club}",
-    "emptySolo": "Nothing written yet.",
     "placeholderSolo": "A thought, a question, something to remember"
   },
   "vote": {
@@ -614,7 +600,6 @@
     "deadlineCleared": "Deadline removed",
     "deadlineFailed": "Could not change the deadline",
     "suggestions": "Ideas",
-    "suggestionsBlurb": "Books members want to read, ranked by how many want them and how they match past picks.",
     "reasonShelves": "On {n} shelves: {names}",
     "reasonWants": "{name} wants to read it",
     "reasonLikePicks": "Like past picks: {subjects}",
@@ -810,16 +795,11 @@
     "lastRow": "Your bookshelf always keeps one shelf.",
     "removeRowHint": "Move the contents to an adjacent shelf and remove this shelf",
     "addDecoration": "Add decoration",
-    "decorate": "Add decoration",
     "decorationHint": "You can move it between your books afterwards.",
     "plant": "Plant",
     "vase": "Vase",
     "candle": "Candle",
     "frame": "Picture frame",
-    "plantHint": "A little greenery",
-    "vaseHint": "Simple ceramics",
-    "candleHint": "A warm glow",
-    "frameHint": "A little memory",
     "decorationLabel": "{name}. Customise or move.",
     "decorationColor": "Colour",
     "saveDecoration": "Save decoration",
@@ -837,9 +817,7 @@
     "display_cover": "Cover out",
     "automatic": "Automatic",
     "bookend": "Bookend",
-    "bookendHint": "Keeps the row upright",
     "globe": "Globe",
-    "globeHint": "For wanderlust",
     "memberTitle": "{name}'s bookshelf",
     "memberBookSheet": "From {name}'s shelf",
     "memberEmpty": "{name} has no books on the shelf yet."
@@ -861,10 +839,8 @@
   },
   "clubs": {
     "title": "Clubs",
-    "lede": "Every club you're in. Open one, start another, or join with a code.",
     "soloLede": "You're not in a club yet.",
     "loadFailed": "Could not load your clubs",
-    "createHeading": "Start a club",
     "createBlurb": "Up to 20 members.",
     "create": "Create a club",
     "joinHeading": "Join a club",
@@ -982,7 +958,6 @@
     },
     "incoming": {
       "heading": "Requests to you",
-      "empty": "No requests right now.",
       "asked": "asked {day}",
       "accept": "Accept",
       "decline": "Decline",
@@ -990,7 +965,6 @@
     },
     "invites": {
       "heading": "Invitations to clubs",
-      "empty": "No invitations right now.",
       "from": "{name} invited you to {club}",
       "fromGone": "You were invited to {club}",
       "until": "valid until {day}",
@@ -1011,14 +985,12 @@
     },
     "outgoing": {
       "heading": "Requests you sent",
-      "empty": "No open requests.",
       "sentOn": "sent {day}",
       "withdraw": "Withdraw",
       "withdrawn": "Request withdrawn"
     },
     "blocked": {
       "heading": "Blocked",
-      "empty": "You have not blocked anyone.",
       "since": "blocked {day}",
       "unblock": "Unblock",
       "unblocked": "{name} is no longer blocked",
@@ -1076,7 +1048,6 @@
   "milestones": {
     "heading": "Milestones",
     "add": "Add",
-    "empty": "No milestones for this book.",
     "emptyAdmin": "No milestones yet, e.g. “Part one by Friday”.",
     "title": "Title",
     "titlePlaceholder": "e.g. Part one",
@@ -1101,8 +1072,6 @@
     "notes": "{n} note | {n} notes"
   },
   "discussions": {
-    "lede": "Talk about the current pick. Notes flagged as spoilers stay blurred for anyone who hasn't read that far.",
-    "earlierLede": "The discussion of an earlier pick. It is closed: you can read it, but not add to it.",
     "toCurrent": "← Current pick",
     "heading": "Discussion",
     "written": "Written by members",
@@ -1112,7 +1081,6 @@
   "activity": {
     "heading": "Activity",
     "clubHeading": "What happened",
-    "clubLede": "Picks, votes, notes and what members are reading, newest first.",
     "empty": "Nothing has happened yet.",
     "loadFailed": "Could not load the activity",
     "someone": "Someone",
@@ -1142,7 +1110,6 @@
     "title": "Quotes",
     "heading": "Quotes",
     "yours": "Your quotes",
-    "lede": "Lines you kept, from every book. Add one on a book's page.",
     "empty": "No quotes yet.",
     "emptyOwn": "No quotes yet. Add one on a book's page.",
     "emptyBook": "No quotes from this book yet. Keep a line you liked.",
@@ -1162,7 +1129,6 @@
   },
   "diaryPage": {
     "title": "Diary",
-    "lede": "Everything you wrote about your books, newest first. You write on a book's page.",
     "yours": "Your entries",
     "empty": "Nothing written yet. You write on a book's page.",
     "toShelf": "Open your shelf",
@@ -1173,8 +1139,6 @@
     "title": "Your year in books",
     "titleOf": "{name}'s year in books",
     "short": "Year",
-    "lede": "What you finished, how much you read and what you liked best.",
-    "ledeOf": "What {name} finished, how much they read and what they liked best.",
     "year": "Year",
     "loadFailed": "Could not load the numbers",
     "finished": "Finished",
@@ -1222,7 +1186,6 @@
       "other": "Other format"
     },
     "notListed": "My edition is not listed",
-    "addBlurb": "Add the edition you have. What you leave empty stays empty. An ISBN is looked up in the catalog first.",
     "isbnHint": "On the back cover or the copyright page. Optional.",
     "isbnFilled": "The ISBN you looked up.",
     "noFormat": "Not given",
@@ -1239,7 +1202,7 @@
   "merge": {
     "open": "Same book as another one?",
     "title": "These are the same book",
-    "blurb": "If the catalog has “{title}” twice, find the other entry. An admin checks it and joins the two.",
+    "blurb": "Find the duplicate entry. An admin checks and joins the two.",
     "other": "The other entry",
     "otherPlaceholder": "Title, author, or a link to its page",
     "find": "Find it",
@@ -1349,7 +1312,7 @@
     "openBook": "Wrong details?",
     "title": "Correct this book's details",
     "editionTitle": "Correct this edition's details",
-    "blurb": "Change what is wrong about “{title}”. An admin checks it before everyone sees it.",
+    "blurb": "An admin checks your change before everyone sees it.",
     "fields": {
       "title": "Title",
       "subtitle": "Subtitle",
@@ -1656,8 +1619,7 @@
     "failed": "Could not load this text.",
     "back": "← Back",
     "contact": "Questions about your data, or content to report? Write to {email}.",
-    "settingsTitle": "Legal",
-    "settingsBlurb": "Who runs {name}, what it stores about you, and the rules for using it."
+    "settingsTitle": "Legal"
   },
   "terms": {
     "signup": "By creating an account, you accept the {terms}.",

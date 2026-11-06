@@ -97,6 +97,33 @@ describe("physical bookshelf", () => {
     wrapper.unmount();
   });
 
+  it("explains dragging only once there are books to drag", async () => {
+    const wrapper = await render();
+    expect(wrapper.get(".shelf-instruction").text()).toBe("Hold and drag to rearrange. Tap a book to restyle it.");
+    expect(wrapper.find(".empty-discover").exists()).toBe(false);
+    wrapper.unmount();
+
+    myShelf.mockResolvedValue({ items: [], favorites: [], timezone: "Europe/Berlin" });
+    physicalShelfLayout.mockResolvedValue({ rows: [[], [], []], material: "oak", spines: {} });
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const empty = mount(PhysicalShelfPage, { global: { plugins: [pinia], stubs: { VueDraggable: draggable } } });
+    await flushPromises();
+    expect(empty.find(".shelf-instruction").exists()).toBe(false);
+    expect(empty.get(".empty-discover").text()).toBe("Find a book");
+    empty.unmount();
+  });
+
+  it("names the decoration picker after its task and each choice only by its name", async () => {
+    const wrapper = await render();
+    await wrapper.get(".add-decoration").trigger("click");
+    expect(wrapper.get(".sheet h2").text()).toBe("Add decoration");
+    expect(wrapper.get(".decoration-picker-hint").text()).toBe("You can move it between your books afterwards.");
+    expect(wrapper.get('.decoration-choice[data-kind="plant"]').text()).toBe("Plant");
+    expect(wrapper.find(".decoration-choice .finer").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
   it("prevents edits if loading the saved layout failed, so a default cannot overwrite it", async () => {
     myShelf.mockResolvedValue({ items: books, favorites: [], timezone: "Europe/Berlin" });
     physicalShelfLayout.mockRejectedValue(new Error("offline"));

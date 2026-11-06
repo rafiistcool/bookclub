@@ -5,11 +5,11 @@ import type { ColorMode, ThemeId, User } from "../types";
 import { useService } from "./service";
 
 export const THEMES = [
-  { id: "paper", labelKey: "theme.paper", blurbKey: "theme.paperBlurb" },
-  { id: "slate", labelKey: "theme.slate", blurbKey: "theme.slateBlurb" },
-  { id: "forest", labelKey: "theme.forest", blurbKey: "theme.forestBlurb" },
-  { id: "ink", labelKey: "theme.ink", blurbKey: "theme.inkBlurb" },
-] as const satisfies readonly { id: ThemeId; labelKey: string; blurbKey: string }[];
+  { id: "paper", labelKey: "theme.paper" },
+  { id: "slate", labelKey: "theme.slate" },
+  { id: "forest", labelKey: "theme.forest" },
+  { id: "ink", labelKey: "theme.ink" },
+] as const satisfies readonly { id: ThemeId; labelKey: string }[];
 
 export const MODES = [
   { id: "light", labelKey: "theme.light" },

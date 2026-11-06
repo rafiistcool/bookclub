@@ -56,7 +56,7 @@ async function save(next: string) {
     <p v-if="device && device !== saved" class="fine subtle device-zone">
       {{ t("settings.deviceZone", { zone: device }) }}
       <button class="text-btn" type="button" :disabled="busy" @click="save(device)">
-        {{ t("settings.useDeviceZone", { zone: device }) }}
+        {{ t("settings.useDeviceZone") }}
       </button>
     </p>
   </section>

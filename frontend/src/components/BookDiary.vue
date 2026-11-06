@@ -438,7 +438,7 @@ watch(
         </li>
       </ol>
       <div v-else class="diary-empty">
-        <p class="fine subtle">{{ club ? t("diary.emptyClub") : solo ? t("diary.emptySolo") : t("diary.empty") }}</p>
+        <p class="fine subtle">{{ t("diary.empty") }}</p>
         <button v-if="diary?.can_post" class="btn btn-ghost btn-sm" type="button" @click="focusComposer">
           {{ t("diary.writeFirst") }}
         </button>

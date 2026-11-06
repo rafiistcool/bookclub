@@ -11,16 +11,11 @@ const slug = computed(() => club.value.slug);
 
 <template>
   <div class="events-page">
-    <p class="lede events-lede">{{ t("activity.clubLede") }}</p>
     <ActivityFeed :club="slug" :heading="t('activity.clubHeading')" :page-size="30" />
   </div>
 </template>
 
 <style scoped>
-.events-lede {
-  margin-bottom: var(--space-4);
-}
-
 @media (min-width: 1024px) {
   .events-page {
     max-width: 760px;

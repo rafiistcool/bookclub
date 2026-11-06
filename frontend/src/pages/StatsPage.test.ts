@@ -70,6 +70,8 @@ describe("year in books", () => {
     const { wrapper, router } = await mountAt("/stats", StatsPage, "/stats");
     expect(personalStats).toHaveBeenCalledWith({ username: undefined, year: undefined });
     expect(wrapper.get("h1").text()).toBe("Your year in books");
+    // The tiles name what is counted; no lede repeats them.
+    expect(wrapper.find(".page-head .lede").exists()).toBe(false);
     const tiles = Object.fromEntries(
       wrapper.findAll(".stat-tile").map((tile) => [tile.attributes("data-stat"), tile.get("dd").text()]),
     );
@@ -94,6 +96,7 @@ describe("year in books", () => {
     const { wrapper } = await mountAt("/u/grace/stats", StatsPage, "/u/:username/stats");
     expect(personalStats).toHaveBeenCalledWith({ username: "grace", year: undefined });
     expect(wrapper.get("h1").text()).toBe("grace's year in books");
+    expect(wrapper.find(".page-head .lede").exists()).toBe(false);
 
     personalStats.mockRejectedValue(new ApiError("Nobody with that name here", 404, "No member with that name"));
     const stranger = await mountAt("/u/max/stats", StatsPage, "/u/:username/stats");
