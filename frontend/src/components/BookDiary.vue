@@ -317,7 +317,8 @@ async function focusComposer() {
   showAll.value = true;
   composing.value = true;
   await nextTick();
-  composer.value?.scrollIntoView({ behavior: "smooth", block: "center" });
+  const still = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  composer.value?.scrollIntoView({ behavior: still ? "auto" : "smooth", block: "center" });
   composer.value?.focus();
 }
 

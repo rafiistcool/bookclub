@@ -48,8 +48,10 @@ const { t } = useI18n();
   min-width: 0;
 }
 
-.club-card:hover {
-  border-color: var(--border-strong);
+@media (hover: hover) {
+  .club-card:hover {
+    border-color: var(--border-strong);
+  }
 }
 
 .club-card-cover {

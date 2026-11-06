@@ -10,6 +10,14 @@ body,
   min-height: 100%;
 }
 
+/* Touch: no grey flash over a tapped element (every control draws its own
+   pressed state instead) and no double-tap zoom delay. */
+html {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  accent-color: var(--accent);
+}
+
 body {
   margin: 0;
   color: var(--text);
@@ -32,6 +40,13 @@ select {
 a {
   color: var(--accent);
   text-underline-offset: 0.18em;
+  transition: opacity var(--dur-press) var(--ease);
+}
+
+/* Plain text links dim under the finger; classed links (tiles, tabs,
+   buttons) draw their own pressed state in components.css. */
+a:not([class]):active {
+  opacity: 0.6;
 }
 
 button {
@@ -54,7 +69,7 @@ h2,
 h3,
 h4 {
   font-family: var(--serif);
-  font-weight: 650;
+  font-weight: 600;
   letter-spacing: var(--tracking-tight);
   line-height: var(--leading-snug);
   margin: 0;
@@ -85,6 +100,11 @@ img {
 ::selection {
   background: var(--accent);
   color: var(--accent-ink);
+}
+
+input,
+textarea {
+  caret-color: var(--accent);
 }
 
 @media (prefers-reduced-motion: reduce) {

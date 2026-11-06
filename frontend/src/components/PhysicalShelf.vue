@@ -271,7 +271,9 @@ function compartment(row: ShelfObjectId[], index: number) {
   .shelf-decoration:not(:disabled):hover { transform: translateY(-4px); }
 }
 .book-spine:focus-visible, .book-face:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; transform: translateY(-9px); }
-.physical-shelf[data-dragging] .shelf-object:hover { transform: none; filter: none; }
+@media (hover: hover) {
+  .physical-shelf[data-dragging] .shelf-object:hover { transform: none; filter: none; }
+}
 .physical-shelf[data-readonly] .shelf-object { cursor: pointer; }
 .physical-shelf[data-readonly] .shelf-decoration { cursor: default; }
 .book-spine[data-lean] { rotate: -4.5deg; transform-origin: bottom left; margin-left: calc(var(--obj-h) * .082); }
@@ -328,10 +330,17 @@ function compartment(row: ShelfObjectId[], index: number) {
 .spine-dragging { --spine-scale: 1; --row-h: 212px; --plank: 15px; rotate: -5deg; box-shadow: 9px 12px 18px #00000055; }
 .empty-compartment { position: absolute; inset: 0 0 var(--plank); display: grid; place-items: center; padding: 0 56px; text-align: center; font-family: var(--serif); font-style: italic; color: var(--shelf-label); opacity: .5; font-size: var(--text-sm); pointer-events: none; }
 .remove-shelf-row { position: absolute; z-index: 4; right: 4px; top: 4px; display: grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: 50%; background: transparent; color: var(--shelf-label); opacity: 0; transition: opacity var(--dur-fast), background var(--dur-fast); }
-.physical-shelf-row:hover .remove-shelf-row, .remove-shelf-row:focus-visible { opacity: .6; }
-.remove-shelf-row:hover:not(:disabled) { opacity: 1; background: #ffffff30; }
+.remove-shelf-row:focus-visible { opacity: .6; }
+@media (hover: hover) {
+  .physical-shelf-row:hover .remove-shelf-row { opacity: .6; }
+}
+@media (hover: hover) {
+  .remove-shelf-row:hover:not(:disabled) { opacity: 1; background: #ffffff30; }
+}
 .remove-shelf-row:disabled { cursor: default; }
-.physical-shelf-row:hover .remove-shelf-row:disabled { opacity: .2; }
+@media (hover: hover) {
+  .physical-shelf-row:hover .remove-shelf-row:disabled { opacity: .2; }
+}
 .remove-shelf-row svg { width: 16px; height: 16px; }
 @media (hover: none) { .remove-shelf-row { opacity: .4; } }
 .shelf-decoration { width: calc(var(--decoration-width) * var(--spine-scale)); display: block; margin-inline: 6px; padding: 0; border: 0; background: none; cursor: grab; user-select: none; transition: transform var(--dur-base) var(--ease); filter: drop-shadow(3px 3px 3px #00000045); }

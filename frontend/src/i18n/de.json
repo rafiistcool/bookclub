@@ -62,6 +62,7 @@
   },
   "common": {
     "cancel": "Abbrechen",
+    "close": "Schließen",
     "save": "Speichern",
     "remove": "Entfernen",
     "undo": "Rückgängig",

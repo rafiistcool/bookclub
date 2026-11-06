@@ -520,8 +520,10 @@ onMounted(() => {
   border-radius: var(--radius-lg);
 }
 
-.member-card:hover {
-  border-color: var(--border-strong);
+@media (hover: hover) {
+  .member-card:hover {
+    border-color: var(--border-strong);
+  }
 }
 
 .is-you {

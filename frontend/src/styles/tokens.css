@@ -50,10 +50,17 @@
   --content-max: 1180px;
   --tap: 44px;
 
-  /* Motion. Overridden to 0 under prefers-reduced-motion below. */
+  /* Motion. Overridden under prefers-reduced-motion below.
+     --ease-out lands things (sheets, pages, toasts); --ease-in sends them
+     away, faster than they came. --dur-press is the finger's feedback. */
   --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.5, 0, 0.75, 0);
+  --dur-press: 90ms;
   --dur-fast: 120ms;
   --dur-base: 220ms;
+  --dur-slow: 380ms;
+  --press-scale: 0.96;
 }
 
 /* Derived colours. These resolve against whichever palette block won on
@@ -91,9 +98,13 @@
   --dnf: var(--status-dnf-fg);
 }
 
+/* Reduced motion keeps colour and opacity feedback but drops movement:
+   nothing scales, slides or springs. */
 @media (prefers-reduced-motion: reduce) {
   :root {
     --dur-fast: 0ms;
     --dur-base: 0ms;
+    --dur-slow: 0ms;
+    --press-scale: 1;
   }
 }

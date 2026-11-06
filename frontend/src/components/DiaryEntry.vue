@@ -98,8 +98,13 @@ function askDelete() {
   confirmTimer = setTimeout(() => (confirming.value = false), 4000);
 }
 
+// The reaction just tapped pops once when its chip appears or changes;
+// reactions already there on load stay still.
+const popped = ref<string | null>(null);
+
 function react(emoji: string) {
   pickerOpen.value = false;
+  popped.value = emoji;
   emit("react", emoji);
 }
 
@@ -196,7 +201,8 @@ watch(
           v-for="row in entry.reactions"
           :key="row.emoji"
           class="chip reaction"
-          :class="{ active: row.mine }"
+          :class="{ active: row.mine, pop: popped === row.emoji }"
+          @animationend="popped = null"
           type="button"
           :aria-pressed="row.mine"
           :title="row.users.join(', ')"
@@ -410,15 +416,33 @@ watch(
 }
 
 .chip.reaction {
-  min-height: 28px;
-  padding: 0 var(--space-2);
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  gap: var(--space-1);
   font-size: var(--text-sm);
 }
 
+/* With the chip's own 2px reach this is a 40px target in a dense row. */
 .chip.reaction.add {
-  min-width: 28px;
+  min-width: 40px;
   justify-content: center;
   color: var(--text-muted);
+}
+
+.chip.reaction.pop {
+  animation: reaction-pop var(--dur-slow) var(--ease-out);
+}
+
+@keyframes reaction-pop {
+  40% {
+    transform: scale(1.18);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chip.reaction.pop {
+    animation: none;
+  }
 }
 
 .reaction-picker {
@@ -433,14 +457,34 @@ watch(
 .reaction-pick {
   border: 0;
   background: transparent;
-  min-width: 32px;
-  min-height: 28px;
-  font-size: var(--text-md);
+  min-width: 40px;
+  min-height: 40px;
+  font-size: var(--text-lg);
   border-radius: var(--radius-pill);
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 
-.reaction-pick:hover {
-  background: var(--surface-2);
+.reaction-pick:active {
+  transform: scale(1.25);
+  transition-duration: var(--dur-press);
+}
+
+.reaction-picker {
+  animation: picker-in var(--dur-base) var(--ease-out);
+  transform-origin: left center;
+}
+
+@keyframes picker-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+}
+
+@media (hover: hover) {
+  .reaction-pick:hover {
+    background: var(--surface-2);
+  }
 }
 
 .entry-links {

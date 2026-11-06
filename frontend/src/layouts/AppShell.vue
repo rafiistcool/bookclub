@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import Avatar from "../components/Avatar.vue";
@@ -20,6 +20,46 @@ const friends = useFriends();
 const route = useRoute();
 
 const bottomItems = NAV_ITEMS.filter((item) => item.bottomBar);
+const activeTab = computed(() => bottomItems.findIndex((item) => isActive(route.path, item)));
+// The pill stays where it last was while a page outside the tabs is open.
+const pillTab = ref(Math.max(0, activeTab.value));
+watch(activeTab, (index) => {
+  if (index >= 0) pillTab.value = index;
+});
+
+const view = ref<HTMLElement | null>(null);
+
+function matches(query: string): boolean {
+  return typeof window.matchMedia === "function" && window.matchMedia(query).matches;
+}
+
+// A new page arrives with a short move that says where it came from: across
+// for a sibling tab (from the side the tab sits on), up for a page opened
+// from this one. Only the path counts: a query change (a tab inside a page)
+// is the page's own business.
+watch(
+  () => route.path,
+  (now, before) => {
+    const element = view.value;
+    if (!element || typeof element.animate !== "function" || now === before) return;
+    const from = bottomItems.findIndex((item) => isActive(before, item));
+    const to = bottomItems.findIndex((item) => isActive(now, item));
+    if (matches("(prefers-reduced-motion: reduce)")) {
+      element.animate([{ opacity: 0.4 }, { opacity: 1 }], { duration: 160, easing: "ease-out" });
+      return;
+    }
+    const across = from >= 0 && to >= 0 && from !== to;
+    const start = across ? `translateX(${to > from ? 24 : -24}px)` : "translateY(12px)";
+    element.animate(
+      [
+        { opacity: 0, transform: start },
+        { opacity: 1, transform: "none" },
+      ],
+      { duration: across ? 320 : 280, easing: "cubic-bezier(0.16, 1, 0.3, 1)" },
+    );
+  },
+  { flush: "post" },
+);
 const username = computed(() => session.user?.username ?? "");
 const avatarUrl = computed(() => session.user?.avatar_url ?? null);
 
@@ -91,7 +131,9 @@ watch(
     <main class="main">
       <TermsPrompt />
       <EmailPrompt />
-      <RouterView />
+      <div ref="view" class="view">
+        <RouterView />
+      </div>
       <!-- Settings lists the same texts in its Legal section. -->
       <footer v-if="service.legal.length && route.path !== '/settings'" class="shell-footer">
         <LegalLinks />
@@ -99,6 +141,12 @@ watch(
     </main>
 
     <nav class="bottom-nav" :aria-label="t('nav.main')">
+      <span
+        class="nav-pill"
+        :class="{ off: activeTab < 0 }"
+        :style="{ '--tab': pillTab }"
+        aria-hidden="true"
+      />
       <RouterLink
         v-for="item in bottomItems"
         :key="item.to"
@@ -170,20 +218,61 @@ watch(
 }
 
 .bottom-nav a {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 3px;
+  justify-content: flex-start;
+  gap: 4px;
+  padding-top: 8px;
   text-decoration: none;
   color: var(--text-muted);
   font-size: var(--text-2xs);
   font-weight: 600;
   min-height: var(--tap);
+  transition: color var(--dur-base) var(--ease-out);
+}
+
+.bottom-nav a :deep(svg) {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.bottom-nav a:active :deep(svg) {
+  transform: scale(0.86);
+  transition-duration: var(--dur-press);
 }
 
 .bottom-nav a.active {
-  color: var(--accent);
+  color: var(--accent-hover);
+}
+
+/* The active tab's pill slides from tab to tab under the icons. */
+.nav-pill {
+  position: absolute;
+  top: calc(var(--space-1) + 4px);
+  left: var(--space-2);
+  width: calc((100% - 2 * var(--space-2)) / 5);
+  height: 32px;
+  transform: translateX(calc(var(--tab) * 100%));
+  transition:
+    transform var(--dur-slow) var(--ease-out),
+    opacity var(--dur-base) var(--ease);
+  pointer-events: none;
+}
+
+.nav-pill::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 58px;
+  margin: 0 auto;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+}
+
+.nav-pill.off {
+  opacity: 0;
 }
 
 .sidebar {
@@ -239,9 +328,11 @@ watch(
       color var(--dur-fast) var(--ease);
   }
 
-  .side-link:hover {
-    background: var(--surface-2);
-    color: var(--text);
+  @media (hover: hover) {
+    .side-link:hover {
+      background: var(--surface-2);
+      color: var(--text);
+    }
   }
 
   .side-link.active {
@@ -275,8 +366,10 @@ watch(
     min-width: 0;
   }
 
-  .side-account:hover {
-    background: var(--surface-2);
+  @media (hover: hover) {
+    .side-account:hover {
+      background: var(--surface-2);
+    }
   }
 
   .side-account-text {

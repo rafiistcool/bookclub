@@ -76,7 +76,11 @@ const monthLabel = computed(() => readingMonthLabel(month.value, locale.value));
 .status-label .nums { white-space: nowrap; margin-left: var(--space-1); font-size: var(--text-xs); }
 .status-chevron { width: 16px; height: 16px; flex-shrink: 0; color: var(--text-muted); }
 button.shelf-status { cursor: pointer; transition: color var(--dur-fast) var(--ease); }
-button.shelf-status:hover:not(:disabled) { color: var(--accent); }
-button.shelf-status:hover:not(:disabled) .status-chevron { color: inherit; }
+@media (hover: hover) {
+  button.shelf-status:hover:not(:disabled) { color: var(--accent); }
+}
+@media (hover: hover) {
+  button.shelf-status:hover:not(:disabled) .status-chevron { color: inherit; }
+}
 button.shelf-status:disabled { cursor: wait; opacity: 0.6; }
 </style>

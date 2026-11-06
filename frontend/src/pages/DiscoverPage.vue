@@ -743,11 +743,15 @@ defineExpose({ loadPage });
             />
             <button
               v-if="query || submittedQuery"
-              class="text-btn"
+              class="icon-btn search-clear"
               type="button"
+              :aria-label="t('common.clear')"
+              :title="t('common.clear')"
               @click="clearSearch"
             >
-              {{ t("common.clear") }}
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <path d="M7 7l10 10M17 7 7 17" />
+              </svg>
             </button>
             <RouterLink
               class="icon-btn scan-link"
@@ -1063,7 +1067,9 @@ defineExpose({ loadPage });
 .history-heading { flex-wrap: wrap; font-size: var(--text-sm); }
 .search-history ul { list-style: none; margin: 0; padding: 0; }
 .history-query { flex: 1; text-align: left; overflow-wrap: anywhere; min-height: var(--tap); }
-.search-history li:hover { background: var(--surface-2); }
+@media (hover: hover) {
+  .search-history li:hover { background: var(--surface-2); }
+}
 
 .discover-search {
   position: sticky;
@@ -1099,11 +1105,19 @@ defineExpose({ loadPage });
 
 .search-field input {
   flex: 1;
+  align-self: stretch;
   min-width: 0;
+  min-height: var(--tap);
   border: 0;
   background: transparent;
   padding: 0;
   color: var(--text);
+}
+
+.search-clear {
+  flex: none;
+  min-width: 36px;
+  border-radius: var(--radius-pill);
 }
 
 .search-field input:focus-visible {
@@ -1114,8 +1128,8 @@ defineExpose({ loadPage });
    as it can on a 360 px phone. */
 .scan-link {
   flex: none;
-  min-width: 40px;
-  min-height: 40px;
+  min-width: var(--tap);
+  min-height: var(--tap);
   margin-right: calc(-1 * var(--space-3));
   color: var(--text-muted);
 }

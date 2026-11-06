@@ -164,8 +164,10 @@ watch(slug, () => void load(), { immediate: true });
   margin-bottom: -1px;
 }
 
-.club-tab:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .club-tab:hover {
+    color: var(--text);
+  }
 }
 
 .club-tab.active {

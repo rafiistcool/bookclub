@@ -24,16 +24,21 @@ const docs = computed(() => LEGAL_DOCS.filter((doc) => service.hasLegal(doc)));
 .legal-links {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-1) var(--space-4);
+  gap: 0 var(--space-4);
 }
 
 .legal-links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
   color: var(--text-muted);
   text-decoration: none;
 }
 
-.legal-links a:hover {
-  color: var(--text);
-  text-decoration: underline;
+@media (hover: hover) {
+  .legal-links a:hover {
+    color: var(--text);
+    text-decoration: underline;
+  }
 }
 </style>

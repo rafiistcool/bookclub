@@ -487,8 +487,10 @@ onMounted(load);
   text-decoration: none;
 }
 
-.reader-chip:hover {
-  border-color: var(--border-strong);
+@media (hover: hover) {
+  .reader-chip:hover {
+    border-color: var(--border-strong);
+  }
 }
 
 /* Takes are shown in full: the chips are too narrow for a whole sentence. */
@@ -553,8 +555,10 @@ onMounted(load);
   font-weight: 600;
 }
 
-.next-up-card:hover {
-  border-color: var(--border-strong);
+@media (hover: hover) {
+  .next-up-card:hover {
+    border-color: var(--border-strong);
+  }
 }
 
 .past-tile {

@@ -158,8 +158,10 @@ onBeforeUnmount(() => polling?.abort());
   cursor: pointer;
 }
 
-.import-file:hover {
-  border-color: var(--accent);
+@media (hover: hover) {
+  .import-file:hover {
+    border-color: var(--accent);
+  }
 }
 
 .import-file input {

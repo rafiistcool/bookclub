@@ -446,7 +446,9 @@ describe("the legal parts of the app shell and Settings", () => {
     const order = Array.from(main.element.children).map((element) => element.className);
     expect(order.findIndex((name) => name.includes("terms-prompt"))).toBe(0);
     expect(order.findIndex((name) => name.includes("email-prompt"))).toBe(1);
-    expect(order.findIndex((name) => name.includes("page-home"))).toBe(2);
+    // The page itself sits in the shell's transition wrapper.
+    expect(order.findIndex((name) => name === "view")).toBe(2);
+    expect(main.find(".view > .page-home").exists()).toBe(true);
     expect(wrapper.get(".terms-prompt").text()).toContain("Accept the terms");
   });
 
