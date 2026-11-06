@@ -51,7 +51,8 @@ async function mountHero(
   api.clubPick.mockResolvedValue({ pick, timezone: "Europe/Berlin" });
   const wrapper = mount(HomeHero, {
     props: { entry: null, ...props },
-    global: { plugins: [pinia], stubs: { BookCover: true } },
+    // The swap's cross-fade would keep the outgoing book on screen until its animation ends.
+    global: { plugins: [pinia], stubs: { BookCover: true, transition: true } },
   });
   await flushPromises();
   return wrapper;
@@ -157,6 +158,67 @@ describe("HomeHero", () => {
     const toast = useToast();
     const saved = toast.items.find((row) => row.message === "Progress: 55%");
     expect(saved?.action?.label).toBe("Undo");
+  });
+
+  it("undoes a save on the book it was made for, even after a chip swap", async () => {
+    const circe = shelfItem({ id: 5, status: "currently_reading", progress: 30, book: CIRCE });
+    const wrapper = await mountHero({ club: READERS, others: [READERS, OWLS], entry: circe });
+    await wrapper.get(".progress-trigger").trigger("click");
+    await wrapper.get(".sheet input[type=range]").setValue("220");
+    api.patchShelf.mockResolvedValue({ ...circe, progress: 55 });
+    await wrapper.get(".sheet .btn-primary").trigger("click");
+    await flushPromises();
+    const toast = useToast();
+    const saved = toast.items.find((row) => row.message === "Progress: 55%")!;
+
+    // The Owls' pick is another book I am reading; Home hands the hero its entry.
+    const dune = bookOut({ id: 8, title: "Dune", pages: 600 });
+    const duneEntry = shelfItem({ id: 6, status: "currently_reading", progress: 80, book: dune });
+    api.clubPick.mockResolvedValue({
+      pick: clubPick({ book: dune, on_shelf: "currently_reading", shelf_id: 6 }),
+      timezone: "UTC",
+    });
+    await wrapper.get(".hero-chip").trigger("click");
+    await wrapper.setProps({ club: OWLS, others: [READERS, OWLS], entry: duneEntry });
+    await flushPromises();
+    expect(wrapper.get(".hero-title").text()).toBe("Dune");
+
+    api.patchShelf.mockClear();
+    api.patchShelf.mockResolvedValue({ ...circe, progress: 30 });
+    await toast.run(saved.id);
+    await flushPromises();
+    expect(api.patchShelf).toHaveBeenCalledTimes(1);
+    expect(api.patchShelf).toHaveBeenCalledWith(5, { progress: 30 });
+  });
+
+  it("shows no action for the outgoing book during a swap, and its saved progress meanwhile", async () => {
+    const circe = shelfItem({ id: 5, status: "currently_reading", progress: 30, book: CIRCE });
+    const wrapper = await mountHero(
+      { club: READERS, others: [READERS, OWLS], entry: circe },
+      pickOf({
+        on_shelf: "currently_reading",
+        shelf_id: 5,
+        readers: [{ username: "ada", status: "currently_reading", rating: null, take: "", dnf_reason: "", progress: 30, avatar_url: null }],
+      }),
+    );
+    await wrapper.get(".progress-trigger").trigger("click");
+    await wrapper.get(".sheet input[type=range]").setValue("200");
+    api.patchShelf.mockResolvedValue({ ...circe, progress: 50 });
+    await wrapper.get(".sheet .btn-primary").trigger("click");
+    await flushPromises();
+
+    // The Owls' pick is slow: Circe stays on screen, but Home's entry is the Owls' already (none).
+    let answer!: (value: unknown) => void;
+    api.clubPick.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    await wrapper.setProps({ club: OWLS, others: [READERS, OWLS], entry: null });
+    await flushPromises();
+    expect(wrapper.get(".hero-title").text()).toBe("Circe");
+    expect(wrapper.find(".hero-action").exists()).toBe(false);
+    // My ring falls back to the pick, which took the save: 50 %, not the 30 % it was loaded with.
+    expect(wrapper.findAll(".reader-rings li .visually-hidden").map((row) => row.text())).toContain("ada: 50%");
+    answer({ pick: null, timezone: "UTC" });
+    await flushPromises();
+    expect(wrapper.find(".hero-action").exists()).toBe(true);
   });
 
   it("asks for the stars of a finished book through the finished moment", async () => {

@@ -20,6 +20,7 @@ vi.mock("../../api/client", () => ({
 
 import { i18n } from "../../i18n";
 import { useClubs } from "../../stores/clubs";
+import { useFinish } from "../../stores/finish";
 import { useSession } from "../../stores/session";
 import ClubHomePage from "./ClubHomePage.vue";
 
@@ -125,6 +126,25 @@ describe("ClubHomePage", () => {
     expect(wrapper.findComponent({ name: "ProgressEditor" }).exists()).toBe(false);
     expect(wrapper.find(".hero-action .to-discussion").exists()).toBe(true);
     expect(wrapper.text()).toContain("2 of 4 finished");
+
+    // In the moment the reader gives five stars and a take: the takes show it without a reload of the page.
+    const rated = { ...reading.readers[0]!, status: "finished" as const, progress: null, rating: 5, take: "Fierce" };
+    api.clubPick.mockResolvedValue({
+      pick: { ...reading, on_shelf: "finished", readers: [rated, reading.readers[1]!] },
+      timezone: "Europe/Berlin",
+    });
+    const finish = useFinish();
+    finish.celebrate({ item: shelfItem({ id: 30, status: "finished" }), clubSlug: "readers-ab12" });
+    finish.close(shelfItem({ id: 30, status: "finished", rating: 5, take: "Fierce" }), finish.serial);
+    await flushPromises();
+    expect(api.clubPick).toHaveBeenCalledTimes(3);
+    expect(wrapper.get(".reader-takes").text()).toContain("Fierce");
+
+    // Another book's stars are not this pick's business.
+    finish.celebrate({ item: shelfItem({ id: 31, status: "finished" }) });
+    finish.close(shelfItem({ id: 31, status: "finished", rating: 2 }), finish.serial);
+    await flushPromises();
+    expect(api.clubPick).toHaveBeenCalledTimes(3);
   });
 
   it("counts the last day before the meeting in hours", async () => {

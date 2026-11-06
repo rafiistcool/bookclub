@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { routerKey } from "vue-router";
 import { detectCover, flatten, insetQuad, isConvex, loadForScan, MIN_CONFIDENCE, readPixels, type Point, type Quad } from "../coverScan";
 import { rotateQuad } from "../coverScan/geometry";
+import { ancestry, giveFocusBack } from "../focusBack";
 import { useCoverScan } from "../stores/coverScan";
 import { useTheme } from "../stores/theme";
 import { useToast } from "../stores/toast";
@@ -445,48 +446,6 @@ function unlock() {
   }
 }
 
-function tryFocus(el: HTMLElement): boolean {
-  el.focus({ preventScroll: true });
-  return document.activeElement === el;
-}
-
-/** Focus an element that is not focusable on its own, until it loses focus again. */
-function focusTemporarily(el: HTMLElement): boolean {
-  if (el.hasAttribute("tabindex")) return tryFocus(el);
-  el.setAttribute("tabindex", "-1");
-  if (tryFocus(el)) {
-    el.addEventListener("blur", () => el.removeAttribute("tabindex"), { once: true });
-    return true;
-  }
-  el.removeAttribute("tabindex");
-  return false;
-}
-
-/**
- * Focus goes back where it was. A CoverPhotoButton disables its file input
- * while it uploads, and a disabled or removed element takes no focus; then
- * it goes to the input's label, or the nearest ancestor still on the page
- * that takes it, and at worst to the page's main region, never silently to
- * the body.
- */
-function giveFocusBack(chain: HTMLElement[]) {
-  for (const el of chain) {
-    if (!el.isConnected || el === document.body || el === document.documentElement) continue;
-    if (tryFocus(el)) return;
-    if (el instanceof HTMLLabelElement && focusTemporarily(el)) return;
-  }
-  const main = document.querySelector<HTMLElement>("main") ?? document.querySelector<HTMLElement>("#app");
-  if (main) focusTemporarily(main);
-}
-
-function ancestry(el: Element | null): HTMLElement[] {
-  const chain: HTMLElement[] = [];
-  for (let node = el; node && node !== document.body; node = node.parentElement) {
-    if (node instanceof HTMLElement) chain.push(node);
-  }
-  return chain;
-}
-
 /** The browser chrome (Android's status bar, Safari's tinted bar) takes the scanner's dark background. */
 function darkenChrome() {
   const meta = document.querySelector('meta[name="theme-color"]');
@@ -601,6 +560,7 @@ function close() {
   restoreChrome();
   const chain = restoreFocusTo;
   restoreFocusTo = [];
+  // A CoverPhotoButton disables its file input while it uploads: then its label or an ancestor.
   giveFocusBack(chain);
 }
 

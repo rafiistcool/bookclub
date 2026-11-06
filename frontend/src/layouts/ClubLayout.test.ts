@@ -146,6 +146,25 @@ describe("ClubLayout", () => {
     expect(wrapper.find(".sheet").exists()).toBe(false);
   });
 
+  it("closes the sheets on Back between two sections of one page", async () => {
+    club.mockResolvedValue(clubOut(READERS));
+    const { wrapper, router } = await mountAt("/c/readers-ab12/members#invites");
+    await router.push("/c/readers-ab12/members#club-settings");
+    await flushPromises();
+    await wrapper.get(".more-tab").trigger("click");
+    expect(wrapper.find(".sheet").exists()).toBe(true);
+    router.back();
+    await flushPromises();
+    expect(router.currentRoute.value.fullPath).toBe("/c/readers-ab12/members#invites");
+    expect(wrapper.find(".sheet").exists()).toBe(false);
+
+    // A query alone keeps a sheet open.
+    await wrapper.get(".more-tab").trigger("click");
+    await router.replace("/c/readers-ab12/members?year=2025#invites");
+    await flushPromises();
+    expect(wrapper.find(".sheet").exists()).toBe(true);
+  });
+
   it("shows members no admin rows behind More", async () => {
     club.mockResolvedValue(clubOut(OWLS));
     const { wrapper } = await mountAt("/c/night-owls-cd34");

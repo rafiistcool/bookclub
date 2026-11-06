@@ -10,7 +10,7 @@ import NavIcon from "../components/NavIcon.vue";
 import ProgressEditor from "../components/ProgressEditor.vue";
 import { bookPath } from "../constants";
 import { tp } from "../i18n";
-import { heroClubSlug, useClubs } from "../stores/clubs";
+import { heroClubSlug, pickClubSlug, useClubs } from "../stores/clubs";
 import { useFinish } from "../stores/finish";
 import { useFriends } from "../stores/friends";
 import { useSession } from "../stores/session";
@@ -83,12 +83,10 @@ const heroPending = computed(() => (hasClubs.value ? !clubsLoaded.value : !shelf
 /** The books being read besides the hero's: one shelf entry never has two editors. */
 const restReading = computed(() => reading.value.filter((item) => item.id !== heroEntry.value?.id));
 
-/** "See all" leads to a page that holds the whole feed: the diary, or the one club's pages. */
-const onlyClub = computed(() => (clubs.items.length === 1 ? clubs.items[0]!.slug : null));
-const diaryMoreTo = computed(() =>
-  !hasClubs.value ? "/diary" : onlyClub.value ? `/c/${onlyClub.value}/discussions` : undefined,
-);
-const activityMoreTo = computed(() => (onlyClub.value ? `/c/${onlyClub.value}/events` : undefined));
+// The previews page in place ("Show more"), with no "See all": no page holds
+// Home's whole feed. /diary has only the viewer's own writing, a club's pages
+// only that club and its members (not friends, not the viewer's own events
+// from before they joined).
 
 async function loadClubs() {
   if (!clubs.hasClubs) {
@@ -246,6 +244,7 @@ onMounted(() => {
               :book-title="item.book.title"
               :busy="savingId === item.id"
               :shelf-id="item.id"
+              :club-slug="pickClubSlug(clubs.list, item.book.id)"
               @save="(value) => saveProgress(item, value)"
               @finished="onRowFinished"
             />
@@ -260,7 +259,6 @@ onMounted(() => {
           :heading="hasClubs ? t('home.recentlyWritten') : t('home.yourNotes')"
           :empty-text="hasClubs ? t('home.nothingWritten') : t('home.noNotes')"
           :limit="4"
-          :more-to="diaryMoreTo"
         >
           <template #head>
             <RouterLink to="/diary">{{ t("home.toDiary") }}</RouterLink>
@@ -268,7 +266,7 @@ onMounted(() => {
         </DiaryFeed>
       </section>
       <section v-if="showActivity" class="section">
-        <ActivityFeed :heading="t('activity.heading')" :limit="5" :more-to="activityMoreTo" />
+        <ActivityFeed :heading="t('activity.heading')" :limit="5" />
       </section>
       <section v-if="!hasClubs && favorites.length" class="section" aria-labelledby="favourites">
         <div class="section-head">

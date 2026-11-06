@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { CalendarDaysIcon } from "@heroicons/vue/24/outline";
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../../api/client";
 import Avatar from "../../components/Avatar.vue";
@@ -15,6 +15,7 @@ import { bookPath, relativeDay, starLabel, statusLabel, statusShort } from "../.
 import { formatClubDate } from "../../i18n/dates";
 import { tp } from "../../i18n";
 import { isClubAdmin, isClubGone, useClubs, useCurrentClub } from "../../stores/clubs";
+import { useFinish } from "../../stores/finish";
 import { useLocale } from "../../stores/locale";
 import { useSession } from "../../stores/session";
 import { useToast } from "../../stores/toast";
@@ -174,6 +175,16 @@ async function saveProgress(value: number, undo = true) {
     busy.value = false;
   }
 }
+
+// The moment the ProgressEditor opened saved stars, a take or "only me":
+// the readers (and with them the takes) load again.
+const finish = useFinish();
+watch(
+  () => finish.lastSaved,
+  (saved) => {
+    if (saved && pick.value?.shelf_id === saved.id) void load();
+  },
+);
 
 /** ProgressEditor marked the book read (and opened the finished moment). */
 function onFinished(item: ShelfItem) {

@@ -27,11 +27,17 @@ function toClub(sub = "", withoutClub?: string) {
  * `scrollIntoView`, which keeps the target's `scroll-margin-top` clear of the
  * sticky bars. For a while after, a section pushed down by late content is
  * followed, unless the reader has scrolled meanwhile. A section that never
- * appears (a member has no invites) leaves the page at the top.
+ * appears (a member has no invites) leaves the page at the top. The wait ends
+ * without a scroll once the reader has moved on (another page, Back) or
+ * scrolled: vue-router applies whatever this resolves to, on whatever page is
+ * current by then.
  */
-function scrollToSection(id: string): Promise<false | { top: number }> {
+function scrollToSection(id: string, fullPath: string): Promise<false | { top: number }> {
   return new Promise((resolve) => {
     const started = performance.now();
+    // Not there yet: meanwhile the page starts at the top, as any other page does.
+    if (!document.getElementById(id) && window.scrollY !== 0) window.scrollTo(0, 0);
+    const startY = window.scrollY;
     let lastTop: number | null = null;
     let still = 0;
     let placed: { top: number; height: number; scrollY: number } | null = null;
@@ -49,6 +55,10 @@ function scrollToSection(id: string): Promise<false | { top: number }> {
         if (!element || elapsed > 2500 || window.scrollY !== placed.scrollY) return;
         if (topOf(element) !== placed.top || document.documentElement.scrollHeight !== placed.height) place(element);
         requestAnimationFrame(check);
+        return;
+      }
+      if (router.currentRoute.value.fullPath !== fullPath || window.scrollY !== startY) {
+        resolve(false);
         return;
       }
       if (element) {
@@ -76,8 +86,9 @@ const router = createRouter({
   scrollBehavior(to, from, saved) {
     if (saved) return saved;
     // Only a plain id: the mail links carry `#token=…`, which is no section.
+    // A diary entry (`#entry-N`, the feeds' links) is BookDiary's: it centres it once loaded.
     const section = /^#([A-Za-z][\w-]*)$/.exec(to.hash)?.[1];
-    if (section) return scrollToSection(section);
+    if (section && !section.startsWith("entry-")) return scrollToSection(section, to.fullPath);
     return { top: 0 };
   },
   routes: [

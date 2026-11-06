@@ -160,10 +160,27 @@ function swap(slug: string) {
   clubs.remember(slug);
 }
 
+/**
+ * An entry the hero changed: the pick on screen takes it, my reader row too,
+ * so a fallback to the pick (during a swap, before Home's entry matches) is
+ * never older than what was just saved.
+ */
 function adopt(item: ShelfItem) {
   const current = shown.value;
   if (current?.pick && current.pick.book.id === item.book.id) {
-    shown.value = { ...current, pick: { ...current.pick, on_shelf: item.status, shelf_id: item.id } };
+    const name = session.user?.username;
+    const readers = current.pick.readers.map((row) =>
+      row.username === name
+        ? {
+            ...row,
+            status: item.status,
+            progress: item.status === "currently_reading" ? (item.progress ?? 0) : null,
+            rating: item.rating,
+            take: item.take,
+          }
+        : row,
+    );
+    shown.value = { ...current, pick: { ...current.pick, on_shelf: item.status, shelf_id: item.id, readers } };
   }
   emit("entry", item);
 }
@@ -195,12 +212,18 @@ async function startReading() {
 // Only the newest save can be undone: an older toast's "before" would undo the newer one too.
 let undoToast = 0;
 
-async function saveProgress(value: number, undo = true) {
+/**
+ * `target` is the entry the save is for, taken when it is made: an Undo
+ * tapped after a chip swap still restores the book it belongs to, not the
+ * one the hero shows by then.
+ */
+async function saveProgress(value: number, undo = true, target: number | null = shelfId.value) {
   // An Undo waits for a save still under way instead of being dropped.
   if (!undo) await whenIdle(busy);
-  const id = shelfId.value;
+  const id = target;
   if (id == null || busy.value) return;
-  if (!undo && status.value !== "currently_reading") return;
+  // The status is known only while the hero still shows that entry.
+  if (!undo && id === shelfId.value && status.value !== "currently_reading") return;
   const before = progress.value;
   busy.value = true;
   try {
@@ -211,7 +234,7 @@ async function saveProgress(value: number, undo = true) {
     if (undo) {
       undoToast = toast.show(t("book.progressSaved", { n: value }), {
         label: t("common.undo"),
-        run: () => saveProgress(before, false),
+        run: () => saveProgress(before, false, id),
       });
     } else toast.show(t("progress.undone"));
   } catch (err) {
@@ -291,7 +314,8 @@ const swapKey = computed(() => (solo.value ? `solo-${props.entry?.id ?? 0}` : `c
             :max="5"
           />
 
-          <div class="hero-action">
+          <!-- During a swap the outgoing book has no action: Home's list may already hold its editor. -->
+          <div v-if="!busySwap" class="hero-action">
             <ProgressEditor
               v-if="status === 'currently_reading' && shelfId != null"
               :value="progress"
@@ -354,9 +378,10 @@ const swapKey = computed(() => (solo.value ? `solo-${props.entry?.id ?? 0}` : `c
         :key="other.slug"
         class="chip hero-chip"
         type="button"
+        :title="other.name"
         @click="swap(other.slug)"
       >
-        {{ other.name }}
+        <span class="hero-chip-name">{{ other.name }}</span>
       </button>
       <RouterLink class="hero-all fine" to="/clubs">{{ t("home.allClubs") }}</RouterLink>
     </div>
@@ -364,8 +389,10 @@ const swapKey = computed(() => (solo.value ? `solo-${props.entry?.id ?? 0}` : `c
 </template>
 
 <style scoped>
+/* One column the width of the page: a long chip shrinks inside it instead of widening it. */
 .home-hero {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-4);
 }
 
@@ -506,9 +533,20 @@ const swapKey = computed(() => (solo.value ? `solo-${props.entry?.id ?? 0}` : `c
   border-top: 1px solid var(--border);
 }
 
-/* A 36px pill with a finger-sized hit area around it. */
+/* A 36px pill with a finger-sized hit area around it. A long club name
+   (up to 80 characters) ends in an ellipsis instead of widening the page. */
 .hero-chip {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 100%;
   min-height: 36px;
+}
+
+.hero-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hero-chip::before {

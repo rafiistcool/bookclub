@@ -2,7 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FriendsOut } from "../api/generated";
-import { activityItem, bookOut, clubOut, clubPick, favorite, shelfItem, user } from "../test/fixtures";
+import { activityItem, bookOut, clubOut, clubPick, favorite, post, shelfItem, user } from "../test/fixtures";
 import { friendClubInvite, friendOut, friendRequest, friendsOut } from "../test/friends";
 import { memoryStorage } from "../test/storage";
 import type { ClubSummary } from "../types";
@@ -33,6 +33,7 @@ vi.mock("../api/client", () => ({
 import { ApiError } from "../api/client";
 import { i18n } from "../i18n";
 import { heroClubSlug, LAST_CLUB_KEY } from "../stores/clubs";
+import { useFinish } from "../stores/finish";
 import { useFriends } from "../stores/friends";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
@@ -152,9 +153,9 @@ describe("HomePage", () => {
     expect(api.activity).toHaveBeenCalledWith({ before: undefined, limit: 5, club: undefined });
     expect(wrapper.get(".activity-row").text()).toContain("ada nominated Circe");
     expect(wrapper.get(".activity-club").attributes("href")).toBe("/c/readers-ab12");
-    // The whole feed is the one club's: a link there, not "Show more".
-    expect(wrapper.get(".activity-all").attributes("href")).toBe("/c/readers-ab12/events");
-    expect(wrapper.find(".activity-more").exists()).toBe(false);
+    // The club's events page leaves out my own events from before I joined: Home pages in place.
+    expect(wrapper.find(".activity-all").exists()).toBe(false);
+    expect(wrapper.find(".activity-more").exists()).toBe(true);
     expect(api.diaryFeed).toHaveBeenCalledWith(undefined, 4, undefined);
     expect(wrapper.find(".solo-prompt").exists()).toBe(false);
   });
@@ -193,8 +194,6 @@ describe("HomePage", () => {
     expect(api.clubPick).toHaveBeenCalledTimes(1);
     expect(api.clubPick).toHaveBeenLastCalledWith(SUMMARY.slug);
     expect(wrapper.findAll(".hero-chip").map((chip) => chip.text())).toEqual(["Night owls"]);
-    // Two clubs: the combined feeds have no one page, so they page in place.
-    expect(wrapper.find(".activity-all").exists()).toBe(false);
   });
 
   it("swaps the hero in place from a chip and remembers that club", async () => {
@@ -214,6 +213,49 @@ describe("HomePage", () => {
     expect(wrapper.findAll(".hero-chip").map((chip) => chip.text())).toEqual(["Readers"]);
     // Circe is mine to read and no longer the hero's: it is back in the list.
     expect(wrapper.findAll(".reading-title").map((row) => row.text())).toEqual(["Circe"]);
+  });
+
+  it("finishes another club's pick from its row with that club's line in the moment", async () => {
+    const owlBook = bookOut({ id: 20, title: "Owl book", pages: null });
+    api.clubs.mockResolvedValue({
+      items: [
+        clubOut({ ...SUMMARY, current_pick: { id: 1, book: bookOut({ id: 1, title: "Circe" }), meeting_at: null } }),
+        clubOut({ ...OWLS, current_pick: { id: 2, book: owlBook, meeting_at: null } }),
+      ],
+    });
+    api.myShelf.mockResolvedValue({
+      user: { id: 1, username: "ada", avatar_url: null },
+      timezone: "UTC",
+      items: [
+        shelfItem({ id: 1, status: "currently_reading", position: 0, progress: 30, book: { id: 1, title: "Circe" } }),
+        shelfItem({ id: 3, status: "currently_reading", position: 1, progress: 90, book: owlBook }),
+      ],
+      favorites: [],
+    });
+    localStorage.setItem(LAST_CLUB_KEY, SUMMARY.slug);
+    const wrapper = await mountHome([SUMMARY, OWLS]);
+    expect(wrapper.get(".hero-title").text()).toBe("Circe");
+    const row = wrapper.get(".reading-row");
+    expect(row.get(".reading-title").text()).toBe("Owl book");
+    await row.get(".progress-trigger").trigger("click");
+    await wrapper.get(".sheet input[type=range]").setValue("100");
+    const finished = shelfItem({ id: 3, status: "finished", book: owlBook });
+    api.patchShelf.mockResolvedValue(finished);
+    await wrapper.findAll(".sheet button").find((button) => button.text() === "Mark as read")!.trigger("click");
+    await flushPromises();
+    expect(api.patchShelf).toHaveBeenCalledWith(3, { status: "finished", position: 0 });
+    expect(useFinish().item).toEqual(finished);
+    expect(useFinish().clubSlug).toBe(OWLS.slug);
+  });
+
+  it("pages the diary in place: no page holds Home's feed with friends' notes", async () => {
+    const note = { parent_author: null, my_progress: null, my_status: null, club: null, book: bookOut({ id: 1 }), entry: post({ id: 11, author: "ada" }) };
+    api.diaryFeed.mockResolvedValue({ items: [note], has_more: true, timezone: "UTC" });
+    for (const friends of [friendsOut(), friendsOut({ friends: [friendOut("grace")] })]) {
+      const wrapper = await mountHome([], friends);
+      expect(wrapper.find(".feed-all").exists()).toBe(false);
+      expect(wrapper.find(".feed-load-more").exists()).toBe(true);
+    }
   });
 
   it("moves on to the next club when the hero's club is gone", async () => {

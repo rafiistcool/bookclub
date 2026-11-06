@@ -91,6 +91,11 @@ export function heroClubSlug(
   return (clubs.find((club) => club.current_pick) ?? clubs[0])?.slug ?? null;
 }
 
+/** The club whose current pick the book is, for the finished moment's "2 of 4" line; else null. */
+export function pickClubSlug(clubs: readonly Pick<ClubOut, "slug" | "current_pick">[], bookId: number): string | null {
+  return clubs.find((club) => club.current_pick?.book.id === bookId)?.slug ?? null;
+}
+
 /**
  * Where a club link without a slug leads (`/club`, the Club tab, old routes):
  * `sub` of the default club, else the club list, which is also the
@@ -203,6 +208,19 @@ export const useClubs = defineStore("clubs", {
       const session = useSession();
       if (session.user) session.user.clubs = items.map(clubSummary);
       return items;
+    },
+    /**
+     * The club whose current pick the book is, from a fresh `GET /api/clubs`
+     * (solo mode asks nothing). Null when none is, and when the list fails:
+     * the line it serves is a nicety.
+     */
+    async pickClubFor(bookId: number): Promise<string | null> {
+      if (!this.hasClubs) return null;
+      try {
+        return pickClubSlug(await this.loadList(), bookId);
+      } catch {
+        return null;
+      }
     },
     /** After a join, create, leave, transfer or delete: ask the server which clubs the viewer is in. */
     async refresh() {

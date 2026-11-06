@@ -205,6 +205,12 @@ watch(
     var(--space-4) calc(var(--nav-h) + env(safe-area-inset-bottom) + var(--space-7));
 }
 
+/* The club bar pulls itself up to the column's top edge. Under a Terms or
+   Email prompt it starts below the prompt instead of over its buttons. */
+.main > .panel ~ .view :deep(.club-head) {
+  margin-top: 0;
+}
+
 .shell-footer {
   margin-top: var(--space-8);
 }

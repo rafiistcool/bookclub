@@ -1,7 +1,7 @@
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { edition, isbnHit, searchHit, shelfItem } from "../test/fixtures";
+import { bookOut, clubOut, edition, isbnHit, searchHit, shelfItem, user } from "../test/fixtures";
 
 const lookupIsbn = vi.fn();
 const addToShelf = vi.fn();
@@ -9,6 +9,7 @@ const patchShelf = vi.fn();
 const search = vi.fn();
 const addEdition = vi.fn();
 const createCustomBook = vi.fn();
+const clubs = vi.fn();
 const push = vi.fn();
 const back = vi.fn();
 
@@ -21,6 +22,7 @@ vi.mock("../api/client", async (importOriginal) => ({
     search: (...args: unknown[]) => search(...args),
     addEdition: (...args: unknown[]) => addEdition(...args),
     createCustomBook: (...args: unknown[]) => createCustomBook(...args),
+    clubs: (...args: unknown[]) => clubs(...args),
   },
 }));
 
@@ -30,6 +32,7 @@ vi.mock("vue-router", () => ({
 
 import { ApiError } from "../api/client";
 import { useFinish } from "../stores/finish";
+import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import ScanPage from "./ScanPage.vue";
 
@@ -71,7 +74,7 @@ function apiError(status: number, detail: string, body: Record<string, unknown> 
 describe("ScanPage", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
-    for (const mock of [lookupIsbn, addToShelf, patchShelf, search, addEdition, createCustomBook, push, back]) {
+    for (const mock of [lookupIsbn, addToShelf, patchShelf, search, addEdition, createCustomBook, clubs, push, back]) {
       mock.mockReset();
     }
   });
@@ -144,6 +147,27 @@ describe("ScanPage", () => {
     expect(useFinish().item).toMatchObject({ id: 5, status: "finished" });
     expect(useToast().items).toHaveLength(0);
     expect(w.text()).toContain("On your shelf: Finished");
+  });
+
+  it("gives the moment the club whose current pick the scanned book is", async () => {
+    lookupIsbn.mockResolvedValue(isbnHit());
+    addToShelf.mockResolvedValue(shelfItem({ id: 5, status: "finished", book: { id: 9 } }));
+    const w = await mountPage();
+    const owls = { slug: "night-owls-cd34", name: "Night owls", role: "member" as const, timezone: "UTC", member_count: 2 };
+    const readers = { ...owls, slug: "readers-ab12", name: "Readers" };
+    useSession().user = user({ clubs: [readers, owls] });
+    clubs.mockResolvedValue({
+      items: [
+        clubOut({ ...readers, current_pick: { id: 1, book: bookOut({ id: 3 }), meeting_at: null } }),
+        clubOut({ ...owls, current_pick: { id: 2, book: bookOut({ id: 9 }), meeting_at: null } }),
+      ],
+    });
+    await scan(w);
+    await button(w, "Read").trigger("click");
+    await flushPromises();
+    expect(clubs).toHaveBeenCalledTimes(1);
+    expect(useFinish().item).toMatchObject({ id: 5, status: "finished" });
+    expect(useFinish().clubSlug).toBe("night-owls-cd34");
   });
 
   it("opens no moment when the entry that was there was finished already", async () => {

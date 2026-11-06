@@ -65,9 +65,11 @@ watch(activeTab, (index) => {
   if (index >= 0) inkTab.value = index;
 });
 
-// A new club or section closes the sheets (a row in them already did).
+// A new club, section or section anchor closes the sheets (a row in them
+// already did); so does Back between two anchors of one page. A query alone
+// (the year on the stats page) leaves them.
 watch(
-  () => route.path,
+  [() => route.path, () => route.hash],
   () => {
     switching.value = false;
     showingMore.value = false;

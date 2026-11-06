@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
 import { vAutosize } from "../autosize";
+import { focusLost, giveFocusBack } from "../focusBack";
 import { tp } from "../i18n";
 import { momentPatch, useFinish } from "../stores/finish";
 import { useSession } from "../stores/session";
@@ -23,8 +24,11 @@ const { t } = useI18n();
 const finish = useFinish();
 const session = useSession();
 
-// Mounted only while a moment is open (App.vue's v-if); the entry is fixed for its life.
+// Mounted only while a moment is open (App.vue's v-if, keyed by the serial);
+// the entry is fixed for its life, and a close names this moment.
 const item = finish.item!;
+const serial = finish.serial;
+const returnFocus = finish.returnFocus;
 const STAGGER_MS = 30;
 
 const rating = ref<number | null>(item.rating);
@@ -101,13 +105,13 @@ async function done() {
   if (busy.value) return;
   const body = momentPatch(item, { rating: rating.value, take: take.value, onlyMe: onlyMe.value });
   if (!body) {
-    finish.close(null);
+    finish.close(null, serial);
     return;
   }
   busy.value = true;
   error.value = "";
   try {
-    finish.close(await api.patchShelf(item.id, body));
+    finish.close(await api.patchShelf(item.id, body), serial);
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : t("book.saveFailed");
   } finally {
@@ -116,11 +120,19 @@ async function done() {
 }
 
 function skip() {
-  if (!busy.value) finish.close(null);
+  if (!busy.value) finish.close(null, serial);
 }
 
 onMounted(() => void loadClub());
 onBeforeUnmount(stopStagger);
+// The sheet gives focus back to what had it when it opened. After a finish
+// that is often gone (the progress row left with the book), and on the first
+// finish it is the body (this chunk loaded later): then the opener noted at
+// the finish, or the nearest of its ancestors still on the page (the list or
+// the hero the control was in), so the next Tab carries on from there.
+onUnmounted(() => {
+  if (focusLost()) giveFocusBack(returnFocus, { nearest: true });
+});
 </script>
 
 <template>

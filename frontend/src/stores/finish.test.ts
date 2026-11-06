@@ -80,4 +80,39 @@ describe("useFinish", () => {
     finish.close();
     await expect(second).resolves.toBeNull();
   });
+
+  it("closes only the moment a late save belongs to", async () => {
+    const finish = useFinish();
+    finish.celebrate({ item: shelfItem({ id: 1, status: "finished" }) });
+    const first = finish.serial;
+    // Its "Done" is still saving when another finish opens the next moment.
+    const second = finish.celebrate({ item: shelfItem({ id: 2, status: "finished" }) });
+    const savedFirst = shelfItem({ id: 1, status: "finished", rating: 4 });
+    finish.close(savedFirst, first);
+    expect(finish.item?.id).toBe(2);
+    // The page of the first book still learns its stars.
+    expect(finish.lastSaved).toStrictEqual(savedFirst);
+    const savedSecond = shelfItem({ id: 2, status: "finished", rating: 5 });
+    finish.close(savedSecond, finish.serial);
+    expect(finish.item).toBeNull();
+    await expect(second).resolves.toStrictEqual(savedSecond);
+  });
+
+  it("notes where focus goes back, while the opener is still on the page", () => {
+    const finish = useFinish();
+    const row = document.createElement("li");
+    const button = document.createElement("button");
+    row.append(button);
+    document.body.append(row);
+    finish.celebrate({ item: shelfItem({ status: "finished" }), opener: button });
+    row.remove();
+    expect(finish.returnFocus).toEqual([button, row]);
+    finish.close();
+
+    document.body.append(row);
+    button.focus();
+    finish.celebrate({ item: shelfItem({ status: "finished" }) });
+    expect(finish.returnFocus[0]).toBe(button);
+    row.remove();
+  });
 });

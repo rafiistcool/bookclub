@@ -35,6 +35,7 @@ const { t } = useI18n();
 
 const open = ref(false);
 const percent = ref(0);
+const trigger = ref<HTMLButtonElement | null>(null);
 const page = ref(0);
 
 const pageCount = computed(() => (props.pages && props.pages > 0 ? props.pages : null));
@@ -107,10 +108,12 @@ async function markFinished() {
   finishError.value = "";
   try {
     const item = await api.patchShelf(id, { status: "finished", position: 0 });
+    // Noted before `finished`: the parent usually removes this editor with the book.
+    const opener = trigger.value;
     open.value = false;
     emit("finished", item);
     // Looked up here, not at setup: a parent without a finish path needs no store.
-    void useFinish().celebrate({ item, clubSlug: props.clubSlug ?? null });
+    void useFinish().celebrate({ item, clubSlug: props.clubSlug ?? null, opener });
   } catch (err) {
     finishError.value = err instanceof ApiError ? err.message : t("book.saveFailed");
   } finally {
@@ -135,6 +138,7 @@ function stepLabel(by: number): string {
 
 <template>
   <button
+    ref="trigger"
     class="progress-trigger"
     type="button"
     aria-haspopup="dialog"

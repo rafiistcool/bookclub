@@ -22,10 +22,12 @@ vi.mock("../api/client", () => ({
   },
 }));
 
+import { defineComponent, ref } from "vue";
 import { ApiError } from "../api/client";
 import { useFinish } from "../stores/finish";
 import { useSession } from "../stores/session";
 import FinishedMoment from "./FinishedMoment.vue";
+import ProgressEditor from "./ProgressEditor.vue";
 
 const CLUB: ClubSummary = { slug: "readers", name: "Readers", role: "member", timezone: "UTC", member_count: 4 };
 
@@ -204,5 +206,54 @@ describe("FinishedMoment", () => {
     expect(clubPickCall).toHaveBeenCalledTimes(2);
     expect(stranger.wrapper.find(".moment-club").exists()).toBe(false);
     stranger.wrapper.unmount();
+  });
+
+  it("does not close a newer moment when its own save returns late", async () => {
+    const { wrapper, finish } = open();
+    let saved!: (item: ShelfItem) => void;
+    patchShelf.mockReturnValue(new Promise((resolve) => (saved = resolve)));
+    await stars(wrapper)[3]!.trigger("click");
+    await wrapper.get(".moment-actions .btn-primary").trigger("click");
+    // Another finish opens the next moment while this "Done" is still saving.
+    const next = finish.celebrate({ item: finished({ id: 10, book: { id: 5, title: "Dune" } }) });
+    saved(finished({ rating: 4 }));
+    await flushPromises();
+    expect(finish.item?.id).toBe(10);
+    expect(finish.lastSaved?.id).toBe(9);
+    finish.close(null, finish.serial);
+    await expect(next).resolves.toBeNull();
+  });
+
+  it("gives focus back near the progress row the finish removed", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    useSession().user = user({ username: "ada" });
+    // A page whose reading row leaves the list with the finished book, like Home's.
+    const Page = defineComponent({
+      components: { ProgressEditor },
+      setup: () => ({ reading: ref(true) }),
+      template: `<main><ul class="reading-list">
+        <li v-if="reading"><ProgressEditor :value="95" label="Progress" book-title="Circe" :shelf-id="9" @finished="reading = false" /></li>
+        <li><a href="/book/2">Dune</a></li>
+      </ul></main>`,
+    });
+    const page = mount(Page, { global: { plugins: [pinia] }, attachTo: document.body });
+    const trigger = page.get<HTMLButtonElement>(".progress-trigger");
+    trigger.element.focus();
+    await trigger.trigger("click");
+    await page.get('.sheet button[aria-label="Forward 5 percent"]').trigger("click");
+    patchShelf.mockResolvedValue(finished());
+    await page.findAll(".sheet button").find((button) => button.text() === "Mark as read")!.trigger("click");
+    await flushPromises();
+    expect(page.findAll("li")).toHaveLength(1);
+
+    // App.vue mounts the moment once its chunk is here; Skip closes it and App unmounts it.
+    const finish = useFinish();
+    const moment = mount(FinishedMoment, { global: { plugins: [pinia] }, attachTo: document.body });
+    await moment.get(".moment-actions .btn-ghost").trigger("click");
+    expect(finish.item).toBeNull();
+    moment.unmount();
+    expect(document.activeElement).toBe(page.get(".reading-list").element);
+    page.unmount();
   });
 });

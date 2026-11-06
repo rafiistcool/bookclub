@@ -123,6 +123,25 @@ describe("useClubs", () => {
     expect(clubsList).not.toHaveBeenCalled();
   });
 
+  it("finds the club whose current pick a book is, and nothing when the list fails", async () => {
+    useSession().user = user({ clubs: [summary(A), summary(B)] });
+    clubsList.mockResolvedValue({
+      items: [
+        clubOut({ ...A, current_pick: { id: 1, book: bookOut({ id: 3 }), meeting_at: null } }),
+        clubOut({ ...B, current_pick: { id: 2, book: bookOut({ id: 9 }), meeting_at: null } }),
+      ],
+    });
+    const clubs = useClubs();
+    expect(await clubs.pickClubFor(9)).toBe(B.slug);
+    expect(await clubs.pickClubFor(4)).toBeNull();
+    clubsList.mockRejectedValue(new Error("offline"));
+    expect(await clubs.pickClubFor(9)).toBeNull();
+    useSession().user = user({ clubs: [] });
+    clubsList.mockClear();
+    expect(await clubs.pickClubFor(9)).toBeNull();
+    expect(clubsList).not.toHaveBeenCalled();
+  });
+
   it("loads the cards and keeps the switcher in step", async () => {
     const session = useSession();
     session.user = user({ clubs: [summary(A)] });
