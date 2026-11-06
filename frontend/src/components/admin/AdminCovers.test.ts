@@ -4,6 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CoverSuggestionOut, MissingCoverOut } from "../../api/generated";
 import { bookOut, user } from "../../test/fixtures";
 
+// No scanner is mounted here: the cover scan hands each photo back as it is.
+vi.mock("../../stores/coverScan", () => import("../../test/coverScan"));
+
 const api: Record<string, ReturnType<typeof vi.fn>> = {
   adminCoverSuggestionPage: vi.fn(),
   approveCoverSuggestion: vi.fn(),
