@@ -1644,6 +1644,15 @@
       "tr": "Top-right corner",
       "br": "Bottom-right corner",
       "bl": "Bottom-left corner"
+    },
+    "rotate": "Rotate clockwise",
+    "top": "top",
+    "turned": "The top of the cover is now the {side} edge",
+    "side": {
+      "top": "top",
+      "right": "right",
+      "bottom": "bottom",
+      "left": "left"
     }
   }
 }

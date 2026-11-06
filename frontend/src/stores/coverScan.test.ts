@@ -32,6 +32,30 @@ describe("useCoverScan", () => {
     await expect(next).resolves.toBe(second);
   });
 
+  it("notes what had focus when the photo was requested, and forgets it on finish", async () => {
+    const scan = useCoverScan();
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+    const answer = scan.request(new File(["p"], "photo.jpg"));
+    // The opener may be disabled or blurred by the time the scan screen opens.
+    input.disabled = true;
+    input.blur();
+    expect(scan.opener).toBe(input);
+    scan.finish(null);
+    await answer;
+    expect(scan.opener).toBeNull();
+    input.remove();
+  });
+
+  it("notes no opener when nothing had focus", () => {
+    const scan = useCoverScan();
+    (document.activeElement as HTMLElement | null)?.blur();
+    void scan.request(new File(["p"], "photo.jpg"));
+    expect(scan.opener).toBeNull();
+    scan.finish(null);
+  });
+
   it("ignores a finish with nothing open", () => {
     const scan = useCoverScan();
     expect(() => scan.finish(null)).not.toThrow();

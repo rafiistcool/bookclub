@@ -5,11 +5,11 @@
  * nothing is fetched.
  */
 
-import { isConvex, outputSize, quadSides, type Quad } from "./geometry";
+import { coverAspect, isConvex, outputSize, quadSides, type Quad } from "./geometry";
 import { warpQuad } from "./warp";
 
 export { detectCover, MIN_CONFIDENCE, type Detection } from "./detect";
-export { insetQuad, isConvex, orderQuad, outputSize, type PixelImage, type Point, type Quad } from "./geometry";
+export { coverAspect, insetQuad, isConvex, orderQuad, outputSize, rotateQuad, type PixelImage, type Point, type Quad } from "./geometry";
 export { homography, warpQuad } from "./warp";
 
 export type ScanImage = ImageBitmap | HTMLImageElement;
@@ -85,16 +85,27 @@ function toJpeg(el: HTMLCanvasElement): Promise<Blob> {
   });
 }
 
+/** Resolves after the browser has painted once (at once where it does not paint, as in tests without frames). */
+function afterPaint(): Promise<void> {
+  if (typeof requestAnimationFrame !== "function") return Promise.resolve();
+  return new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+}
+
 /**
- * Cuts the cover inside `quad` (photo pixels, in `Quad` order) out of the
- * photo and flattens it into an upright JPEG `cover.jpg` of `outputSize()`
- * (long side at most 1600 px). Only the quad's bounding box is drawn, scaled
- * to about the output's resolution, so a 12 MP photo needs no 12 MP canvas.
- * Throws a `RangeError` when the corners do not form a convex quad.
+ * Cuts the cover inside `quad` (photo pixels, in `Quad` order; `rotateQuad()`
+ * turns the result) out of the photo and flattens it into an upright JPEG
+ * `cover.jpg` of `outputSize()` (long side at most 1600 px) with the cover's
+ * own proportions (`coverAspect()`: the perspective undone). Only the quad's
+ * bounding box is drawn, scaled to about the output's resolution, so a 12 MP
+ * photo needs no 12 MP canvas. Transparent parts of the picture come out
+ * white. The heavy work waits for one painted frame, so a busy state set
+ * just before the call shows. Throws a `RangeError` when the corners do not
+ * form a convex quad.
  */
 export async function flatten(bitmap: ScanImage, width: number, height: number, quad: Quad): Promise<File> {
   if (!isConvex(quad)) throw new RangeError("cover scan: the corners do not form a convex quadrilateral");
-  const out = outputSize(quad, MAX_OUTPUT_SIDE);
+  await afterPaint();
+  const out = outputSize(quad, MAX_OUTPUT_SIDE, coverAspect(quad, width, height));
 
   // The part of the photo the quad covers, clamped to the photo.
   const left = Math.max(0, Math.floor(Math.min(...quad.map((p) => p.x))));
@@ -112,6 +123,10 @@ export async function flatten(bitmap: ScanImage, width: number, height: number, 
   const workW = Math.max(1, Math.round(boxW * ratio));
   const workH = Math.max(1, Math.round(boxH * ratio));
   const work = canvas(workW, workH);
+  // A transparent PNG or GIF would read back as black (RGBA 0, 0, 0, 0) and
+  // darken the edges it blends into; on white it looks as it does on a page.
+  work.ctx.fillStyle = "#ffffff";
+  work.ctx.fillRect(0, 0, workW, workH);
   work.ctx.drawImage(bitmap, left, top, boxW, boxH, 0, 0, workW, workH);
   const pixels = work.ctx.getImageData(0, 0, workW, workH);
   const sx = workW / boxW;

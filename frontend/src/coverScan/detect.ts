@@ -9,23 +9,31 @@
  *    follows the picture's noise, then a Hough transform in which each edge
  *    pixel votes only near its own gradient direction. The strongest roughly
  *    horizontal and roughly vertical lines are paired into quadrilaterals;
- *    the plausible ones (convex, 5–98 % of the picture, a cover's aspect, no
- *    extreme corner angles) are scored by how much of each quarter of each
+ *    the plausible ones (convex, 5–98 % of the picture, a cover's aspect
+ *    upright or lying, no extreme corner angles) are scored by how much of each quarter of each
  *    side an edge runs along, then by size, then by the outline's contrast,
  *    and the winner's sides are refitted to their edge pixels.
  * 2. Regions, when the lines are weak: the background's colour from the
  *    picture's border, the pixels that differ from it (Otsu), the largest
  *    connected region, its convex hull and the largest quadrilateral in it,
  *    its sides refitted to the region's outline.
+ * 3. A cover that runs off the photo (tight framing): when the lines' winner
+ *    is surrounded by something other than the background, an outline of
+ *    lines and one or two of the picture's own edges (or of four lines with a
+ *    corner off the picture) that holds that same material is the cover's
+ *    visible part, and the winner was only its print.
  *
- * The better of the two wins. The confidence (0..1) is how much of the four
- * sides an edge runs along (for regions, mixed with how well the quad covers
- * the region); below `MIN_CONFIDENCE` the result is `null`, and the caller
- * starts from `insetQuad()` instead. Fails on purpose-built traps such as a
- * checked tablecloth, whose grid lines outline quads as well as the cover.
+ * The better of the two wins, except that a region inside a fairly well
+ * outlined quad is that cover's print. The confidence (0..1) is how much of
+ * the sides an edge runs along (of the sides the picture shows; for regions,
+ * mixed with how well the quad covers the region); below `MIN_CONFIDENCE`
+ * the result is `null`, and the caller starts from `insetQuad()` instead.
+ * Covers may be upright or lying (landscape, or turned sideways). Fails on
+ * purpose-built traps such as a checked tablecloth, whose grid lines outline
+ * quads as well as the cover.
  */
 
-import { clampQuad, isConvex, orderQuad, quadArea, quadSides, scaleQuad, type PixelImage, type Point, type Quad } from "./geometry";
+import { clampQuad, distance, isConvex, orderQuad, quadArea, quadSides, scaleQuad, type PixelImage, type Point, type Quad } from "./geometry";
 
 export interface Detection {
   quad: Quad;
@@ -36,12 +44,18 @@ export interface Detection {
 export const MIN_CONFIDENCE = 0.35;
 /** At or above this the region fallback is not tried. */
 const GOOD_ENOUGH = 0.75;
+/** Lines this well supported win over a region inside them. */
+const OUTLINED = 0.5;
 /** The smallest share of the picture a cover may fill: a cover photographed from arm's length still counts. */
 const MIN_AREA = 0.05;
 const MAX_AREA = 0.98;
-/** A photographed cover's width / height, wider than `geometry`'s range: a tilt squashes one side. */
+/**
+ * A photographed cover's width / height: upright or lying (a landscape
+ * picture book, a cover turned sideways in the frame), the same range either
+ * way.
+ */
 const MIN_PHOTO_ASPECT = 0.4;
-const MAX_PHOTO_ASPECT = 1.2;
+const MAX_PHOTO_ASPECT = 1 / MIN_PHOTO_ASPECT;
 const MIN_CORNER_ANGLE = 45;
 const MAX_CORNER_ANGLE = 135;
 /** Larger pictures are box-downscaled to a long side of at most this. */
@@ -382,9 +396,9 @@ function cornerAngle(a: Point, b: Point, c: Point): number {
   return Math.acos(Math.max(-1, Math.min(1, cos))) / DEG;
 }
 
-/** Whether a quad could be a photographed cover in a w × h picture. */
-function plausible(q: Quad, w: number, h: number): boolean {
-  const margin = 0.02 * Math.max(w, h);
+/** Whether a quad could be a photographed cover in a w × h picture, its corners at most `margin` (× the long side) outside it. */
+function plausible(q: Quad, w: number, h: number, margin = 0.02): boolean {
+  margin *= Math.max(w, h);
   for (const p of q) {
     if (!(p.x >= -margin && p.x <= w + margin && p.y >= -margin && p.y <= h + margin)) return false;
   }
@@ -651,7 +665,7 @@ function combinedSupport(sides: Float64Array[]): number {
     sum += side;
     if (side < minSide) minSide = side;
   }
-  return 0.4 * (sum / 4) + 0.3 * minSide + 0.3 * minSegment;
+  return 0.4 * (sum / sides.length) + 0.3 * minSide + 0.3 * minSegment;
 }
 
 const PER_GROUP = 24;
@@ -662,12 +676,11 @@ const ENCLOSING_SHARE = 0.7;
 /** ...and this much more area (a shadow's outline around the cover has less). */
 const ENCLOSING_GROWTH = 1.3;
 
-function linesDetection(edges: Edges): Detection | null {
+function linesDetection(edges: Edges, image?: PixelImage): Detection | null {
   const { width: w, height: h } = edges;
   const lines = houghLines(edges, 64);
   const cx = w / 2;
   const cy = h / 2;
-  type Ranked = Line & { pos: number; profile: Profile };
   const horizontal: Ranked[] = [];
   const vertical: Ranked[] = [];
   for (const l of lines) {
@@ -706,10 +719,10 @@ function linesDetection(edges: Edges): Detection | null {
           const quad: Quad = [tl, tr, br, bl];
           if (!plausible(quad, w, h)) continue;
           const strength =
-            profileSupport(top.profile, tl, tr, sides[0]) +
-            profileSupport(right.profile, tr, br, sides[1]) +
-            profileSupport(bottom.profile, br, bl, sides[2]) +
-            profileSupport(left.profile, bl, tl, sides[3]);
+            profileSupport(top.profile!, tl, tr, sides[0]) +
+            profileSupport(right.profile!, tr, br, sides[1]) +
+            profileSupport(bottom.profile!, br, bl, sides[2]) +
+            profileSupport(left.profile!, bl, tl, sides[3]);
           const support = combinedSupport(sides);
           if (support < 0.2) continue;
           // Well outlined first, then large; the contrast of the outline
@@ -740,8 +753,265 @@ function linesDetection(edges: Edges): Detection | null {
     if (!outer) break;
     best = outer;
   }
+  if (image) {
+    const cut = runOff(image, edges, horizontal, vertical, best.quad, best.area);
+    if (cut) {
+      const quad = refineByEdges(edges, cut.quad);
+      // The confidence of the sides the picture shows, as far as it shows them.
+      const shown: Float64Array[] = [];
+      for (let i = 0; i < 4; i++) {
+        const part = cut.border[i] ? null : clipToPicture(quad[i], quad[(i + 1) % 4], edges.width, edges.height);
+        if (!part) continue;
+        sideSupport(edges, part[0], part[1], scratch[i]);
+        shown.push(scratch[i]);
+      }
+      return { quad, confidence: shown.length >= 2 ? combinedSupport(shown) : 0 };
+    }
+  }
   const quad = refineByEdges(edges, best.quad);
   return { quad, confidence: supportOf(edges, quad) };
+}
+
+// ---------------------------------------------------------------------------
+// A cover that runs off the photo
+
+/** Two colours this far apart (RGB distance) are different materials. */
+const COLOUR_GAP = 40;
+/**
+ * The visible part of a cover may be only a little larger than the print
+ * inside it; the colour checks, not the size, tell them apart.
+ */
+const RUN_OFF_GROWTH = 1.1;
+/** How far (× the picture's long side) the corner of a cover that runs off may lie outside the picture. */
+const RUN_OFF_MARGIN = 0.25;
+/** A sample this far from a colour does not match it. */
+const SAMPLE_GAP = 35;
+
+type Rgb = [number, number, number];
+
+function colourDistance(a: Rgb, b: Rgb): number {
+  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+}
+
+/** The per-channel median of colour samples. */
+function medianColour(samples: Rgb[]): Rgb {
+  const channel = (c: number) => {
+    const v = samples.map((s) => s[c]).sort((a, b) => a - b);
+    return v.length ? v[v.length >> 1] : 0;
+  };
+  return [channel(0), channel(1), channel(2)];
+}
+
+/** The share of `samples` that do not match `colour`. */
+function shareUnlike(samples: Rgb[], colour: Rgb): number {
+  if (!samples.length) return 0;
+  let far = 0;
+  for (const s of samples) if (colourDistance(s, colour) > SAMPLE_GAP) far++;
+  return far / samples.length;
+}
+
+/**
+ * The pixels of a band along the side a → b of a quad in `Quad` order, from
+ * `from` to `to` px inwards (negative: outside the quad), leaving out the
+ * last 10 % at each corner. Points outside the picture are skipped.
+ */
+function band(image: PixelImage, a: Point, b: Point, from: number, to: number): Rgb[] {
+  const { width: w, height: h, data } = image;
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  const out: Rgb[] = [];
+  if (!(len >= 4)) return out;
+  const ux = (b.x - a.x) / len;
+  const uy = (b.y - a.y) / len;
+  // Clockwise on the screen, the inside lies to the right of a → b.
+  const nx = -uy;
+  const ny = ux;
+  for (let t = 0.1 * len; t <= 0.9 * len; t += 2) {
+    for (let k = from; k <= to; k++) {
+      const x = Math.floor(a.x + ux * t + nx * k);
+      const y = Math.floor(a.y + uy * t + ny * k);
+      if (x < 0 || y < 0 || x >= w || y >= h) continue;
+      const j = (y * w + x) * 4;
+      out.push([data[j], data[j + 1], data[j + 2]]);
+    }
+  }
+  return out;
+}
+
+/** The background: the median colour of a ring along the picture's border. */
+function borderColour(image: PixelImage): Rgb {
+  const { width: w, height: h, data } = image;
+  const ring = Math.max(2, Math.round(0.03 * Math.min(w, h)));
+  const histR = new Uint32Array(256);
+  const histG = new Uint32Array(256);
+  const histB = new Uint32Array(256);
+  let ringCount = 0;
+  for (let y = 0; y < h; y++) {
+    const inRow = y < ring || y >= h - ring;
+    for (let x = 0; x < w; x++) {
+      if (!inRow && x >= ring && x < w - ring) {
+        x = w - ring - 1;
+        continue;
+      }
+      const j = (y * w + x) * 4;
+      histR[data[j]]++;
+      histG[data[j + 1]]++;
+      histB[data[j + 2]]++;
+      ringCount++;
+    }
+  }
+  const median = (hist: Uint32Array) => {
+    let acc = 0;
+    for (let i = 0; i < 256; i++) {
+      acc += hist[i];
+      if (acc >= ringCount / 2) return i;
+    }
+    return 255;
+  };
+  return [median(histR), median(histG), median(histB)];
+}
+
+type Ranked = Line & { pos: number; profile: Profile | null };
+
+/** The part of the segment a → b inside the w × h picture (Liang–Barsky), or null. */
+function clipToPicture(a: Point, b: Point, w: number, h: number): [Point, Point] | null {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  let t0 = 0;
+  let t1 = 1;
+  for (const [p, q] of [
+    [-dx, a.x],
+    [dx, w - a.x],
+    [-dy, a.y],
+    [dy, h - a.y],
+  ]) {
+    if (p === 0) {
+      if (q < 0) return null;
+      continue;
+    }
+    const r = q / p;
+    if (p < 0) t0 = Math.max(t0, r);
+    else t1 = Math.min(t1, r);
+    if (t0 > t1) return null;
+  }
+  return [
+    { x: a.x + t0 * dx, y: a.y + t0 * dy },
+    { x: a.x + t1 * dx, y: a.y + t1 * dy },
+  ];
+}
+
+/**
+ * When the cover runs off the photo, its outline has a side (or two) the
+ * picture does not show, and its print (a picture block, a band of colour)
+ * is the best complete outline. `inner` is that kind of winner when, just
+ * outside it, there is something other than the background (the picture's
+ * border colour), and an outline around it of the lines and the picture's
+ * own edges (one or two of them) holds that same material: well supported
+ * where it is a line, the material on the inside of those lines and
+ * something else beyond them, and the material reaching the picture's edge
+ * where the outline runs along it. Returns that outline, and which of its
+ * sides lie on the picture's edge, or null.
+ */
+function runOff(
+  image: PixelImage,
+  edges: Edges,
+  horizontal: Ranked[],
+  vertical: Ranked[],
+  inner: Quad,
+  innerArea: number,
+): { quad: Quad; border: boolean[] } | null {
+  const { width: w, height: h } = edges;
+  const background = borderColour(image);
+  // What lies just outside the winner, on the sides where it is not the background.
+  const gap: Rgb[] = [];
+  for (let i = 0; i < 4; i++) {
+    const outside = band(image, inner[i], inner[(i + 1) % 4], -6, -3);
+    if (shareUnlike(outside, background) >= 0.6) gap.push(...outside);
+  }
+  if (!gap.length) return null;
+  const material = medianColour(gap);
+  if (colourDistance(material, background) < COLOUR_GAP) return null;
+
+  const edge = (nx: number, ny: number, c: number, theta: number, pos: number): Ranked => ({ nx, ny, c, theta, votes: 0, pos, profile: null });
+  const hs = [edge(0, 1, 0, 90, 0), ...horizontal, edge(0, 1, h, 90, h)].sort((a, b) => a.pos - b.pos);
+  const vs = [edge(1, 0, 0, 0, 0), ...vertical, edge(1, 0, w, 0, w)].sort((a, b) => a.pos - b.pos);
+  const sides = [new Float64Array(SEGMENTS), new Float64Array(SEGMENTS), new Float64Array(SEGMENTS), new Float64Array(SEGMENTS)];
+  let best: { quad: Quad; border: boolean[]; score: number } | null = null;
+  for (let i = 0; i < hs.length; i++) {
+    for (let j = i + 1; j < hs.length; j++) {
+      const top = hs[i];
+      const bottom = hs[j];
+      if (angleGap(top.theta, bottom.theta) > 40) continue;
+      for (let k = 0; k < vs.length; k++) {
+        for (let m = k + 1; m < vs.length; m++) {
+          const left = vs[k];
+          const right = vs[m];
+          // Clockwise from the top: top, right, bottom, left.
+          const lines = [top, right, bottom, left];
+          const border = lines.map((l) => !l.profile);
+          const open = border.filter(Boolean).length;
+          if (open > 2) continue;
+          if (angleGap(left.theta, right.theta) > 40) continue;
+          const tl = intersect(top, left);
+          const tr = intersect(top, right);
+          const br = intersect(bottom, right);
+          const bl = intersect(bottom, left);
+          if (!tl || !tr || !br || !bl) continue;
+          const quad: Quad = [tl, tr, br, bl];
+          // Four lines of the cover are a run-off only with a corner off the picture.
+          if (open === 0 && quad.every((p) => p.x >= -2 && p.y >= -2 && p.x <= w + 2 && p.y <= h + 2)) continue;
+          // The winner often shares lines (and so corners) with the outline.
+          if (!inner.every((p) => insideQuad(quad, p.x, p.y, 1))) continue;
+          const area = quadArea(quad) / (w * h);
+          if (area < RUN_OFF_GROWTH * innerArea || !plausible(quad, w, h, RUN_OFF_MARGIN)) continue;
+          const supported: Float64Array[] = [];
+          let weak = false;
+          for (let s = 0; s < 4 && !weak; s++) {
+            const profile = lines[s].profile;
+            if (!profile) continue;
+            // A side measured where the picture shows it, and it must show most of it.
+            const a = quad[s];
+            const b = quad[(s + 1) % 4];
+            const part = clipToPicture(a, b, w, h);
+            if (!part || distance(part[0], part[1]) < 0.5 * distance(a, b)) {
+              weak = true;
+              break;
+            }
+            profileSupport(profile, part[0], part[1], sides[s]);
+            let mean = 0;
+            for (let q = 0; q < SEGMENTS; q++) mean += sides[s][q] / SEGMENTS;
+            if (mean < ENCLOSING_SUPPORT) weak = true;
+            supported.push(sides[s]);
+          }
+          if (weak) continue;
+          const support = combinedSupport(supported);
+          if (support < ENCLOSING_SUPPORT) continue;
+          const score = support * support * Math.sqrt(area);
+          if (best && score <= best.score) continue;
+          // The colours: the same material inside the lines and up to the
+          // picture's edge, something else beyond the lines.
+          const within: Rgb[] = [];
+          const beyond: Rgb[] = [];
+          let reaches = true;
+          for (let s = 0; s < 4 && reaches; s++) {
+            const a = quad[s];
+            const b = quad[(s + 1) % 4];
+            if (border[s]) {
+              reaches = shareUnlike(band(image, a, b, 1, 4), background) >= 0.35;
+            } else {
+              within.push(...band(image, a, b, 2, 5));
+              beyond.push(...band(image, a, b, -5, -2));
+            }
+          }
+          if (!reaches) continue;
+          const cover = medianColour(within);
+          if (colourDistance(cover, material) > COLOUR_GAP || colourDistance(cover, background) < COLOUR_GAP) continue;
+          if (shareUnlike(beyond, cover) < 0.6) continue;
+          best = { quad, border, score };
+        }
+      }
+    }
+  }
+  return best && { quad: best.quad, border: best.border };
 }
 
 // ---------------------------------------------------------------------------
@@ -824,11 +1094,13 @@ function largestQuad(poly: Point[]): Point[] | null {
   return pick;
 }
 
-function insideQuad(q: Quad, x: number, y: number): boolean {
+/** Whether (x, y) lies inside the quad, or at most `slack` px outside a side. */
+function insideQuad(q: Quad, x: number, y: number, slack = 0): boolean {
   for (let i = 0; i < 4; i++) {
     const a = q[i];
     const b = q[(i + 1) % 4];
-    if ((b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x) < 0) return false;
+    const cross = (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x);
+    if (cross < (slack ? -slack * Math.hypot(b.x - a.x, b.y - a.y) : 0)) return false;
   }
   return true;
 }
@@ -864,37 +1136,7 @@ function morph(src: Uint8Array, w: number, h: number, keep: 0 | 1): Uint8Array {
 function regionDetection(image: PixelImage, edges: Edges): Detection | null {
   const { width: w, height: h, data } = image;
   const n = w * h;
-  // The background: the median colour of a ring along the picture's border.
-  const ring = Math.max(2, Math.round(0.03 * Math.min(w, h)));
-  const histR = new Uint32Array(256);
-  const histG = new Uint32Array(256);
-  const histB = new Uint32Array(256);
-  let ringCount = 0;
-  for (let y = 0; y < h; y++) {
-    const inRow = y < ring || y >= h - ring;
-    for (let x = 0; x < w; x++) {
-      if (!inRow && x >= ring && x < w - ring) {
-        x = w - ring - 1;
-        continue;
-      }
-      const j = (y * w + x) * 4;
-      histR[data[j]]++;
-      histG[data[j + 1]]++;
-      histB[data[j + 2]]++;
-      ringCount++;
-    }
-  }
-  const median = (hist: Uint32Array) => {
-    let acc = 0;
-    for (let i = 0; i < 256; i++) {
-      acc += hist[i];
-      if (acc >= ringCount / 2) return i;
-    }
-    return 255;
-  };
-  const mr = median(histR);
-  const mg = median(histG);
-  const mb = median(histB);
+  const [mr, mg, mb] = borderColour(image);
   const raw = new Float32Array(n);
   for (let i = 0, j = 0; i < n; i++, j += 4) {
     raw[i] = Math.hypot(data[j] - mr, data[j + 1] - mg, data[j + 2] - mb);
@@ -1009,7 +1251,7 @@ function regionDetection(image: PixelImage, edges: Edges): Detection | null {
 
 /** The line detector alone (exported for tests). */
 export function detectByLines(image: PixelImage): Detection | null {
-  return linesDetection(analyse(image));
+  return linesDetection(analyse(image), image);
 }
 
 /** The region detector alone (exported for tests). */
@@ -1026,10 +1268,13 @@ export function detectCover(image: PixelImage): Detection | null {
   if (image.width < 16 || image.height < 16) return null;
   const { image: work, factor } = shrink(image);
   const edges = analyse(work);
-  let best = linesDetection(edges);
+  let best = linesDetection(edges, work);
   if (!best || best.confidence < GOOD_ENOUGH) {
     const region = regionDetection(work, edges);
-    if (region && (!best || region.confidence > best.confidence)) best = region;
+    // A region inside a fairly well outlined quad is the print on that cover
+    // (a cover close to the table's colour, a corner off the picture).
+    const print = !!region && !!best && best.confidence >= OUTLINED && region.quad.every((p) => insideQuad(best!.quad, p.x, p.y, 1));
+    if (region && !print && (!best || region.confidence > best.confidence)) best = region;
   }
   if (!best || !(best.confidence >= MIN_CONFIDENCE)) return null;
   const quad = clampQuad(orderQuad(factor === 1 ? best.quad : scaleQuad(best.quad, factor)), image.width, image.height);

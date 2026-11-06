@@ -20,6 +20,7 @@ export function resetScan() {
 export function useCoverScan() {
   return {
     file: null,
+    opener: null,
     async request(file: File): Promise<File | null> {
       scanned.push(file);
       return answer ? answer(file) : file;

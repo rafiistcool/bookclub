@@ -1644,6 +1644,15 @@
       "tr": "Ecke oben rechts",
       "br": "Ecke unten rechts",
       "bl": "Ecke unten links"
+    },
+    "rotate": "Im Uhrzeigersinn drehen",
+    "top": "oben",
+    "turned": "Oben ist jetzt die {side} Kante",
+    "side": {
+      "top": "obere",
+      "right": "rechte",
+      "bottom": "untere",
+      "left": "linke"
     }
   }
 }

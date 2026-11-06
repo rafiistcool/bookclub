@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { insetQuad, outputSize, type Quad } from "./geometry";
+import { coverAspect, insetQuad, outputSize, quadSides, type Quad } from "./geometry";
+import { posedCover } from "./scenes";
 import { flatten, JPEG_QUALITY, loadForScan, readPixels, type ScanImage } from "./index";
 
 // jsdom has no canvas: a 2D context that records its calls and hands back
@@ -9,6 +10,8 @@ interface FakeContext {
   drawImage: ReturnType<typeof vi.fn>;
   getImageData: ReturnType<typeof vi.fn>;
   putImageData: ReturnType<typeof vi.fn>;
+  fillRect: ReturnType<typeof vi.fn>;
+  fillStyle: string;
   imageSmoothingEnabled: boolean;
   imageSmoothingQuality: string;
 }
@@ -31,6 +34,8 @@ beforeEach(() => {
         return { data, width: w, height: h };
       }),
       putImageData: vi.fn(),
+      fillRect: vi.fn(),
+      fillStyle: "#000000",
       imageSmoothingEnabled: false,
       imageSmoothingQuality: "low",
     };
@@ -96,7 +101,7 @@ describe("flatten", () => {
     expect(file.name).toBe("cover.jpg");
     expect(file.type).toBe("image/jpeg");
     expect(blobs).toEqual([{ type: "image/jpeg", quality: JPEG_QUALITY }]);
-    const size = outputSize(quad, 1600);
+    const size = outputSize(quad, 1600, coverAspect(quad, 4000, 3000));
     const result = contexts[contexts.length - 1];
     expect(result.canvas.width).toBe(size.width);
     expect(result.canvas.height).toBe(size.height);
@@ -107,6 +112,46 @@ describe("flatten", () => {
     // The warp read the working canvas's pixels, not the background.
     expect(Array.from(flat.data.slice(0, 4))).toEqual(FILL);
     expect(Array.from(flat.data.slice(-4))).toEqual(FILL);
+  });
+
+  it("gives the cover its own proportions, not the foreshortened ones", async () => {
+    // A 2:3 cover tilted away by 45° in a 450 × 600 photo (posedCover's camera): it looks 0.92:1.
+    const tilted = posedCover(450, 600, { width: 200, height: 300, tiltX: 45 });
+    expect(quadSides(tilted).width / quadSides(tilted).height).toBeGreaterThan(0.9);
+    await flatten(bitmap, 450, 600, tilted);
+    const result = contexts[contexts.length - 1];
+    expect(result.canvas.width / result.canvas.height).toBeCloseTo(2 / 3, 2);
+  });
+
+  it("flattens a landscape cover landscape", async () => {
+    await flatten(bitmap, 800, 600, insetQuad(800, 600, 0.1));
+    const result = contexts[contexts.length - 1];
+    expect([result.canvas.width, result.canvas.height]).toEqual([640, 480]);
+  });
+
+  it("paints the working canvas white before the photo, so transparency comes out white", async () => {
+    await flatten(bitmap, 4000, 3000, quad);
+    const work = contexts[0];
+    expect(work.fillStyle).toBe("#ffffff");
+    expect(work.fillRect).toHaveBeenCalledWith(0, 0, work.canvas.width, work.canvas.height);
+    expect(work.fillRect.mock.invocationCallOrder[0]).toBeLessThan(work.drawImage.mock.invocationCallOrder[0]);
+  });
+
+  it("lets a frame paint before the heavy work", async () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));
+    const done = flatten(bitmap, 4000, 3000, quad);
+    await Promise.resolve();
+    expect(contexts).toHaveLength(0);
+    expect(frames).toHaveLength(1);
+    frames[0](0);
+    await done;
+    expect(contexts.length).toBeGreaterThan(0);
+  });
+
+  it("runs at once without requestAnimationFrame", async () => {
+    vi.stubGlobal("requestAnimationFrame", undefined);
+    await expect(flatten(bitmap, 4000, 3000, quad)).resolves.toBeInstanceOf(File);
   });
 
   it("draws only the quad's bounding box, at about the output's resolution", async () => {

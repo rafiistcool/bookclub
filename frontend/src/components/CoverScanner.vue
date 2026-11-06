@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, shallowRef, useId, watch } from "vue";
+import { computed, inject, nextTick, onBeforeUnmount, ref, shallowRef, useId, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { routerKey } from "vue-router";
 import { detectCover, flatten, insetQuad, isConvex, loadForScan, MIN_CONFIDENCE, readPixels, type Point, type Quad } from "../coverScan";
+import { rotateQuad } from "../coverScan/geometry";
 import { useCoverScan } from "../stores/coverScan";
 import { useTheme } from "../stores/theme";
 import { useToast } from "../stores/toast";
@@ -14,7 +16,9 @@ import { useToast } from "../stores/toast";
  * warps that quadrilateral into a rectangle (`coverScan/`). Nothing leaves
  * the browser here; the caller uploads what this resolves with.
  *
- * Mounted once in App.vue; `useCoverScan().request(file)` opens it.
+ * App.vue loads it only while `useCoverScan().request(file)` has a photo
+ * open, so the detector stays out of the entry chunk. While it is open, Back
+ * (or any other navigation) cancels the scan and keeps the page.
  */
 type Loaded = Awaited<ReturnType<typeof loadForScan>>;
 type Phase = "loading" | "ready" | "busy";
@@ -30,6 +34,8 @@ const LOUPE_GAP = 44;
 const CORNERS = ["tl", "tr", "br", "bl"] as const;
 /** An edge shorter than this on screen gets no midpoint handle: it would crowd its corners. */
 const EDGE_HANDLE_MIN = 96;
+/** How far outside the cover's top edge its "top" marker sits, in screen px. */
+const TOP_OFFSET = 26;
 const LOCKS = "sheetLocks";
 const FOCUSABLE = 'button:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -38,6 +44,8 @@ const scan = useCoverScan();
 const theme = useTheme();
 const toast = useToast();
 const keysId = useId();
+// Not useRouter(): the scanner also mounts without a router (tests), and inject warns then.
+const router = inject(routerKey, null);
 
 const root = ref<HTMLElement | null>(null);
 const area = ref<HTMLElement | null>(null);
@@ -53,6 +61,10 @@ const areaSize = ref({ w: 0, h: 0 });
 const active = ref<number | null>(null);
 /** A finger or mouse holds `active` (rather than the keys moving it). */
 const held = ref(false);
+/** Quarter turns clockwise of the result: which edge of the quad is the cover's top. */
+const turns = ref(0);
+/** The last "Apply" failed; said inside the dialog, where a screen reader still hears it. */
+const failed = ref(false);
 
 const file = computed(() => scan.file);
 // The scanner is a photo-editing surface: dark in either mode, in the reader's palette.
@@ -60,6 +72,8 @@ const palette = computed(() => `pal-${theme.theme}-dark`);
 
 const status = computed(() => {
   if (phase.value === "loading") return t("coverScan.loading");
+  if (phase.value === "busy") return t("coverScan.applying");
+  if (turns.value && topEdge.value) return t("coverScan.turned", { side: t(`coverScan.side.${topEdge.value.side}`) });
   return detected.value ? t("coverScan.found") : t("coverScan.adjust");
 });
 
@@ -113,6 +127,41 @@ const edges = computed(() => {
       shown: length >= EDGE_HANDLE_MIN,
     };
   });
+});
+
+/**
+ * The edge that becomes the cover's top, in screen px relative to the fitted
+ * photo: its two ends, a point just outside it for the "top" marker, the angle
+ * the marker reads along (upright as the cover will be), and the screen side
+ * it faces. The corners themselves stay in screen order; `turns` only picks
+ * which of them `rotateQuad` makes the top-left when the cover is flattened.
+ */
+const topEdge = computed(() => {
+  const v = view.value;
+  if (v.length !== 4) return null;
+  const [a, b] = turns.value ? rotateQuad(v as Quad, turns.value) : (v as Quad);
+  const cx = (v[0].x + v[1].x + v[2].x + v[3].x) / 4;
+  const cy = (v[0].y + v[1].y + v[2].y + v[3].y) / 4;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const length = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+  let nx = -(b.y - a.y) / length;
+  let ny = (b.x - a.x) / length;
+  // The normal that points away from the middle of the cover.
+  if ((mx - cx) * nx + (my - cy) * ny < 0) {
+    nx = -nx;
+    ny = -ny;
+  }
+  const side: "top" | "right" | "bottom" | "left" =
+    Math.abs(mx - cx) > Math.abs(my - cy) ? (mx > cx ? "right" : "left") : my > cy ? "bottom" : "top";
+  return {
+    a,
+    b,
+    x: mx + nx * TOP_OFFSET,
+    y: my + ny * TOP_OFFSET,
+    angle: (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI,
+    side,
+  };
 });
 
 /** Where the loupe sits, in stage px: above the finger, or beside it when there is no room above. */
@@ -337,7 +386,11 @@ let session = 0;
 /** Between open() and close(): the listeners, the scroll lock and the focus to give back. */
 let opened = false;
 let observer: ResizeObserver | null = null;
-let restoreFocusTo: HTMLElement | null = null;
+/** The element to give focus back to, then its ancestors, nearest first. */
+let restoreFocusTo: HTMLElement[] = [];
+let removeGuard: (() => void) | null = null;
+/** The browser chrome's colour before the scanner darkened it; null while untouched. */
+let savedThemeColor: string | null = null;
 
 function measure() {
   const el = area.value;
@@ -366,10 +419,13 @@ function onKeydown(event: KeyboardEvent) {
   const first = items[0];
   const last = items[items.length - 1];
   const current = document.activeElement as HTMLElement | null;
-  if (event.shiftKey && (current === first || !root.value.contains(current))) {
+  // The dialog itself (focused when it opens) counts as outside: from there the
+  // browser would tab backwards out of it, onto the page hidden underneath.
+  const outside = !current || current === root.value || !root.value.contains(current);
+  if (event.shiftKey && (current === first || outside)) {
     event.preventDefault();
     last.focus();
-  } else if (!event.shiftKey && (current === last || !root.value.contains(current))) {
+  } else if (!event.shiftKey && (current === last || outside)) {
     event.preventDefault();
     first.focus();
   }
@@ -387,6 +443,64 @@ function unlock() {
     delete document.body.dataset[LOCKS];
     document.body.style.overflow = "";
   }
+}
+
+function tryFocus(el: HTMLElement): boolean {
+  el.focus({ preventScroll: true });
+  return document.activeElement === el;
+}
+
+/** Focus an element that is not focusable on its own, until it loses focus again. */
+function focusTemporarily(el: HTMLElement): boolean {
+  if (el.hasAttribute("tabindex")) return tryFocus(el);
+  el.setAttribute("tabindex", "-1");
+  if (tryFocus(el)) {
+    el.addEventListener("blur", () => el.removeAttribute("tabindex"), { once: true });
+    return true;
+  }
+  el.removeAttribute("tabindex");
+  return false;
+}
+
+/**
+ * Focus goes back where it was. A CoverPhotoButton disables its file input
+ * while it uploads, and a disabled or removed element takes no focus; then
+ * it goes to the input's label, or the nearest ancestor still on the page
+ * that takes it, and at worst to the page's main region, never silently to
+ * the body.
+ */
+function giveFocusBack(chain: HTMLElement[]) {
+  for (const el of chain) {
+    if (!el.isConnected || el === document.body || el === document.documentElement) continue;
+    if (tryFocus(el)) return;
+    if (el instanceof HTMLLabelElement && focusTemporarily(el)) return;
+  }
+  const main = document.querySelector<HTMLElement>("main") ?? document.querySelector<HTMLElement>("#app");
+  if (main) focusTemporarily(main);
+}
+
+function ancestry(el: Element | null): HTMLElement[] {
+  const chain: HTMLElement[] = [];
+  for (let node = el; node && node !== document.body; node = node.parentElement) {
+    if (node instanceof HTMLElement) chain.push(node);
+  }
+  return chain;
+}
+
+/** The browser chrome (Android's status bar, Safari's tinted bar) takes the scanner's dark background. */
+function darkenChrome() {
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (!meta || !root.value) return;
+  const bg = getComputedStyle(root.value).getPropertyValue("--bg").trim();
+  if (!bg) return;
+  if (savedThemeColor === null) savedThemeColor = meta.getAttribute("content") ?? "";
+  meta.setAttribute("content", bg);
+}
+
+function restoreChrome() {
+  if (savedThemeColor === null) return;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", savedThemeColor);
+  savedThemeColor = null;
 }
 
 function release(image: Loaded | null) {
@@ -413,11 +527,26 @@ async function open(chosen: File) {
   opened = true;
   phase.value = "loading";
   detected.value = false;
-  restoreFocusTo = document.activeElement as HTMLElement | null;
+  failed.value = false;
+  turns.value = 0;
+  // The store notes the focus when the photo was requested: by the time this
+  // (lazily loaded) screen opens, the opener may already be disabled and blurred.
+  restoreFocusTo = ancestry(scan.opener ?? document.activeElement);
   window.addEventListener("keydown", onKeydown, true);
+  // Back, or any other navigation, cancels the scan and keeps the page (on
+  // popstate vue-router puts the URL back): the photo belongs to this page.
+  removeGuard?.();
+  removeGuard =
+    router?.beforeEach(() => {
+      if (!file.value) return true;
+      scan.finish(null);
+      return false;
+    }) ?? null;
   lock();
   await nextTick();
+  if (run !== session) return;
   root.value?.focus({ preventScroll: true });
+  darkenChrome();
   if (area.value && typeof ResizeObserver === "function") {
     observer = new ResizeObserver(measure);
     observer.observe(area.value);
@@ -460,19 +589,30 @@ function close() {
   observer?.disconnect();
   observer = null;
   window.removeEventListener("keydown", onKeydown, true);
+  removeGuard?.();
+  removeGuard = null;
   release(loaded.value);
   loaded.value = null;
   quad.value = null;
   phase.value = "loading";
+  failed.value = false;
+  turns.value = 0;
   unlock();
-  restoreFocusTo?.focus?.({ preventScroll: true });
-  restoreFocusTo = null;
+  restoreChrome();
+  const chain = restoreFocusTo;
+  restoreFocusTo = [];
+  giveFocusBack(chain);
 }
 
-watch(file, (next, previous) => {
-  if (previous) close();
-  if (next) void open(next);
-});
+// Immediate: App.vue mounts this screen only once a photo is already waiting.
+watch(
+  file,
+  (next, previous) => {
+    if (previous) close();
+    if (next) void open(next);
+  },
+  { immediate: true },
+);
 
 onBeforeUnmount(() => {
   if (file.value) scan.finish(null);
@@ -481,13 +621,24 @@ onBeforeUnmount(() => {
 
 /* -------------------------------------------------------------- actions */
 
+// While busy the buttons are aria-disabled rather than disabled: a disabled
+// button drops the focus it holds to the body.
 function cancel() {
+  if (phase.value === "busy") return;
   scan.finish(null);
 }
 
 function whole() {
   const chosen = file.value;
-  if (chosen) scan.finish(chosen);
+  if (phase.value === "busy" || !chosen) return;
+  scan.finish(chosen);
+}
+
+/** The cover's top moves one edge on, clockwise: for a cover photographed sideways. */
+function rotate() {
+  if (phase.value !== "ready") return;
+  settleGlide();
+  turns.value = (turns.value + 1) % 4;
 }
 
 async function apply() {
@@ -496,12 +647,19 @@ async function apply() {
   settleGlide();
   const run = session;
   phase.value = "busy";
+  failed.value = false;
+  // The warp blocks the main thread for a while on a phone: "Straightening…" paints first.
+  await nextTick();
+  await afterPaint();
+  if (run !== session || !quad.value) return;
+  const corners = turns.value ? rotateQuad(quad.value, turns.value) : quad.value;
   try {
-    const flat = await flatten(image.bitmap, image.width, image.height, quad.value);
+    const flat = await flatten(image.bitmap, image.width, image.height, corners);
     if (run === session) scan.finish(flat);
   } catch {
     if (run !== session) return;
     phase.value = "ready";
+    failed.value = true;
     toast.show(t("coverScan.failed"));
   }
 }
@@ -535,7 +693,23 @@ async function apply() {
             <path class="scan-shade" :d="shade" fill-rule="evenodd" />
             <polygon class="scan-edge-under" :points="outline" />
             <polygon class="scan-edge-line" :points="outline" pathLength="1" />
+            <line
+              v-if="topEdge && phase !== 'loading'"
+              class="scan-edge-top"
+              :x1="topEdge.a.x"
+              :y1="topEdge.a.y"
+              :x2="topEdge.b.x"
+              :y2="topEdge.b.y"
+            />
           </svg>
+          <span
+            v-if="topEdge && phase !== 'loading'"
+            class="scan-top"
+            :data-side="topEdge.side"
+            :style="{ left: `${topEdge.x}px`, top: `${topEdge.y}px`, '--angle': `${topEdge.angle}deg` }"
+            aria-hidden="true"
+            >{{ t("coverScan.top") }}</span
+          >
           <template v-if="phase !== 'loading'">
             <span
               v-for="edge in edges"
@@ -574,15 +748,30 @@ async function apply() {
       </div>
     </div>
 
+    <p v-if="failed" class="scan-error" role="alert">{{ t("coverScan.failed") }}</p>
+
     <div class="scan-bar">
-      <button type="button" class="text-btn scan-cancel" :disabled="phase === 'busy'" @click="cancel">
+      <button type="button" class="text-btn scan-cancel" :aria-disabled="phase === 'busy'" @click="cancel">
         {{ t("common.cancel") }}
       </button>
+      <button
+        type="button"
+        class="icon-btn scan-rotate"
+        :aria-label="t('coverScan.rotate')"
+        :title="t('coverScan.rotate')"
+        :aria-disabled="phase !== 'ready'"
+        @click="rotate"
+      >
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20 11a8 8 0 1 0-2.34 5.66" />
+          <path d="M20 4v7h-7" />
+        </svg>
+      </button>
       <span class="scan-bar-end">
-        <button type="button" class="btn btn-ghost scan-whole" :disabled="phase === 'busy'" @click="whole">
+        <button type="button" class="btn btn-ghost scan-whole" :aria-disabled="phase === 'busy'" @click="whole">
           {{ t("coverScan.whole") }}
         </button>
-        <button type="button" class="btn btn-primary scan-apply" :disabled="phase !== 'ready'" @click="apply">
+        <button type="button" class="btn btn-primary scan-apply" :aria-disabled="phase !== 'ready'" @click="apply">
           {{ phase === "busy" ? t("coverScan.applying") : t("coverScan.apply") }}
         </button>
       </span>
@@ -671,6 +860,31 @@ async function apply() {
 .scan-edge-line {
   stroke: var(--accent);
   stroke-width: 2;
+}
+
+/* The edge that becomes the cover's top: drawn heavier, with a small "top" beside it. */
+.scan-edge-top {
+  stroke: var(--accent);
+  stroke-width: 5;
+  stroke-linecap: round;
+}
+
+.scan-top {
+  position: absolute;
+  transform: translate(-50%, -50%) rotate(var(--angle, 0deg));
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.scan-frame:not(.ready) .scan-top {
+  visibility: hidden;
 }
 
 /* The shade and the edges wait for the detector, then the edges draw in once. */
@@ -798,6 +1012,15 @@ async function apply() {
   margin: -9px 0 0 -0.5px;
 }
 
+.scan-error {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--danger);
+  background: var(--surface);
+}
+
 .scan-bar {
   display: flex;
   align-items: center;
@@ -825,19 +1048,48 @@ async function apply() {
   text-align: center;
 }
 
-.scan-cancel {
+.scan-bar .btn,
+.scan-bar .text-btn {
+  white-space: nowrap;
+}
+
+/* The primary choice takes a little more: room for its busy label, with no jump when it shows. */
+.scan-bar .scan-apply {
+  flex-grow: 1.3;
+}
+
+.scan-bar [aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.scan-cancel,
+.scan-rotate {
   flex: none;
+}
+
+.scan-cancel {
   padding: 0 var(--space-2);
 }
 
+/* At 360 px the four controls and the longest label ("Wird begradigt …") fit on one line. */
 @media (max-width: 400px) {
+  .scan-bar {
+    padding-inline: var(--space-2);
+  }
+
+  .scan-bar,
+  .scan-bar-end {
+    gap: var(--space-1);
+  }
+
   .scan-bar .btn,
   .scan-bar .text-btn {
     font-size: var(--text-sm);
   }
 
   .scan-bar .btn {
-    padding: 0 var(--space-2);
+    padding: 0 var(--space-1);
   }
 }
 

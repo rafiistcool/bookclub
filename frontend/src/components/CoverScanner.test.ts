@@ -1,6 +1,7 @@
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createMemoryHistory, createRouter, type Router } from "vue-router";
 import type { PixelImage, Quad } from "../coverScan/geometry";
 import { bookCover, cornerError, posedCover, renderScene, solid } from "../coverScan/scenes";
 
@@ -22,6 +23,7 @@ import { i18n } from "../i18n";
 import { useCoverScan } from "../stores/coverScan";
 import { useToast } from "../stores/toast";
 import CoverScanner from "./CoverScanner.vue";
+import { rotateQuad } from "../coverScan/geometry";
 
 /** A 1000 × 1500 photo; the detector sees a 200 × 300 copy of it. */
 const bitmap = { close: vi.fn() };
@@ -50,8 +52,8 @@ const EVEN_PHOTO: PixelImage = { width: 200, height: 300, data: new Uint8Clamped
 
 let wrapper: VueWrapper | null = null;
 
-async function openScan(file = photo) {
-  wrapper = mount(CoverScanner, { attachTo: document.body });
+async function openScan(file = photo, router?: Router) {
+  wrapper = mount(CoverScanner, { attachTo: document.body, global: { plugins: router ? [router] : [] } });
   const answer = useCoverScan().request(file);
   await flushPromises();
   // Wrapped: an async function returning the promise would wait for it.
@@ -59,7 +61,24 @@ async function openScan(file = photo) {
 }
 
 async function ready() {
-  await vi.waitFor(() => expect(wrapper!.get(".scan-apply").attributes("disabled")).toBeUndefined());
+  await vi.waitFor(() => expect(wrapper!.get(".scan-apply").attributes("aria-disabled")).toBe("false"));
+}
+
+function tab(shiftKey = false): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", { key: "Tab", shiftKey, bubbles: true, cancelable: true });
+  (document.activeElement ?? document.body).dispatchEvent(event);
+  return event;
+}
+
+function pages(): Router {
+  const page = { render: () => null };
+  return createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: "/a", component: page },
+      { path: "/b", component: page },
+    ],
+  });
 }
 
 /** jsdom has no PointerEvent: a mouse event with a pointer id stands in. */
@@ -225,16 +244,193 @@ describe("CoverScanner", () => {
     flatten.mockReturnValue(new Promise((_resolve, reject) => (fail = reject)));
     const { answer } = await openScan();
     await ready();
-    await wrapper!.get(".scan-apply").trigger("click");
-    expect(wrapper!.get(".scan-apply").text()).toBe("Straightening…");
-    expect(wrapper!.get(".scan-apply").attributes("disabled")).toBeDefined();
-    expect(wrapper!.get(".scan-cancel").attributes("disabled")).toBeDefined();
+    const apply = wrapper!.get(".scan-apply");
+    (apply.element as HTMLElement).focus();
+    await apply.trigger("click");
+    expect(apply.text()).toBe("Straightening…");
+    expect(wrapper!.get(".scan-status").text()).toBe("Straightening…");
+    // aria-disabled, not disabled: the focus stays on the button.
+    for (const name of [".scan-apply", ".scan-cancel", ".scan-whole", ".scan-rotate"]) {
+      expect(wrapper!.get(name).attributes("aria-disabled")).toBe("true");
+      expect(wrapper!.get(name).attributes("disabled")).toBeUndefined();
+    }
+    await vi.waitFor(() => expect(flatten).toHaveBeenCalled());
+    expect(document.activeElement).toBe(apply.element);
+    // Busy, the other buttons do nothing.
+    await wrapper!.get(".scan-cancel").trigger("click");
+    await wrapper!.get(".scan-whole").trigger("click");
+    expect(wrapper!.find('[role="dialog"]').exists()).toBe(true);
     fail(new Error("no canvas"));
     await flushPromises();
     expect(useToast().items.at(-1)?.message).toBe("Could not straighten the photo");
-    expect(wrapper!.get(".scan-apply").text()).toBe("Apply");
+    // Said inside the dialog too, where a screen reader still hears it.
+    expect(wrapper!.get('[role="dialog"] [role="alert"]').text()).toBe("Could not straighten the photo");
+    expect(document.activeElement).toBe(apply.element);
+    expect(apply.text()).toBe("Apply");
+    expect(apply.attributes("aria-disabled")).toBe("false");
     await wrapper!.get(".scan-whole").trigger("click");
     await expect(answer).resolves.toBe(photo);
+  });
+
+  it("lets the busy state paint before the warp starts", async () => {
+    const { answer } = await openScan();
+    await ready();
+    await wrapper!.get(".scan-apply").trigger("click");
+    // The click's own task only sets the state; the flattening waits for a frame.
+    expect(flatten).not.toHaveBeenCalled();
+    expect(wrapper!.get(".scan-apply").text()).toBe("Straightening…");
+    await expect(answer).resolves.toBe(flat);
+    expect(flatten).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps Shift+Tab from the dialog itself inside it", async () => {
+    const behind = document.createElement("button");
+    document.body.appendChild(behind);
+    await openScan();
+    await ready();
+    const dialog = wrapper!.get('[role="dialog"]').element;
+    expect(document.activeElement).toBe(dialog);
+    const back = tab(true);
+    expect(back.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(wrapper!.get(".scan-apply").element);
+    // From the first control, Shift+Tab wraps to the last; from the last, Tab to the first.
+    (wrapper!.get('[data-corner="tl"]').element as HTMLElement).focus();
+    tab(true);
+    expect(document.activeElement).toBe(wrapper!.get(".scan-apply").element);
+    tab();
+    expect(document.activeElement).toBe(wrapper!.get('[data-corner="tl"]').element);
+    (dialog as HTMLElement).focus();
+    expect(tab().defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(wrapper!.get('[data-corner="tl"]').element);
+    behind.remove();
+  });
+
+  it("gives focus to the label when the input that opened it is disabled by then", async () => {
+    // CoverPhotoButton: a file input in a label, disabled while it uploads.
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "file";
+    label.appendChild(input);
+    document.body.appendChild(label);
+    input.focus();
+    const { answer } = await openScan();
+    input.disabled = true;
+    await ready();
+    await wrapper!.get(".scan-cancel").trigger("click");
+    await expect(answer).resolves.toBeNull();
+    await flushPromises();
+    expect(document.activeElement).toBe(label);
+    expect(label.getAttribute("tabindex")).toBe("-1");
+    // Only while it holds the focus.
+    label.blur();
+    expect(label.hasAttribute("tabindex")).toBe(false);
+    label.remove();
+  });
+
+  it("gives focus to the nearest focusable ancestor when the opener is gone", async () => {
+    const section = document.createElement("section");
+    section.tabIndex = -1;
+    const trigger = document.createElement("button");
+    section.appendChild(trigger);
+    document.body.appendChild(section);
+    trigger.focus();
+    await openScan();
+    trigger.remove();
+    await ready();
+    await wrapper!.get(".scan-cancel").trigger("click");
+    await flushPromises();
+    expect(document.activeElement).toBe(section);
+    section.remove();
+  });
+
+  it("falls back to the main region rather than the body", async () => {
+    const main = document.createElement("main");
+    const trigger = document.createElement("button");
+    document.body.append(main, trigger);
+    trigger.focus();
+    await openScan();
+    trigger.remove();
+    await ready();
+    await wrapper!.get(".scan-cancel").trigger("click");
+    await flushPromises();
+    expect(document.activeElement).toBe(main);
+    main.remove();
+  });
+
+  it("darkens the browser chrome while open and gives the colour back", async () => {
+    const meta = document.createElement("meta");
+    meta.name = "theme-color";
+    meta.content = "#f7f4ec";
+    document.head.appendChild(meta);
+    const style = document.createElement("style");
+    style.textContent = ".scanner { --bg: #16130f; }";
+    document.head.appendChild(style);
+    await openScan();
+    await ready();
+    expect(meta.content).toBe("#16130f");
+    await wrapper!.get(".scan-cancel").trigger("click");
+    await flushPromises();
+    expect(meta.content).toBe("#f7f4ec");
+    meta.remove();
+    style.remove();
+  });
+
+  it("turns the cover's top an edge on, clockwise, and flattens it that way", async () => {
+    const { answer } = await openScan();
+    await ready();
+    const rotate = wrapper!.get(".scan-rotate");
+    expect(rotate.attributes("aria-label")).toBe("Rotate clockwise");
+    expect(wrapper!.get(".scan-top").attributes("data-side")).toBe("top");
+    await rotate.trigger("click");
+    // Clockwise: what is on the left of the photo becomes the cover's top.
+    expect(wrapper!.get(".scan-top").attributes("data-side")).toBe("left");
+    expect(wrapper!.get(".scan-status").text()).toBe("The top of the cover is now the left edge");
+    // The corners keep their places and names on screen.
+    expect(corner("tl").attributes("aria-label")).toBe("Top-left corner");
+    await wrapper!.get(".scan-apply").trigger("click");
+    await expect(answer).resolves.toBe(flat);
+    expect(flatten).toHaveBeenCalledWith(bitmap, 1000, 1500, rotateQuad(INSET, 1));
+  });
+
+  it("comes round to the photo's own top after four turns", async () => {
+    const { answer } = await openScan();
+    await ready();
+    const sides: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      await wrapper!.get(".scan-rotate").trigger("click");
+      sides.push(wrapper!.get(".scan-top").attributes("data-side")!);
+    }
+    expect(sides).toEqual(["left", "bottom", "right", "top"]);
+    await wrapper!.get(".scan-apply").trigger("click");
+    await expect(answer).resolves.toBe(flat);
+    expect(flatten).toHaveBeenCalledWith(bitmap, 1000, 1500, INSET);
+  });
+
+  it("cancels on Back and keeps the page", async () => {
+    const router = pages();
+    await router.push("/a");
+    await router.push("/b");
+    const { answer } = await openScan(photo, router);
+    await ready();
+    router.back();
+    await expect(answer).resolves.toBeNull();
+    await flushPromises();
+    expect(router.currentRoute.value.path).toBe("/b");
+    expect(wrapper!.find('[role="dialog"]').exists()).toBe(false);
+    // Closed, the guard is gone: navigation works again.
+    await router.push("/a");
+    expect(router.currentRoute.value.path).toBe("/a");
+  });
+
+  it("cancels on any other navigation too, and stays on the page", async () => {
+    const router = pages();
+    await router.push("/a");
+    const { answer } = await openScan(photo, router);
+    await ready();
+    const failure = await router.push("/b");
+    expect(failure).toBeTruthy();
+    await expect(answer).resolves.toBeNull();
+    expect(router.currentRoute.value.path).toBe("/a");
   });
 
   it("hands a photo it cannot open back as it is", async () => {
@@ -262,5 +458,7 @@ describe("CoverScanner", () => {
     expect(wrapper!.get(".scan-whole").text()).toBe("Ganzes Bild");
     expect(wrapper!.get(".scan-apply").text()).toBe("Übernehmen");
     expect(corner("tl").attributes("aria-label")).toBe("Ecke oben links");
+    expect(wrapper!.get(".scan-top").text()).toBe("oben");
+    expect(wrapper!.get(".scan-rotate").attributes("aria-label")).toBe("Im Uhrzeigersinn drehen");
   });
 });

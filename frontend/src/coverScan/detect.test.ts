@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { detectByLines, detectByRegion, detectCover, MIN_CONFIDENCE } from "./detect";
-import { isConvex, orderQuad, type PixelImage, type Quad } from "./geometry";
+import { clampQuad, isConvex, orderQuad, type PixelImage, type Quad } from "./geometry";
 import { blurred, bookCover, cornerError, posedCover, ramp, random, renderScene, shadowed, solid, wood, type CoverPose, type Rgb } from "./scenes";
 
 const CREAM: Rgb = [228, 218, 196];
@@ -213,6 +213,24 @@ const cases: Case[] = [
     background: wood([150, 120, 90]),
     noise: 10,
   },
+  {
+    name: "a landscape picture book, tilted and turned",
+    width: 480,
+    height: 360,
+    pose: { width: 290, height: 200, rotate: 6, tiltX: 15 },
+    cover: bookCover([240, 200, 60], INK, [60, 140, 60]),
+    background: solid([70, 70, 90]),
+    noise: 6,
+  },
+  {
+    name: "a portrait cover lying sideways in the frame",
+    width: 480,
+    height: 360,
+    pose: { width: 190, height: 280, rotate: 90, tiltY: 10 },
+    cover: bookCover(CREAM, INK, TEAL),
+    background: wood([120, 85, 55]),
+    noise: 6,
+  },
 ];
 
 function photo(c: Case, truth: Quad): PixelImage {
@@ -275,12 +293,45 @@ describe("detectCover", () => {
     expect(detectCover(gradient)).toBeNull();
   });
 
-  it("keeps the corners inside the picture when the cover runs off it", () => {
+  // A tight phone shot: the cover leaves the photo, so one or two of its sides
+  // are missing, and its printed picture is the one complete outline. The
+  // answer is the visible part of the cover, its corners on the picture's edge.
+  const runOffs: { name: string; width: number; height: number; pose: CoverPose; background: Background }[] = [
+    { name: "at the top and the bottom", width: 300, height: 300, pose: { width: 250, height: 380, rotate: 4 }, background: solid([40, 40, 40]) },
+    { name: "at the top and the bottom, on wood", width: 300, height: 300, pose: { width: 250, height: 380, rotate: 4 }, background: wood([120, 85, 55]) },
+    { name: "on the right", width: 300, height: 400, pose: { width: 300, height: 360, dx: 30 }, background: solid([40, 40, 40]) },
+    { name: "by 10 px at the top", width: 300, height: 400, pose: { width: 220, height: 380, dy: -20 }, background: solid([40, 40, 40]) },
+    { name: "at the bottom, turned", width: 400, height: 400, pose: { width: 220, height: 330, rotate: -6, dy: 60 }, background: solid([70, 72, 80]) },
+  ];
+  for (const r of runOffs) {
+    it(`finds the visible part of a printed cover that runs off the photo ${r.name}`, () => {
+      const truth = orderQuad(posedCover(r.width, r.height, r.pose));
+      const image = renderScene({ width: r.width, height: r.height, quad: truth, cover: bookCover(CREAM, INK, TEAL), background: r.background, noise: 5 });
+      const found = detectCover(image);
+      expect(found).not.toBeNull();
+      const visible = clampQuad(truth, r.width, r.height);
+      expect(cornerError(found!.quad, visible)).toBeLessThan(0.05 * diagonal(r.width, r.height));
+      expect(found!.confidence).toBeGreaterThanOrEqual(MIN_CONFIDENCE);
+    });
+  }
+
+  it("prefers the outline over the picture printed inside it when a corner is just off the photo", () => {
+    // The cover is close to the table's colour, so the regions find only its picture block.
+    const truth = orderQuad(posedCover(400, 400, { width: 232, height: 363, rotate: -5, tiltX: 3, tiltY: 8, dy: -7 }));
+    expect(truth[1].y).toBeLessThan(0);
+    const image = renderScene({ width: 400, height: 400, quad: truth, cover: bookCover(CREAM, INK, TEAL), background: solid([180, 180, 175]), noise: 6, seed: 7 });
+    const found = detectCover(image);
+    expect(found).not.toBeNull();
+    expect(cornerError(found!.quad, clampQuad(truth, 400, 400))).toBeLessThan(0.03 * diagonal(400, 400));
+  });
+
+  it("keeps the corners inside the picture when a plain cover runs off it", () => {
     const truth = orderQuad(posedCover(300, 300, { width: 250, height: 380, rotate: 4 }));
     const image = renderScene({ width: 300, height: 300, quad: truth, cover: solid(CREAM), background: solid([40, 40, 40]), noise: 5 });
     const found = detectCover(image);
-    // Only the left and right sides are in the picture: at best the visible part.
-    for (const p of found?.quad ?? []) {
+    expect(found).not.toBeNull();
+    expect(cornerError(found!.quad, clampQuad(truth, 300, 300))).toBeLessThan(0.05 * diagonal(300, 300));
+    for (const p of found!.quad) {
       expect(p.x).toBeGreaterThanOrEqual(0);
       expect(p.x).toBeLessThanOrEqual(300);
       expect(p.y).toBeGreaterThanOrEqual(0);
