@@ -7,6 +7,7 @@ import BookCover from "../components/BookCover.vue";
 import ClubCard from "../components/ClubCard.vue";
 import DiaryFeed from "../components/DiaryFeed.vue";
 import NavIcon from "../components/NavIcon.vue";
+import ProgressEditor from "../components/ProgressEditor.vue";
 import { bookPath } from "../constants";
 import { tp } from "../i18n";
 import { useClubs } from "../stores/clubs";
@@ -74,15 +75,22 @@ async function loadShelf() {
   }
 }
 
-async function saveProgress(item: ShelfItem) {
-  const value = progress.value[item.id] ?? 0;
+async function saveProgress(item: ShelfItem, value: number, undo = true) {
+  const before = progress.value[item.id] ?? 0;
+  progress.value = { ...progress.value, [item.id]: value };
   savingId.value = item.id;
   try {
     const updated = await api.patchShelf(item.id, { progress: value });
     reading.value = reading.value.map((row) => (row.id === item.id ? updated : row));
-    toast.show(t("book.progressSaved", { n: value }));
+    progress.value = { ...progress.value, [item.id]: updated.progress ?? value };
+    if (undo) {
+      toast.show(t("book.progressSaved", { n: value }), {
+        label: t("common.undo"),
+        run: () => saveProgress(updated, before, false),
+      });
+    } else toast.show(t("progress.undone"));
   } catch (err) {
-    progress.value = { ...progress.value, [item.id]: item.progress ?? 0 };
+    progress.value = { ...progress.value, [item.id]: before };
     toast.show(err instanceof ApiError ? err.message : t("book.saveFailed"));
   } finally {
     savingId.value = null;
@@ -157,19 +165,13 @@ onMounted(() => {
           <span class="reading-meta">
             <RouterLink class="reading-title" :to="bookPath(item.book)">{{ item.book.title }}</RouterLink>
             <span v-if="item.book.authors" class="finer subtle">{{ item.book.authors }}</span>
-            <label class="progress-label" :for="`progress-${item.id}`">
-              <span class="finer subtle">{{ t("home.yourProgress") }}</span>
-              <strong class="nums fine">{{ progress[item.id] ?? 0 }}%</strong>
-            </label>
-            <input
-              :id="`progress-${item.id}`"
-              v-model.number="progress[item.id]"
-              type="range"
-              min="0"
-              max="100"
-              step="5"
-              :disabled="savingId === item.id"
-              @change="saveProgress(item)"
+            <ProgressEditor
+              :value="progress[item.id] ?? 0"
+              :pages="item.book.pages"
+              :label="t('home.yourProgress')"
+              :book-title="item.book.title"
+              :busy="savingId === item.id"
+              @save="(value) => saveProgress(item, value)"
             />
           </span>
         </li>
@@ -317,20 +319,6 @@ onMounted(() => {
   font-size: var(--text-md);
   font-weight: 650;
   line-height: var(--leading-snug);
-}
-
-.progress-label {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-2);
-  margin-top: var(--space-1);
-}
-
-.reading-meta input[type="range"] {
-  width: 100%;
-  min-height: var(--tap);
-  accent-color: var(--accent);
 }
 
 .favourite-tile {

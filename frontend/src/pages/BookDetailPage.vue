@@ -7,6 +7,7 @@ import { api, ApiError } from "../api/client";
 import Avatar from "../components/Avatar.vue";
 import BookCover from "../components/BookCover.vue";
 import BookDiary from "../components/BookDiary.vue";
+import ProgressEditor from "../components/ProgressEditor.vue";
 import QuoteList from "../components/QuoteList.vue";
 import ClubBookActions from "../components/ClubBookActions.vue";
 import ReportSheet, { isWithdrawn, type ReportTarget } from "../components/ReportSheet.vue";
@@ -67,7 +68,6 @@ const editionsVersion = ref(0);
 
 const takeDraft = ref("");
 const reasonDraft = ref("");
-const progressDraft = ref(0);
 const diary = ref<InstanceType<typeof BookDiary> | null>(null);
 const clubActions = ref<InstanceType<typeof ClubBookActions> | null>(null);
 
@@ -87,7 +87,6 @@ const pickNames = computed(() => (book.value?.club_picks ?? []).map((club) => cl
 function syncDrafts(detail: BookDetail) {
   takeDraft.value = detail.take;
   reasonDraft.value = detail.dnf_reason;
-  progressDraft.value = detail.progress ?? 0;
 }
 
 /**
@@ -186,7 +185,9 @@ async function load() {
 
 async function setStatus(status: Status) {
   const detail = book.value;
-  if (!detail || busy.value) return;
+  // The current segment is a state, not an action: tapping it again changed
+  // nothing but still moved the book to the top of its column.
+  if (!detail || busy.value || detail.on_shelf === status) return;
   busy.value = true;
   try {
     const item = detail.shelf_id
@@ -220,6 +221,28 @@ async function patch(
     adoptEntry(detail, await api.patchShelf(detail.shelf_id, body));
     toast.show(message, action);
     if ("rating" in body || "rating_visibility" in body) void refreshClubRating();
+  } catch (err) {
+    toast.show(err instanceof ApiError ? err.message : t("book.saveFailed"));
+  } finally {
+    busy.value = false;
+  }
+}
+
+/** Progress from the sheet, with an Undo; the diary's spoiler shields follow it. */
+async function saveProgress(value: number, undo = true) {
+  const detail = book.value;
+  if (!detail?.shelf_id || busy.value) return;
+  const before = detail.progress ?? 0;
+  busy.value = true;
+  try {
+    adoptEntry(detail, await api.patchShelf(detail.shelf_id, { progress: value }));
+    void diary.value?.reload();
+    if (undo) {
+      toast.show(t("book.progressSaved", { n: value }), {
+        label: t("common.undo"),
+        run: () => saveProgress(before, false),
+      });
+    } else toast.show(t("progress.undone"));
   } catch (err) {
     toast.show(err instanceof ApiError ? err.message : t("book.saveFailed"));
   } finally {
@@ -564,19 +587,13 @@ watch(param, load);
             </p>
 
             <div v-if="book.on_shelf === 'currently_reading'" class="control-block">
-              <label class="progress-label" for="progress">
-                <span>{{ t("book.progress") }}</span>
-                <strong class="nums">{{ progressDraft }}%</strong>
-              </label>
-              <input
-                id="progress"
-                v-model.number="progressDraft"
-                type="range"
-                min="0"
-                max="100"
-                step="5"
-                :disabled="busy"
-                @change="patch({ progress: progressDraft }, t('book.progressSaved', { n: progressDraft }))"
+              <ProgressEditor
+                :value="book.progress"
+                :pages="book.pages"
+                :label="t('book.progress')"
+                :book-title="book.title"
+                :busy="busy"
+                @save="saveProgress"
               />
             </div>
 
@@ -905,19 +922,6 @@ watch(param, load);
 
 .control-block .btn {
   justify-self: start;
-}
-
-.progress-label {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
-  font-size: var(--text-sm);
-}
-
-.control-block input[type="range"] {
-  width: 100%;
-  accent-color: var(--accent);
 }
 
 .panel-actions {

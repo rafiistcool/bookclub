@@ -142,6 +142,17 @@ describe("ShelfPage favourites portrait", () => {
     expect(board.props("items")[0]).toMatchObject({ status: "finished", rating: 5, finished_at: finished.finished_at });
 
     await wrapper.findAll("button.shelf-status")[0].trigger("click");
+    // The current status is marked as pressed and stays enabled; a tap on it
+    // only closes the sheet.
+    const current = wrapper.findAll(".sheet .status-choice").find(button => button.text() === "Want to read")!;
+    expect(current.attributes("aria-pressed")).toBe("true");
+    expect(current.attributes("disabled")).toBeUndefined();
+    const calls = patchShelf.mock.calls.length;
+    await current.trigger("click");
+    expect(wrapper.find(".sheet").exists()).toBe(false);
+    expect(patchShelf.mock.calls.length).toBe(calls);
+
+    await wrapper.findAll("button.shelf-status")[0].trigger("click");
     patchShelf.mockResolvedValueOnce({ ...first, status: "currently_reading", shelf_position: 1 });
     await wrapper.findAll(".sheet button").find(button => button.text() === "Reading")!.trigger("click");
     await flushPromises();

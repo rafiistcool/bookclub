@@ -85,6 +85,18 @@
     "genericError": "Something went wrong. Try again.",
     "showLess": "Show less"
   },
+  "progress": {
+    "percent": "{n}%",
+    "change": "{label}: {n}%, change",
+    "page": "p. {page} of {pages}",
+    "pageLabel": "Page",
+    "ofPages": "of {pages}",
+    "backPages": "Back {n} pages",
+    "forwardPages": "Forward {n} pages",
+    "backPercent": "Back {n} percent",
+    "forwardPercent": "Forward {n} percent",
+    "undone": "Progress put back"
+  },
   "status": {
     "want_to_read": "Want to read",
     "currently_reading": "Reading",
@@ -586,7 +598,6 @@
     "confirmWinner": "Confirm winner",
     "noneTitle": "No nominations yet",
     "noneBody": "Open any book and choose “Nominate for next up”. Books more than one of you wants to read are a good place to start.",
-    "cast": "{n} vote cast | {n} votes cast",
     "confirmTitle": "Confirm as the club pick",
     "confirmBlurb": "This ends the vote and replaces the current pick for everyone in the club.",
     "blurbAdmin": "Everyone gets one vote and can change it any time. When you're ready, confirm the winner: it replaces the club pick for everyone.",
@@ -607,7 +618,8 @@
     "reasonShelves": "On {n} shelves: {names}",
     "reasonWants": "{name} wants to read it",
     "reasonLikePicks": "Like past picks: {subjects}",
-    "reasonRating": "Open Library rating {rating}"
+    "reasonRating": "Open Library rating {rating}",
+    "chooseWinner": "Which book becomes the club book?"
   },
   "meeting": {
     "dateTime": "Meeting date and time",
