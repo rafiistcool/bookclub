@@ -249,8 +249,9 @@ describe("BookDetailPage", () => {
     book.mockResolvedValue(detail({ club_picks: [readers, { slug: "night-cd34", name: "Night owls" }], year: null }));
     const two = await mountBook();
     const badge = two.wrapper.get(".hero-pick .badge");
-    expect(badge.text()).toBe("Club pick in 2 clubs");
-    expect(badge.attributes("title")).toBe("Current pick in Leserunde, Night owls");
+    // Every club by name, readable on a phone (no tooltip).
+    expect(badge.text()).toBe("Club pick · Leserunde, Night owls");
+    expect(badge.attributes("title")).toBeUndefined();
     expect(two.wrapper.get(".detail-authors").text()).toBe("Paulo Coelho");
     expect(two.wrapper.find(".club-rating").exists()).toBe(false);
   });

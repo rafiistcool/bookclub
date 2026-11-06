@@ -138,7 +138,7 @@ describe("DiaryFeed (recently written)", () => {
     expect(scoped.find(".feed-club").exists()).toBe(false);
   });
 
-  it("dates a note relative to now, counting days in the club's zone for a club post", async () => {
+  it("dates a note relative to now, counting days in the reader's zone, a club post too", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       // 2 Sep 06:00 in Tokyo, still 1 Sep (17:00) in New York.
@@ -162,7 +162,8 @@ describe("DiaryFeed (recently written)", () => {
       const wrapper = mount(DiaryFeed, { global: { plugins: [pinia, i18n], stubs: { BookCover: true } } });
       await flushPromises();
       const times = wrapper.findAll(".feed-foot time");
-      expect(times.map((time) => time.text())).toEqual(["gestern", "vor 9 Std."]);
+      // Days counted in the reader's New York for both; the club's time stays in the title.
+      expect(times.map((time) => time.text())).toEqual(["vor 9 Std.", "vor 9 Std."]);
       expect(times[0]!.attributes("datetime")).toBe("2026-09-01T12:00:00Z");
       expect(times[0]!.attributes("title")).toBe("Di., 1. Sept. 2026, 21:00 GMT+9");
       expect(times[1]!.attributes("title")).toBe("Di., 1. Sept. 2026, 08:00 GMT-4");

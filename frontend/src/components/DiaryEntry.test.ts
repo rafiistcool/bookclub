@@ -44,15 +44,21 @@ describe("DiaryEntry time", () => {
     wrapper.unmount();
   });
 
-  it("counts a club post's days in the club's zone, in German too", async () => {
-    vi.setSystemTime(new Date("2026-09-01T22:30:00Z"));
+  it("counts a club post's days in the reader's zone, with the club's time in the title, in German too", async () => {
+    // 23:00 in Berlin (the reader's zone), 17:00 in the club's New York.
+    vi.setSystemTime(new Date("2026-09-01T21:00:00Z"));
     useLocale().locale = "de";
     const wrapper = mountEntry(post({ club: CLUB, created_at: "2026-09-01T20:00:00Z" }));
-    expect(wrapper.get(".entry-time").text()).toBe("vor 2 Std.");
+    expect(wrapper.get(".entry-time").text()).toBe("vor 1 Std.");
     expect(wrapper.get(".entry-time").attributes("title")).toBe("Di., 1. Sept. 2026, 16:00 GMT-4");
+    // A tap shows the exact time in place, a second one the short label again.
+    await wrapper.get(".entry-time").trigger("click");
+    expect(wrapper.get(".entry-time").text()).toBe("Di., 1. Sept. 2026, 16:00 GMT-4");
+    await wrapper.get(".entry-time").trigger("click");
 
-    // The shared clock moves the label along without a new render from outside.
-    vi.setSystemTime(new Date("2026-09-02T05:00:00Z"));
+    // The shared clock moves the label along without a new render from outside:
+    // past midnight in Berlin it is yesterday, though still the 1st in New York.
+    vi.setSystemTime(new Date("2026-09-01T22:30:00Z"));
     vi.advanceTimersByTime(60_000);
     await nextTick();
     expect(wrapper.get(".entry-time").text()).toBe("gestern");

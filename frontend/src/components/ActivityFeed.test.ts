@@ -49,17 +49,19 @@ describe("ActivityFeed times", () => {
     vi.useRealTimers();
   });
 
-  it("shows a club feed in the club's zone, personal events included", async () => {
+  it("counts days in the viewer's zone and keeps the club's time in the title", async () => {
+    // The viewer is in New York: 22:30 UTC is their Thursday, though it is Friday in Tokyo.
     const wrapper = await mountFeed({ club: OWLS.slug }, "Asia/Tokyo");
-    expect(times(wrapper)).toEqual(["Friday", "Friday"]);
+    expect(times(wrapper)).toEqual(["Thursday", "Thursday"]);
     const time = wrapper.get(".activity-row time");
     expect(time.attributes("datetime")).toBe(AT);
     expect(time.attributes("title")).toBe("Fri, 2 Oct 2026, 07:30 GMT+9");
   });
 
-  it("shows the home feed's club events in their club's zone and personal ones in the viewer's", async () => {
+  it("shows the home feed's club events with their club's time in the title", async () => {
     const wrapper = await mountFeed({}, "America/New_York");
-    expect(times(wrapper)).toEqual(["Friday", "Thursday"]);
+    expect(times(wrapper)).toEqual(["Thursday", "Thursday"]);
+    expect(wrapper.findAll(".activity-row time")[0]!.attributes("title")).toBe("Fri, 2 Oct 2026, 07:30 GMT+9");
     expect(wrapper.findAll(".activity-row time")[1]!.attributes("title")).toBe("Thu, 1 Oct 2026, 18:30 GMT-4");
   });
 
@@ -77,9 +79,9 @@ describe("ActivityFeed times", () => {
   it("shows a day and month for older lines, the year only before this one", async () => {
     vi.setSystemTime(new Date("2026-11-20T12:00:00Z"));
     const wrapper = await mountFeed({}, "America/New_York");
-    expect(times(wrapper)).toEqual(["2 Oct", "1 Oct"]);
+    expect(times(wrapper)).toEqual(["1 Oct", "1 Oct"]);
     vi.setSystemTime(new Date("2027-01-20T12:00:00Z"));
     const nextYear = await mountFeed({}, "America/New_York");
-    expect(times(nextYear)).toEqual(["2 Oct 2026", "1 Oct 2026"]);
+    expect(times(nextYear)).toEqual(["1 Oct 2026", "1 Oct 2026"]);
   });
 });

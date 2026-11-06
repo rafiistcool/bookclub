@@ -74,7 +74,10 @@ const moreButton = ref<HTMLButtonElement | null>(null);
 /** An instance admin's list of the work's editions, each with a cover upload. */
 const adminEditionCover = ref(false);
 /** A photo chosen in a sheet is uploading; the sheet itself is gone by then. */
-const coverUploading = ref(false);
+// The work a photo from a sheet is being uploaded for: the page can move to
+// another book (Back) while it runs, and that book is not uploading.
+const coverUploadFor = ref<number | null>(null);
+const coverUploading = computed(() => coverUploadFor.value !== null && coverUploadFor.value === book.value?.id);
 
 const takeDraft = ref("");
 const reasonDraft = ref("");
@@ -452,13 +455,17 @@ async function onMoreAction(action: BookAction) {
  */
 async function uploadPicked(target: CoverTarget, file: File, done: (updated: BookOut) => void) {
   await closeSheets();
-  if (coverUploading.value) return;
-  coverUploading.value = true;
+  // One upload at a time; a second pick says so instead of vanishing.
+  if (coverUploadFor.value !== null) {
+    toast.show(t("cover.waitForUpload"));
+    return;
+  }
+  coverUploadFor.value = target.workId;
   try {
     const updated = await sendCoverPhoto(target, file);
     if (updated && book.value?.id === target.workId) done(updated);
   } finally {
-    coverUploading.value = false;
+    coverUploadFor.value = null;
   }
 }
 
@@ -554,9 +561,11 @@ watch(param, load);
         <div class="hero-cover" :class="{ uploading: coverUploading }" :aria-busy="coverUploading">
           <BookCover :book="withdrawn ? { ...book, title: shownTitle } : book" eager />
           <p v-if="coverUploading" class="finer subtle cover-status" role="status">{{ t("cover.photoUploading") }}</p>
-          <!-- The only call to action on a bare cloth; with a cover, the "…" sheet suggests a photo. -->
+          <!-- The only call to action on a bare cloth; with a cover, the "…" sheet suggests a photo.
+               Hidden, not removed, during a sheet's upload: its own upload must keep its listener. -->
           <CoverPhotoButton
-            v-else-if="!coverPrompted && !hasCover"
+            v-if="!coverPrompted && !hasCover"
+            v-show="!coverUploading"
             :work-id="book.id"
             :edition-id="book.edition_id"
             :has-cover="false"
@@ -578,15 +587,7 @@ watch(param, load);
                 <EllipsisHorizontalIcon class="more-icon" aria-hidden="true" />
               </button>
               <p v-if="book.club_picks.length" class="hero-pick">
-                <span
-                  v-if="book.club_picks.length === 1"
-                  class="badge club-pick"
-                >{{ t("book.pickBadge", { club: book.club_picks[0]!.name }) }}</span>
-                <span
-                  v-else
-                  class="badge club-pick"
-                  :title="t('book.currentPickIn', { clubs: pickNames })"
-                >{{ t("book.pickBadgeMany", { n: book.club_picks.length }) }}</span>
+                <span class="badge club-pick">{{ t("book.pickBadge", { club: pickNames }) }}</span>
               </p>
               <h1 class="display">{{ shownTitle }}</h1>
             </div>
@@ -953,10 +954,11 @@ watch(param, load);
   line-height: 1;
 }
 
+/* Every club's name stays readable: the badge wraps rather than cutting. */
 .hero-pick .badge {
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  line-height: 1.3;
 }
 
 .detail-subtitle {

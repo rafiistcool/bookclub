@@ -31,7 +31,8 @@
       "title": "This book has no cover yet",
       "body": "A photo of your copy's front becomes the cover for everyone. Photograph only the cover.",
       "action": "Add a photo of the cover"
-    }
+    },
+    "waitForUpload": "Wait until the photo has uploaded."
   },
   "report": {
     "action": {
@@ -505,7 +506,6 @@
     "refreshFailed": "Could not refresh that book",
     "backDiscover": "← Discover",
     "addedByReader": "Added by a reader — not on Open Library.",
-    "currentPickIn": "Current pick in {clubs}",
     "pickBlurbIn": "Replaces the current pick for everyone in {club}.",
     "whichClub": "Which club?",
     "nominatedIn": "Nominated in {club}",
@@ -518,7 +518,6 @@
     "groupCover": "Cover",
     "groupAdmin": "Admin",
     "pickBadge": "Club pick · {club}",
-    "pickBadgeMany": "Club pick in {n} clubs",
     "ratingVotes": "{n} rating | {n} ratings",
     "ratingLabel": "Rating"
   },
@@ -994,12 +993,12 @@
       "since": "blocked {day}",
       "unblock": "Unblock",
       "unblocked": "{name} is no longer blocked",
-      "note": "Blocking hides nothing in shared clubs. There, leave the club or ask its admins."
+      "note": "Blocking hides nothing in clubs you share, now or later. There, leave the club or ask its admins to remove them."
     },
     "block": {
       "action": "Block",
       "title": "Block {name}?",
-      "blurb": "{name} is not told. Your friendship, requests and invitations end, and you see no new requests. In shared clubs you still see each other.",
+      "blurb": "{name} is not told. Your friendship, requests and invitations end, and you see no new requests. In clubs you share, now or later, you still see each other.",
       "confirm": "Yes, block",
       "done": "{name} is blocked"
     },

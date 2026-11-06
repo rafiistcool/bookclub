@@ -148,7 +148,7 @@ describe("FriendsPage", () => {
     expect(blocked.get(".blocked-row").text()).toContain("max");
     // Answer 21: a block does not reach into shared clubs, and the page says so.
     expect(blocked.get(".block-note").text()).toBe(
-      "Blocking hides nothing in shared clubs. There, leave the club or ask its admins.",
+      "Blocking hides nothing in clubs you share, now or later. There, leave the club or ask its admins to remove them.",
     );
   });
 
@@ -229,7 +229,7 @@ describe("FriendsPage", () => {
     const sheet = third.get(".sheet");
     expect(sheet.get("h2").text()).toBe("Block mia?");
     expect(sheet.text()).toContain("mia is not told.");
-    expect(sheet.text()).toContain("In shared clubs you still see each other.");
+    expect(sheet.text()).toContain("In clubs you share, now or later, you still see each other.");
     expect(api.blockAccount).not.toHaveBeenCalled();
     api.blockAccount.mockResolvedValue(friendsOut({ blocked: [blockedOut("mia")] }));
     await button(sheet, "Yes, block").trigger("click");

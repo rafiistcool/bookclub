@@ -31,7 +31,8 @@
       "title": "Dieses Buch hat noch kein Cover",
       "body": "Ein Foto der Vorderseite deines Exemplars wird das Cover für alle. Fotografiere nur das Cover.",
       "action": "Foto vom Cover hinzufügen"
-    }
+    },
+    "waitForUpload": "Warte, bis das Foto hochgeladen ist."
   },
   "report": {
     "action": {
@@ -505,7 +506,6 @@
     "refreshFailed": "Details konnten nicht aktualisiert werden",
     "backDiscover": "← Entdecken",
     "addedByReader": "Von Hand angelegt — nicht bei Open Library.",
-    "currentPickIn": "Aktuelles Buch in {clubs}",
     "pickBlurbIn": "Ersetzt das aktuelle Club-Buch für alle in {club}.",
     "whichClub": "Für welchen Club?",
     "nominatedIn": "In {club} nominiert",
@@ -518,7 +518,6 @@
     "groupCover": "Cover",
     "groupAdmin": "Admin",
     "pickBadge": "Club-Buch · {club}",
-    "pickBadgeMany": "Club-Buch in {n} Clubs",
     "ratingVotes": "{n} Stimme | {n} Stimmen",
     "ratingLabel": "Bewertung"
   },
@@ -897,7 +896,7 @@
     "transferConfirm": "Ja, übergeben",
     "transferred": "Der Club gehört jetzt {name}",
     "remove": "Aus dem Club entfernen",
-    "removeBlurb": "{name} verliert den Zugang. Einladungen dieser Person gelten nicht mehr.",
+    "removeBlurb": "{name} verliert den Zugang. Einladungen, die diese Person erstellt oder benutzt hat, gelten nicht mehr.",
     "removeConfirm": "Ja, entfernen",
     "removed": "{name} wurde entfernt",
     "actionFailed": "Das hat nicht geklappt",
@@ -994,12 +993,12 @@
       "since": "blockiert am {day}",
       "unblock": "Freigeben",
       "unblocked": "{name} ist nicht mehr blockiert",
-      "note": "In gemeinsamen Clubs verbirgt Blockieren nichts. Dort hilft nur, den Club zu verlassen oder die Admins zu fragen."
+      "note": "In Clubs, die ihr jetzt oder später teilt, verbirgt Blockieren nichts. Dort hilft nur, den Club zu verlassen oder die Admins zu bitten, die Person zu entfernen."
     },
     "block": {
       "action": "Blockieren",
       "title": "{name} blockieren?",
-      "blurb": "{name} erfährt es nicht. Freundschaft, Anfragen und Einladungen zwischen euch enden, neue Anfragen siehst du nicht. In gemeinsamen Clubs seht ihr euch weiter.",
+      "blurb": "{name} erfährt es nicht. Freundschaft, Anfragen und Einladungen zwischen euch enden, neue Anfragen siehst du nicht. In Clubs, die ihr jetzt oder später teilt, seht ihr euch weiter.",
       "confirm": "Ja, blockieren",
       "done": "{name} ist blockiert"
     },
