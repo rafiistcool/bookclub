@@ -68,6 +68,14 @@ Rafael chose on 2026-11-05 to build it for the private instance and to store the
 
 The admin adds `DNB_PORTAL_COVERS=true` to the host's `.env` in the update block of the release that contains migration 3901. Migration 3901 makes the 17 books due again, so the next runs of the job (every 10 minutes, 30 books each) fetch the 7 covers.
 
+## The result on the host (2026-11-06)
+
+The admin updated the host to v0.11.3 with `DNB_PORTAL_COVERS=true`, after a VM backup. The count about 20 minutes later:
+
+- **7 portal covers:** 7 `dnb_portal` media rows, and 7 searches since the update with the outcome `isbn`. They are the 7 ISBNs the portal had answered 200 for.
+- **10 imported books without a cover** (17 before). 4 of them were searched again since the update and found nothing. The portal had answered 404 for all 10. Those books keep the cloth cover until a reader adds a photo or an admin sets one.
+- **No open cover suggestions.**
+
 ## Before the public launch
 
 `docs/phase3/work-plan.md` §5.9 lists it.
