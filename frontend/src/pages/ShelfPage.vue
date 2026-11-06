@@ -301,12 +301,20 @@ onMounted(load);
 
     <BottomSheet v-if="editing" :title="t(editing.action === 'date' ? 'shelf.editDate' : 'shelf.changeStatus')"
       @close="!saving && (editing = null)">
-      <p>{{ editing.item.book.title }}</p>
+      <p class="sheet-book">{{ editing.item.book.title }}</p>
       <div v-if="editing.action === 'status'" class="stack">
-        <button v-for="status in STATUSES" :key="status" type="button" class="btn btn-ghost btn-block"
-          :disabled="saving || status === editing.item.status" @click="changeStatus(status)">{{ statusLabel(status) }}</button>
+        <!-- The current status is marked, not disabled: it stays readable and
+             focusable, and tapping it just closes the sheet. -->
+        <button v-for="status in STATUSES" :key="status" type="button" class="btn btn-ghost btn-block status-choice"
+          :class="{ current: status === editing.item.status }" :aria-pressed="status === editing.item.status"
+          :disabled="saving" @click="status === editing.item.status ? (editing = null) : changeStatus(status)"><svg
+            v-if="status === editing.item.status" class="status-check" width="18" height="18" viewBox="0 0 24 24"
+            fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"
+            aria-hidden="true"><path d="M5 12.5 10 17l9-10" /></svg>{{ statusLabel(status) }}</button>
         <details class="shelf-more-actions">
-          <summary>{{ t('shelf.moreActions') }}</summary>
+          <summary><span>{{ t('shelf.moreActions') }}</span><svg class="more-chevron" width="18" height="18"
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></summary>
           <div class="stack">
             <button v-if="editing.item.status === 'finished'" type="button" class="btn btn-ghost btn-block"
               @click="onAction(editing.item, 'date')">{{ t('shelf.editDate') }}</button>
@@ -319,7 +327,6 @@ onMounted(load);
             <button type="button" class="btn btn-ghost btn-block" @click="bookAction('remove')">{{ t('common.remove') }}</button>
           </div>
         </details>
-        <button type="button" class="btn btn-ghost btn-block" @click="editing = null">{{ t('common.cancel') }}</button>
       </div>
       <form v-else class="stack" @submit.prevent="saveDate()">
         <label for="date-precision">{{ t('shelf.datePrecision') }}</label>
@@ -376,8 +383,21 @@ onMounted(load);
   .shelf-head { gap: var(--space-3); }
   .shelf-filter button { padding-inline: var(--space-1); font-size: var(--text-xs); }
 }
-.shelf-more-actions summary { cursor: pointer; padding-block: var(--space-3); font-size: var(--text-sm); }
-.shelf-more-actions .stack { padding-bottom: var(--space-3); }
+.sheet-book { margin-bottom: var(--space-3); color: var(--text-muted); font-family: var(--serif); }
+.status-choice { position: relative; }
+.status-choice.current { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-hover); }
+.status-check { position: absolute; left: var(--space-4); }
+.shelf-more-actions { border-top: 1px solid var(--border); margin-top: var(--space-2); }
+.shelf-more-actions summary {
+  display: flex; align-items: center; justify-content: space-between; min-height: var(--tap);
+  cursor: pointer; list-style: none; font-size: var(--text-sm); font-weight: 600; color: var(--text-muted);
+}
+.shelf-more-actions summary::-webkit-details-marker { display: none; }
+.more-chevron { transition: transform var(--dur-base) var(--ease-out); }
+.shelf-more-actions[open] .more-chevron { transform: rotate(180deg); }
+.shelf-more-actions[open] .stack { animation: more-in var(--dur-base) var(--ease-out); }
+.shelf-more-actions .stack { padding-bottom: var(--space-2); }
+@keyframes more-in { from { opacity: 0; transform: translateY(-6px); } }
 .shelf-head {
   display: flex;
   align-items: center;

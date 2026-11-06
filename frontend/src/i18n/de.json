@@ -85,6 +85,18 @@
     "genericError": "Etwas ist schiefgelaufen. Versuch es nochmal.",
     "showLess": "Weniger anzeigen"
   },
+  "progress": {
+    "percent": "{n} %",
+    "change": "{label}: {n} %, ändern",
+    "page": "S. {page} von {pages}",
+    "pageLabel": "Seite",
+    "ofPages": "von {pages}",
+    "backPages": "{n} Seite zurück | {n} Seiten zurück",
+    "forwardPages": "{n} Seite weiter | {n} Seiten weiter",
+    "backPercent": "{n} Prozent zurück",
+    "forwardPercent": "{n} Prozent weiter",
+    "undone": "Fortschritt wiederhergestellt"
+  },
   "status": {
     "want_to_read": "Will ich lesen",
     "currently_reading": "Lese ich",
@@ -586,7 +598,6 @@
     "confirmWinner": "Gewinnertitel bestätigen",
     "noneTitle": "Noch keine Nominierungen",
     "noneBody": "Öffne ein Buch und wähle „Fürs Nächste nominieren“. Bücher, die mehrere von euch lesen wollen, sind ein guter Start.",
-    "cast": "{n} Stimme abgegeben | {n} Stimmen abgegeben",
     "confirmTitle": "Als Club-Buch bestätigen",
     "confirmBlurb": "Das beendet die Abstimmung und ersetzt das aktuelle Club-Buch für alle im Club.",
     "blurbAdmin": "Jede Person hat eine Stimme und kann sie jederzeit ändern. Wenn ihr soweit seid, bestätige den Gewinnertitel: Er ersetzt das Club-Buch für alle.",
@@ -607,7 +618,8 @@
     "reasonShelves": "In {n} Regalen: {names}",
     "reasonWants": "{name} will es lesen",
     "reasonLikePicks": "Wie frühere Club-Bücher: {subjects}",
-    "reasonRating": "Open-Library-Bewertung {rating}"
+    "reasonRating": "Open-Library-Bewertung {rating}",
+    "chooseWinner": "Welches Buch gewinnt?"
   },
   "meeting": {
     "dateTime": "Datum und Uhrzeit des Treffens",

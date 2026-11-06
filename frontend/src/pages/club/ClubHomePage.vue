@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../../api/client";
 import Avatar from "../../components/Avatar.vue";
@@ -7,6 +7,8 @@ import BookCover from "../../components/BookCover.vue";
 import BookDiary from "../../components/BookDiary.vue";
 import MeetingSheet from "../../components/MeetingSheet.vue";
 import MilestoneList from "../../components/MilestoneList.vue";
+import ProgressEditor from "../../components/ProgressEditor.vue";
+import { whenIdle } from "../../whenIdle";
 import { bookPath, relativeDay, starLabel, statusLabel, statusShort } from "../../constants";
 import { formatClubDate } from "../../i18n/dates";
 import { tp } from "../../i18n";
@@ -35,18 +37,10 @@ const loaded = ref(false);
 const editingMeeting = ref(false);
 const busy = ref(false);
 const diary = ref<InstanceType<typeof BookDiary> | null>(null);
-const progressDraft = ref(0);
 
 // My own row among the readers carries my progress for the club pick.
 const me = computed(
   () => pick.value?.readers.find((row) => row.username === session.user?.username) ?? null,
-);
-watch(
-  () => me.value?.progress,
-  (progress) => {
-    progressDraft.value = progress ?? 0;
-  },
-  { immediate: true },
 );
 
 const readers = computed(() =>
@@ -119,18 +113,32 @@ async function startReading() {
   }
 }
 
-async function saveProgress() {
+// Only the newest progress save can be undone (an older toast's "before"
+// would undo the newer save too).
+let undoToast = 0;
+
+async function saveProgress(value: number, undo = true) {
+  // An Undo waits for a save still under way instead of being dropped.
+  if (!undo) await whenIdle(busy);
   const current = pick.value;
   if (!current?.shelf_id || busy.value) return;
+  if (!undo && current.on_shelf !== "currently_reading") return;
+  const before = me.value?.progress ?? 0;
   busy.value = true;
   try {
-    const item = await api.patchShelf(current.shelf_id, { progress: progressDraft.value });
+    const item = await api.patchShelf(current.shelf_id, { progress: value });
     if (me.value) me.value.progress = item.progress;
-    toast.show(t("book.progressSaved", { n: progressDraft.value }));
+    if (undoToast) toast.dismiss(undoToast);
+    undoToast = 0;
+    if (undo) {
+      undoToast = toast.show(t("book.progressSaved", { n: value }), {
+        label: t("common.undo"),
+        run: () => saveProgress(before, false),
+      });
+    } else toast.show(t("progress.undone"));
     // Spoiler shields in the discussion depend on how far I am.
     void diary.value?.reload();
   } catch (err) {
-    progressDraft.value = me.value?.progress ?? 0;
     toast.show(err instanceof ApiError ? err.message : t("book.saveFailed"));
   } finally {
     busy.value = false;
@@ -207,19 +215,13 @@ onMounted(load);
           <p v-if="pick.note" class="note">{{ pick.note }}</p>
 
           <div v-if="pick.on_shelf === 'currently_reading' && pick.shelf_id" class="hero-progress">
-            <label class="progress-label" for="club-progress">
-              <span>{{ t("home.yourProgress") }}</span>
-              <strong class="nums">{{ progressDraft }}%</strong>
-            </label>
-            <input
-              id="club-progress"
-              v-model.number="progressDraft"
-              type="range"
-              min="0"
-              max="100"
-              step="5"
-              :disabled="busy"
-              @change="saveProgress"
+            <ProgressEditor
+              :value="me?.progress ?? 0"
+              :pages="pick.book.pages"
+              :label="t('home.yourProgress')"
+              :book-title="pick.book.title"
+              :busy="busy"
+              @save="saveProgress"
             />
           </div>
 
@@ -426,25 +428,8 @@ onMounted(load);
 }
 
 .hero-progress {
-  display: grid;
-  gap: var(--space-1);
-  margin-top: var(--space-3);
+  margin-top: var(--space-2);
   max-width: 420px;
-}
-
-.progress-label {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
-  font-size: var(--text-sm);
-  font-weight: 600;
-}
-
-.hero-progress input[type="range"] {
-  width: 100%;
-  min-height: var(--tap);
-  accent-color: var(--accent);
 }
 
 .next-up-empty {

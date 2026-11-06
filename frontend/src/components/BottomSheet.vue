@@ -59,6 +59,14 @@ let velocity = 0;
 let dragging = false;
 let fromBody = false;
 let offset = 0;
+// Once something was typed or chosen in the sheet, a drag no longer closes
+// it: a swipe made in passing would throw the draft away. The sheet gives a
+// little and springs back; the close button is the deliberate way out.
+let edited = false;
+
+function onEdit() {
+  edited = true;
+}
 
 function setOffset(y: number) {
   offset = Math.max(0, y);
@@ -84,14 +92,15 @@ function move(y: number): boolean {
   if (!dragging) {
     // In the body a drag only starts downward from the top; anything else
     // is the body's own scroll.
-    if (!fromBody || dy < 8 || (panel.value?.scrollTop ?? 0) > 0) return false;
+    if (!fromBody || edited || dy < 8 || (panel.value?.scrollTop ?? 0) > 0) return false;
     dragging = true;
     dragStartY = y;
   }
   velocity = (y - dragLastY) / Math.max(1, now - dragLastT);
   dragLastY = y;
   dragLastT = now;
-  setOffset(y - dragStartY);
+  const pulled = y - dragStartY;
+  setOffset(edited ? Math.min(48, pulled * 0.25) : pulled);
   return true;
 }
 
@@ -101,7 +110,7 @@ async function end() {
   const height = panel.value?.offsetHeight ?? 0;
   // A flick counts only if the finger was still moving when it let go.
   const flick = velocity > 0.6 && offset > 40 && performance.now() - dragLastT < 100;
-  if (offset > Math.min(160, height / 3) || flick) {
+  if (!edited && (offset > Math.min(160, height / 3) || flick)) {
     emit("close");
     // A parent may refuse to close (it is still saving); then come back up.
     await nextTick();
@@ -127,7 +136,10 @@ function onGripMove(event: PointerEvent) {
 }
 
 function onTouchStart(event: TouchEvent) {
-  if (event.touches.length !== 1 || (event.target as HTMLElement).closest(".sheet-grip")) return;
+  // A range input's thumb moves sideways under the finger; a slightly
+  // downward drag on it must not pull the sheet away with the draft.
+  const target = event.target as HTMLElement;
+  if (event.touches.length !== 1 || target.closest(".sheet-grip, input[type='range']")) return;
   begin(event.touches[0].clientY, true);
 }
 
@@ -221,6 +233,8 @@ onUnmounted(() => {
       aria-modal="true"
       :aria-label="title"
       tabindex="-1"
+      @input="onEdit"
+      @change="onEdit"
       @touchstart.passive="onTouchStart"
       @touchend="onTouchEnd"
       @touchcancel="onTouchEnd"

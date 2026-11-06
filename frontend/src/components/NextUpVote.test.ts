@@ -1,7 +1,7 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { clubOut, clubPick, nomination, vote } from "../test/fixtures";
+import { clubOut, clubPick, nomination, user, vote } from "../test/fixtures";
 
 const api = { vote: vi.fn(), castVote: vi.fn(), applyVote: vi.fn(), setVoteDeadline: vi.fn() };
 
@@ -12,6 +12,7 @@ vi.mock("../api/client", () => ({
 
 import { i18n } from "../i18n";
 import { useClubs } from "../stores/clubs";
+import { useSession } from "../stores/session";
 import NextUpVote from "./NextUpVote.vue";
 
 const OPEN = vote({
@@ -42,6 +43,9 @@ describe("NextUpVote", () => {
   it("lets every member vote in this club, and only admins confirm or set a deadline", async () => {
     const member = await mountVote(false);
     expect(api.vote).toHaveBeenCalledWith("readers-ab12");
+    // A list, not the empty state under it, and no confirm for a member.
+    expect(member.find(".empty").exists()).toBe(false);
+    expect(member.find(".confirm-winner").exists()).toBe(false);
     expect(member.get(".vote-status").text()).toContain("2 of 3 voted");
     expect(member.get(".vote-status").text()).toContain("max");
     expect(member.text()).not.toContain("Confirm winner");
@@ -60,7 +64,9 @@ describe("NextUpVote", () => {
     const wrapper = await mountVote(true);
     useClubs().current = clubOut({ current_pick: null });
     api.applyVote.mockResolvedValue({ pick: clubPick({ id: 9, meeting_at: "2026-12-01T18:00:00Z" }), vote: vote() });
-    await wrapper.findAll(".vote-actions .text-btn")[0]!.trigger("click");
+    // One confirm for the whole list: it asks which book, then when to meet.
+    await wrapper.get(".confirm-winner").trigger("click");
+    await wrapper.findAll(".sheet .winner-choice")[0]!.trigger("click");
     await wrapper.get(".sheet input[type=datetime-local]").setValue("2026-12-01T19:00");
     await wrapper.get(".sheet .btn-primary").trigger("click");
     await flushPromises();
@@ -68,6 +74,39 @@ describe("NextUpVote", () => {
     expect(wrapper.emitted("applied")).toHaveLength(1);
     // The club's other pages (the discussion) see the new pick without asking again.
     expect(useClubs().current?.current_pick).toMatchObject({ id: 9, meeting_at: "2026-12-01T18:00:00Z" });
+  });
+
+  it("moves the ballot at once and takes it back when the server refuses", async () => {
+    const wrapper = await mountVote(false);
+    useSession().user = user({ username: "max" });
+    let refuse: (err: unknown) => void = () => {};
+    api.castVote.mockReturnValue(new Promise((_resolve, reject) => (refuse = reject)));
+    await wrapper.findAll(".vote-actions .btn")[1]!.trigger("click");
+    // Before the server answers: the count, the pressed state and the turnout.
+    const second = wrapper.findAll(".vote-row")[1]!;
+    const count = (row: typeof second) => row.get(".tally-count:not(.count-leave-active)").text();
+    expect(count(second)).toBe("1");
+    // The book with the most votes still leads, as the server would say.
+    expect(wrapper.findAll(".vote-row")[0]!.classes()).toContain("leading");
+    expect(second.get(".vote-btn").attributes("aria-pressed")).toBe("true");
+    expect(wrapper.get(".vote-status").text()).toContain("3 of 3 voted");
+    refuse(new Error("offline"));
+    await flushPromises();
+    expect(count(wrapper.findAll(".vote-row")[1]!)).toBe("0");
+    expect(wrapper.get(".vote-status").text()).toContain("2 of 3 voted");
+  });
+
+  it("shows only the skeleton while the vote loads", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    api.vote.mockReturnValue(new Promise(() => {}));
+    const wrapper = mount(NextUpVote, {
+      props: { slug: "readers-ab12", canManage: true },
+      global: { plugins: [pinia, i18n], stubs: { BookCover: true } },
+    });
+    await flushPromises();
+    expect(wrapper.find(".skeleton").exists()).toBe(true);
+    expect(wrapper.find(".empty").exists()).toBe(false);
   });
 
   it("sets the deadline in the club's zone", async () => {

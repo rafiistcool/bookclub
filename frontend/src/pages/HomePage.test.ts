@@ -22,6 +22,7 @@ vi.mock("../api/client", () => ({
 import { i18n } from "../i18n";
 import { useFriends } from "../stores/friends";
 import { useSession } from "../stores/session";
+import { useToast } from "../stores/toast";
 import HomePage from "./HomePage.vue";
 
 const SUMMARY: ClubSummary = { slug: "readers-ab12", name: "Readers", role: "member", timezone: "Europe/Berlin", member_count: 3 };
@@ -136,13 +137,27 @@ describe("HomePage", () => {
     expect(Object.keys(api)).not.toContain("friends");
   });
 
-  it("saves progress from the reading list", async () => {
+  it("saves progress from the reading list only on Save, and puts it back with Undo", async () => {
     const wrapper = await mountHome([]);
-    api.patchShelf.mockResolvedValue(shelfItem({ id: 1, status: "currently_reading", progress: 55 }));
-    const slider = wrapper.get("input[type=range]");
+    // No slider on the page itself: a stray touch used to save and post to the club.
+    expect(wrapper.find("input[type=range]").exists()).toBe(false);
+    await wrapper.get(".progress-trigger").trigger("click");
+    const slider = wrapper.get(".sheet input[type=range]");
     await slider.setValue("55");
-    await slider.trigger("change");
+    expect(api.patchShelf).not.toHaveBeenCalled();
+    api.patchShelf.mockResolvedValue(shelfItem({ id: 1, status: "currently_reading", progress: 55 }));
+    await wrapper.get(".sheet .btn-primary").trigger("click");
     await flushPromises();
     expect(api.patchShelf).toHaveBeenCalledWith(1, { progress: 55 });
+    expect(wrapper.get(".progress-trigger").text()).toContain("55%");
+
+    const toast = useToast();
+    const saved = toast.items.find((row) => row.message === "Progress: 55%");
+    expect(saved?.action?.label).toBe("Undo");
+    api.patchShelf.mockResolvedValue(shelfItem({ id: 1, status: "currently_reading", progress: 30 }));
+    await toast.run(saved!.id);
+    await flushPromises();
+    expect(api.patchShelf).toHaveBeenLastCalledWith(1, { progress: 30 });
+    expect(wrapper.get(".progress-trigger").text()).toContain("30%");
   });
 });

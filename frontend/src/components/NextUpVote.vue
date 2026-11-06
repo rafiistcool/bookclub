@@ -7,6 +7,7 @@ import { formatClubDate } from "../i18n/dates";
 import { tp } from "../i18n";
 import { isClubGone, useClubs } from "../stores/clubs";
 import { useLocale } from "../stores/locale";
+import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import type { NextUpVote as NextUpVoteState, VoteNomination } from "../types";
 import BookCover from "./BookCover.vue";
@@ -25,24 +26,26 @@ const { t } = useI18n();
 const locale = useLocale();
 const clubs = useClubs();
 const toast = useToast();
+const session = useSession();
 
 const vote = ref<NextUpVoteState | null>(null);
 const error = ref("");
 const loaded = ref(false);
 const pendingId = ref<number | null>(null);
 const confirming = ref<VoteNomination | null>(null);
+const choosing = ref(false);
 const editingDeadline = ref(false);
 const deadlineDraft = ref("");
 
-const nominations = computed(() =>
-  [...(vote.value?.nominations ?? [])].sort(
-    (a, b) => b.votes - a.votes || a.book.title.localeCompare(b.book.title),
-  ),
-);
+// The server's order (votes, then the earlier nomination) and its leader,
+// so the row marked as leading is the book the deadline would make the pick.
+const nominations = computed(() => vote.value?.nominations ?? []);
 
-const totalVotes = computed(() =>
-  nominations.value.reduce((sum, row) => sum + row.votes, 0),
-);
+function share(row: VoteNomination): number {
+  const members = Math.max(1, vote.value?.member_count ?? 1);
+  return Math.min(1, row.votes / members);
+}
+
 
 const closes = computed(() =>
   vote.value?.closes_at
@@ -67,15 +70,49 @@ async function load() {
   }
 }
 
+/** The ballot as it will be once the server agrees, so the bars move under the finger. */
+function withBallot(state: NextUpVoteState, id: number): NextUpVoteState {
+  const me = session.user?.username ?? "";
+  const nominations = state.nominations
+    .map((row) => {
+      if (row.id === id && !row.mine) return { ...row, mine: true, votes: row.votes + 1, voters: [...row.voters, me].sort() };
+      if (row.id !== id && row.mine) return { ...row, mine: false, votes: row.votes - 1, voters: row.voters.filter((name) => name !== me) };
+      return row;
+    })
+    .sort((a, b) => b.votes - a.votes || a.id - b.id);
+  const first = state.my_vote_id == null;
+  // Like the server: the leader needs a vote, and a tie stays with the
+  // earlier nomination, which the sort puts first.
+  const top = nominations[0];
+  return {
+    ...state,
+    nominations,
+    leader_id: top && top.votes > 0 ? top.id : null,
+    my_vote_id: id,
+    voted_count: state.voted_count + (first ? 1 : 0),
+    not_voted: state.not_voted.filter((name) => name !== me),
+  };
+}
+
 async function cast(row: VoteNomination) {
+  const before = vote.value;
+  if (!before || row.mine) return;
   pendingId.value = row.id;
+  vote.value = withBallot(before, row.id);
+  if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") navigator.vibrate(10);
   try {
     vote.value = await api.castVote(props.slug, row.id);
   } catch (err) {
+    vote.value = before;
     fail(err, t("vote.saveFailed"));
   } finally {
     pendingId.value = null;
   }
+}
+
+function choose(row: VoteNomination) {
+  choosing.value = false;
+  confirming.value = row;
 }
 
 async function confirm(meetingAt: string | null) {
@@ -141,12 +178,13 @@ defineExpose({ load });
     <p v-if="error" class="error">{{ error }}</p>
     <div v-else-if="!loaded" class="skeleton skeleton-block" aria-hidden="true" />
 
-    <ol v-else-if="nominations.length" class="vote-list">
+    <template v-else-if="nominations.length">
+    <TransitionGroup tag="ol" name="vote" class="vote-list">
       <li
-        v-for="(row, index) in nominations"
+        v-for="row in nominations"
         :key="row.id"
         class="vote-row"
-        :class="{ leading: index === 0 && row.votes > 0 }"
+        :class="{ leading: row.id === vote?.leader_id, mine: row.mine }"
       >
         <RouterLink class="vote-book" :to="bookPath(row.book)">
           <BookCover :book="row.book" size="sm" />
@@ -160,35 +198,48 @@ defineExpose({ load });
         </RouterLink>
 
         <div class="vote-tally">
-          <span class="tally-count nums">{{ row.votes }}</span>
-          <span class="finer subtle">{{ tp("vote.voteWord", row.votes) }}</span>
-          <span v-if="row.voters.length" class="finer subtle clamp-2">
-            {{ row.voters.join(", ") }}
+          <span class="tally-bar" aria-hidden="true">
+            <span class="tally-fill" :style="{ transform: `scaleX(${share(row)})` }" />
+          </span>
+          <span class="tally-line">
+            <span class="tally-number">
+              <Transition name="count">
+                <span :key="row.votes" class="tally-count nums">{{ row.votes }}</span>
+              </Transition>
+            </span>
+            <span class="finer subtle">{{ tp("vote.voteWord", row.votes) }}</span>
+            <span v-if="row.voters.length" class="finer subtle tally-voters" :title="row.voters.join(', ')">{{ row.voters.join(", ") }}</span>
           </span>
         </div>
 
         <div class="vote-actions">
           <button
-            class="btn btn-sm"
+            class="btn btn-sm vote-btn"
             :class="row.mine ? 'btn-primary' : 'btn-ghost'"
             type="button"
-            :disabled="pendingId === row.id"
+            :aria-pressed="row.mine"
+            :disabled="pendingId !== null"
             @click="cast(row)"
           >
+            <svg v-if="row.mine" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M5 12.5 10 17l9-10" />
+            </svg>
             {{ row.mine ? t("vote.yourVote") : t("vote.vote") }}
-          </button>
-          <button
-            v-if="canManage"
-            class="text-btn"
-            type="button"
-            :disabled="pendingId === row.id"
-            @click="confirming = row"
-          >
-            {{ t("vote.confirmWinner") }}
           </button>
         </div>
       </li>
-    </ol>
+    </TransitionGroup>
+
+    <button
+      v-if="canManage"
+      class="btn btn-ghost btn-block confirm-winner"
+      type="button"
+      :disabled="pendingId !== null"
+      @click="choosing = true"
+    >
+      {{ t("vote.confirmWinner") }}
+    </button>
+    </template>
 
     <div v-else class="empty">
       <h3>{{ t("vote.noneTitle") }}</h3>
@@ -200,9 +251,24 @@ defineExpose({ load });
       </div>
     </div>
 
-    <p v-if="nominations.length" class="finer subtle vote-total nums">
-      {{ tp("vote.cast", totalVotes) }}
-    </p>
+
+    <BottomSheet v-if="choosing" :title="t('vote.chooseWinner')" @close="choosing = false">
+      <p class="fine subtle choose-blurb">{{ t("vote.confirmBlurb") }}</p>
+      <div class="stack">
+        <button
+          v-for="row in nominations"
+          :key="row.id"
+          class="winner-choice"
+          :class="{ leading: row.id === vote?.leader_id }"
+          type="button"
+          @click="choose(row)"
+        >
+          <BookCover :book="row.book" size="xs" />
+          <span class="choice-title">{{ row.book.title }}</span>
+          <span class="choice-votes nums">{{ row.votes }}</span>
+        </button>
+      </div>
+    </BottomSheet>
 
     <MeetingSheet
       v-if="confirming"
@@ -276,19 +342,32 @@ defineExpose({ load });
 .vote-row {
   display: grid;
   grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "book book"
+    "tally action";
   gap: var(--space-3);
-  align-items: start;
+  align-items: center;
   padding: var(--space-3);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
+  transition:
+    border-color var(--dur-base) var(--ease),
+    box-shadow var(--dur-base) var(--ease);
 }
 
 .vote-row.leading {
   border-color: var(--accent-line);
+  box-shadow: var(--elev-panel);
+}
+
+/* A new leader climbs past the others instead of the list jumping. */
+.vote-move {
+  transition: transform var(--dur-slow) var(--ease-out);
 }
 
 .vote-book {
+  grid-area: book;
   display: flex;
   gap: var(--space-3);
   min-width: 0;
@@ -310,48 +389,149 @@ defineExpose({ load });
 }
 
 .vote-tally {
-  grid-column: 1;
+  grid-area: tally;
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/* The share of the club behind a book: members, not ballots, so an empty
+   bar still says how many are missing. */
+.tally-bar {
+  position: relative;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.tally-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--text-subtle);
+  transform-origin: left center;
+  transition: transform 600ms var(--ease-out);
+}
+
+.vote-row.leading .tally-fill,
+.vote-row.mine .tally-fill {
+  background: var(--accent);
+}
+
+.tally-line {
   display: flex;
-  align-items: baseline;
   flex-wrap: wrap;
+  align-items: baseline;
   gap: var(--space-1) var(--space-2);
+  min-width: 0;
 }
 
 .tally-count {
+  display: inline-block;
   font-family: var(--serif);
   font-size: var(--text-xl);
   font-weight: 700;
+  line-height: 1;
+}
+
+.tally-voters {
+  flex-basis: 100%;
+  min-width: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+/* The count rolls: the old number lifts away while the new one rises in
+   under it. */
+.tally-number {
+  position: relative;
+  display: inline-block;
+}
+
+.count-leave-active {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.count-enter-active,
+.count-leave-active {
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    opacity var(--dur-fast) var(--ease);
+}
+
+.count-enter-from {
+  opacity: 0;
+  transform: translateY(50%);
+}
+
+.count-leave-to {
+  opacity: 0;
+  transform: translateY(-50%);
 }
 
 .vote-actions {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  display: grid;
-  justify-items: end;
-  align-content: start;
-  gap: var(--space-1);
+  grid-area: action;
 }
 
-.vote-total {
-  margin-top: var(--space-3);
+.vote-btn {
+  min-width: 7.5rem;
+}
+
+.confirm-winner {
+  margin-top: var(--space-4);
+}
+
+.choose-blurb {
+  margin-bottom: var(--space-4);
+}
+
+.winner-choice {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 56px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: inherit;
+  text-align: left;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.winner-choice.leading {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.winner-choice:active {
+  transform: scale(var(--press-scale));
+  transition-duration: var(--dur-press);
+}
+
+.choice-title {
+  font-family: var(--serif);
+  font-weight: 600;
+  min-width: 0;
+}
+
+.choice-votes {
+  font-family: var(--serif);
+  font-size: var(--text-lg);
+  font-weight: 700;
 }
 
 @media (min-width: 720px) {
   .vote-row {
-    grid-template-columns: 1fr auto auto;
-    align-items: center;
-  }
-
-  .vote-tally {
-    grid-column: 2;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 0;
-  }
-
-  .vote-actions {
-    grid-column: 3;
-    grid-row: 1;
+    grid-template-columns: minmax(0, 1fr) 200px auto;
+    grid-template-areas: "book tally action";
   }
 }
 </style>
