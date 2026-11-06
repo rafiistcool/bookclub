@@ -1628,5 +1628,31 @@
     "accepting": "Wird gespeichert…",
     "accepted": "Danke! Du hast die Nutzungsbedingungen akzeptiert.",
     "failed": "Deine Antwort konnte nicht gespeichert werden"
+  },
+  "coverScan": {
+    "title": "Cover begradigen",
+    "loading": "Foto wird geladen …",
+    "found": "Ecken erkannt",
+    "adjust": "Zieh die Ecken an den Rand des Covers",
+    "keys": "Mit den Pfeiltasten verschieben, mit Umschalt schneller",
+    "whole": "Ganzes Bild",
+    "apply": "Übernehmen",
+    "applying": "Wird begradigt …",
+    "failed": "Das Begradigen hat nicht geklappt",
+    "corner": {
+      "tl": "Ecke oben links",
+      "tr": "Ecke oben rechts",
+      "br": "Ecke unten rechts",
+      "bl": "Ecke unten links"
+    },
+    "rotate": "Im Uhrzeigersinn drehen",
+    "top": "oben",
+    "turned": "Oben ist jetzt die {side} Kante",
+    "side": {
+      "top": "obere",
+      "right": "rechte",
+      "bottom": "untere",
+      "left": "linke"
+    }
   }
 }

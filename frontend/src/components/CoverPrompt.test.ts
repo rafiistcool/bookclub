@@ -4,6 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { bookDetail, bookOut } from "../test/fixtures";
 import type { BookDetail } from "../types";
 
+// No scanner is mounted here: the cover scan hands each photo back as it is.
+vi.mock("../stores/coverScan", () => import("../test/coverScan"));
+
 const uploadCover = vi.fn();
 
 vi.mock("../api/client", () => ({

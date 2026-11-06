@@ -2,6 +2,7 @@
 import { api, ApiError } from "../api/client";
 import type { BookOut } from "../api/generated";
 import { i18n } from "../i18n";
+import { useCoverScan } from "../stores/coverScan";
 import { useToast } from "../stores/toast";
 
 const MAX_BYTES = 50 * 1024 * 1024;
@@ -14,14 +15,17 @@ export interface CoverTarget {
 }
 
 /**
- * Upload a chosen picture and say how it went in a toast. Resolves to the
- * book when the picture is its cover now, and to null when it waits for an
- * admin, is too large, or failed. The book page calls it too, for a file
- * chosen in a sheet that closed as soon as the file was picked.
+ * Straighten a chosen picture in the cover scanner, upload what the reader
+ * kept and say how it went in a toast. Resolves to the book when the picture
+ * is its cover now, and to null when the reader cancelled the scan, or it
+ * waits for an admin, is too large, or failed. The book page calls it too,
+ * for a file chosen in a sheet that closed as soon as the file was picked.
  */
-export async function sendCoverPhoto(target: CoverTarget, file: File): Promise<BookOut | null> {
+export async function sendCoverPhoto(target: CoverTarget, chosen: File): Promise<BookOut | null> {
   const t = i18n.global.t;
   const toast = useToast();
+  const file = await useCoverScan().request(chosen);
+  if (!file) return null;
   if (file.size > MAX_BYTES) {
     toast.show(t("errors.pictureTooLarge"));
     return null;

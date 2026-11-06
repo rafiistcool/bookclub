@@ -3,6 +3,9 @@ import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { bookOut } from "../test/fixtures";
 
+// No scanner is mounted here: the cover scan hands each photo back as it is.
+vi.mock("../stores/coverScan", () => import("../test/coverScan"));
+
 const uploadCover = vi.fn();
 const adminSetCover = vi.fn();
 
@@ -15,6 +18,7 @@ vi.mock("../api/client", () => ({
 }));
 
 import { useToast } from "../stores/toast";
+import { resetScan, scanAnswer, scanned } from "../test/coverScan";
 import CoverPhotoButton, { sendCoverPhoto } from "./CoverPhotoButton.vue";
 
 async function pick(wrapper: ReturnType<typeof mount>, file: File) {
@@ -29,6 +33,39 @@ describe("CoverPhotoButton", () => {
     setActivePinia(createPinia());
     uploadCover.mockReset();
     adminSetCover.mockReset();
+    resetScan();
+  });
+
+  it("uploads what the cover scan kept, and nothing when it was cancelled", async () => {
+    const book = bookOut({ id: 9, cover_url: "/media/flat/c", cover_thumb_url: "/media/flat/t", cover_public_id: "flat" });
+    uploadCover.mockResolvedValue({ book });
+    const photo = new File(["photo"], "copy.jpg", { type: "image/jpeg" });
+    const flat = new File(["flat"], "cover.jpg", { type: "image/jpeg" });
+    scanAnswer(() => flat);
+    const wrapper = mount(CoverPhotoButton, { props: { workId: 9, editionId: 3, hasCover: false } });
+    await pick(wrapper, photo);
+    expect(scanned).toEqual([photo]);
+    expect(uploadCover).toHaveBeenCalledWith(9, flat, 3);
+    expect(wrapper.emitted("covered")).toEqual([[book]]);
+
+    uploadCover.mockClear();
+    const toasts = useToast().items.length;
+    scanAnswer(() => null);
+    await pick(wrapper, photo);
+    expect(uploadCover).not.toHaveBeenCalled();
+    expect(useToast().items).toHaveLength(toasts);
+    expect(wrapper.emitted("covered")).toHaveLength(1);
+    expect(wrapper.text()).toBe("Add a photo of your copy");
+  });
+
+  it("checks the size of what the scan kept", async () => {
+    const huge = new File(["x"], "cover.jpg", { type: "image/jpeg" });
+    Object.defineProperty(huge, "size", { value: 51 * 1024 * 1024 });
+    scanAnswer(() => huge);
+    const wrapper = mount(CoverPhotoButton, { props: { workId: 9, editionId: null, hasCover: false } });
+    await pick(wrapper, new File(["x"], "copy.jpg", { type: "image/jpeg" }));
+    expect(uploadCover).not.toHaveBeenCalled();
+    expect(useToast().items.at(-1)?.message).toContain("50 MB");
   });
 
   it("sets the first cover at once, for the reader's edition", async () => {

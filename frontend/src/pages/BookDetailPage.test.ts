@@ -5,6 +5,9 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import { bookDetail, bookOut, edition, shelfItem, user } from "../test/fixtures";
 import type { BookDetail, ClubSummary } from "../types";
 
+// No scanner is mounted here: the cover scan hands each photo back as it is.
+vi.mock("../stores/coverScan", () => import("../test/coverScan"));
+
 const book = vi.fn();
 const addFavorite = vi.fn();
 const removeFavorite = vi.fn();

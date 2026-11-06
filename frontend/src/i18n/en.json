@@ -1628,5 +1628,31 @@
     "accepting": "Saving…",
     "accepted": "Thank you. You accepted the terms of use.",
     "failed": "Could not save your answer"
+  },
+  "coverScan": {
+    "title": "Straighten the cover",
+    "loading": "Loading the photo…",
+    "found": "Corners found",
+    "adjust": "Drag the corners to the edges of the cover",
+    "keys": "Move with the arrow keys, faster with Shift",
+    "whole": "Whole photo",
+    "apply": "Apply",
+    "applying": "Straightening…",
+    "failed": "Could not straighten the photo",
+    "corner": {
+      "tl": "Top-left corner",
+      "tr": "Top-right corner",
+      "br": "Bottom-right corner",
+      "bl": "Bottom-left corner"
+    },
+    "rotate": "Rotate clockwise",
+    "top": "top",
+    "turned": "The top of the cover is now the {side} edge",
+    "side": {
+      "top": "top",
+      "right": "right",
+      "bottom": "bottom",
+      "left": "left"
+    }
   }
 }
