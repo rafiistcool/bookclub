@@ -1,5 +1,5 @@
 //! Every English detail string the frontend translates still exists in the server
-//! (docs/phase1/conventions.md §17.6; the Rust port of backend/tests/test_api_error_copy.py).
+//! (docs/phase1/conventions.md §17.6; the Rust port of the Python app's tests/test_api_error_copy.py).
 
 use std::path::{Path, PathBuf};
 

@@ -2,146 +2,90 @@
 
 # Bookclub
 
-**A private book club for 2–5 people.** Invite-only shelves, one shared pick, and a spoiler-shielded diary — one container, one SQLite file.
+**An invite-only book club and reading tracker.** Shelves, clubs with a shared pick, a spoiler-shielded diary, and friends. One Rust server on Postgres serves the API and the Vue app.
 
-You host it. There is no public service. One named club per instance.
+Today it runs as a private instance on the homelab for one club: invite-only, with mail off and no legal texts. The hosted public service comes with the public launch. Until then the name stays "Bookclub".
 
 </div>
 
-- **Shelves** — Cover grids with a visible reading status on every book. Hold and drag to arrange books; tap a status to change it. Finished books are grouped by completion month, newest first, in both All and Finished views. Drag within a month to reorder, or into another month to correct the completion month. Empty months can be added as drop targets. Order and date changes sync across devices. Under the expanded book actions, enter a month/year or an exact date; month-only changes use the first day of that month in the club timezone.
-- **Club pick** — Home is the current book: meeting countdown, everyone’s progress, and a next-up vote.
-- **Diary** — Short notes at a reading position (“at 45%”, “Finished ★★★★☆”). Spoiler-shielded for members who are behind; one level of replies and emoji reactions.
-- **Discover** — Search by title, author, or ISBN ([Open Library](https://openlibrary.org), or [Google Books](https://developers.google.com/books) only when `GOOGLE_BOOKS_API_KEY` is set). Private search history follows your account across devices (last 20 terms, individually or fully deletable). Trending row, subject shelves, and **add your own** when the catalog misses.
-- **Looks** — Four palettes (Paper, Slate, Forest, Ink) in light / dark / system, per member. Optional profile photo; initials if you skip it. English or German, toggled in Settings.
-- **One box** — FastAPI + the Vue app in a single image. SQLite WAL. No Redis, no Postgres. amd64.
+- **Shelves** — Cover grids with a visible reading status on every book. Hold and drag to arrange books; tap a status to change it. Finished books are grouped by completion month, newest first, in both All and Finished views. Drag within a month to reorder, or into another month to correct the completion month. Empty months can be added as drop targets. Order and date changes sync across devices. Under the expanded book actions, enter a month/year or an exact date; month-only changes use the first day of that month in your time zone.
+- **Clubs** — Create up to 10 and join any number, with an owner, admins and members. Each club has a current pick with everyone's progress and milestones, a meeting with "Add to calendar", a next-up vote, discussions, TBR overlap and club stats.
+- **Diary** — Short notes at a reading position ("at 45%", "Finished ★★★★☆"). Spoiler-shielded for readers who are behind; one level of replies and emoji reactions. Your own diary, quotes and reading stats have their own pages, and a note can be "Only me".
+- **Friends** — Ask someone by their exact username; once they accept, you see each other's shelves, ratings, quotes and notes, as club mates do, and what they are reading. Club admins invite a friend into a club with a personal invite only that friend can use. Blocking is silent and ends the friendship; it does not reach into clubs you share.
+- **Discover** — Search by title, author, or ISBN in our own catalog, filled from [Open Library](https://openlibrary.org) and the German National Library (DNB). Private search history follows your account across devices (last 20 terms, individually or fully deletable). Trending, new German releases, subject shelves, and **add your own** when the catalog misses. **Scan a barcode** to find a book by its ISBN.
+- **Covers** — Every catalog and imported book gets a cover where one can be found:
+  - from Open Library, by title and author, or by a translation's original title from the DNB;
+  - from a reader's photo of their copy, which the book page asks for when a book on your shelf has none;
+  - on the private instance only, from the publisher via the DNB portal.
 
-<p align="center">
-  <img src="docs/discover.png" alt="Discover: search Open Library by title, author, or ISBN, with trending and subject shelves" width="900" />
-</p>
-<p align="center">
-  <img src="docs/home.png" alt="Home: current club pick, everyone’s progress, next-up vote, and diary" width="440" />
-  <img src="docs/shelf.png" alt="Shelf: Want to read, Reading, Finished, and Did not finish columns" width="440" />
-</p>
+  A book without a picture shows a cloth binding with its title and author stamped on it. Every picture is stored and served from our own origin. Instance admins review cover suggestions and the books still without a cover under **Admin → Covers**, and can set a cover directly on the book page.
+- **Account** — Email, **password change**, signed-in devices and a per-account time zone in Settings, plus the Goodreads import, "Export my data" and deleting the account.
+- **Looks** — Four palettes (Paper, Slate, Forest, Ink) in light / dark / system, per account. Optional profile photo; initials if you skip it. English or German, toggled in Settings.
+- **One image** — The Rust server (axum, sqlx) serves the API and the built Vue app; Postgres runs beside it. amd64.
 
 ---
 
-## Self-host
+## Running it
 
-Releases ship as `git.tillhome.de/rafiistcool/bookclub` (amd64). The registry needs a sign-in, so log in once with an account on that Forgejo instance. No clone needed:
-
-```bash
-docker login git.tillhome.de
-mkdir bookclub && cd bookclub
-curl -fsSLO https://raw.githubusercontent.com/rafiistcool/bookclub/main/docker-compose.yml
-curl -fsSL  https://raw.githubusercontent.com/rafiistcool/bookclub/main/.env.example -o .env
-# set BOOKCLUB_NAME
-# leave SECRET_KEY and BOOKCLUB_BOOTSTRAP_INVITE empty to generate them under ./data
-docker compose up -d
-docker compose logs -f bookclub
-```
-
-Open `http://<host>:8000`. Register with the first-run invite (printed once in the logs, and written to `data/.bootstrap_invite`), then mint more from **Settings → Invites**.
-
-`DEBUG=0` is the Compose default, so `/api/docs` stays closed. Update with `docker compose pull && docker compose up -d`. Pin `:0.10` or `:0.10.0` instead of `:latest` if you want upgrades on your schedule.
-
-Put your own reverse proxy (Caddy, nginx, Tailscale Serve, Cloudflare Tunnel) on the **same host** as the UI, forward `X-Forwarded-Proto`, and leave `BOOKCLUB_HTTPS=auto`. The Vue app calls relative `/api` — there is no split frontend/API origin.
-
-Proxy, LAN, NAS `PUID`/`PGID`, bare metal, backup, systemd, and release tags: **[SELFHOST.md](SELFHOST.md)**.
-
-Building this app from source works only from a release tag up to `v0.10.x` (contributors; turns on debug docs and invite `DEV-ONLY` — not for a shared host):
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
-```
-
-On this branch the root `Dockerfile` builds the image of the new Rust server instead (`docker build -t bookclub:local .`), which this Compose setup cannot run, so the overlay above no longer works here. That image runs with Postgres from [`deploy/hosted/`](deploy/hosted/README.md), and `v*` tags publish it as `git.tillhome.de/rafiistcool/bookclub-server` (the current release is `0.11.1`); `rafiistcool/bookclub` gets no new versions.
+- **The private instance** follows [`docs/phase3/private-move.md`](docs/phase3/private-move.md). Updates are applied by hand, each after a VM backup (§9). A forgotten password is reset on the host (§10).
+- **The image and the hosted stack** (compose with Postgres, Caddy, backups, updates, the legacy import) are in [`deploy/hosted/README.md`](deploy/hosted/README.md), the operator runbook.
+- **Releases:** a `vX.Y.Z` tag on Forgejo publishes `git.tillhome.de/rafiistcool/bookclub-server:X.Y.Z` and moves `X.Y` and `stable` when it is the highest release (there is no `latest`). The registry needs a sign-in. The old Python app is kept on the branch `legacy-python` (tag `legacy-python-final`); its image `rafiistcool/bookclub` gets no new versions.
 
 ---
 
 ## Develop
 
-> **In transition.** `frontend/` on this branch already speaks the API of the new Rust server in `server/`, which is not released yet (the cutover is #52): Vite proxies `/api` and `/media` to it on `127.0.0.1:8080`, and `npm run build` writes `frontend/dist/` for it. [CLAUDE.md](CLAUDE.md) lists its setup. The Python steps below run the released app's API and tests; the current frontend no longer works against it.
+Two processes: the Rust server on `127.0.0.1:8080` and Vite on `:5173`. Vite proxies `/api` and `/media` to the server, so the browser only talks to `localhost:5173`.
 
-Day-to-day work is **two processes**: FastAPI on `:8000` and Vite on `:5173`. Vite proxies `/api` to the backend, so the browser only talks to `localhost:5173`.
+Needs the stable Rust toolchain, Node **20+** and Docker (for Postgres). [CLAUDE.md](CLAUDE.md) has every command, including parallel worktrees and the agents VM.
 
-Needs Python **3.12+**, Node **20+**, and two terminals. On Homebrew macOS, `python3` may be older than 3.12 — use `python3.12` (or newer) if so.
-
-```bash
-cp .env.example .env
-# uncomment the local Vite block at the bottom (DEBUG=1, invite DEV-ONLY)
-```
-
-Leave `DEBUG=0` if you are using Docker Compose.
-
-**Backend** (leave this running):
+**Postgres and the schema** (once):
 
 ```bash
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate          # fish: source .venv/bin/activate.fish
-pip install -e ".[dev]"
-uvicorn app.main:app --reload --port 8000
+docker compose -f server/compose.yaml up -d --wait
+export DATABASE_URL=postgres://bookclub:bookclub@127.0.0.1:5432/bookclub
+cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --features rustls,postgres
+cd server && cargo sqlx migrate run
 ```
 
-[http://127.0.0.1:8000/api/health](http://127.0.0.1:8000/api/health) should return `{"ok":true}`. With `DEBUG=1`, docs are at [http://127.0.0.1:8000/api/docs](http://127.0.0.1:8000/api/docs).
+The `query!` macros check against the live schema at compile time, so `DATABASE_URL` must be set when you build.
+
+**Server** (leave this running):
+
+```bash
+cd server
+DEV_MODE=true cargo run
+```
+
+It applies the migrations at startup. [http://127.0.0.1:8080/api/health](http://127.0.0.1:8080/api/health) should return `{"status":"ok"}`.
 
 **Frontend** (second terminal):
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-Open **[http://localhost:5173](http://localhost:5173)** — not port 8000.
+Open **[http://localhost:5173](http://localhost:5173)**, not port 8080.
 
-**First account.** Create an account with invite `DEV-ONLY` (empty database + `DEBUG=1` only). Username: `a–z`, `0–9`, `_`, 2–32 characters. Password: 8+ characters. After that, `DEV-ONLY` is spent — mint more from **Settings → Invites**, or `cd backend && .venv/bin/python -m app.create_invite`.
+**First account.** Sign-up needs an invite. `cd server && DEV_MODE=true cargo run -- beta-invite` prints a sign-up code and its join link; `DEV_MODE=true cargo run -- make-admin <username>` makes that account an instance admin, who can mint more under **Admin → Invites**. Username: `a–z`, `0–9`, `_`, 2–32 characters. Password: 8+ characters. `cargo run -- --help` lists the other commands.
 
 | You change | Where it shows up |
 |---|---|
 | Vue / CSS / TS | Instantly in Vite (`:5173`) |
-| Python | Uvicorn `--reload` restarts the API |
-| `.env` | Restart uvicorn (settings load at process start) |
+| Rust | Restart `cargo run` |
+| A `query!` macro | Run `cargo sqlx prepare -- --all-targets` in `server/` and commit `server/.sqlx/` |
+| A DTO | Run `npm run gen:api` in `frontend/` and commit `src/api/generated.ts` |
 
-**Tests.** Backend, venv active: `pytest`. Frontend: `npm run typecheck`, `npm test`, `npm run build`. CI runs all of those on every push and pull request.
+**One process.** `cd frontend && npm run build` writes `frontend/dist/`; start the server with `STATIC_DIR=../frontend/dist` and open [http://127.0.0.1:8080](http://127.0.0.1:8080).
 
-### Local demo
-
-An isolated demo includes three members, eight fictional books, shelves in all
-four stages, a current and past club pick, diary entries with spoilers and
-replies, reading checkpoints, and a next-up vote. The demo uses `data/demo.db`;
-running the seed again preserves edits made while testing.
-
-Start the backend from the repository root:
+**Tests.** CI runs all of these on every push and pull request:
 
 ```bash
-cd backend
-.venv/bin/python -m app.seed_demo
-DEBUG=1 DATABASE_PATH="$PWD/../data/demo.db" BOOKCLUB_NAME="Demo-Buchclub" BOOKCLUB_TZ=Europe/Berlin BOOKCLUB_HTTPS=0 SECRET_KEY=local-demo-secret-for-bookclub GOOGLE_BOOKS_API_KEY= .venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+cd frontend && npm run typecheck && npm test && npm run build && npm run check:api
+cd server && cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked && cargo sqlx prepare --check -- --all-targets
 ```
-
-In a second terminal, from the repository root:
-
-```bash
-cd frontend
-npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
-```
-
-Open [http://127.0.0.1:5173](http://127.0.0.1:5173) and sign in as `demo` with
-password `DemoBuecher2026!`. The other demo members, `anna` and `max`, use the
-same password. The unused invite `DEMOTEST2026` can register an extra test
-member. These credentials and settings are for a local demo only. Vue changes
-update through Vite; Python changes reload the API.
-
-One-process run without Docker, from a release tag (build the Vue app, then serve API + UI from uvicorn; on this branch the build goes to `frontend/dist/` instead):
-
-```bash
-cd frontend && npm install && npm run build
-cd ../backend && source .venv/bin/activate
-uvicorn app.main:app --host 127.0.0.1 --port 8000
-```
-
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Bind `0.0.0.0` only if the LAN should reach it. For a machine you share, use the [self-host](#self-host) defaults (`DEBUG=0`, generated secrets, HTTPS in front).
 
 ---
 
@@ -149,31 +93,38 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Bind `0.0.0.0` only if the 
 
 ```mermaid
 flowchart LR
-  Browser -->|"same origin /api"| App["FastAPI + Vue"]
-  App --> DB[("SQLite WAL")]
-  App -.->|"OL when no Google key; legacy OL works"| OL[Open Library]
-  App -.->|"search + covers when key set"| GB[Google Books]
+  Browser -->|"same origin /api, /media"| Server["Rust server + Vue app"]
+  Server --> PG[("Postgres")]
+  Server --> Media[("media store")]
+  Server -.->|"search, covers"| OL[Open Library]
+  Server -.->|"ISBN lookup, harvest, original titles"| DNB[DNB]
 ```
 
-Production is one process: uvicorn serves the API and the built Vue app from `:8000`. Everything lives in **`data/bookclub.db`**. Catalog search needs outbound HTTPS. Open Library needs no key. Set optional `GOOGLE_BOOKS_API_KEY` to use Google Books for Discover search, trending, subject shelves, ISBN, and Goodreads — with **no Open Library fallback**. An empty Google page stays empty (add-your-own). Google 5xx / timeout / 429 return an error. Title and Popular map to Google relevance; New maps to newest. Trending is newest fiction on Google. Leave the key empty for the current Open Library catalog (self-hosters without a key). Only books someone adds are stored. A work already in the club database is served from SQLite (local-first). Unknown `/works/OL…` keys still import from Open Library on first open. Google Books imports use an ISBN key (`/works/ISBN…`) when the volume has one, otherwise `/works/GB{volumeId}`. Enabling the key later can create a second row for a book already stored as `/works/OL…`. Club-only books (`/works/BC…`) never call a catalog. Google covers come from `imageLinks`, stored on the book as `cover_image_url` and rendered as https URLs. Open Library `cover_id` still uses `covers.openlibrary.org`. Blank covers fall back to a monogram. A Google 429/403 cools down Google calls for two minutes.
+The catalog is our own, in Postgres: works with editions, served locally first. A lookup asks Open Library, and the DNB for German ISBNs that Open Library does not know; the DNB harvester adds new German releases. Books from the old app keep their links: `/book/OL…W`, and the legacy keys `BC…`, `ISBN…` and `GB…`, still open the right work. The browser loads nothing from another origin: covers and profile photos are stored by the server and served under `/media`.
 
-Any member can download `bookclub.db` from **Settings → Backup**, or run `python -m app.backup`. There is no restore-from-upload — replace the files (see [SELFHOST.md](SELFHOST.md)). Schema changes apply on boot.
-
-Invite-only, no email. Any signed-in member can mint invites. There is no password change in the app and no reset link. Treat unused codes like passwords.
+Sign-up needs an invite: a club admin's invite link (`/join/<code>`), or a sign-up invite from an instance admin (Admin → Invites, or `beta-invite`). Change your password under **Settings → Password**. On the private instance mail is off, so "Forgot password" sends nothing; see [Troubleshooting](#troubleshooting).
 
 | Path | What it is |
 |---|---|
-| `/` | Club pick, meeting, progress, that book’s diary, next-up vote, past picks |
-| `/discover` | Search + browse the catalog; add-your-own when it misses |
+| `/` | Your clubs, currently reading, favourites, and the feed |
+| `/discover` | Search and browse the catalog; add your own when it misses |
+| `/scan` | Scan a book's barcode (or type its ISBN), then shelve it, set your edition, or add the book when the catalog has none |
 | `/shelf` | Your cover grid, reading-status filters, and saved book order |
 | `/shelf/physical` | A personal bookshelf with draggable spines, shelf finishes, and saved placements |
-| `/club` | Members, TBR overlap, recent diary across all books, next-up vote |
-| `/club/:username` | A member’s shelf and ratings |
-| `/club/:username/shelf` | A member’s bookshelf, as they arranged it (view only) |
-| `/book/:workId` | Synopsis, club rating, shelf actions, full diary |
-| `/settings` | Theme, invites, Goodreads import, SQLite backup |
+| `/diary`, `/quotes`, `/stats` | Your diary, quotes and reading stats |
+| `/clubs`, `/clubs/new` | Your clubs; create one |
+| `/c/:slug` | A club: the pick, everyone's progress, next up, past picks |
+| `/c/:slug/discussions`, `vote`, `members`, `overlap`, `events`, `stats` | The club's other tabs |
+| `/club` | Goes to your last club |
+| `/u/:username`, `/u/:username/shelf`, `/u/:username/stats` | Another reader's shelf, bookshelf and stats, for friends and club mates |
+| `/book/:id` | Synopsis, ratings, editions, shelf actions, diary, cover prompt |
+| `/friends` | Friends, requests, club invitations, blocks |
+| `/join/:code` | An invite link |
+| `/settings` | Profile, email, password, devices, notifications, favourites, language, time zone, theme, Goodreads import, data export, delete account |
+| `/admin` | Instance admins only: Requests, Reports, Covers, Invites, Accounts |
+| `/imprint`, `/privacy`, `/terms` | The operator's legal texts |
 
-Old paths (`/library`, `/friends`, `/overlap`, `/invites`, `/pick`) still redirect.
+Old paths (`/library`, `/friends/:username`, `/club/:username`, `/club/:username/shelf`, `/overlap`, `/invites`, `/pick`, `/register`) still redirect.
 
 Choose **Bookshelf** in the view switch on the Shelf tab to arrange books across wooden
 shelves. On a phone, hold a spine briefly before dragging. Tap or keyboard-focus
@@ -187,58 +138,54 @@ and the shelf finish save to your account without changing reading statuses or
 completion dates. A failed save restores the previous arrangement.
 Add plants, vases, candles, picture frames, bookends, or a globe and drag them
 between the books, or switch on the string lights. Decorations have their own
-colour and position controls. Other members can look at your bookshelf from
-your shelf page; only you can change it. Remove a shelf board
+colour and position controls. Friends and club mates can look at your bookshelf
+(`/u/<name>/shelf`); only you can change it. Remove a shelf board
 using its bin button; all its books and decorations move to an adjacent shelf.
 At least one shelf remains, and Undo restores the last successful change.
 
 ```
-backend/           FastAPI, tests (the released app)
-frontend/          Vue 3 + Vite + Pinia
-server/            Rust server and Postgres schema that replace backend/ (not released yet)
-deploy/            Entrypoint, systemd unit, env example (this app); hosted/ runs the Rust server (deploy/hosted/README.md)
-data/              SQLite (gitignored except .gitkeep)
+frontend/              Vue 3 + Vite + Pinia; npm run build writes frontend/dist/
+server/                The Rust server, its Postgres migrations and tests
+deploy/hosted/         The image's compose stack, Caddy, backups and updates (its README is the runbook)
+deploy/cutover/        The legacy import's checks and the host facts of the move
+deploy/legacy-origin/  The kill switch for the old app's service worker
+docs/                  The plan, the phase designs and notes
 ```
-
-In a release, `npm run build` writes into `backend/app/static/` (gitignored), and uvicorn serves that folder in “run” mode. On this branch it writes `frontend/dist/` (gitignored) for the Rust server, which serves it as `STATIC_DIR`.
 
 ---
 
 ## Configure
 
-Compose and `.env` share the same keys. These are the ones that matter on first start:
+Every setting is in [`deploy/hosted/env.example`](deploy/hosted/env.example), with its default; `docs/phase1/conventions.md` §11 documents them. Outside `DEV_MODE` the server refuses to start without the ones production needs, and names the missing one. The private instance sets these:
 
-| Variable | First-run default | Meaning |
-|---|---|---|
-| `BOOKCLUB_NAME` | `Bookclub` | Club name in the UI, tab title, manifest, and Open Library User-Agent. |
-| `SECRET_KEY` | empty in Compose | Signs the session cookie. Empty + `DEBUG=0` writes `data/.secret_key`. Example / short values are refused when `DEBUG=0`. |
-| `BOOKCLUB_BOOTSTRAP_INVITE` | empty in Compose | First invite, only if the DB has none. Empty + `DEBUG=0` writes `data/.bootstrap_invite`. `DEV-ONLY` is refused when `DEBUG=0`. |
-| `DEBUG` | `0` in Compose | `1`: CORS for Vite, `/api/docs`. |
-| `BOOKCLUB_PUBLIC_URL` | empty | Public origin of this instance (`https://books.example.com`). Same-origin proxy only. |
-| `BOOKCLUB_HTTPS` | `auto` | `Secure` cookie only on HTTPS (including `X-Forwarded-Proto`). |
-| `BOOKCLUB_TZ` | `UTC` | IANA timezone for meeting labels. |
-| `GOOGLE_BOOKS_API_KEY` | empty | Optional. Google-only catalog (search, browse, ISBN, Goodreads, covers). Create an API key in Google Cloud Console and enable `books.googleapis.com`. Leave empty for Open Library only. |
-
-Theme accents, port, `PUID`/`PGID`, trusted proxies, and the rest: **[`.env.example`](.env.example)** and **[SELFHOST.md](SELFHOST.md)**.
+| Variable | Meaning |
+|---|---|
+| `BOOKCLUB_TAG` | The image version, pinned and raised by hand |
+| `PUBLIC_URL` | The origin the browser uses. The origin check allows only this one, so a wrong value gives 403 `Cross-site request refused` |
+| `TRUSTED_PROXIES` | The reverse proxy's address, whose `X-Forwarded-For` the rate limits trust |
+| `SIGNUP_MODE=invite` | Sign-up only with an invite |
+| `EMAIL_TRANSPORT=none` | Mail off: no mail leaves, and password resets go through `set-password` |
+| `DNB_HARVEST` | The DNB harvester for new German releases |
+| `DNB_PORTAL_COVERS` | Publisher covers from the DNB portal; private instance only, and `SIGNUP_MODE=open` refuses it |
 
 ---
 
 ## API
 
-Cookie session: `bookclub_session` (`credentials: include`). While `DEBUG=1`, the live catalog is at [`/api/docs`](http://127.0.0.1:8000/api/docs). `GET /api/health` is unauthenticated and pings SQLite. Shelf stages: `want_to_read`, `currently_reading`, `finished`, `did_not_finish`.
+Cookie session: `bookclub_session`, or `__Host-bookclub_session` when the cookie is `Secure` (`credentials: include`); apps can use bearer tokens (`/api/auth/tokens`). The OpenAPI document is at `GET /api/openapi.json`, or offline from `cargo run -- openapi`. `GET /api/health` is unauthenticated and answers `{"status":"ok"}`, or 503 when Postgres does not answer within 2 s. Shelf stages: `want_to_read`, `currently_reading`, `finished`, `did_not_finish`.
 
 ---
 
 ## Troubleshooting
 
-**`DEV-ONLY` is not valid** — someone already registered on this database, or you are on `DEBUG=0` (that code is refused). Mint a new invite (UI, `python -m app.create_invite`, or `data/.bootstrap_invite` on a fresh DB).
+**Forgot a password while mail is off** — "Forgot password" sends nothing, though it still says a link is on its way. The member asks the operator, who runs `docker compose exec -T app bookclub-server set-password <username>` on the host ([`private-move.md`](docs/phase3/private-move.md) §10). It prints a new password and ends every session of the account; the member changes it under **Settings → Password** the same day. After too many failed sign-ins the app still holds the account for up to 10 minutes.
 
-**Vite loads but login/search fails** — backend isn’t running on `:8000`. Start uvicorn first. Vite only proxies `/api`. If that port is already taken, stop the leftover process or point Vite’s `server.proxy` at the new one. On this branch Vite proxies `/api` and `/media` to the Rust server on `:8080` instead: start that (see [Develop](#develop)).
+**Vite loads but sign-in or search fails** — the Rust server isn't running on `127.0.0.1:8080`. Start it first (see [Develop](#develop)). Vite only proxies `/api` and `/media`.
 
-**`SECRET_KEY must be a long random string` / `BOOTSTRAP_INVITE cannot be DEV-ONLY`** — `DEBUG=0` refuses demo values. Paste a long random secret, or leave both empty so files are generated under `./data`.
+**403 `Cross-site request refused` after signing in** — `PUBLIC_URL` is not the origin in the browser's address bar. In `DEV_MODE` it defaults to `http://localhost:5173`; set it when you open the app under another host or port.
 
-**Logged in on HTTP, not on HTTPS** — the proxy is not forwarding `X-Forwarded-Proto`, or you set `BOOKCLUB_HTTPS=1` on plain HTTP. Leave `BOOKCLUB_HTTPS=auto`.
+**The server does not start outside `DEV_MODE`** — it names the missing or refused setting in its last log line; see "When it does not start" in [`deploy/hosted/README.md`](deploy/hosted/README.md).
 
-**Forgot every invite / lost a password** — mint from the server: `docker compose exec bookclub python -m app.create_invite`. There is no password reset. On a toy install, delete `data/bookclub.db*` and start again.
+**`query!` fails to compile** — `DATABASE_URL` is not set, or the database is behind the migrations: export it and run `cargo sqlx migrate run` in `server/`.
 
-Proxy, NAS, backup, Open Library outages, and upgrades: **[SELFHOST.md](SELFHOST.md)**.
+**`/scan` offers only typing the ISBN** — the camera needs a secure context: HTTPS, or `localhost`.

@@ -6,7 +6,7 @@ Writes, next to this file:
 - fresh.sql: a database made by the Python app (`app.seed_demo` with `DEMO_DB` overridden,
   then `init_db`), plus the extra rows docs/phase1/spec/platform.md §5.8 and
   docs/phase1/legacy-mapping.md §0 "Test fixtures" ask for.
-- migrated.sql: the hand-written LEGACY_SCHEMA of backend/tests/test_migrations.py, booted once
+- migrated.sql: the hand-written LEGACY_SCHEMA of the Python app's tests/test_migrations.py, booted once
   through `init_db` (columns added by ALTER TABLE, nullable take/dnf_reason, timestamps without
   fractions), plus a few rows.
 - legacy_schema.sql: LEGACY_SCHEMA as it is, never booted: a very old database whose
@@ -16,9 +16,8 @@ Every value is synthetic. Time is frozen, and the password hashes are one fixed 
 of KNOWN_PASSWORD, so the output only changes when this script or the Python app does. The dumps
 are `sqlite3.Connection.iterdump()` text, which the Rust tests load with `execute_batch`.
 
-Run it with the backend's virtualenv from the repository root:
-
-    backend/.venv/bin/python server/tests/fixtures/legacy/generate.py
+The Python app is no longer on main (CUT-R, #52): run this script inside a checkout of the
+`legacy-python` branch, with that checkout's virtualenv, as README.md ("Regenerating") describes.
 """
 
 from __future__ import annotations

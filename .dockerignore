@@ -1,6 +1,6 @@
 # Build context of the root Dockerfile (the production image). It needs only frontend/ and
 # server/, so everything else stays out: .git, .cargo (the untracked worktree settings),
-# backend/, docs/, deploy/ and data/.
+# docs/ and deploy/.
 *
 !frontend/
 !server/

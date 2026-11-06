@@ -1,0 +1,6 @@
+# Self-hosted runner labels for actionlint, passed with `-config-file`: actionlint looks for a
+# config only under .github/, which this repo no longer has. `docker-host` is the Forgejo runner
+# that hands job containers the Docker daemon (docs/phase2/notes/dep.md, "The runner").
+self-hosted-runner:
+  labels:
+    - docker-host
