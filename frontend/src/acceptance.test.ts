@@ -47,6 +47,15 @@ async function openApp(me: User, path: string) {
   return wrapper;
 }
 
+/** Opens the club sheet and follows its row to `href` (the RouterLink stub does not navigate). */
+async function switchTo(app: VueWrapper, href: string) {
+  if (!app.find(".sheet").exists()) await app.get(".club-name-btn").trigger("click");
+  const row = app.get(`.sheet .club-choice[href="${href}"]`);
+  await row.trigger("click");
+  await go(href);
+  expect(app.find(".club-switch").exists()).toBe(false);
+}
+
 async function go(path: string) {
   await router.push(path);
   await flushPromises();
@@ -141,6 +150,7 @@ describe("#48 acceptance", () => {
       "GET /api/activity": () => ({ items: [], has_more: false, timezone: "UTC" }),
       [`GET /api/clubs/${readers.slug}`]: () => clubOut({ ...readers }),
       [`GET /api/clubs/${owls.slug}`]: () => clubOut({ ...owls }),
+      [`GET /api/clubs/${readers.slug}/pick`]: () => ({ pick: null, timezone: readers.timezone }),
       [`GET /api/clubs/${readers.slug}/activity`]: feed,
       [`GET /api/clubs/${owls.slug}/activity`]: feed,
       [`GET /api/clubs/${owls.slug}/members`]: () => ({
@@ -150,21 +160,18 @@ describe("#48 acceptance", () => {
       [`GET /api/clubs/${owls.slug}/vote/suggestions`]: () => ({ items: [] }),
     });
 
-    // Home shows both clubs.
+    // Home shows the first club as the hero and the other as a chip.
     const app = await openApp(me, "/");
-    expect(app.findAll(".club-card").map((card) => card.attributes("href"))).toEqual([
-      `/c/${readers.slug}`,
-      `/c/${owls.slug}`,
-    ]);
+    expect(app.get(".hero-club").attributes("href")).toBe(`/c/${readers.slug}`);
+    expect(app.findAll(".hero-chip").map((chip) => chip.text())).toEqual([owls.name]);
 
     await go(`/c/${readers.slug}/events`);
     expect(app.get(".club-name").text()).toBe("Readers");
     expect(app.text()).toContain("Readers book");
     expect(localStorage.getItem(LAST_CLUB_KEY)).toBe(readers.slug);
 
-    // The switcher keeps the section and asks the other club.
-    await app.get(".club-switcher select").setValue(owls.slug);
-    await flushPromises();
+    // The club sheet keeps the section and asks the other club.
+    await switchTo(app, `/c/${owls.slug}/events`);
     expect(router.currentRoute.value.path).toBe(`/c/${owls.slug}/events`);
     expect(app.get(".club-name").text()).toBe("Night owls");
     expect(app.text()).toContain("Night owls book");
@@ -180,9 +187,9 @@ describe("#48 acceptance", () => {
     expect(server.requests.some((line) => line.includes(`/api/clubs/${owls.slug}/invites`))).toBe(false);
 
     await go(`/c/${owls.slug}/vote`);
-    expect(app.get(".club-switcher select").element).toHaveProperty("value", owls.slug);
-    await app.get(".club-switcher select").setValue(readers.slug);
-    await flushPromises();
+    await app.get(".club-name-btn").trigger("click");
+    expect(app.get(".club-choice[aria-current]").attributes("href")).toBe(`/c/${owls.slug}/vote`);
+    await switchTo(app, `/c/${readers.slug}/vote`);
     expect(router.currentRoute.value.path).toBe(`/c/${readers.slug}/vote`);
     expect(app.get(".club-name").text()).toBe("Readers");
     expect(server.unknown.filter((key) => key.includes("/api/friends"))).toEqual([]);

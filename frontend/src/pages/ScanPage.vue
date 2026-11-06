@@ -12,6 +12,8 @@ import BookCover from "../components/BookCover.vue";
 import CoverPhotoButton from "../components/CoverPhotoButton.vue";
 import { bookPath, STATUSES, statusLabel, statusShort, type Status } from "../constants";
 import { parseIsbn } from "../isbn";
+import { useClubs } from "../stores/clubs";
+import { isFinishTransition, useFinish } from "../stores/finish";
 import { useToast } from "../stores/toast";
 
 /**
@@ -37,6 +39,8 @@ const FIND_LIMIT = 10;
 const { t } = useI18n();
 const router = useRouter();
 const toast = useToast();
+const finish = useFinish();
+const clubs = useClubs();
 const findId = useId();
 
 const phase = ref<Phase>("scan");
@@ -198,20 +202,29 @@ async function addTo(status: Status) {
   const current = hit.value;
   if (!current || busy.value) return;
   busy.value = true;
+  // Where the finished moment gives focus back: the tapped button, noted before it is disabled.
+  const opener = document.activeElement;
   try {
     let item: ShelfItemOut;
+    /** The entry's status before this tap: none for a new entry. */
+    let previous: Status | null = null;
     try {
       item = await api.addToShelf({ work_id: current.work_id, edition_id: current.edition_id, status });
     } catch (err) {
       // Shelved meanwhile (another tab, the importer): that entry gets this edition and status.
       if (!(err instanceof ApiError && err.status === 409 && err.item)) throw err;
+      previous = err.item.status;
       item = await api.patchShelf(err.item.id, { edition_id: current.edition_id, status, position: 0 });
     }
     current.on_shelf = true;
     current.shelf_id = item.id;
     shelvedAs.value = item.status;
     editionIsYours.value = true;
-    toast.show(t("scan.added", { status: statusLabel(item.status) }));
+    // A book finished just now gets its moment (with the "2 of 4" line for a
+    // club's current pick); the card's line says where it is.
+    if (isFinishTransition(previous, item)) {
+      void finish.celebrate({ item, clubSlug: await clubs.pickClubFor(item.book.id), opener });
+    } else toast.show(t("scan.added", { status: statusLabel(item.status) }));
   } catch (err) {
     toast.show(err instanceof ApiError ? err.message : t("book.saveFailed"));
   } finally {

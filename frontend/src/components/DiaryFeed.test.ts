@@ -48,7 +48,7 @@ async function mountClub(items: DiaryFeedItem[], props: { club?: string; mine?: 
   return mountFeed(props);
 }
 
-async function mountFeed(props: { club?: string; mine?: boolean; pageSize?: number } = {}) {
+async function mountFeed(props: { club?: string; mine?: boolean; pageSize?: number; limit?: number; moreTo?: string } = {}) {
   const wrapper = mount(DiaryFeed, {
     props,
     global: {
@@ -221,5 +221,36 @@ describe("DiaryFeed (recently written)", () => {
       expect(editDiaryEntry).toHaveBeenLastCalledWith(10, { visibility: "audience" });
       expect(wrapper.find(".only-me-badge").exists()).toBe(false);
     });
+  });
+});
+
+describe("DiaryFeed preview (Home)", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    diaryFeed.mockReset();
+    useSession().user = user({ username: "ada" });
+  });
+
+  it("asks only the preview's rows and links to the whole feed instead of paging", async () => {
+    diaryFeed.mockResolvedValue({ items: [feedItem()], has_more: true, timezone: "UTC" });
+    const wrapper = await mountFeed({ limit: 4, moreTo: "/diary" });
+    expect(diaryFeed).toHaveBeenCalledWith(undefined, 4, undefined);
+    expect(wrapper.get(".feed-all").attributes("href")).toBe("/diary");
+    expect(wrapper.get(".feed-all").text()).toBe("See all");
+    expect(wrapper.find(".feed-load-more").exists()).toBe(false);
+  });
+
+  it("pages in place without a page to link to, and links nowhere when all is shown", async () => {
+    diaryFeed.mockResolvedValue({ items: [feedItem()], has_more: true, timezone: "UTC" });
+    let wrapper = await mountFeed({ limit: 4 });
+    expect(wrapper.find(".feed-all").exists()).toBe(false);
+    await wrapper.get(".feed-load-more").trigger("click");
+    await flushPromises();
+    expect(diaryFeed).toHaveBeenLastCalledWith(11, 4, undefined);
+
+    diaryFeed.mockResolvedValue({ items: [feedItem()], has_more: false, timezone: "UTC" });
+    wrapper = await mountFeed({ limit: 4, moreTo: "/diary" });
+    expect(wrapper.find(".feed-all").exists()).toBe(false);
+    expect(wrapper.find(".feed-load-more").exists()).toBe(false);
   });
 });

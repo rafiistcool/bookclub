@@ -196,3 +196,59 @@ describe("legal pages", () => {
     expect(await landing("/impressum", [READERS])).toBe("/imprint");
   });
 });
+
+describe("section links (#…)", () => {
+  beforeEach(() => {
+    me.mockReset();
+    vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    document.body.replaceChildren();
+    Object.defineProperty(window, "scrollY", { value: 0, configurable: true });
+  });
+
+  /** Where vue-router would scroll for a new visit to `hash` on the current page. */
+  function scroll(hash: string, fullPath = `${router.currentRoute.value.fullPath}${hash}`) {
+    return Promise.resolve(router.options.scrollBehavior!({ hash, fullPath } as never, router.currentRoute.value, null));
+  }
+
+  /** The answer, or "pending" when there is none within `ms`. */
+  function within<T>(answer: Promise<T>, ms: number) {
+    return Promise.race([answer, new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), ms))]);
+  }
+
+  it("brings a section in once it has stopped moving, and leaves the scroll to it", async () => {
+    await landing("/friends", [READERS]);
+    const section = document.createElement("div");
+    section.id = "invites";
+    section.scrollIntoView = vi.fn();
+    document.body.append(section);
+    const answer = scroll("#invites", router.currentRoute.value.fullPath);
+    expect(await within(answer, 1000)).toBe(false);
+    expect(section.scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+  });
+
+  it("drops a section still awaited once the reader has moved on", async () => {
+    await landing("/friends", [READERS]);
+    const answer = scroll("#invites", router.currentRoute.value.fullPath);
+    await router.push("/stats");
+    // Not a late `{ top: 0 }` for the page the reader is on now.
+    expect(await within(answer, 300)).toBe(false);
+  });
+
+  it("drops a section still awaited once the reader has scrolled", async () => {
+    await landing("/friends", [READERS]);
+    const answer = scroll("#invites", router.currentRoute.value.fullPath);
+    Object.defineProperty(window, "scrollY", { value: 120, configurable: true });
+    expect(await within(answer, 300)).toBe(false);
+  });
+
+  it("leaves a diary entry to the book's diary, which centres it once loaded", async () => {
+    await landing("/friends", [READERS]);
+    // At once, not after a wait: a second scroll would move the centred entry under the top bar.
+    const to = { hash: "#entry-12", fullPath: "/book/1#entry-12" };
+    expect(router.options.scrollBehavior!(to as never, router.currentRoute.value, null)).toEqual({ top: 0 });
+  });
+});

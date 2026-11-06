@@ -20,10 +20,75 @@ function toClub(sub = "", withoutClub?: string) {
   };
 }
 
+/**
+ * `#section` on a page (the club's "More" sheet opens the members page at
+ * `#invites`): wait until the section is there and has stopped moving (the
+ * page above it may still be loading), then bring it in with
+ * `scrollIntoView`, which keeps the target's `scroll-margin-top` clear of the
+ * sticky bars. For a while after, a section pushed down by late content is
+ * followed, unless the reader has scrolled meanwhile. A section that never
+ * appears (a member has no invites) leaves the page at the top. The wait ends
+ * without a scroll once the reader has moved on (another page, Back) or
+ * scrolled: vue-router applies whatever this resolves to, on whatever page is
+ * current by then.
+ */
+function scrollToSection(id: string, fullPath: string): Promise<false | { top: number }> {
+  return new Promise((resolve) => {
+    const started = performance.now();
+    // Not there yet: meanwhile the page starts at the top, as any other page does.
+    if (!document.getElementById(id) && window.scrollY !== 0) window.scrollTo(0, 0);
+    const startY = window.scrollY;
+    let lastTop: number | null = null;
+    let still = 0;
+    let placed: { top: number; height: number; scrollY: number } | null = null;
+    const topOf = (element: HTMLElement) => element.getBoundingClientRect().top + window.scrollY;
+    const place = (element: HTMLElement) => {
+      element.scrollIntoView({ block: "start" });
+      placed = { top: topOf(element), height: document.documentElement.scrollHeight, scrollY: window.scrollY };
+    };
+    const check = () => {
+      const element = document.getElementById(id);
+      const elapsed = performance.now() - started;
+      if (placed) {
+        // Follow a late shift (or a page grown tall enough) until 2.5 s
+        // after the tap, while the reader has not scrolled.
+        if (!element || elapsed > 2500 || window.scrollY !== placed.scrollY) return;
+        if (topOf(element) !== placed.top || document.documentElement.scrollHeight !== placed.height) place(element);
+        requestAnimationFrame(check);
+        return;
+      }
+      if (router.currentRoute.value.fullPath !== fullPath || window.scrollY !== startY) {
+        resolve(false);
+        return;
+      }
+      if (element) {
+        const top = topOf(element);
+        still = top === lastTop ? still + 1 : 0;
+        lastTop = top;
+        if (still >= 4 || elapsed > 1000) {
+          place(element);
+          resolve(false);
+          requestAnimationFrame(check);
+          return;
+        }
+      } else if (elapsed > 2000) {
+        resolve({ top: 0 });
+        return;
+      }
+      requestAnimationFrame(check);
+    };
+    requestAnimationFrame(check);
+  });
+}
+
 const router = createRouter({
   history: createWebHistory(),
   scrollBehavior(to, from, saved) {
     if (saved) return saved;
+    // Only a plain id: the mail links carry `#token=…`, which is no section.
+    // A diary entry (`#entry-N`, the feeds' links) is BookDiary's: it centres it once loaded.
+    const section = /^#([A-Za-z][\w-]*)$/.exec(to.hash)?.[1];
+    if (section && !section.startsWith("entry-")) return scrollToSection(section, to.fullPath);
     return { top: 0 };
   },
   routes: [

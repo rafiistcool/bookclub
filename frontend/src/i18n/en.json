@@ -96,7 +96,9 @@
     "forwardPages": "Forward {n} page | Forward {n} pages",
     "backPercent": "Back {n} percent",
     "forwardPercent": "Forward {n} percent",
-    "undone": "Progress put back"
+    "undone": "Progress put back",
+    "markFinished": "Mark as read",
+    "saveOnly": "Just save progress"
   },
   "status": {
     "want_to_read": "Want to read",
@@ -211,11 +213,9 @@
     "hello": "Hello, {name}",
     "title": "Home",
     "loadFailed": "Could not load the club pick",
-    "readingNow": "Reading now",
     "chosenBy": "Chosen by {name}",
     "noMeeting": "No meeting scheduled yet.",
     "openBook": "Open book",
-    "seeDetails": "See details",
     "startReading": "Start reading",
     "addedToReading": "Added to Reading",
     "alreadyOnShelf": "Already on your shelf as {status}",
@@ -240,10 +240,7 @@
     "meetingTitle": "Meeting",
     "saveMeeting": "Save meeting",
     "yourProgress": "Your progress",
-    "yourClubs": "Your clubs",
     "allClubs": "All clubs",
-    "soloTitle": "Read together",
-    "soloBody": "Read one book together, meet, and vote on the next.",
     "joinWithCode": "Join with a code",
     "currentlyReading": "Currently reading",
     "toShelf": "Shelf",
@@ -259,7 +256,18 @@
     "noPickMemberBody": "An admin sets the next book. Nominate one for the vote in the meantime.",
     "toVote": "Vote",
     "seeOverlap": "See shared wants",
-    "toDiary": "Your diary"
+    "toDiary": "Your diary",
+    "inHours": "in {n} hour | in {n} hours",
+    "inMinutes": "in {n} min",
+    "toDiscussion": "Go to the discussion",
+    "start": "Start",
+    "rate": "Rate it",
+    "alsoIn": "Also:",
+    "otherClubs": "Your other clubs",
+    "noBookYet": "No book yet",
+    "seeAll": "See all",
+    "soloLine": "Read together?",
+    "meetingWhen": "Meeting {when} · {date}"
   },
   "shelf": {
     "title": "Your shelf",
@@ -351,13 +359,13 @@
     "overlapFailed": "Could not load the overlap",
     "noOverlap": "No shared wants yet. Put books on “Want to read”.",
     "memberCount": "{n} member | {n} members",
-    "switch": "Switch club",
     "allClubs": "All clubs",
     "notFoundTitle": "Club not found",
     "notFoundBody": "This club does not exist, or you are not a member of it (any more).",
     "toYourClubs": "Your clubs",
     "toHome": "Home",
-    "onlyYouMemberBody": "Ask an admin for an invite."
+    "onlyYouMemberBody": "Ask an admin for an invite.",
+    "yourClubs": "Your clubs"
   },
   "discover": {
     "title": "Discover",
@@ -471,7 +479,6 @@
     "viewOpenLibrary": "View on Open Library",
     "refreshDetails": "Refresh details",
     "refreshing": "Refreshing…",
-    "yourShelf": "Your shelf",
     "shelfStatus": "Shelf status",
     "notOnShelf": "Pick a status to shelve it.",
     "progress": "Progress",
@@ -519,7 +526,8 @@
     "groupAdmin": "Admin",
     "pickBadge": "Club pick · {club}",
     "ratingVotes": "{n} rating | {n} ratings",
-    "ratingLabel": "Rating"
+    "ratingLabel": "Rating",
+    "clearRating": "Remove rating"
   },
   "diary": {
     "heading": "Diary",
@@ -828,13 +836,16 @@
   },
   "clubNav": {
     "label": "Club sections",
-    "home": "Pick",
-    "discussions": "Discussion",
-    "vote": "Vote",
-    "members": "Members",
     "overlap": "Shared wants",
     "events": "Activity",
-    "stats": "Year"
+    "stats": "Year",
+    "homeShort": "Book",
+    "discussionsShort": "Talk",
+    "voteShort": "Vote",
+    "membersShort": "Members",
+    "more": "More",
+    "moreOn": "More, now: {section}",
+    "invite": "Invite"
   },
   "clubs": {
     "title": "Clubs",
@@ -1654,5 +1665,23 @@
       "bottom": "bottom",
       "left": "left"
     }
+  },
+  "finish": {
+    "title": "Finished!",
+    "rate": "How was it?",
+    "addTake": "+ One line",
+    "onlyMe": "Only me",
+    "clubLine": "{n} of {total} in the club is done | {n} of {total} in the club are done",
+    "clubAll": "All {total} in the club are done",
+    "done": "Done",
+    "skip": "Skip"
+  },
+  "rings": {
+    "reading": "{name}: {n}%",
+    "finished": "{name}: finished",
+    "status": "{name}: {status}",
+    "more": "{n} more",
+    "notStarted": "{n} not started yet",
+    "notYet": "not yet"
   }
 }

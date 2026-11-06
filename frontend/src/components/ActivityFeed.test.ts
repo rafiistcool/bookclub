@@ -85,3 +85,36 @@ describe("ActivityFeed times", () => {
     expect(times(nextYear)).toEqual(["1 Oct 2026", "1 Oct 2026"]);
   });
 });
+
+describe("ActivityFeed preview (Home)", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    activity.mockReset();
+    useSession().user = user();
+  });
+
+  it("asks only the preview's rows and links to the whole feed instead of paging", async () => {
+    activity.mockResolvedValue({ items: ITEMS, has_more: true, timezone: "UTC" });
+    const wrapper = mount(ActivityFeed, {
+      props: { limit: 5, moreTo: "/c/night-owls-cd34/events" },
+      global: { stubs: { BookCover: true, Avatar: true } },
+    });
+    await flushPromises();
+    expect(activity).toHaveBeenCalledWith({ before: undefined, limit: 5, club: undefined });
+    expect(wrapper.findAll(".activity-row")).toHaveLength(2);
+    expect(wrapper.get(".activity-all").attributes("href")).toBe("/c/night-owls-cd34/events");
+    expect(wrapper.get(".activity-all").text()).toBe("See all");
+    expect(wrapper.find(".activity-more").exists()).toBe(false);
+  });
+
+  it("keeps paging where no page holds the whole feed", async () => {
+    activity.mockResolvedValue({ items: ITEMS, has_more: true, timezone: "UTC" });
+    const wrapper = mount(ActivityFeed, { props: { limit: 5 }, global: { stubs: { BookCover: true, Avatar: true } } });
+    await flushPromises();
+    expect(wrapper.find(".activity-all").exists()).toBe(false);
+    await wrapper.get(".activity-more").trigger("click");
+    await flushPromises();
+    expect(activity).toHaveBeenLastCalledWith({ before: 1, limit: 5, club: undefined });
+  });
+});
+

@@ -71,8 +71,16 @@
 }
 
 .section-head a {
+  position: relative;
   font-size: var(--text-sm);
   font-weight: 600;
+}
+
+/* The link stays one line of small text; its hit area reaches 44px. */
+.section-head a::after {
+  content: "";
+  position: absolute;
+  inset: -11px -8px;
 }
 
 .panel {

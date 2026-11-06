@@ -34,6 +34,7 @@ import {
 } from "../constants";
 import { tp, type Locale } from "../i18n";
 import { formatRating } from "../stats";
+import { isFinishTransition, useFinish } from "../stores/finish";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import type { BookDetailOut, BookOut, EditionOut } from "../api/generated";
@@ -45,6 +46,7 @@ const route = useRoute();
 const router = useRouter();
 const session = useSession();
 const toast = useToast();
+const finish = useFinish();
 
 const book = ref<BookDetail | null>(null);
 const error = ref("");
@@ -96,6 +98,8 @@ const pickDone = computed(() => {
 });
 const pickNames = computed(() => (book.value?.club_picks ?? []).map((club) => club.name).join(", "));
 const hasCover = computed(() => Boolean(book.value?.cover_url || book.value?.cover_thumb_url));
+/** The club the finished moment counts in: the first whose current pick this is. */
+const pickClubSlug = computed(() => book.value?.club_picks[0]?.slug ?? null);
 
 function syncDrafts(detail: BookDetail) {
   takeDraft.value = detail.take;
@@ -203,13 +207,17 @@ async function setStatus(status: Status) {
   // The current segment is a state, not an action: tapping it again changed
   // nothing but still moved the book to the top of its column.
   if (!detail || busy.value || detail.on_shelf === status) return;
+  const previous = detail.on_shelf;
   busy.value = true;
   try {
     const item = detail.shelf_id
       ? await api.patchShelf(detail.shelf_id, { status, position: 0 })
       : await api.addToShelf({ work_id: detail.id, status });
     adoptEntry(detail, item);
-    toast.show(t("book.movedTo", { status: statusLabel(status) }));
+    // Finished just now: the moment instead of the toast. A 409 retry whose
+    // entry was finished already returned above, without either.
+    if (isFinishTransition(previous, item)) celebrate(item);
+    else toast.show(t("book.movedTo", { status: statusLabel(status) }));
   } catch (err) {
     // Another tab or the importer may have shelved it since this page loaded.
     if (err instanceof ApiError && err.status === 409 && err.item) {
@@ -275,6 +283,37 @@ async function saveProgress(value: number, undo = true) {
   }
 }
 
+function celebrate(item: ShelfItem) {
+  void finish.celebrate({ item, clubSlug: pickClubSlug.value });
+}
+
+/**
+ * The progress sheet's "Mark as read" saved the status and opened the moment
+ * itself. The progress it left is gone on the server, so an Undo of an
+ * earlier progress save would point at a state that no longer exists.
+ */
+function onFinished(item: ShelfItem) {
+  const detail = book.value;
+  if (!detail) return;
+  if (undoToast) toast.dismiss(undoToast);
+  undoToast = 0;
+  adoptEntry(detail, item);
+  void diary.value?.reload();
+  void refreshClubRating();
+}
+
+// The moment saved stars, a line or "only me": the page shows them, and the
+// club's average moves with them.
+watch(
+  () => finish.lastSaved,
+  (saved) => {
+    const detail = book.value;
+    if (!saved || !detail || detail.shelf_id !== saved.id) return;
+    adoptEntry(detail, saved);
+    void refreshClubRating();
+  },
+);
+
 /** The average moved with my stars; pull it without disturbing the page. */
 async function refreshClubRating() {
   const detail = book.value;
@@ -289,17 +328,18 @@ async function refreshClubRating() {
   }
 }
 
+/** A second tap on the chosen star keeps it; "Remove rating" is the way to clear it. */
 function rate(value: number) {
   const detail = book.value;
-  if (!detail) return;
-  if (detail.rating === value) {
-    void patch({ rating: null }, t("book.ratingCleared"));
-    return;
-  }
+  if (!detail || detail.rating === value) return;
   void patch({ rating: value }, t("book.starsOf", { n: value }), {
     label: t("book.writeAFew"),
     run: () => diary.value?.focusComposer(),
   });
+}
+
+function clearRating() {
+  void patch({ rating: null }, t("book.ratingCleared"));
 }
 
 async function setRatingVisibility(event: Event) {
@@ -610,7 +650,6 @@ watch(param, load);
           <CoverPrompt :book="book" class="detail-cover-prompt" @covered="adoptCover" />
 
           <div class="panel shelf-panel">
-            <p class="caps subtle">{{ t("book.yourShelf") }}</p>
             <div class="segmented status-control" role="group" :aria-label="t('book.shelfStatus')">
               <button
                 v-for="status in STATUSES"
@@ -635,54 +674,74 @@ watch(param, load);
                 :label="t('book.progress')"
                 :book-title="book.title"
                 :busy="busy"
+                :shelf-id="book.shelf_id"
+                :club-slug="pickClubSlug"
                 @save="saveProgress"
+                @finished="onFinished"
               />
             </div>
 
-            <div v-if="book.on_shelf === 'finished'" class="control-block">
-              <span class="fine">{{ t("book.yourRating") }}</span>
-              <div class="star-row">
-                <button
-                  v-for="value in 5"
-                  :key="value"
-                  class="star-btn"
-                  type="button"
-                  :aria-label="t('book.starsOf', { n: value })"
-                  :aria-pressed="book.rating === value"
-                  :disabled="busy"
-                  @click="rate(value)"
-                >
-                  {{ book.rating && book.rating >= value ? "★" : "☆" }}
-                </button>
+            <!-- Light rows with hairlines between them: the stars, "only me", the line. -->
+            <div v-if="book.on_shelf === 'finished'" class="finished-rows">
+              <div class="light-row rating-row">
+                <div class="rating-head">
+                  <span class="fine">{{ t("book.yourRating") }}</span>
+                  <button
+                    v-if="book.rating"
+                    class="text-btn clear-rating finer"
+                    type="button"
+                    :disabled="busy"
+                    @click="clearRating"
+                  >
+                    {{ t("book.clearRating") }}
+                  </button>
+                </div>
+                <div class="star-row" role="group" :aria-label="t('book.yourRating')">
+                  <button
+                    v-for="value in 5"
+                    :key="value"
+                    class="star-btn"
+                    type="button"
+                    :aria-label="t('book.starsOf', { n: value })"
+                    :aria-pressed="book.rating === value"
+                    :disabled="busy"
+                    @click="rate(value)"
+                  >
+                    {{ book.rating && book.rating >= value ? "★" : "☆" }}
+                  </button>
+                </div>
               </div>
-              <label class="check-row">
+              <label class="light-row check-row">
+                <span class="fine">{{ t("book.ratingOnlyMe") }}</span>
                 <input
                   type="checkbox"
                   :checked="book.rating_visibility === 'only_me'"
                   :disabled="busy"
                   @change="setRatingVisibility"
                 />
-                <span class="fine">{{ t("book.ratingOnlyMe") }}</span>
               </label>
-              <label class="field">
-                <span class="field-head">{{ t("book.oneLineTake") }}<span class="finer subtle nums">{{ takeDraft.length }}/140</span></span>
-                <textarea
-                  v-model="takeDraft"
-                  v-autosize
-                  class="short-note"
-                  rows="2"
-                  maxlength="140"
-                  :placeholder="t('book.takePlaceholder')"
-                />
-              </label>
-              <button
-                class="btn btn-ghost btn-sm"
-                type="button"
-                :disabled="busy || takeDraft === book.take"
-                @click="patch({ take: takeDraft }, t('book.takeSaved'))"
-              >
-                {{ t("book.saveTake") }}
-              </button>
+              <div class="light-row take-row">
+                <label class="field">
+                  <span class="field-head">{{ t("book.oneLineTake") }}<span class="finer subtle nums">{{ takeDraft.length }}/140</span></span>
+                  <textarea
+                    v-model="takeDraft"
+                    v-autosize
+                    class="short-note"
+                    rows="2"
+                    maxlength="140"
+                    :placeholder="t('book.takePlaceholder')"
+                  />
+                </label>
+                <button
+                  v-if="takeDraft !== book.take"
+                  class="btn btn-ghost btn-sm"
+                  type="button"
+                  :disabled="busy"
+                  @click="patch({ take: takeDraft }, t('book.takeSaved'))"
+                >
+                  {{ t("book.saveTake") }}
+                </button>
+              </div>
             </div>
 
             <div v-if="book.on_shelf === 'did_not_finish'" class="control-block">
@@ -924,6 +983,65 @@ watch(param, load);
   align-items: center;
   gap: var(--space-2);
   min-height: var(--tap);
+}
+
+/* The finished book's own rows: hairlines between them, no box around each. */
+.finished-rows {
+  display: grid;
+  border-top: 1px solid var(--border);
+}
+
+.light-row {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.light-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.rating-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: var(--tap);
+}
+
+.clear-rating {
+  margin-right: calc(-1 * var(--space-2));
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+/* The stars line up with the text above them; each keeps its 44 px target. */
+.rating-row .star-row {
+  margin-left: calc(-1 * var(--space-2));
+}
+
+.finished-rows .check-row {
+  justify-content: space-between;
+  color: var(--text-muted);
+}
+
+.finished-rows .check-row input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent);
+}
+
+.take-row {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.take-row .field {
+  margin-bottom: 0;
+}
+
+.take-row .btn {
+  justify-self: start;
 }
 
 .detail-intro {

@@ -470,6 +470,7 @@ async fn patch_entry(
 ) -> ApiResult<()> {
     let previous_status = entry.status;
     let previous_progress = entry.fields.progress;
+    let previous_notes = finish_notes(&entry);
     let status = body.status.unwrap_or(entry.status);
     let position = body.position.unwrap_or(entry.position.into());
     let places_item = body.places_item();
@@ -546,6 +547,8 @@ async fn patch_entry(
             false,
         )
         .await?;
+    } else if entry.status == ShelfStatus::Finished && finish_notes(&entry) != previous_notes {
+        refresh_finished_event(conn, &entry).await?;
     } else if entry.status == ShelfStatus::CurrentlyReading
         && progress_sent
         && entry.fields.progress.is_some()
@@ -826,17 +829,10 @@ async fn status_event(
     rating_visibility: Visibility,
     added: bool,
 ) -> sqlx::Result<()> {
-    let non_empty = |text: &str| (!text.is_empty()).then(|| text.to_owned());
-    let sealed = rating_visibility == Visibility::OnlyMe
-        && (fields.rating.is_some() || !fields.take.is_empty());
     let (kind, payload) = match status {
         ShelfStatus::Finished => (
             EventKind::ShelfFinished,
-            json!({
-                "rating": fields.rating,
-                "take": non_empty(&fields.take),
-                PRIVATE_KEY: sealed.then_some(true),
-            }),
+            finished_payload(fields, rating_visibility),
         ),
         ShelfStatus::DidNotFinish => (
             EventKind::ShelfDnf,
@@ -846,6 +842,73 @@ async fn status_event(
         _ => (EventKind::ShelfMoved, json!({ "status": status })),
     };
     record_event(conn, user_id, work_id, kind, payload).await
+}
+
+/// A text, or None when it is empty.
+fn non_empty(text: &str) -> Option<String> {
+    (!text.is_empty()).then(|| text.to_owned())
+}
+
+/// The `shelf_finished` payload of a finished entry: `{rating?, take?}`, sealed to the actor
+/// ([`PRIVATE_KEY`]) when it holds an only-me rating or take.
+fn finished_payload(fields: &StatusFields, rating_visibility: Visibility) -> Value {
+    let sealed = rating_visibility == Visibility::OnlyMe
+        && (fields.rating.is_some() || !fields.take.is_empty());
+    json!({
+        "rating": fields.rating,
+        "take": non_empty(&fields.take),
+        PRIVATE_KEY: sealed.then_some(true),
+    })
+}
+
+/// What a finish's event shows of an entry: its rating, take and rating visibility.
+fn finish_notes(entry: &Entry) -> (Option<i32>, String, Visibility) {
+    (
+        entry.fields.rating,
+        entry.fields.take.clone(),
+        entry.rating_visibility,
+    )
+}
+
+/// How long after a finish a rating, take or visibility change still rewrites its event.
+const FINISH_EDIT_WINDOW_MINUTES: i32 = 30;
+
+/// Rewrites the payload of the finish that a PATCH on a still-finished entry rated or noted:
+/// the stars and take given right after finishing show in the feeds, and no second event is
+/// recorded. Only the actor's newest shelf event of the work counts, when it is that
+/// `shelf_finished` and younger than [`FINISH_EDIT_WINDOW_MINUTES`]; an older finish, or one a
+/// later move or removal followed, keeps the payload it was written with. The new payload is
+/// what [`finished_payload`] gives now, and a seal stays, even over an emptied payload
+/// (`activity::seal_finished_ratings`: once sealed, the event's rating and take stay the
+/// actor's own for good, so showing them again from now on is no rewrite's business).
+async fn refresh_finished_event(conn: &mut PgConnection, entry: &Entry) -> sqlx::Result<()> {
+    let Value::Object(fresh) = finished_payload(&entry.fields, entry.rating_visibility) else {
+        return Ok(());
+    };
+    let fresh: Map<String, Value> = fresh.into_iter().filter(|(_, v)| !v.is_null()).collect();
+    sqlx::query!(
+        r#"UPDATE events e
+         SET payload = CASE
+             WHEN e.payload ? 'private' THEN $3::jsonb || '{"private": true}'::jsonb
+             ELSE $3::jsonb
+         END
+         WHERE e.id = (
+                 SELECT l.id FROM events l
+                 WHERE l.actor_id = $1 AND l.club_id IS NULL AND l.work_id = $2
+                   AND l.kind IN ('shelf_added', 'shelf_moved', 'shelf_finished',
+                                  'shelf_dnf', 'shelf_removed')
+                 ORDER BY l.id DESC
+                 LIMIT 1)
+           AND e.kind = 'shelf_finished'
+           AND e.created_at > now() - make_interval(mins => $4)"#,
+        entry.user_id,
+        entry.work_id,
+        Value::Object(fresh),
+        FINISH_EDIT_WINDOW_MINUTES
+    )
+    .execute(conn)
+    .await?;
+    Ok(())
 }
 
 /// Records a personal shelf event (null payload values are dropped by `activity::record`).
