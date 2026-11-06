@@ -39,6 +39,7 @@ const avatarUrl = computed(() => session.user?.avatar_url ?? null);
 const shelfCount = ref<number | null>(null);
 const favorites = ref<Favorite[]>([]);
 const shelfLoaded = ref(false);
+const shelfFailed = ref(false);
 const stats = ref<PersonalStatsOut | null>(null);
 
 /* ------------------------------------------------------------ the numbers */
@@ -139,12 +140,15 @@ async function replaceFavorites(workIds: number[]) {
 /* ---------------------------------------------------------------- loading */
 
 async function loadShelf() {
+  shelfFailed.value = false;
   try {
     const shelf = await api.myShelf();
     shelfCount.value = shelf.items.length;
     favorites.value = shelf.favorites;
   } catch {
-    // The numbers stay a dash; the shelf page says what went wrong.
+    // The shelf count stays a dash. The favourites say so rather than
+    // claim there are none.
+    shelfFailed.value = true;
   } finally {
     shelfLoaded.value = true;
   }
@@ -220,6 +224,10 @@ onMounted(() => {
         </button>
       </div>
       <div v-if="!shelfLoaded" class="skeleton favorites-skeleton" aria-hidden="true" />
+      <p v-else-if="shelfFailed" class="fine subtle favorites-failed" role="alert">
+        {{ t("shelf.loadFailed") }}
+        <button class="text-btn fine" type="button" @click="loadShelf">{{ t("common.tryAgain") }}</button>
+      </p>
       <FavoritePortrait v-else :items="favorites" :empty-hint="t('favorites.emptyOwn')" />
     </section>
 

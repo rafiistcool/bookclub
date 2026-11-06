@@ -172,6 +172,8 @@ describe("JoinPage", () => {
     expect(links(wrapper).some(({ to }) => typeof to === "object" && to.path === "/signup")).toBe(false);
     expect(wrapper.find(".btn-primary").exists()).toBe(false);
     expect(pendingJoinCode()).toBeNull();
+    // Signed out is no dead end: signing in returns here, and a member goes on into the club.
+    expect(links(wrapper)).toContainEqual({ to: { path: "/login", query: { next: "/join/7K3M9QX2HD" } }, text: "Sign in" });
   });
 
   it("shows the mapped error when the club fills up meanwhile", async () => {

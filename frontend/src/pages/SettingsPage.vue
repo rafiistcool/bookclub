@@ -53,7 +53,11 @@ const accountAlert = computed(() => {
   const me = user.value;
   if (!me) return undefined;
   if (!me.email) return t("settings.noEmail");
-  if (!me.email_verified || me.pending_email) return t("account.unverified");
+  // With mail off no address can be confirmed, so none is asked for.
+  if (!service.mail) return undefined;
+  if (!me.email_verified) return t("account.unverified");
+  // The current address may be confirmed: the alert names the one waiting.
+  if (me.pending_email) return t("account.pending", { email: me.pending_email });
   return undefined;
 });
 
@@ -62,7 +66,7 @@ const hasLegal = computed(() => LEGAL_DOCS.some((doc) => service.hasLegal(doc)) 
 
 <template>
   <section class="settings-index">
-    <BackLink :label="t('settings.backToProfile')" fallback="/me" />
+    <BackLink :label="t('settings.backToProfile')" fallback="/me" exact />
     <div class="page-head">
       <h1>{{ t("settings.title") }}</h1>
     </div>

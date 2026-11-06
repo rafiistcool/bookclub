@@ -90,6 +90,7 @@ describe("AppShell", () => {
     const gear = card.get(".side-settings");
     expect(gear.attributes("href")).toBe("/settings");
     expect(gear.attributes("aria-label")).toBe("Settings");
+    expect(gear.attributes("aria-current")).toBeUndefined();
 
     // The phone: five tabs, the last one the reader's picture with a dot while something waits.
     const tabs = shell.findAll(".bottom-nav a");
@@ -113,6 +114,19 @@ describe("AppShell", () => {
     expect(shell.get(".bottom-nav a[aria-current=page]").attributes("href")).toBe("/shelf");
     expect(shell.get(".tab-avatar").classes()).not.toContain("waiting");
     expect(shell.get(".bottom-nav a:last-of-type").find(".visually-hidden").exists()).toBe(false);
+  });
+
+  it("on Settings, marks the gear as the current page, not the profile", async () => {
+    api.friends!.mockResolvedValue(friendsOut());
+    const shell = await mountShell("/settings");
+    const card = shell.get(".side-account");
+    expect(card.classes()).toContain("active");
+    expect(card.get(".side-account-link").attributes("aria-current")).toBeUndefined();
+    const gear = card.get(".side-settings");
+    expect(gear.attributes("aria-current")).toBe("page");
+    expect(gear.classes()).toContain("on");
+    // The phone has no gear: its profile tab stays the way to Settings.
+    expect(shell.get(".bottom-nav a[aria-current=page]").attributes("href")).toBe("/me");
   });
 
   it("shows no count when nothing waits or the lists cannot be loaded", async () => {

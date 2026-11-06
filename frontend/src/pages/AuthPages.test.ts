@@ -156,6 +156,28 @@ describe("auth pages", () => {
     expect(wrapper.find(".invite-chip").exists()).toBe(false);
   });
 
+  it("never promises a join that sign-up refuses: a personal invite or a full club", async () => {
+    // A personal invite is for an existing account: the way on is signing in.
+    api.previewInvite.mockResolvedValue({ ...clubInvite(), personal: true });
+    let { wrapper } = await mountAt(SignupPage, "/signup?code=7K3M9QX2HD");
+    expect(wrapper.find(".invite-chip").exists()).toBe(false);
+    expect((wrapper.get("input[name=invite]").element as HTMLInputElement).value).toBe("");
+    expect(wrapper.get("button[type=submit]").text()).toBe("Create an account");
+    const refused = wrapper.get(".invite-refused");
+    expect(refused.text()).toContain("someone who already has an account");
+    expect(refused.get("a").attributes("href")).toBe("/login?next=/join/7K3M9QX2HD");
+    wrapper.unmount();
+
+    // A full club takes nobody.
+    api.previewInvite.mockResolvedValue({ ...clubInvite(), full: true, member_count: 20 });
+    ({ wrapper } = await mountAt(SignupPage, "/signup?code=7K3M9QX2HD"));
+    expect(wrapper.find(".invite-chip").exists()).toBe(false);
+    expect((wrapper.get("input[name=invite]").element as HTMLInputElement).value).toBe("");
+    expect(wrapper.get("button[type=submit]").text()).toBe("Create an account");
+    expect(wrapper.get(".invite-refused").text()).toContain("Readers is full");
+    expect(wrapper.find(".invite-refused a").exists()).toBe(false);
+  });
+
   it("promises no mail when the server sends none", async () => {
     const club: ClubSummary = { slug: "readers-ab12", name: "Readers", role: "member", timezone: "UTC", member_count: 4 };
     api.previewInvite.mockResolvedValue(clubInvite());

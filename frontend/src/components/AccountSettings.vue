@@ -3,6 +3,7 @@ import { ArrowDownTrayIcon, DevicePhoneMobileIcon, EnvelopeIcon, KeyIcon, TrashI
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
+import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import DeleteAccount from "./DeleteAccount.vue";
@@ -15,21 +16,35 @@ import { useDeepLinkedSheet } from "./settings/deepLinkedSheet";
  * The account page (`/settings/account`): the email address and its state,
  * the password, the signed-in devices, the data export, and deleting the
  * account at the bottom. Changes happen in sheets; `?sheet=email|password|delete`
- * opens one.
+ * opens one. With mail off (`ServiceConfig.mail`) no address can be confirmed,
+ * so the page asks for no confirmation and offers no link.
  */
 const emit = defineEmits<{ deleted: [] }>();
 
 const { t } = useI18n();
 const session = useSession();
+const service = useService();
 const toast = useToast();
 const { sheet, open, close } = useDeepLinkedSheet(["email", "password", "delete"] as const);
 
 const user = computed(() => session.user);
-/** The address needs the reader: none yet, not confirmed, or a new one waiting. */
-const needsAttention = computed(
-  () => !user.value?.email || !user.value.email_verified || Boolean(user.value.pending_email),
+/**
+ * What the address needs from the reader, for the row's alert: none yet, or
+ * (with mail on) a confirmation of it or of the new one waiting. It names the
+ * waiting address, since the current one may well be confirmed.
+ */
+const emailAlert = computed(() => {
+  const me = user.value;
+  if (!me) return undefined;
+  if (!me.email) return t("settings.noEmail");
+  if (!service.mail) return undefined;
+  if (!me.email_verified) return t("account.unverified");
+  if (me.pending_email) return t("account.pending", { email: me.pending_email });
+  return undefined;
+});
+const canResend = computed(
+  () => service.mail && Boolean(user.value?.pending_email || (user.value?.email && !user.value.email_verified)),
 );
-const canResend = computed(() => Boolean(user.value?.pending_email || (user.value?.email && !user.value.email_verified)));
 
 async function resend() {
   try {
@@ -49,10 +64,10 @@ async function resend() {
         :icon="EnvelopeIcon"
         :label="t('account.emailHeading')"
         :detail="user?.email || t('settings.noEmail')"
-        :alert="needsAttention ? (user?.email ? t('account.unverified') : t('settings.noEmail')) : undefined"
+        :alert="emailAlert"
         @click="open('email')"
       />
-      <div v-if="needsAttention" class="email-status fine">
+      <div v-if="emailAlert" class="email-status fine">
         <p v-if="!user?.email" class="muted">{{ t("account.noEmail") }}</p>
         <p v-else-if="user.pending_email" class="pending-line">{{ t("account.pending", { email: user.pending_email }) }}</p>
         <p v-if="canResend" class="muted">

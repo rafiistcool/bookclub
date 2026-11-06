@@ -24,7 +24,9 @@ vi.mock("../api/client", () => ({
 }));
 
 import { i18n } from "../i18n";
+import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
+import { useToast } from "../stores/toast";
 import AccountSettings from "./AccountSettings.vue";
 import DeleteAccount from "./DeleteAccount.vue";
 import EmailPrompt from "./EmailPrompt.vue";
@@ -38,9 +40,10 @@ const SESSIONS = {
   ],
 };
 
-async function mountWith(component: object, me = user(), path = "/settings/account") {
+async function mountWith(component: object, me = user(), path = "/settings/account", mail = true) {
   const pinia = createPinia();
   setActivePinia(pinia);
+  useService().$patch({ mail });
   useSession().user = me;
   const router = createRouter({
     history: createMemoryHistory(),
@@ -65,11 +68,57 @@ describe("the account page", () => {
   it("shows a pending address and sends its link again", async () => {
     const { wrapper } = await mountWith(AccountSettings, user({ email: "old@example.com", email_verified: true, pending_email: "new@example.com" }));
     expect(wrapper.get(".email-row .row-detail").text()).toBe("old@example.com");
-    expect(wrapper.find(".email-row .row-alert").exists()).toBe(true);
+    // The current address is confirmed: the alert names the one waiting.
+    expect(wrapper.get(".email-row .row-alert").text()).toBe("Waiting for confirmation: new@example.com");
     expect(wrapper.get(".pending-line").text()).toContain("new@example.com");
     api.resendVerification.mockResolvedValue(undefined);
     await wrapper.get(".email-status .text-btn").trigger("click");
     expect(api.resendVerification).toHaveBeenCalled();
+  });
+
+  it("with mail off, asks for no confirmation and offers no link", async () => {
+    for (const me of [
+      user({ email: "mia@example.com", email_verified: false }),
+      user({ email: "old@example.com", email_verified: true, pending_email: "new@example.com" }),
+    ]) {
+      const { wrapper } = await mountWith(AccountSettings, me, "/settings/account", false);
+      expect(wrapper.get(".email-row .row-detail").text()).toBe(me.email);
+      expect(wrapper.find(".email-row .row-alert").exists()).toBe(false);
+      expect(wrapper.find(".email-status").exists()).toBe(false);
+      expect(wrapper.text()).not.toContain("Send it again");
+      wrapper.unmount();
+    }
+    // A missing address is still worth saying.
+    const { wrapper } = await mountWith(AccountSettings, user({ email: null, email_verified: false }), "/settings/account", false);
+    expect(wrapper.get(".email-row .row-alert").text()).toBe("No address");
+  });
+
+  it("with mail off, promises no link when an address is saved", async () => {
+    const { wrapper } = await mountWith(AccountSettings, user({ email: "old@example.com", email_verified: false }), "/settings/account", false);
+    await wrapper.get(".email-row").trigger("click");
+    let form = wrapper.get(".email-sheet form");
+    expect(form.find(".field-hint").exists()).toBe(false);
+    await form.get("input[type=email]").setValue("next@example.com");
+    await form.get("input[type=password]").setValue("secret pw");
+    api.changeEmail.mockResolvedValue(undefined);
+    // An unconfirmed address is replaced at once.
+    api.me.mockResolvedValue(user({ email: "next@example.com", email_verified: false }));
+    await form.trigger("submit");
+    await flushPromises();
+    expect(useToast().items.map((toast) => toast.message)).toEqual(["Address saved"]);
+
+    // A confirmed one stays, and the new one waits for a link that cannot come yet.
+    useSession().user = user({ email: "old@example.com", email_verified: true });
+    await wrapper.get(".email-row").trigger("click");
+    form = wrapper.get(".email-sheet form");
+    await form.get("input[type=email]").setValue("other@example.com");
+    await form.get("input[type=password]").setValue("secret pw");
+    api.me.mockResolvedValue(user({ email: "old@example.com", email_verified: true, pending_email: "other@example.com" }));
+    await form.trigger("submit");
+    await flushPromises();
+    const last = useToast().items.at(-1)?.message ?? "";
+    expect(last).toContain("sends no mail");
+    expect(last).not.toContain("link is on its way");
   });
 
   it("says nothing more about a confirmed address", async () => {

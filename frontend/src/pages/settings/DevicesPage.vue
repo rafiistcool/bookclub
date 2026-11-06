@@ -11,7 +11,7 @@ const router = useRouter();
 
 <template>
   <section class="settings-sub">
-    <BackLink :label="t('settings.backToAccount')" fallback="/settings/account" />
+    <BackLink :label="t('settings.backToAccount')" fallback="/settings/account" exact />
     <div class="page-head">
       <h1>{{ t("account.sessionsHeading") }}</h1>
     </div>

@@ -22,6 +22,8 @@ const route = useRoute();
 const bottomItems = NAV_ITEMS.filter((item) => item.bottomBar);
 const sideItems = NAV_ITEMS.filter((item) => item.sidebar !== false);
 const onProfile = computed(() => isActive(route.path, PROFILE_ITEM));
+// The gear is the link to the open page on /settings, so it, not the profile, is marked current there.
+const onSettings = computed(() => isActive(route.path, "/settings"));
 const activeTab = computed(() => bottomItems.findIndex((item) => isActive(route.path, item)));
 // The pill stays where it last was while a page outside the tabs is open.
 const pillTab = ref(Math.max(0, activeTab.value));
@@ -117,7 +119,7 @@ watch(
         <RouterLink
           class="side-account-link"
           :to="PROFILE_ITEM.to"
-          :aria-current="onProfile ? 'page' : undefined"
+          :aria-current="onProfile && !onSettings ? 'page' : undefined"
         >
           <Avatar :username="username" :src="avatarUrl" />
           <span class="side-account-text">
@@ -131,7 +133,8 @@ watch(
         </RouterLink>
         <RouterLink
           class="icon-btn side-settings"
-          :class="{ on: isActive(route.path, '/settings') }"
+          :class="{ on: onSettings }"
+          :aria-current="onSettings ? 'page' : undefined"
           to="/settings"
           :aria-label="t('nav.settings')"
         >

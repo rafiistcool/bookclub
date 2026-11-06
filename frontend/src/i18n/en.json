@@ -144,7 +144,9 @@
     "inviteChange": "Change code",
     "inviteAttached": "With an invite",
     "emailHintNoMail": "Only you see it.",
-    "welcomeNoMail": "Welcome, {name}!"
+    "welcomeNoMail": "Welcome, {name}!",
+    "invitePersonal": "This invite is for someone who already has an account, and it creates no new one.",
+    "inviteFull": "{club} is full: it already has 20 members, so this code cannot add you."
   },
   "locale": {
     "en": "English",
@@ -1321,7 +1323,9 @@
     "deleteFinal": "Delete for good",
     "deleteFailed": "Could not delete the account",
     "deleted": "Your account was deleted",
-    "deviceOn": "{browser} on {os}"
+    "deviceOn": "{browser} on {os}",
+    "emailSaved": "Address saved",
+    "emailNotConfirmed": "Saved. The new address is confirmed with a link, and this server sends no mail yet. Until then your current address stays."
   },
   "editRequest": {
     "open": "Suggest a correction",

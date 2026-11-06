@@ -21,7 +21,10 @@ import type { InvitePreview } from "../types";
  *
  * A code from an invite link stays out of the way: a chip names the club it
  * joins (with "Change code" for another one), so the form asks for three
- * things. The username rule shows only when what was typed breaks it.
+ * things. The username rule shows only when what was typed breaks it. A
+ * personal invite never makes an account and a full club takes nobody, so
+ * neither stands behind the chip: the field comes back empty, with the reason
+ * (and, for a personal invite, the way to sign in and accept it).
  *
  * Above the button, one sentence links the terms and the privacy policy
  * (Q13 option A: no checkbox). Creating the account accepts the terms
@@ -52,6 +55,8 @@ const chip = ref(Boolean(linkCode));
 const showInvite = ref(!chip.value && (inviteOnly.value || Boolean(invite.value)));
 const inviteInput = ref<HTMLInputElement | null>(null);
 const preview = ref<InvitePreview | null>(null);
+/** Why the link's code was set aside: a personal invite, or a full club. */
+const refused = ref<{ personal: boolean; club: string } | null>(null);
 const show = ref(false);
 const error = ref("");
 const pending = ref(false);
@@ -70,7 +75,16 @@ const usernameWrong = computed(() => {
 onMounted(async () => {
   if (!linkCode) return;
   try {
-    preview.value = (await api.previewInvite(linkCode)) ?? null;
+    const current = (await api.previewInvite(linkCode)) ?? null;
+    if (current?.club && (current.personal || current.full)) {
+      // Sign-up would refuse this code every time: set it aside and say why.
+      refused.value = { personal: current.personal, club: current.club.name };
+      invite.value = "";
+      clearJoinCode();
+      void changeCode();
+      return;
+    }
+    preview.value = current;
   } catch {
     // An invalid code: the field comes back, and the server says why at sign-up.
     changeCode();
@@ -122,6 +136,10 @@ async function submit() {
     <p v-if="inviteOnly && !chip" class="lede">{{ t("auth.signupInviteLede") }}</p>
     <form @submit.prevent="submit">
       <p v-if="error" class="error">{{ error }}</p>
+      <p v-if="refused" class="fine invite-refused" role="status">
+        {{ refused.personal ? t("auth.invitePersonal") : t("auth.inviteFull", { club: refused.club }) }}
+        <RouterLink v-if="refused.personal" :to="`/login?next=/join/${linkCode}`">{{ t("join.signInAndJoin") }}</RouterLink>
+      </p>
       <div v-if="chip" class="invite-chip">
         <span v-if="pick" class="invite-chip-cover">
           <BookCover :book="pick" size="xs" />

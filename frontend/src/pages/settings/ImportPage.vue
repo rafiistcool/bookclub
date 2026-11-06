@@ -13,7 +13,7 @@ const { t } = useI18n();
 
 <template>
   <section class="settings-sub">
-    <BackLink :label="t('settings.back')" fallback="/settings" />
+    <BackLink :label="t('settings.back')" fallback="/settings" exact />
     <div class="page-head">
       <h1>{{ t("settings.importTitle") }}</h1>
     </div>

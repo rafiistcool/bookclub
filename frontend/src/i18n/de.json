@@ -144,7 +144,9 @@
     "inviteChange": "Code ändern",
     "inviteAttached": "Mit Einladung",
     "emailHintNoMail": "Nur du siehst sie.",
-    "welcomeNoMail": "Willkommen, {name}!"
+    "welcomeNoMail": "Willkommen, {name}!",
+    "invitePersonal": "Diese Einladung gilt für jemanden, der schon ein Konto hat, und legt kein neues an.",
+    "inviteFull": "{club} ist voll: Der Club hat schon 20 Mitglieder, mit diesem Code kommst du nicht hinein."
   },
   "locale": {
     "en": "English",
@@ -1321,7 +1323,9 @@
     "deleteFinal": "Endgültig löschen",
     "deleteFailed": "Das Konto konnte nicht gelöscht werden",
     "deleted": "Dein Konto wurde gelöscht",
-    "deviceOn": "{browser} unter {os}"
+    "deviceOn": "{browser} unter {os}",
+    "emailSaved": "Adresse gespeichert",
+    "emailNotConfirmed": "Gespeichert. Die neue Adresse wird über einen Link bestätigt, und dieser Server verschickt noch keine Mails. Bis dahin bleibt deine jetzige Adresse."
   },
   "editRequest": {
     "open": "Korrektur vorschlagen",

@@ -37,10 +37,10 @@ function makeRouter(): Router {
   });
 }
 
-async function mountPage(path = "/settings", me: Partial<User> = {}) {
+async function mountPage(path = "/settings", me: Partial<User> = {}, mail = true) {
   const pinia = createPinia();
   setActivePinia(pinia);
-  useService().$patch({ name: "Bookclub", legal: ["imprint", "privacy", "terms"], contact_email: null });
+  useService().$patch({ name: "Bookclub", legal: ["imprint", "privacy", "terms"], contact_email: null, mail });
   useSession().user = user({ username: "mia", email: "mia@example.com", ...me });
   const router = makeRouter();
   await router.push(path);
@@ -87,7 +87,6 @@ describe("SettingsPage", () => {
     expect(value(wrapper, "appearance-row")).toBe("Paper · System");
     expect(value(wrapper, "language-row")).toBe("English");
     expect(value(wrapper, "timezone-row")).toBe("UTC");
-    expect(value(wrapper, "account-row")).toBe("mia@example.com");
     expect(wrapper.find(".account-row .row-alert").exists()).toBe(false);
     expect(wrapper.get(".account-row").attributes("href")).toBe("/settings/account");
     expect(wrapper.get(".import-row").attributes("href")).toBe("/settings/import");
@@ -101,6 +100,35 @@ describe("SettingsPage", () => {
     expect(wrapper.get(".account-row .row-alert").text()).toBe("Not confirmed");
     ({ wrapper } = await mountPage("/settings", { email: null, email_verified: false }));
     expect(value(wrapper, "account-row")).toBe("No address");
+    // A confirmed address with a new one waiting: the alert names the new one.
+    ({ wrapper } = await mountPage("/settings", { email_verified: true, pending_email: "new@example.com" }));
+    expect(wrapper.get(".account-row .row-alert").text()).toBe("Waiting for confirmation: new@example.com");
+  });
+
+  it("with mail off, asks for no confirmation the server could never send", async () => {
+    for (const me of [{ email_verified: false }, { email_verified: true, pending_email: "new@example.com" }]) {
+      const { wrapper } = await mountPage("/settings", me, false);
+      expect(wrapper.find(".account-row .row-alert").exists()).toBe(false);
+      wrapper.unmount();
+    }
+    const { wrapper } = await mountPage("/settings", { email: null, email_verified: false }, false);
+    expect(wrapper.get(".account-row .row-alert").text()).toBe("No address");
+  });
+
+  it("leads back to the profile its link names, whatever page came before", async () => {
+    window.history.replaceState({ back: "/shelf" }, "");
+    try {
+      const { wrapper, router } = await mountPage();
+      const back = vi.spyOn(router, "back");
+      const link = wrapper.get(".back-link a");
+      expect(link.text()).toBe("← Profile");
+      await link.trigger("click");
+      await flushPromises();
+      expect(back).not.toHaveBeenCalled();
+      expect(router.currentRoute.value.path).toBe("/me");
+    } finally {
+      window.history.replaceState(null, "");
+    }
   });
 
   it("shows the admin row with its count to instance admins only", async () => {

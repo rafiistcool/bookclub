@@ -18,7 +18,7 @@ function deleted() {
 
 <template>
   <section class="settings-sub">
-    <BackLink :label="t('settings.back')" fallback="/settings" />
+    <BackLink :label="t('settings.back')" fallback="/settings" exact />
     <div class="page-head">
       <h1>{{ t("settings.account") }}</h1>
     </div>

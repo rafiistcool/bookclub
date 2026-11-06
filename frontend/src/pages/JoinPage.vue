@@ -56,12 +56,13 @@ const signupLink = computed(() => ({ path: "/signup", query: { code: code.value 
 type DeadEnd = {
   title: string;
   body: string;
-  action: { to: string; label: string } | null;
+  action: { to: string | { path: string; query: Record<string, string> }; label: string } | null;
 };
 
 /** A page that cannot lead into the club, with the one thing left to do. */
 const deadEnd = computed<DeadEnd | null>(() => {
-  const home = signedIn.value ? { to: "/", label: t("join.home") } : null;
+  // Signed out, the way on is signing in: a member then goes on into the club.
+  const home = signedIn.value ? { to: "/", label: t("join.home") } : { to: loginLink.value, label: t("join.signIn") };
   if (invalid.value) {
     return {
       title: t("join.invalidTitle"),

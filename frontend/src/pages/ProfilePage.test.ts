@@ -155,6 +155,21 @@ describe("ProfilePage", () => {
     expect(page.find(".friends-invite").exists()).toBe(false);
   });
 
+  it("says the favourites could not be loaded instead of claiming there are none, and tries again", async () => {
+    const shelf = await api.myShelf();
+    api.myShelf.mockRejectedValueOnce(new ApiError("offline", 503, "offline"));
+    const page = await mountProfile();
+    expect(page.find(".portrait-empty").exists()).toBe(false);
+    expect(page.get(".favorites-failed").text()).toContain("Could not load your shelf");
+    expect(page.find(".edit-favorites").exists()).toBe(false);
+    api.myShelf.mockResolvedValueOnce(shelf);
+    await page.get(".favorites-failed button").trigger("click");
+    await flushPromises();
+    expect(page.find(".favorites-failed").exists()).toBe(false);
+    expect(page.text()).toContain("Middlemarch");
+    expect(page.find(".edit-favorites").exists()).toBe(true);
+  });
+
   it("changes the picture from the camera badge's sheet", async () => {
     const page = await mountProfile({ avatar: "/media/pictures/abc.webp" });
     await page.get(".photo-badge").trigger("click");
