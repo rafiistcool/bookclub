@@ -4,12 +4,9 @@
     "discover": "Discover",
     "shelf": "Shelf",
     "club": "Club",
-    "friends": "Friends",
     "settings": "Settings",
-    "settingsAndTheme": "Settings and theme",
-    "settingsFor": "Settings for {name}",
-    "settingsShort": "Profile",
-    "main": "Main"
+    "main": "Main",
+    "profile": "Profile"
   },
   "cover": {
     "alt": "Cover of {title}",
@@ -72,7 +69,6 @@
     "show": "Show",
     "hide": "Hide",
     "optional": "Optional",
-    "active": "Active",
     "all": "All",
     "club": "Club",
     "edit": "Edit",
@@ -144,7 +140,11 @@
     "newHere": "New here?",
     "signupInviteLede": "You need an invite code to sign up.",
     "usernameHint": "2–32 characters: lowercase letters, numbers, underscore.",
-    "usernameOrEmail": "Or the email address you confirmed."
+    "usernameOrEmail": "Or the email address you confirmed.",
+    "inviteChange": "Change code",
+    "inviteAttached": "With an invite",
+    "emailHintNoMail": "Only you see it.",
+    "welcomeNoMail": "Welcome, {name}!"
   },
   "locale": {
     "en": "English",
@@ -152,19 +152,12 @@
   },
   "settings": {
     "title": "Settings",
-    "signedInAs": "Signed in as {name}.",
-    "profile": "Profile",
-    "choosePhoto": "Choose photo",
-    "removePhoto": "Remove photo",
-    "photoSaved": "Profile picture saved",
-    "photoRemoved": "Profile picture removed",
-    "photoFailed": "Could not save that picture",
     "appearance": "Appearance",
     "colourMode": "Colour mode",
     "followingDevice": "Currently {mode}.",
     "language": "Language",
     "importTitle": "Import from Goodreads",
-    "importBlurb": "Upload your Goodreads library export (CSV). Shelves, ratings and read dates come along.",
+    "importBlurb": "Your Goodreads library as a CSV file. Shelves, ratings and read dates come along.",
     "chooseCsv": "Choose CSV",
     "importCsv": "Import CSV",
     "importing": "Importing…",
@@ -189,16 +182,22 @@
       "catalog_unavailable": "The catalog could not answer; try this one again later",
       "already_on_shelf": "Already on your shelf"
     },
-    "yourData": "Your data",
-    "exportBlurb": "Everything you added, as one ZIP file.",
     "exportData": "Export my data",
     "currentPassword": "Current password",
     "timezone": "Time zone",
-    "timezoneBlurb": "For your reading dates, diary and quotes; club meetings and deadlines use the club's zone.",
-    "timezoneSaved": "Time zone set to {zone}",
+    "timezoneBlurb": "For reading dates, diary and quotes. Club meetings use the club's zone.",
     "timezoneFailed": "Could not save the time zone",
     "deviceZone": "This device: {zone}.",
-    "useDeviceZone": "Use it"
+    "useDeviceZone": "Use it",
+    "account": "Account",
+    "importRow": "Import",
+    "importSource": "Goodreads",
+    "back": "← Settings",
+    "backToAccount": "← Account",
+    "noEmail": "No address",
+    "logOutTitle": "Log out?",
+    "logOutText": "You log out on this device only.",
+    "backToProfile": "← Profile"
   },
   "theme": {
     "paper": "Paper",
@@ -267,7 +266,13 @@
     "noBookYet": "No book yet",
     "seeAll": "See all",
     "soloLine": "Read together?",
-    "meetingWhen": "Meeting {when} · {date}"
+    "meetingWhen": "Meeting {when} · {date}",
+    "friendsWaiting": "{n} waiting for you | {n} waiting for you",
+    "welcomeTitle": "Welcome to {club}!",
+    "welcomePick": "This is what you're all reading. Put it on your shelf and note how far you are.",
+    "welcomePickAction": "Read along",
+    "welcomeNoPick": "No book yet. Suggest one.",
+    "welcomeNoPickAction": "To the vote"
   },
   "shelf": {
     "title": "Your shelf",
@@ -318,7 +323,7 @@
     "added": "Added to favourites",
     "removed": "Removed from favourites",
     "saveFailed": "Could not update favourites",
-    "full": "You already have 3 favourites. Remove one first, or reorder in Settings.",
+    "full": "You already have 3 favourites. Remove one first, or reorder on your profile.",
     "mark": "Favourite",
     "markedAt": "Favourite · {n}",
     "settingsBlurb": "Mark favourites on a book's page, shelved or not.",
@@ -875,24 +880,31 @@
     "toSettings": "Settings"
   },
   "join": {
-    "kicker": "You're invited to",
-    "lede": "Join as {name}?",
-    "alreadyIn": "You're already a member of this club.",
-    "join": "Join {club}",
     "joining": "Joining…",
-    "joined": "Welcome to {club}",
     "failed": "Could not join the club",
-    "open": "Open the club",
-    "notNow": "Not now",
-    "signedOutLede": "Create an account or sign in, and you join right after.",
-    "signUp": "Create an account",
     "signIn": "Sign in",
     "signupInvite": "This invite lets you create an account.",
-    "signupInviteSignedIn": "This invite is for creating an account, and you already have one.",
     "home": "Home",
     "loadFailed": "Could not check that invite",
-    "invalidHint": "Ask for a new one. Invites expire, run out or get withdrawn.",
-    "toClubs": "Your clubs"
+    "toClubs": "Your clubs",
+    "invitedBy": "{name} invites you to {club}",
+    "invitedTo": "You're invited to {club}",
+    "readingNow": "What they're reading",
+    "members": "{n} member | {n} members",
+    "joinNow": "Join",
+    "createAndJoin": "Create account and join",
+    "haveAccount": "I already have an account",
+    "signInAndJoin": "Sign in and join",
+    "notYoursTitle": "This invite is for someone else",
+    "notYoursBody": "Ask for a link of your own.",
+    "fullTitle": "{club} is full",
+    "fullBodyInviter": "It already has 20 members. Let {name} know.",
+    "fullBody": "It already has 20 members. Let whoever invited you know.",
+    "invalidTitle": "This link no longer works",
+    "invalidBody": "Ask whoever sent it for a new one.",
+    "alreadyInToast": "You're already in {club}",
+    "signupInviteSignedInToast": "That invite is for a new account, and you already have one.",
+    "signupTitle": "You're invited"
   },
   "members": {
     "manage": "Manage",
@@ -951,7 +963,6 @@
   },
   "friends": {
     "title": "Friends",
-    "lede": "Friends see each other's shelves, quotes and notes. Only you see this page.",
     "loadFailed": "Could not load your friends",
     "actionFailed": "That did not work",
     "waiting": "{n} request or invitation waiting | {n} requests or invitations waiting",
@@ -1029,8 +1040,7 @@
       "done": "Done"
     },
     "personalInvite": {
-      "signedOut": "Personal invite: sign in with the account it's for, and you join right after.",
-      "notYours": "This invite is for another account."
+      "signedOut": "Personal invite: sign in with the account it's for, and you join right after."
     }
   },
   "clubSettings": {
@@ -1236,7 +1246,7 @@
     "doneBody": "Password reset links now go to this address.",
     "failed": "Could not confirm the address",
     "failedTitle": "That did not work",
-    "failedHint": "Links work once and expire. Ask for a new one under Settings → Email address.",
+    "failedHint": "Links work once and expire. Ask for a new one under Settings → Account.",
     "toHome": "Go to Bookclub",
     "toSettings": "Open the settings"
   },
@@ -1270,7 +1280,6 @@
   },
   "account": {
     "emailHeading": "Email address",
-    "verified": "Confirmed",
     "unverified": "Not confirmed",
     "noEmail": "No address yet. Without one you cannot reset your password.",
     "pending": "Waiting for confirmation: {email}",
@@ -1285,7 +1294,6 @@
     "saveEmail": "Save address",
     "emailSent": "If {email} can be used, a confirmation link is on its way.",
     "emailFailed": "Could not change the address",
-    "passwordHeading": "Password",
     "newPassword": "New password",
     "passwordHint": "At least 8 characters. Your other devices are signed out.",
     "savePassword": "Change password",
@@ -1300,7 +1308,6 @@
     "signOutHere": "Sign out here",
     "sessionEnded": "Signed out there",
     "sessionsFailed": "Could not load the devices",
-    "notificationsHeading": "Notifications",
     "notificationsBlurb": "Takes effect once the apps can notify you.",
     "notify_meeting": "Reminders before a meeting",
     "notify_pick": "A new club pick",
@@ -1310,7 +1317,6 @@
     "deleteHeading": "Delete account",
     "deleteBlurb": "Deletes your account with your shelf, notes, quotes, posts and the clubs only you are in. Export your data first if you want to keep it.",
     "ownedClubs": "Hand over or delete these clubs first:",
-    "delete": "Delete my account",
     "deletePassword": "Your password, to confirm",
     "deleteFinal": "Delete for good",
     "deleteFailed": "Could not delete the account",
@@ -1356,8 +1362,6 @@
       "invites": "Invites",
       "users": "Accounts"
     },
-    "settingsBlurb": "Corrections, cover photos, merges and reports wait for you.",
-    "open": "Open the admin page",
     "loadFailed": "Could not load the queue",
     "decideFailed": "Could not save the decision",
     "someone": "someone",
@@ -1683,5 +1687,19 @@
     "more": "{n} more",
     "notStarted": "{n} not started yet",
     "notYet": "not yet"
+  },
+  "profile": {
+    "readIn": "Read in {year}",
+    "onShelf": "On your shelf",
+    "yourFriends": "Your friends",
+    "friendsReading": "{n} reading now | {n} reading now",
+    "clubs": "Your clubs",
+    "photo": "Profile picture",
+    "photoChange": "Change profile picture",
+    "photoChoose": "Choose photo",
+    "photoRemove": "Remove photo",
+    "photoSaved": "Profile picture saved",
+    "photoRemoved": "Profile picture removed",
+    "photoFailed": "Could not save that picture"
   }
 }

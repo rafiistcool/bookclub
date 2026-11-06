@@ -105,7 +105,7 @@ onBeforeUnmount(() => polling?.abort());
       <span>{{ file ? file.name : t("settings.chooseCsv") }}</span>
     </label>
     <button
-      class="btn btn-ghost"
+      class="btn btn-primary btn-block"
       type="button"
       :disabled="!file || starting || running"
       @click="start"
@@ -150,7 +150,7 @@ onBeforeUnmount(() => polling?.abort());
   width: 100%;
   min-height: var(--tap);
   padding: var(--space-3);
-  margin: var(--space-3) 0;
+  margin: 0 0 var(--space-3);
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-md);
   background: var(--surface);
@@ -162,6 +162,11 @@ onBeforeUnmount(() => polling?.abort());
   .import-file:hover {
     border-color: var(--accent);
   }
+}
+
+.import-file:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .import-file input {
@@ -181,7 +186,6 @@ onBeforeUnmount(() => polling?.abort());
 .progress-track {
   display: block;
   height: 6px;
-  max-width: 320px;
   border-radius: var(--radius-pill);
   background: var(--surface-3);
   overflow: hidden;
@@ -204,11 +208,5 @@ onBeforeUnmount(() => polling?.abort());
   padding-left: var(--space-5);
   color: var(--text-subtle);
   font-size: var(--text-sm);
-}
-
-@media (min-width: 720px) {
-  .import-file {
-    max-width: 320px;
-  }
 }
 </style>

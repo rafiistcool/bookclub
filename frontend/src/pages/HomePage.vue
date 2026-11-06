@@ -21,9 +21,9 @@ import type { Favorite, ShelfItem } from "../types";
  * Home: one book at the centre (`HomeHero`): the current pick of the hero
  * club (the default club, else the soonest meeting, else the first with a
  * book, else the newest join), with the other clubs as chips that swap it.
- * Below come the other books being read, a Friends row that leads to
- * `/friends` with the requests and invitations waiting (the shell loads
- * them), and short previews of the diary and the activity feed (§4.4: it
+ * Below come the other books being read, a row to `/friends` only while
+ * requests or invitations wait there (the shell loads them; Friends lives
+ * under the profile, whose tab carries a dot meanwhile), and short previews of the diary and the activity feed (§4.4: it
  * carries friends' personal events, so it shows for a viewer with friends
  * and no club too). With no club (solo mode) Home makes no club call: the
  * hero is the viewer's top book being read, under one quiet line to create
@@ -201,16 +201,9 @@ onMounted(() => {
       <RouterLink class="solo-link" to="/clubs">{{ t("home.joinWithCode") }}</RouterLink>
     </p>
 
-    <RouterLink class="friends-row" to="/friends">
+    <RouterLink v-if="friends.badge" class="friends-row" to="/friends">
       <NavIcon name="friends" :size="20" />
-      <span class="friends-row-label">{{ t("nav.friends") }}</span>
-      <span v-if="friends.badge" class="friends-count nums">
-        <span aria-hidden="true">{{ friends.badge }}</span>
-        <span class="visually-hidden">{{ tp("friends.waiting", friends.badge) }}</span>
-      </span>
-      <span v-else-if="friends.lists && friends.lists.friends.length === 0" class="fine subtle">
-        {{ t("friends.homeAdd") }}
-      </span>
+      <span class="friends-row-label">{{ tp("home.friendsWaiting", friends.badge) }}</span>
       <span class="friends-row-arrow" aria-hidden="true">→</span>
     </RouterLink>
 
@@ -335,21 +328,13 @@ onMounted(() => {
   }
 }
 
+.friends-row :deep(svg) {
+  color: var(--accent);
+}
+
 .friends-row-label {
   flex: 1;
   font-weight: 600;
-}
-
-.friends-count {
-  min-width: 1.5rem;
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-size: var(--text-xs);
-  font-weight: 700;
-  line-height: 1.5rem;
-  text-align: center;
 }
 
 .friends-row-arrow {

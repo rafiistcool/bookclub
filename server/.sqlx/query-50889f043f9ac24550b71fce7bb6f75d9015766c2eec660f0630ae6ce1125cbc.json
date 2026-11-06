@@ -1,0 +1,110 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT c.slug AS \"slug?\", c.name AS \"name?\", i.invitee_id, i.expires_at,\n                  u.username AS \"inviter?\", m.public_id AS \"inviter_avatar?\",\n                  (SELECT count(*) FROM club_memberships cm WHERE cm.club_id = i.club_id)\n                      AS \"member_count!\",\n                  (SELECT p.work_id FROM club_picks p\n                   WHERE p.club_id = i.club_id AND p.ended_at IS NULL) AS pick_work_id,\n                  EXISTS (SELECT 1 FROM club_memberships cm\n                          WHERE cm.club_id = i.club_id AND cm.user_id = $2) AS \"you_are_member!\"\n           FROM club_invites i\n           LEFT JOIN clubs c ON c.id = i.club_id\n           LEFT JOIN club_memberships im ON im.club_id = i.club_id AND im.user_id = i.created_by\n           LEFT JOIN users u ON u.id = im.user_id AND u.suspended_at IS NULL\n           LEFT JOIN media m ON m.id = u.avatar_media_id AND m.removed_at IS NULL\n           WHERE i.code = $1 AND i.revoked_at IS NULL\n             AND (i.expires_at IS NULL OR i.expires_at > now())\n             AND (i.max_uses IS NULL OR i.use_count < i.max_uses)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "slug?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "clubs",
+            "name": "slug"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "clubs",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "invitee_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "club_invites",
+            "name": "invitee_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "expires_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "club_invites",
+            "name": "expires_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "inviter?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "username"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "inviter_avatar?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "public_id"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "member_count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "pick_work_id",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "you_are_member!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "50889f043f9ac24550b71fce7bb6f75d9015766c2eec660f0630ae6ce1125cbc"
+}

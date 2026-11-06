@@ -20,7 +20,7 @@ import AppShell from "./AppShell.vue";
 
 let wrapper: VueWrapper | null = null;
 
-async function mountShell() {
+async function mountShell(path = "/friends") {
   const pinia = createPinia();
   setActivePinia(pinia);
   useSession().user = user({ id: 1, username: "ada" });
@@ -34,7 +34,7 @@ async function mountShell() {
       },
     ],
   });
-  await router.push("/friends");
+  await router.push(path);
   wrapper = mount({ template: "<RouterView />" }, { global: { plugins: [pinia, router, i18n] } });
   await flushPromises();
   return wrapper;
@@ -61,7 +61,7 @@ describe("AppShell", () => {
     Reflect.deleteProperty(document, "visibilityState");
   });
 
-  it("lists Friends in the sidebar after Club, with what waits, and keeps it out of the tab bar", async () => {
+  it("puts Friends and Settings under the profile: the last tab, the account card", async () => {
     api.friends!.mockResolvedValue(
       friendsOut({
         friends: [friendOut("grace")],
@@ -73,28 +73,53 @@ describe("AppShell", () => {
     const shell = await mountShell();
     expect(api.friends).toHaveBeenCalledTimes(1);
 
+    // The sidebar's rows: the four places; the profile is the card below them.
     const side = shell.findAll(".sidebar-nav a");
-    expect(side.map((link) => link.attributes("href"))).toEqual(["/", "/discover", "/shelf", "/club", "/friends", "/settings"]);
-    const friends = side[4]!;
-    expect(friends.attributes("aria-current")).toBe("page");
-    const count = friends.get(".side-count");
+    expect(side.map((link) => link.attributes("href"))).toEqual(["/", "/discover", "/shelf", "/club"]);
+    expect(side.some((link) => link.attributes("aria-current"))).toBe(false);
+    const card = shell.get(".side-account");
+    expect(card.classes()).toContain("active");
+    const profile = card.get(".side-account-link");
+    expect(profile.attributes("href")).toBe("/me");
+    expect(profile.attributes("aria-current")).toBe("page");
+    expect(profile.get("strong").text()).toBe("ada");
+    const count = profile.get(".side-count");
     expect(count.get("[aria-hidden=true]").text()).toBe("2");
     expect(count.get(".visually-hidden").text()).toBe("2 requests or invitations waiting");
-    expect(side.filter((link) => link.find(".side-count").exists())).toHaveLength(1);
+    expect(shell.findAll(".side-count")).toHaveLength(1);
+    const gear = card.get(".side-settings");
+    expect(gear.attributes("href")).toBe("/settings");
+    expect(gear.attributes("aria-label")).toBe("Settings");
 
-    expect(shell.findAll(".bottom-nav a").map((link) => link.attributes("href"))).toEqual([
-      "/",
-      "/discover",
-      "/shelf",
-      "/club",
-      "/settings",
-    ]);
+    // The phone: five tabs, the last one the reader's picture with a dot while something waits.
+    const tabs = shell.findAll(".bottom-nav a");
+    expect(tabs.map((link) => link.attributes("href"))).toEqual(["/", "/discover", "/shelf", "/club", "/me"]);
+    const tab = tabs[4]!;
+    expect(tab.attributes("aria-current")).toBe("page");
+    expect(tab.find("svg").exists()).toBe(false);
+    expect(tab.get(".tab-avatar").classes()).toContain("waiting");
+    expect(tab.get(".tab-avatar .avatar").text()).toBe("A");
+    expect(tab.text()).toContain("Profile");
+    expect(tab.get(".visually-hidden").text()).toBe("2 requests or invitations waiting");
+
+    // The Profil tab is the phone's way to the profile; the top bar carries only the wordmark.
+    expect(shell.find(".topbar .avatar-link").exists()).toBe(false);
+  });
+
+  it("lights the profile on its own pages only", async () => {
+    api.friends!.mockResolvedValue(friendsOut());
+    const shell = await mountShell("/shelf");
+    expect(shell.get(".side-account").classes()).not.toContain("active");
+    expect(shell.get(".bottom-nav a[aria-current=page]").attributes("href")).toBe("/shelf");
+    expect(shell.get(".tab-avatar").classes()).not.toContain("waiting");
+    expect(shell.get(".bottom-nav a:last-of-type").find(".visually-hidden").exists()).toBe(false);
   });
 
   it("shows no count when nothing waits or the lists cannot be loaded", async () => {
     api.friends!.mockResolvedValue(friendsOut({ friends: [friendOut("grace")], outgoing: [friendRequest("olga")] }));
     let shell = await mountShell();
     expect(shell.find(".side-count").exists()).toBe(false);
+    expect(shell.get(".tab-avatar").classes()).not.toContain("waiting");
     shell.unmount();
 
     api.friends!.mockRejectedValue(new Error("offline"));

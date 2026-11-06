@@ -189,7 +189,9 @@ const USER_COLUMNS: &[(&str, Class)] = &[
         "club_invites.created_by",
         Not(
             "invite data: `InviteOut.created_by`, for the club's admins only, or instance admins \
-             for a sign-up invite (clubs_invites.rs)",
+             for a sign-up invite (clubs_invites.rs); the join page's `InvitePreview.inviter` \
+             names a club invite's creator to its code's holders only while they are a member \
+             (invite_preview.rs)",
         ),
     ),
     (

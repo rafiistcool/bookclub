@@ -4,12 +4,9 @@
     "discover": "Entdecken",
     "shelf": "Regal",
     "club": "Club",
-    "friends": "Freunde",
     "settings": "Einstellungen",
-    "settingsAndTheme": "Einstellungen und Design",
-    "settingsFor": "Einstellungen für {name}",
-    "settingsShort": "Profil",
-    "main": "Hauptmenü"
+    "main": "Hauptmenü",
+    "profile": "Profil"
   },
   "cover": {
     "alt": "Cover von {title}",
@@ -72,7 +69,6 @@
     "show": "Zeigen",
     "hide": "Verbergen",
     "optional": "Optional",
-    "active": "Aktiv",
     "all": "Alle",
     "club": "Club",
     "edit": "Bearbeiten",
@@ -144,7 +140,11 @@
     "newHere": "Neu hier?",
     "signupInviteLede": "Ein Konto gibt es nur mit Einladungscode.",
     "usernameHint": "2–32 Zeichen: Kleinbuchstaben, Ziffern, Unterstrich.",
-    "usernameOrEmail": "Oder die E-Mail-Adresse, die du bestätigt hast."
+    "usernameOrEmail": "Oder die E-Mail-Adresse, die du bestätigt hast.",
+    "inviteChange": "Code ändern",
+    "inviteAttached": "Mit Einladung",
+    "emailHintNoMail": "Nur du siehst sie.",
+    "welcomeNoMail": "Willkommen, {name}!"
   },
   "locale": {
     "en": "English",
@@ -152,19 +152,12 @@
   },
   "settings": {
     "title": "Einstellungen",
-    "signedInAs": "Angemeldet als {name}.",
-    "profile": "Profil",
-    "choosePhoto": "Foto wählen",
-    "removePhoto": "Foto entfernen",
-    "photoSaved": "Profilbild gespeichert",
-    "photoRemoved": "Profilbild entfernt",
-    "photoFailed": "Bild konnte nicht gespeichert werden",
-    "appearance": "Erscheinungsbild",
+    "appearance": "Darstellung",
     "colourMode": "Farbmodus",
     "followingDevice": "Gerade {mode}.",
     "language": "Sprache",
     "importTitle": "Aus Goodreads importieren",
-    "importBlurb": "Lade deinen Goodreads-Bibliotheksexport (CSV) hoch. Regale, Bewertungen und Lesedaten kommen mit.",
+    "importBlurb": "Deine Goodreads-Bibliothek als CSV. Regale, Bewertungen und Lesedaten kommen mit.",
     "chooseCsv": "CSV wählen",
     "importCsv": "CSV importieren",
     "importing": "Import läuft…",
@@ -189,16 +182,22 @@
       "catalog_unavailable": "Der Katalog hat nicht geantwortet; versuch es später nochmal",
       "already_on_shelf": "Steht schon in deinem Regal"
     },
-    "yourData": "Deine Daten",
-    "exportBlurb": "Alles, was du angelegt hast, als eine ZIP-Datei.",
     "exportData": "Meine Daten exportieren",
     "currentPassword": "Aktuelles Passwort",
     "timezone": "Zeitzone",
-    "timezoneBlurb": "Für deine Lesedaten, dein Tagebuch und deine Zitate; Club-Treffen und Fristen folgen der Zone des Clubs.",
-    "timezoneSaved": "Zeitzone auf {zone} gestellt",
+    "timezoneBlurb": "Für Lesedaten, Tagebuch und Zitate. Club-Treffen folgen der Zone des Clubs.",
     "timezoneFailed": "Die Zeitzone konnte nicht gespeichert werden",
     "deviceZone": "Dieses Gerät: {zone}.",
-    "useDeviceZone": "Übernehmen"
+    "useDeviceZone": "Übernehmen",
+    "account": "Konto",
+    "importRow": "Import",
+    "importSource": "Goodreads",
+    "back": "← Einstellungen",
+    "backToAccount": "← Konto",
+    "noEmail": "Keine Adresse",
+    "logOutTitle": "Abmelden?",
+    "logOutText": "Du meldest dich auf diesem Gerät ab.",
+    "backToProfile": "← Profil"
   },
   "theme": {
     "paper": "Papier",
@@ -267,7 +266,13 @@
     "noBookYet": "Noch kein Buch",
     "seeAll": "Alle ansehen",
     "soloLine": "Gemeinsam lesen?",
-    "meetingWhen": "Treffen {when} · {date}"
+    "meetingWhen": "Treffen {when} · {date}",
+    "friendsWaiting": "{n} wartet auf dich | {n} warten auf dich",
+    "welcomeTitle": "Willkommen bei {club}!",
+    "welcomePick": "Das lest ihr gerade. Leg es auf dein Regal und trag ein, wie weit du bist.",
+    "welcomePickAction": "Mitlesen",
+    "welcomeNoPick": "Noch kein Buch. Schlag eins vor.",
+    "welcomeNoPickAction": "Zur Abstimmung"
   },
   "shelf": {
     "title": "Mein Regal",
@@ -318,7 +323,7 @@
     "added": "Zu den Favoriten hinzugefügt",
     "removed": "Von den Favoriten entfernt",
     "saveFailed": "Favoriten konnten nicht gespeichert werden",
-    "full": "Du hast schon 3 Favoriten. Entferne zuerst einen, oder sortiere unter Einstellungen um.",
+    "full": "Du hast schon 3 Favoriten. Entferne zuerst einen, oder sortiere in deinem Profil um.",
     "mark": "Favorit",
     "markedAt": "Favorit · {n}",
     "settingsBlurb": "Favoriten markierst du auf einer Buchseite, ob im Regal oder nicht.",
@@ -875,24 +880,31 @@
     "toSettings": "Einstellungen"
   },
   "join": {
-    "kicker": "Du bist eingeladen zu",
-    "lede": "Als {name} beitreten?",
-    "alreadyIn": "Du bist schon Mitglied in diesem Club.",
-    "join": "{club} beitreten",
     "joining": "Trete bei…",
-    "joined": "Willkommen bei {club}",
     "failed": "Beitritt hat nicht geklappt",
-    "open": "Club öffnen",
-    "notNow": "Jetzt nicht",
-    "signedOutLede": "Leg ein Konto an oder melde dich an, dann trittst du direkt danach bei.",
-    "signUp": "Konto anlegen",
     "signIn": "Anmelden",
     "signupInvite": "Mit dieser Einladung kannst du ein Konto anlegen.",
-    "signupInviteSignedIn": "Diese Einladung ist zum Anlegen eines Kontos, und du hast schon eins.",
     "home": "Start",
     "loadFailed": "Die Einladung konnte nicht geprüft werden",
-    "invalidHint": "Bitte um eine neue. Einladungen laufen ab, werden aufgebraucht oder zurückgezogen.",
-    "toClubs": "Deine Clubs"
+    "toClubs": "Deine Clubs",
+    "invitedBy": "{name} lädt dich zu {club} ein",
+    "invitedTo": "Du bist eingeladen zu {club}",
+    "readingNow": "Das lesen sie gerade",
+    "members": "{n} Mitglied | {n} Mitglieder",
+    "joinNow": "Beitreten",
+    "createAndJoin": "Konto erstellen und beitreten",
+    "haveAccount": "Ich habe schon ein Konto",
+    "signInAndJoin": "Anmelden und beitreten",
+    "notYoursTitle": "Diese Einladung ist für jemand anderen",
+    "notYoursBody": "Frag nach einem eigenen Link.",
+    "fullTitle": "{club} ist voll",
+    "fullBodyInviter": "Der Club hat schon 20 Mitglieder. Sag {name} Bescheid.",
+    "fullBody": "Der Club hat schon 20 Mitglieder. Sag der Person Bescheid, die dich eingeladen hat.",
+    "invalidTitle": "Dieser Link gilt nicht mehr",
+    "invalidBody": "Bitte die Person, die ihn dir geschickt hat, um einen neuen.",
+    "alreadyInToast": "Du bist schon in {club}",
+    "signupInviteSignedInToast": "Die Einladung ist für ein neues Konto, und du hast schon eins.",
+    "signupTitle": "Du bist eingeladen"
   },
   "members": {
     "manage": "Verwalten",
@@ -951,7 +963,6 @@
   },
   "friends": {
     "title": "Freunde",
-    "lede": "Freunde sehen gegenseitig Regale, Zitate und Notizen. Diese Seite siehst nur du.",
     "loadFailed": "Deine Freunde konnten nicht geladen werden",
     "actionFailed": "Das hat nicht geklappt",
     "waiting": "{n} Anfrage oder Einladung wartet | {n} Anfragen oder Einladungen warten",
@@ -1029,8 +1040,7 @@
       "done": "Fertig"
     },
     "personalInvite": {
-      "signedOut": "Persönliche Einladung: Melde dich mit dem Konto an, für das sie ist, dann trittst du direkt bei.",
-      "notYours": "Diese Einladung ist für ein anderes Konto."
+      "signedOut": "Persönliche Einladung: Melde dich mit dem Konto an, für das sie ist, dann trittst du direkt bei."
     }
   },
   "clubSettings": {
@@ -1236,7 +1246,7 @@
     "doneBody": "Links zum Zurücksetzen des Passworts gehen jetzt an diese Adresse.",
     "failed": "Die Adresse konnte nicht bestätigt werden",
     "failedTitle": "Das hat nicht geklappt",
-    "failedHint": "Links gelten einmal und laufen ab. Fordere unter Einstellungen → E-Mail-Adresse einen neuen an.",
+    "failedHint": "Links gelten einmal und laufen ab. Fordere unter Einstellungen → Konto einen neuen an.",
     "toHome": "Zu Bookclub",
     "toSettings": "Einstellungen öffnen"
   },
@@ -1270,7 +1280,6 @@
   },
   "account": {
     "emailHeading": "E-Mail-Adresse",
-    "verified": "Bestätigt",
     "unverified": "Nicht bestätigt",
     "noEmail": "Noch keine Adresse. Ohne sie kannst du dein Passwort nicht zurücksetzen.",
     "pending": "Wartet auf Bestätigung: {email}",
@@ -1285,7 +1294,6 @@
     "saveEmail": "Adresse speichern",
     "emailSent": "Wenn {email} verwendet werden kann, ist ein Bestätigungslink unterwegs.",
     "emailFailed": "Die Adresse konnte nicht geändert werden",
-    "passwordHeading": "Passwort",
     "newPassword": "Neues Passwort",
     "passwordHint": "Mindestens 8 Zeichen. Deine anderen Geräte werden abgemeldet.",
     "savePassword": "Passwort ändern",
@@ -1300,7 +1308,6 @@
     "signOutHere": "Hier abmelden",
     "sessionEnded": "Dort abgemeldet",
     "sessionsFailed": "Die Geräte konnten nicht geladen werden",
-    "notificationsHeading": "Benachrichtigungen",
     "notificationsBlurb": "Gilt, sobald die Apps benachrichtigen können.",
     "notify_meeting": "Erinnerungen vor einem Treffen",
     "notify_pick": "Ein neues Club-Buch",
@@ -1310,7 +1317,6 @@
     "deleteHeading": "Konto löschen",
     "deleteBlurb": "Löscht dein Konto mit Regal, Notizen, Zitaten, Beiträgen und den Clubs, in denen nur du bist. Exportiere vorher deine Daten, wenn du sie behalten willst.",
     "ownedClubs": "Übergib oder lösche zuerst diese Clubs:",
-    "delete": "Mein Konto löschen",
     "deletePassword": "Dein Passwort, zur Bestätigung",
     "deleteFinal": "Endgültig löschen",
     "deleteFailed": "Das Konto konnte nicht gelöscht werden",
@@ -1356,8 +1362,6 @@
       "invites": "Einladungen",
       "users": "Konten"
     },
-    "settingsBlurb": "Korrekturen, Cover-Fotos, Zusammenführungen und Meldungen warten auf dich.",
-    "open": "Verwaltung öffnen",
     "loadFailed": "Die Warteschlange konnte nicht geladen werden",
     "decideFailed": "Die Entscheidung konnte nicht gespeichert werden",
     "someone": "jemand",
@@ -1683,5 +1687,19 @@
     "more": "{n} weitere",
     "notStarted": "{n} noch nicht angefangen",
     "notYet": "noch nicht"
+  },
+  "profile": {
+    "readIn": "Gelesen {year}",
+    "onShelf": "Im Regal",
+    "yourFriends": "Deine Freunde",
+    "friendsReading": "{n} liest gerade | {n} lesen gerade",
+    "clubs": "Deine Clubs",
+    "photo": "Profilbild",
+    "photoChange": "Profilbild ändern",
+    "photoChoose": "Foto wählen",
+    "photoRemove": "Foto entfernen",
+    "photoSaved": "Profilbild gespeichert",
+    "photoRemoved": "Profilbild entfernt",
+    "photoFailed": "Bild konnte nicht gespeichert werden"
   }
 }

@@ -45,14 +45,17 @@ describe("the personal time zone", () => {
     await flushPromises();
     expect(savePreferences).toHaveBeenCalledWith({ timezone: "America/New_York" });
     expect(useSession().user?.timezone).toBe("America/New_York");
-    expect(useToast().items.at(-1)?.message).toContain("America/New_York");
+    // Settings' row shows the saved zone: no toast says it again.
+    expect(useToast().items).toHaveLength(0);
   });
 
   it("offers this device's zone when the account has another one", async () => {
     // An imported account keeps the zone the importer gave it.
     const wrapper = mountWith("UTC");
     // The zone is named once, in the sentence; the button only says what it does.
-    expect(wrapper.get(".device-zone").text()).toBe("This device: Europe/Berlin. Use it");
+    // It comes first, as the one-tap way, above the full list.
+    expect(wrapper.get(".device-zone .device-name").text()).toBe("This device: Europe/Berlin.");
+    expect(wrapper.element.firstElementChild?.classList.contains("device-zone")).toBe(true);
     expect(wrapper.get(".device-zone button").text()).toBe("Use it");
     savePreferences.mockResolvedValue(user({ timezone: "Europe/Berlin" }));
     await wrapper.get(".device-zone button").trigger("click");

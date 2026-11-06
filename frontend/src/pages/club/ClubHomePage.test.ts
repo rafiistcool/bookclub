@@ -1,6 +1,6 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bookOut, clubOut, clubPick, nomination, shelfItem, user, vote } from "../../test/fixtures";
 import type { ClubPick } from "../../types";
 
@@ -191,5 +191,60 @@ describe("ClubHomePage", () => {
     await flushPromises();
     expect(empty.get(".empty").text()).toContain("An admin sets the next book");
     wrapper.unmount();
+  });
+
+  describe("the welcome after joining", () => {
+    afterEach(() => {
+      window.history.replaceState(null, "");
+      Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+    });
+
+    it("greets a reader who just joined, once, and leads to the start button", async () => {
+      window.history.replaceState({ current: "/c/readers-ab12", joined: true }, "");
+      const scrolled = vi.fn();
+      HTMLElement.prototype.scrollIntoView = scrolled;
+      const wrapper = await mountAs("member");
+      const welcome = wrapper.get(".welcome");
+      expect(welcome.get(".welcome-title").text()).toBe("Welcome to Readers!");
+      expect(welcome.text()).toContain("This is what you're all reading.");
+      // Taken out of the history entry: a reload or a later visit shows none.
+      expect(window.history.state).toEqual({ current: "/c/readers-ab12", joined: undefined });
+
+      await welcome.get(".welcome-action").trigger("click");
+      expect(wrapper.find(".welcome").exists()).toBe(false);
+      expect(scrolled).toHaveBeenCalledTimes(1);
+      expect(scrolled.mock.instances[0]).toBe(wrapper.get(".start-reading").element);
+
+      const again = await mountAs("member");
+      expect(again.find(".welcome").exists()).toBe(false);
+    });
+
+    it("can be dismissed", async () => {
+      window.history.replaceState({ joined: true }, "");
+      const wrapper = await mountAs("member");
+      await wrapper.get(".welcome-close").trigger("click");
+      expect(wrapper.find(".welcome").exists()).toBe(false);
+    });
+
+    it("points to the vote while the club has no book", async () => {
+      window.history.replaceState({ joined: true }, "");
+      const pinia = createPinia();
+      setActivePinia(pinia);
+      const club = clubOut({ role: "member", member_count: 4 });
+      useSession().user = user({ clubs: [{ ...club }] });
+      useClubs().current = club;
+      api.clubPick.mockResolvedValue({ pick: null, timezone: "Europe/Berlin" });
+      api.clubPickHistory.mockResolvedValue({ items: [], timezone: "Europe/Berlin" });
+      api.vote.mockResolvedValue(vote({ nominations: [] }));
+      const wrapper = mount(ClubHomePage, { global: { plugins: [pinia, i18n], stubs: STUBS } });
+      await flushPromises();
+      expect(wrapper.get(".welcome").text()).toContain("No book yet. Suggest one.");
+      expect(wrapper.get(".welcome-action").attributes("href")).toBe("/c/readers-ab12/vote");
+    });
+
+    it("stays away from an ordinary visit", async () => {
+      const wrapper = await mountAs("member");
+      expect(wrapper.find(".welcome").exists()).toBe(false);
+    });
   });
 });

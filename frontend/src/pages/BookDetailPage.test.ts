@@ -152,7 +152,7 @@ describe("BookDetailPage", () => {
     expect(favourite!.text()).toBe("Favourite");
     expect(favourite!.attributes("aria-pressed")).toBe("false");
     expect(useToast().items[0]?.message).toBe(
-      "You already have 3 favourites. Remove one first, or reorder in Settings.",
+      "You already have 3 favourites. Remove one first, or reorder on your profile.",
     );
   });
 

@@ -8,7 +8,6 @@ import { memoryStorage } from "../test/storage";
 
 const api: Record<string, ReturnType<typeof vi.fn>> = {
   legal: vi.fn(),
-  myFavorites: vi.fn(),
   savePreferences: vi.fn(),
   // The shell asks for the Friends badge (#57).
   friends: vi.fn(),
@@ -384,9 +383,9 @@ interface Shell {
 }
 
 /**
- * The real AppShell with a stand-in page, and the real Settings page (its
- * heavy sections stubbed) at `/settings`: the shell is where the prompts and
- * the legal footer live, so only a mount of the shell shows they are there.
+ * The real AppShell with a stand-in page, and the real Settings index at
+ * `/settings`: the shell is where the prompts and the legal footer live, so
+ * only a mount of the shell shows they are there.
  */
 async function mountShell({ path = "/", me = user(), legal = ["imprint", "privacy", "terms"], contact = null }: Shell = {}) {
   const pinia = createPinia();
@@ -413,13 +412,8 @@ async function mountShell({ path = "/", me = user(), legal = ["imprint", "privac
     {
       global: {
         plugins: [pinia, router],
-        stubs: {
-          AccountSettings: true,
-          DeleteAccount: true,
-          FavoritesEditor: true,
-          GoodreadsImport: true,
-          TimeZoneSetting: true,
-        },
+        // The settings rows' value crossfade waits for a transitionend jsdom never fires.
+        stubs: { transition: true },
       },
     },
   );
@@ -430,7 +424,6 @@ async function mountShell({ path = "/", me = user(), legal = ["imprint", "privac
 describe("the legal parts of the app shell and Settings", () => {
   beforeEach(() => {
     for (const fn of Object.values(api)) fn.mockReset();
-    api.myFavorites.mockResolvedValue({ items: [] });
     api.friends.mockResolvedValue({ friends: [], incoming: [], outgoing: [], blocked: [], club_invites: [] });
     vi.stubGlobal("localStorage", memoryStorage());
     vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
@@ -475,35 +468,40 @@ describe("the legal parts of the app shell and Settings", () => {
     expect(wrapper.find("footer.shell-footer").exists()).toBe(false);
   });
 
-  it("drops the footer on Settings, whose Legal section lists the texts and the contact", async () => {
+  it("drops the footer on Settings, whose Legal sheet lists the texts and the contact", async () => {
     const wrapper = await mountShell({ path: "/settings", contact: "legal@books.example" });
     expect(wrapper.find("footer.shell-footer").exists()).toBe(false);
     expect(wrapper.find("nav.legal-links").exists()).toBe(false);
-    const section = wrapper.get("section[aria-labelledby=legal]");
-    expect(section.get("h2").text()).toBe("Legal");
-    expect(section.findAll(".legal-list a").map((link) => [link.attributes("href"), link.text()])).toEqual([
+    await wrapper.get(".legal-row").trigger("click");
+    const sheet = wrapper.get(".legal-sheet");
+    expect(sheet.get("[role=dialog]").attributes("aria-label")).toBe("Legal");
+    expect(sheet.findAll(".legal-list a").map((link) => [link.attributes("href"), link.text()])).toEqual([
       ["/imprint", "Imprint"],
       ["/privacy", "Privacy policy"],
       ["/terms", "Terms of use"],
     ]);
-    const mail = section.get(".legal-contact a");
+    const mail = sheet.get(".legal-contact a");
     expect(mail.attributes("href")).toBe("mailto:legal@books.example");
     expect(mail.text()).toBe("legal@books.example");
   });
 
-  it("keeps the Legal section for the contact alone, and drops it without texts and contact", async () => {
+  it("keeps the Legal row for the contact alone, and drops it without texts and contact", async () => {
     let wrapper = await mountShell({ path: "/settings", legal: [], contact: "legal@books.example" });
-    let section = wrapper.get("section[aria-labelledby=legal]");
-    expect(section.find(".legal-list").exists()).toBe(false);
-    expect(section.get(".legal-contact a").attributes("href")).toBe("mailto:legal@books.example");
+    await wrapper.get(".legal-row").trigger("click");
+    let sheet = wrapper.get(".legal-sheet");
+    expect(sheet.find(".legal-list").exists()).toBe(false);
+    expect(sheet.get(".legal-contact a").attributes("href")).toBe("mailto:legal@books.example");
+    wrapper.unmount();
 
     wrapper = await mountShell({ path: "/settings", legal: ["privacy"] });
-    section = wrapper.get("section[aria-labelledby=legal]");
-    expect(section.findAll(".legal-list a").map((link) => link.attributes("href"))).toEqual(["/privacy"]);
-    expect(section.find(".legal-contact").exists()).toBe(false);
+    await wrapper.get(".legal-row").trigger("click");
+    sheet = wrapper.get(".legal-sheet");
+    expect(sheet.findAll(".legal-list a").map((link) => link.attributes("href"))).toEqual(["/privacy"]);
+    expect(sheet.find(".legal-contact").exists()).toBe(false);
+    wrapper.unmount();
 
     wrapper = await mountShell({ path: "/settings", legal: [] });
-    expect(wrapper.find("section[aria-labelledby=legal]").exists()).toBe(false);
+    expect(wrapper.find(".legal-row").exists()).toBe(false);
   });
 
   it("links the privacy policy from the email prompt only when the server has one", async () => {

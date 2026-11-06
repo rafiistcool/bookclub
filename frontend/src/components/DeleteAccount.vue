@@ -3,18 +3,19 @@ import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
 import { useSession } from "../stores/session";
+import BottomSheet from "./BottomSheet.vue";
 
 /**
- * Deleting the account. A club the reader owns with other members in it has
- * to be handed over or deleted first (409 `Transfer or delete your clubs
- * first`); a club of one goes with the account.
+ * Deleting the account, the sheet behind the account page's red row. A club
+ * the reader owns with other members in it has to be handed over or deleted
+ * first (409 `Transfer or delete your clubs first`); a club of one goes with
+ * the account.
  */
-const emit = defineEmits<{ deleted: [] }>();
+const emit = defineEmits<{ close: []; deleted: [] }>();
 
 const { t } = useI18n();
 const session = useSession();
 
-const open = ref(false);
 const password = ref("");
 const pending = ref(false);
 const error = ref("");
@@ -36,51 +37,46 @@ async function submit() {
     pending.value = false;
   }
 }
+
+function close() {
+  if (!pending.value) emit("close");
+}
 </script>
 
 <template>
-  <section class="section delete-account" aria-labelledby="delete-account">
-    <div class="section-head">
-      <h2 id="delete-account">{{ t("account.deleteHeading") }}</h2>
-    </div>
+  <BottomSheet class="delete-account" :title="t('account.deleteHeading')" @close="close">
     <p class="fine muted delete-blurb">{{ t("account.deleteBlurb") }}</p>
-    <div v-if="ownedWithOthers.length" class="panel owned-clubs">
+    <div v-if="ownedWithOthers.length" class="owned-clubs">
       <p class="fine">{{ t("account.ownedClubs") }}</p>
       <ul>
         <li v-for="club in ownedWithOthers" :key="club.slug">
-          <RouterLink :to="`/c/${club.slug}/members`">{{ club.name }}</RouterLink>
+          <RouterLink :to="`/c/${club.slug}/members`" @click="close">{{ club.name }}</RouterLink>
         </li>
       </ul>
     </div>
-    <button v-if="!open" class="btn btn-danger btn-sm" type="button" @click="open = true">
-      {{ t("account.delete") }}
-    </button>
-    <form v-else class="panel delete-form" @submit.prevent="submit">
+    <form class="delete-form" @submit.prevent="submit">
       <p v-if="error" class="error">{{ error }}</p>
       <label class="field">
         <span>{{ t("account.deletePassword") }}</span>
         <input v-model="password" type="password" autocomplete="current-password" required />
       </label>
-      <div class="btn-row">
-        <button class="btn btn-danger btn-sm" type="submit" :disabled="pending || !password">
-          {{ t("account.deleteFinal") }}
-        </button>
-        <button class="btn btn-ghost btn-sm" type="button" @click="open = false; password = ''">
-          {{ t("common.cancel") }}
-        </button>
-      </div>
+      <button class="btn btn-danger btn-block" type="submit" :disabled="pending || !password">
+        {{ t("account.deleteFinal") }}
+      </button>
     </form>
-  </section>
+  </BottomSheet>
 </template>
 
 <style scoped>
 .delete-blurb {
-  max-width: 62ch;
-  margin-bottom: var(--space-3);
+  margin-bottom: var(--space-4);
 }
 
 .owned-clubs {
-  margin-bottom: var(--space-3);
+  padding: var(--space-3) 0;
+  margin-bottom: var(--space-4);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
 }
 
 .owned-clubs ul {
@@ -88,7 +84,15 @@ async function submit() {
   padding-left: var(--space-5);
 }
 
+.owned-clubs li a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  font-weight: 600;
+}
+
 .delete-form {
-  max-width: 480px;
+  display: grid;
+  gap: var(--space-3);
 }
 </style>

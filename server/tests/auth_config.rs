@@ -51,11 +51,21 @@ async fn config_is_public_branding(db: PgPool) {
             "theme_dark": "#8e361c",
             "public_url": "http://localhost:5173",
             "signup": "invite",
+            "mail": true,
             "legal": ["imprint", "privacy", "terms"],
             "terms_version": null,
             "contact_email": null,
         })
     );
+}
+
+/// With mail off (`EMAIL_TRANSPORT=none`, the private instance) the SPA promises no mail.
+#[sqlx::test]
+async fn config_says_when_mail_is_off(db: PgPool) {
+    let app = TestApp::with_env(db, &[("EMAIL_TRANSPORT", "none")]).await;
+    let res = app.anon().get("/api/config").await;
+    res.assert_status(200);
+    assert_eq!(res.json()["mail"], false);
 }
 
 /// parity: test_selfhost.py::test_branded_app_config_cors_and_user_agent

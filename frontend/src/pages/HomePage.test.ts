@@ -286,17 +286,14 @@ describe("HomePage", () => {
     expect(wrapper.text()).toContain("Middlemarch");
   });
 
-  it("leads to the friends page with what waits there, or the way to add friends", async () => {
-    // Before the shell's lists arrive (or when they failed): the plain row.
+  it("shows a row to the friends page only while requests or invitations wait there", async () => {
+    // Before the shell's lists arrive (or when they failed), and with nothing waiting: no row.
     let wrapper = await mountHome([]);
-    let row = wrapper.get("a.friends-row");
-    expect(row.attributes("href")).toBe("/friends");
-    expect(row.get(".friends-row-label").text()).toBe("Friends");
-    expect(row.find(".friends-count").exists()).toBe(false);
-    expect(row.text()).not.toContain("Add friends");
-
+    expect(wrapper.find(".friends-row").exists()).toBe(false);
     wrapper = await mountHome([], friendsOut());
-    expect(wrapper.get("a.friends-row").text()).toContain("Add friends");
+    expect(wrapper.find(".friends-row").exists()).toBe(false);
+    wrapper = await mountHome([], friendsOut({ friends: [friendOut("grace")], outgoing: [friendRequest("olga")] }));
+    expect(wrapper.find(".friends-row").exists()).toBe(false);
 
     wrapper = await mountHome(
       [SUMMARY],
@@ -307,16 +304,13 @@ describe("HomePage", () => {
         club_invites: [friendClubInvite()],
       }),
     );
-    row = wrapper.get("a.friends-row");
-    expect(row.get(".friends-count [aria-hidden=true]").text()).toBe("3");
-    expect(row.get(".friends-count .visually-hidden").text()).toBe("3 requests or invitations waiting");
-    expect(row.text()).not.toContain("Add friends");
+    const row = wrapper.get("a.friends-row");
+    expect(row.attributes("href")).toBe("/friends");
+    expect(row.get(".friends-row-label").text()).toBe("3 waiting for you");
 
-    // Friends and nothing waiting: just the way there. Home asks the server nothing itself.
-    wrapper = await mountHome([], friendsOut({ friends: [friendOut("grace")] }));
-    row = wrapper.get("a.friends-row");
-    expect(row.find(".friends-count").exists()).toBe(false);
-    expect(row.text()).not.toContain("Add friends");
+    wrapper = await mountHome([], friendsOut({ club_invites: [friendClubInvite()] }));
+    expect(wrapper.get(".friends-row-label").text()).toBe("1 waiting for you");
+    // Home asks the server nothing itself: the shell loads the lists.
     expect(Object.keys(api)).not.toContain("friends");
   });
 

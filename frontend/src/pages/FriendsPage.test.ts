@@ -62,7 +62,7 @@ const FULL = friendsOut({
 
 let wrapper: VueWrapper | null = null;
 
-async function mountPage(lists = FULL, clubs: ClubSummary[] = [READERS]) {
+async function mountPage(lists = FULL, clubs: ClubSummary[] = [READERS], path = "/friends") {
   const pinia = createPinia();
   setActivePinia(pinia);
   useSession().user = user({ id: 1, username: "ada", clubs, timezone: "UTC" });
@@ -74,7 +74,7 @@ async function mountPage(lists = FULL, clubs: ClubSummary[] = [READERS]) {
       { path: "/:rest(.*)*", component: { template: "<p>elsewhere</p>" } },
     ],
   });
-  await router.push("/friends");
+  await router.push(path);
   wrapper = mount(FriendsPage, {
     attachTo: document.body,
     global: { plugins: [pinia, router, i18n], stubs: { BookCover: true } },
@@ -93,6 +93,12 @@ function button(scope: { findAll: VueWrapper["findAll"] }, label: string) {
   return found;
 }
 
+/** Opens the add-a-friend sheet from the head's button. */
+async function openAdd(page: VueWrapper) {
+  await page.get(".add-btn").trigger("click");
+  return { form: page.get(".add-form"), input: page.get(".add-form input") };
+}
+
 function toasts(): string[] {
   return useToast().items.map((toast) => toast.message);
 }
@@ -109,18 +115,22 @@ describe("FriendsPage", () => {
     document.body.innerHTML = "";
   });
 
-  it("shows the requests, invitations, friends, sent requests and blocks, in that order", async () => {
+  it("opens under the profile with the requests, invitations, friends, sent requests and blocks, in that order", async () => {
     const page = await mountPage();
     expect(api.friends).toHaveBeenCalledTimes(1);
+    expect(page.get(".back-link a").attributes("href")).toBe("/me");
+    expect(page.get("h1").text()).toBe("Friends");
+    expect(page.find(".lede").exists()).toBe(false);
+    // Adding waits behind the head's button.
+    expect(page.find(".add-form").exists()).toBe(false);
+    expect(page.get(".add-btn").attributes("aria-label")).toBe("Add a friend");
     expect(page.findAll("h2").map((heading) => heading.text())).toEqual([
-      "Add a friend",
       "Requests to you",
       "Invitations to clubs",
       "Your friends",
       "Requests you sent",
       "Blocked",
     ]);
-    expect(page.get(".add-friend").text()).toContain("Type their exact username.");
 
     const incoming = section(page, "friend-requests").get(".incoming-row");
     expect(incoming.text()).toContain("mia");
@@ -155,51 +165,69 @@ describe("FriendsPage", () => {
   it("shows only the friends list while every list is empty", async () => {
     const page = await mountPage(friendsOut());
     // Requests, invitations, sent requests and blocks appear once they hold a row.
-    expect(page.findAll("h2").map((heading) => heading.text())).toEqual(["Add a friend", "Your friends"]);
+    expect(page.findAll("h2").map((heading) => heading.text())).toEqual(["Your friends"]);
     expect(page.findAll(".empty-line").map((line) => line.text())).toEqual(["No friends yet."]);
     expect(page.find(".block-note").exists()).toBe(false);
   });
 
-  it("sends a request by exact username and says what became of it", async () => {
+  it("sends a request by exact username from a sheet, and says what became of it", async () => {
     const page = await mountPage(friendsOut());
-    const input = page.get(".add-form input");
-    const submit = page.get(".add-form button[type=submit]");
-    expect(submit.attributes("disabled")).toBeDefined();
+    let { form, input } = await openAdd(page);
+    expect(page.get(".sheet h2").text()).toBe("Add a friend");
+    expect(page.get(".sheet").text()).toContain("Type their exact username.");
+    expect(form.get("button[type=submit]").attributes("disabled")).toBeDefined();
 
     api.sendFriendRequest.mockResolvedValue(friendsOut({ outgoing: [friendRequest("grace")] }));
     await input.setValue(" Grace ");
-    await page.get(".add-form").trigger("submit");
+    await form.trigger("submit");
     await flushPromises();
     expect(api.sendFriendRequest).toHaveBeenCalledWith("Grace");
     expect(toasts()).toContain("Request sent to grace");
-    expect((input.element as HTMLInputElement).value).toBe("");
+    // Sent: the sheet goes, the request shows in the list.
+    expect(page.find(".sheet").exists()).toBe(false);
     expect(section(page, "sent-requests").text()).toContain("grace");
 
     // Their request was already waiting: the two are friends now.
+    ({ form, input } = await openAdd(page));
+    expect((input.element as HTMLInputElement).value).toBe("");
     api.sendFriendRequest.mockResolvedValue(friendsOut({ friends: [friendOut("mia")] }));
     await input.setValue("mia");
-    await page.get(".add-form").trigger("submit");
+    await form.trigger("submit");
     await flushPromises();
     expect(toasts()).toContain("You and mia are friends now");
 
     // A refusal stays by the field, with the name, for a correction.
+    ({ form, input } = await openAdd(page));
     api.sendFriendRequest.mockRejectedValue(apiError(404, "No account with that name"));
     await input.setValue("nobody");
-    await page.get(".add-form").trigger("submit");
+    await form.trigger("submit");
     await flushPromises();
     expect(page.get(".add-form .error").text()).toBe("No account with that name");
     expect((input.element as HTMLInputElement).value).toBe("nobody");
 
     api.sendFriendRequest.mockRejectedValue(apiError(409, "You blocked this account"));
-    await page.get(".add-form").trigger("submit");
+    await form.trigger("submit");
     await flushPromises();
     expect(page.get(".add-form .error").text()).toBe("You blocked this account. Unblock it first.");
 
     api.sendFriendRequest.mockRejectedValue(apiError(400, "That is your own account"));
     await input.setValue("ada");
-    await page.get(".add-form").trigger("submit");
+    await form.trigger("submit");
     await flushPromises();
     expect(page.get(".add-form .error").text()).toBe("That is your own account");
+
+    // Closed and opened again: a fresh start without the old refusal.
+    await page.get(".sheet-close").trigger("click");
+    expect(page.find(".sheet").exists()).toBe(false);
+    await openAdd(page);
+    expect(page.find(".add-form .error").exists()).toBe(false);
+  });
+
+  it("opens the sheet at once from the profile's invitation, and Back does not open it again", async () => {
+    const page = await mountPage(friendsOut(), [READERS], "/friends?add=1&from=me");
+    expect(page.find(".add-form").exists()).toBe(true);
+    const router = page.vm.$router;
+    expect(router.currentRoute.value.fullPath).toBe("/friends?from=me");
   });
 
   it("accepts and declines requests, and blocks only after a confirmation", async () => {
@@ -356,7 +384,9 @@ describe("FriendsPage", () => {
     await flushPromises();
     expect(wrapper.get(".load-failed .error").text()).toBe("Could not load your friends");
     // Sending still works without the lists.
+    await wrapper.get(".add-btn").trigger("click");
     expect(wrapper.find(".add-form").exists()).toBe(true);
+    await wrapper.get(".sheet-close").trigger("click");
 
     api.friends.mockResolvedValue(friendsOut({ incoming: [friendRequest("mia")] }));
     await button(wrapper.get(".load-failed"), "Try again").trigger("click");

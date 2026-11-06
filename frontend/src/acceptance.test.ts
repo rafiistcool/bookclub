@@ -225,11 +225,12 @@ describe("#48 acceptance", () => {
       "GET /api/activity": () => ({ items: [], has_more: false, timezone: "UTC" }),
     });
 
-    // Home: the phone's way to /friends, with a request and an invitation waiting.
+    // Home: a way to /friends while a request and an invitation wait; the profile tab has its dot.
     const app = await openApp(me, "/");
     const row = app.get("a.friends-row");
     expect(row.attributes("href")).toBe("/friends");
-    expect(row.get(".friends-count [aria-hidden=true]").text()).toBe("2");
+    expect(row.text()).toContain("2 waiting for you");
+    expect(app.get(".bottom-nav .tab-avatar").classes()).toContain("waiting");
 
     await go("/friends");
     expect(app.get("h1").text()).toBe("Friends");
@@ -253,7 +254,8 @@ describe("#48 acceptance", () => {
     // Back in the shell, which asked again: nothing waits any more.
     await go("/");
     expect(server.requests.filter((line) => line === "GET /api/friends").length).toBeGreaterThan(1);
-    expect(app.find(".friends-row .friends-count").exists()).toBe(false);
+    expect(app.find(".friends-row").exists()).toBe(false);
+    expect(app.get(".bottom-nav .tab-avatar").classes()).not.toContain("waiting");
     expect(server.unknown).toEqual([]);
   });
 });

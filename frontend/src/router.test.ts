@@ -68,6 +68,55 @@ describe("club routes without a slug", () => {
   });
 });
 
+describe("the viewer's own name", () => {
+  beforeEach(() => {
+    me.mockReset();
+    vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("opens the profile, the reader's own shelf and year instead of the view others get", async () => {
+    // `user()` is ada.
+    expect(await landing("/u/ada", [READERS])).toBe("/me");
+    expect(await landing("/u/ada/shelf", [READERS])).toBe("/shelf/physical");
+    expect(await landing("/u/ada/stats?year=2025", [READERS])).toBe("/stats?year=2025");
+    // The server compares names in lower case.
+    expect(await landing("/u/ADA", [READERS])).toBe("/me");
+    expect(await landing("/u/%20Ada%20/stats", [READERS])).toBe("/stats");
+    // The old feed links come the same way.
+    expect(await landing("/club/ada", [READERS])).toBe("/me");
+    expect(await landing("/friends/ada", [READERS])).toBe("/me");
+  });
+
+  it("leaves other readers' pages alone, also names that only start like the viewer's", async () => {
+    expect(await landing("/u/grace", [READERS])).toBe("/u/grace");
+    expect(await landing("/u/adam/stats", [READERS])).toBe("/u/adam/stats");
+    expect(await landing("/u/ada/nope", [READERS])).toBe("/u/ada/nope");
+    expect(router.currentRoute.value.name).toBe("not-found");
+  });
+
+  it("also redirects on a move from another reader's page, where the route stays the same", async () => {
+    await landing("/u/grace", [READERS]);
+    await router.push("/u/ada");
+    expect(router.currentRoute.value.fullPath).toBe("/me");
+    await router.push("/u/grace/stats");
+    await router.push("/u/ada/stats");
+    expect(router.currentRoute.value.fullPath).toBe("/stats");
+  });
+
+  it("opens the profile and the settings in the app shell", async () => {
+    expect(await landing("/me", [READERS])).toBe("/me");
+    expect(router.currentRoute.value.matched.map((record) => record.path)).toEqual(["/", "/me"]);
+    expect(await landing("/friends", [READERS])).toBe("/friends");
+    await router.push("/me");
+    const failure = await router.push("/settings").catch((error: unknown) => error);
+    expect(failure).toBeUndefined();
+    expect(router.currentRoute.value.name).not.toBe("not-found");
+    expect(router.currentRoute.value.matched[0]?.path).toBe("/");
+  });
+});
+
 /** Where a signed-out visit to `path` ends up. */
 async function guestLanding(path: string) {
   vi.stubGlobal("localStorage", memoryStorage());
@@ -135,7 +184,7 @@ describe("unknown paths", () => {
   });
 
   it("leaves every known page to its own route", async () => {
-    for (const path of ["/", "/discover", "/c/readers-ab12/members", "/u/grace", "/book/4"]) {
+    for (const path of ["/", "/discover", "/me", "/c/readers-ab12/members", "/u/grace", "/book/4"]) {
       expect(await landing(path, [READERS])).toBe(path);
       expect(router.currentRoute.value.name).not.toBe("not-found");
     }

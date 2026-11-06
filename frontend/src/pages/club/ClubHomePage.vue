@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CalendarDaysIcon } from "@heroicons/vue/24/outline";
+import { CalendarDaysIcon, XMarkIcon } from "@heroicons/vue/24/outline";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../../api/client";
@@ -40,6 +40,34 @@ const loaded = ref(false);
 const editingMeeting = ref(false);
 const busy = ref(false);
 const diary = ref<InstanceType<typeof BookDiary> | null>(null);
+const startButton = ref<HTMLButtonElement | null>(null);
+
+/**
+ * Whether the reader joined just now: the join and sign-up pages arrive with
+ * `{joined: true}` in the history state. The flag is taken out at once, so a
+ * reload or a later visit shows no welcome; dismissing it lasts this visit.
+ */
+function takeJoined(): boolean {
+  try {
+    const state = window.history.state as Record<string, unknown> | null;
+    if (!state?.joined) return false;
+    window.history.replaceState({ ...state, joined: undefined }, "");
+    return true;
+  } catch {
+    return false;
+  }
+}
+const welcome = ref(takeJoined());
+
+/** The welcome's "Read along": to the hero's start button, which stays the one that acts. */
+function readAlong() {
+  welcome.value = false;
+  const button = startButton.value;
+  if (!button) return;
+  const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  button.scrollIntoView?.({ behavior: still ? "auto" : "smooth", block: "center" });
+  button.focus({ preventScroll: true });
+}
 
 // My own row among the readers carries my progress for the club pick.
 const me = computed(
@@ -233,6 +261,27 @@ onMounted(load);
   <div class="club-home">
     <p v-if="error" class="error">{{ error }}</p>
 
+    <aside v-if="welcome && loaded" class="welcome" aria-labelledby="welcome-title">
+      <div class="welcome-text">
+        <h2 id="welcome-title" class="welcome-title">{{ t("home.welcomeTitle", { club: club.name }) }}</h2>
+        <p>{{ pick ? t("home.welcomePick") : t("home.welcomeNoPick") }}</p>
+        <button
+          v-if="pick && (!pick.on_shelf || pick.on_shelf === 'want_to_read')"
+          class="text-btn welcome-action"
+          type="button"
+          @click="readAlong"
+        >
+          {{ t("home.welcomePickAction") }}
+        </button>
+        <RouterLink v-else-if="!pick" class="text-btn welcome-action" :to="`/c/${slug}/vote`">
+          {{ t("home.welcomeNoPickAction") }}
+        </RouterLink>
+      </div>
+      <button class="icon-btn welcome-close" type="button" :aria-label="t('common.close')" @click="welcome = false">
+        <XMarkIcon class="welcome-close-icon" aria-hidden="true" />
+      </button>
+    </aside>
+
     <div v-if="!loaded" class="hero hero-skeleton" aria-hidden="true">
       <span class="skeleton hero-cover-skeleton" />
       <span class="skeleton skeleton-line" />
@@ -292,6 +341,7 @@ onMounted(load);
           />
           <button
             v-else-if="!pick.on_shelf"
+            ref="startButton"
             class="btn btn-primary btn-block start-reading"
             type="button"
             :disabled="busy"
@@ -301,6 +351,7 @@ onMounted(load);
           </button>
           <button
             v-else-if="pick.on_shelf === 'want_to_read' && pick.shelf_id"
+            ref="startButton"
             class="btn btn-primary btn-block start-reading"
             type="button"
             :disabled="busy"
@@ -436,6 +487,65 @@ onMounted(load);
 </template>
 
 <style scoped>
+/* A new member's one welcome, above the pick: what the club reads and where to start. */
+.welcome {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-bottom: var(--space-6);
+  padding: var(--space-4) var(--space-2) var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--accent-soft);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .welcome {
+    animation: welcome-in var(--dur-slow) var(--ease-out) both;
+  }
+}
+
+@keyframes welcome-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+.welcome-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.welcome-title {
+  margin: 0 0 var(--space-1);
+  font-family: var(--serif);
+  font-size: var(--text-lg);
+  line-height: var(--leading-snug);
+  overflow-wrap: anywhere;
+}
+
+.welcome-text p {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.welcome-action {
+  display: inline-flex;
+  align-items: center;
+  margin: var(--space-1) 0 0 calc(-1 * var(--space-2));
+  text-decoration: none;
+}
+
+.welcome-close {
+  flex: none;
+  margin-top: calc(-1 * var(--space-2));
+}
+
+.welcome-close-icon {
+  width: 20px;
+  height: 20px;
+}
+
 /* The pick stands in the middle of the page: a large cover, its title, the
    meeting, and the one thing the viewer does next. */
 .hero {

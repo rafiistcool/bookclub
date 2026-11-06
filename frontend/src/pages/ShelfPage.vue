@@ -272,7 +272,7 @@ onMounted(load);
       <h3>{{ t("shelf.emptyTitle") }}</h3>
       <div class="btn-row">
         <RouterLink class="btn btn-primary" to="/discover">{{ t("home.findBook") }}</RouterLink>
-        <RouterLink class="btn btn-ghost" to="/settings">{{ t("shelf.importGoodreads") }}</RouterLink>
+        <RouterLink class="btn btn-ghost" to="/settings/import">{{ t("shelf.importGoodreads") }}</RouterLink>
       </div>
     </div>
 

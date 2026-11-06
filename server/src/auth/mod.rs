@@ -27,6 +27,7 @@ use utoipa_axum::routes;
 
 use crate::AppState;
 use crate::clubs::extract::Role;
+use crate::config::EmailTransport;
 use crate::dto::{ClubSummary, UserOut};
 use crate::error::{ApiResult, AppError};
 use crate::legal::{self, LegalDoc};
@@ -86,6 +87,9 @@ pub struct ServiceConfig {
     pub public_url: String,
     /// `"invite"` (sign-up needs an invite code) or `"open"`.
     pub signup: String,
+    /// The server sends mail. False with `EMAIL_TRANSPORT=none` (the private instance): no
+    /// verification or reset link ever arrives.
+    pub mail: bool,
     /// The documents `GET /api/legal/{doc}` serves: the operator's (`LEGAL_DIR`), or the
     /// DEV_MODE placeholders. Empty when there are none.
     pub legal: Vec<LegalDoc>,
@@ -113,6 +117,7 @@ pub async fn service_config(State(state): State<AppState>) -> Json<ServiceConfig
         theme_dark: THEME_DARK.to_owned(),
         public_url: config.public_url.clone(),
         signup: config.signup_mode.as_str().to_owned(),
+        mail: config.email_transport != EmailTransport::None,
         legal: config.legal.documents(),
         terms_version: config.legal.terms_version().map(str::to_owned),
         contact_email: config.contact_email.clone(),

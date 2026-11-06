@@ -50,7 +50,7 @@ async function submit() {
 
     <p v-if="unverified" class="panel fine verify-note">
       {{ session.user?.email ? t("newClub.verifyFirst", { email: session.user.email }) : t("newClub.addEmailFirst") }}
-      <RouterLink to="/settings">{{ t("newClub.toSettings") }}</RouterLink>
+      <RouterLink to="/settings/account">{{ t("newClub.toSettings") }}</RouterLink>
     </p>
 
     <form class="new-club-form" @submit.prevent="submit">

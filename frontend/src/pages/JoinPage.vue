@@ -1,27 +1,32 @@
 <script setup lang="ts">
+import { XMarkIcon } from "@heroicons/vue/24/outline";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { api, ApiError } from "../api/client";
+import Avatar from "../components/Avatar.vue";
+import BookCover from "../components/BookCover.vue";
 import LanguageSwitch from "../components/LanguageSwitch.vue";
 import LegalLinks from "../components/LegalLinks.vue";
+import { tp } from "../i18n";
 import { clearJoinCode, parseInviteCode, rememberJoinCode } from "../invites";
 import { useClubs } from "../stores/clubs";
-import { useFriends } from "../stores/friends";
 import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import type { InvitePreview } from "../types";
 
 /**
- * An invite link (`/join/<code>`). Signed in, one tap joins the club. Signed
- * out, the code waits (in the login `next` and in this tab) while the reader
- * signs in or creates an account, and then they come back here.
+ * An invite link (`/join/<code>`): who invites, to which club, what it reads
+ * now and how many are in it, then one action. Signed in, one tap joins.
+ * Signed out, the code waits (in the login `next` and in this tab) while the
+ * reader signs in or creates an account, and then they come back here.
  *
- * A personal invite (a club admin's invite for one friend) never makes an
- * account, so signed out it offers only signing in. Signed in, the page joins
- * only when the invite is among the reader's own invitations
- * (`GET /api/friends`); anyone else learns it is someone else's.
+ * The dead ends say what to do next: a code that no longer works, a full
+ * club, someone else's personal invite. A reader already in the club goes
+ * straight to it, and a sign-up invite opened while signed in goes home.
+ * A personal invite never makes an account, so signed out it offers only
+ * signing in.
  */
 const { t } = useI18n();
 const route = useRoute();
@@ -29,57 +34,91 @@ const router = useRouter();
 const service = useService();
 const session = useSession();
 const clubs = useClubs();
-const friends = useFriends();
 const toast = useToast();
 
 const code = computed(() => parseInviteCode(String(route.params.code ?? "")));
 const preview = ref<InvitePreview | null>(null);
 const loaded = ref(false);
+/** The code is unknown or no longer valid (the server's 404). */
+const invalid = ref(false);
+/** The preview could not be loaded (network, server). */
+const loadFailed = ref(false);
 const error = ref("");
 const pending = ref(false);
-/** A personal invite that is not among the signed-in reader's invitations. */
-const notYours = ref(false);
 
 const signedIn = computed(() => Boolean(session.user));
 const club = computed(() => preview.value?.club ?? null);
+const inviter = computed(() => preview.value?.inviter ?? null);
 const personal = computed(() => Boolean(preview.value?.personal));
-const alreadyIn = computed(() =>
-  Boolean(club.value && session.user?.clubs.some((row) => row.slug === club.value!.slug)),
-);
 const loginLink = computed(() => ({ path: "/login", query: { next: `/join/${code.value}` } }));
 const signupLink = computed(() => ({ path: "/signup", query: { code: code.value } }));
 
-/** Codes compare as the server normalises them: no spaces or dashes, any case. */
-function sameCode(a: string, b: string): boolean {
-  const norm = (code: string) => code.replace(/[\s-]+/g, "").toUpperCase();
-  return norm(a) === norm(b);
+type DeadEnd = {
+  title: string;
+  body: string;
+  action: { to: string; label: string } | null;
+};
+
+/** A page that cannot lead into the club, with the one thing left to do. */
+const deadEnd = computed<DeadEnd | null>(() => {
+  const home = signedIn.value ? { to: "/", label: t("join.home") } : null;
+  if (invalid.value) {
+    return {
+      title: t("join.invalidTitle"),
+      body: t("join.invalidBody"),
+      action: signedIn.value ? { to: "/clubs", label: t("join.toClubs") } : { to: "/login", label: t("join.signIn") },
+    };
+  }
+  const current = preview.value;
+  if (!current || !club.value) return null;
+  if (signedIn.value && current.for_you === false) {
+    return { title: t("join.notYoursTitle"), body: t("join.notYoursBody"), action: home };
+  }
+  if (current.full && !current.you_are_member) {
+    return {
+      title: t("join.fullTitle", { club: club.value.name }),
+      body: inviter.value ? t("join.fullBodyInviter", { name: inviter.value.username }) : t("join.fullBody"),
+      action: home,
+    };
+  }
+  return null;
+});
+
+function isMember(current: InvitePreview): boolean {
+  const slug = current.club?.slug;
+  if (!slug) return false;
+  return Boolean(current.you_are_member) || Boolean(session.user?.clubs.some((row) => row.slug === slug));
 }
 
-/**
- * Whether a personal invite was made for someone else: true only when the
- * reader's invitations load and do not hold it. A failed load leaves the
- * decision to the server, which refuses another account's join.
- */
-async function isSomeoneElses(): Promise<boolean> {
-  await friends.load();
-  const lists = friends.lists;
-  return Boolean(lists && !lists.club_invites.some((invite) => sameCode(invite.code, code.value)));
+/** Leaves for a page that fits better; the page stays a skeleton meanwhile. */
+async function leave(to: string, message: string) {
+  clearJoinCode();
+  toast.show(message);
+  await router.replace(to);
 }
 
 async function load() {
+  loaded.value = false;
+  loadFailed.value = false;
+  invalid.value = false;
   try {
-    preview.value = await api.previewInvite(code.value);
-    error.value = "";
-    if (preview.value.personal && session.user && !alreadyIn.value) {
-      notYours.value = await isSomeoneElses();
+    const current = await api.previewInvite(code.value);
+    preview.value = current;
+    if (session.user && current.club && isMember(current)) {
+      await leave(`/c/${current.club.slug}`, t("join.alreadyInToast", { club: current.club.name }));
+      return;
     }
-    // A personal code never signs anyone up, so sign-up need not keep it.
-    if (!session.user && !preview.value.personal) rememberJoinCode(code.value);
+    if (session.user && current.kind === "signup") {
+      await leave("/", t("join.signupInviteSignedInToast"));
+      return;
+    }
+    // A personal code never signs anyone up, and a full club takes nobody: sign-up need not keep it.
+    if (!session.user && !current.personal && !current.full) rememberJoinCode(code.value);
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : t("join.loadFailed");
-  } finally {
-    loaded.value = true;
+    if (err instanceof ApiError && err.status === 404) invalid.value = true;
+    else loadFailed.value = true;
   }
+  loaded.value = true;
 }
 
 async function join() {
@@ -91,13 +130,12 @@ async function join() {
     clearJoinCode();
     clubs.upsert(joined);
     clubs.remember(joined.slug);
-    toast.show(t("join.joined", { club: joined.name }));
-    await router.replace(`/c/${joined.slug}`);
+    // The club's page greets the new member once (ClubHomePage's welcome).
+    await router.replace({ path: `/c/${joined.slug}`, state: { joined: true } });
   } catch (err) {
     // Already a member: the invite was not used, and the club is right there.
     if (err instanceof ApiError && err.status === 409 && club.value && err.detail === "You are already in this club") {
-      clearJoinCode();
-      await router.replace(`/c/${club.value.slug}`);
+      await leave(`/c/${club.value.slug}`, t("join.alreadyInToast", { club: club.value.name }));
       return;
     }
     error.value = err instanceof ApiError ? err.message : t("join.failed");
@@ -111,70 +149,102 @@ onMounted(load);
 
 <template>
   <main class="auth-page join-page">
-    <h1 class="wordmark">{{ service.name }}</h1>
+    <header class="join-top">
+      <h1 class="wordmark">{{ service.name }}</h1>
+      <RouterLink v-if="signedIn" class="icon-btn join-close" to="/" :aria-label="t('common.close')">
+        <XMarkIcon class="join-close-icon" aria-hidden="true" />
+      </RouterLink>
+    </header>
 
-    <div v-if="!loaded" class="skeleton join-skeleton" aria-hidden="true" />
+    <div v-if="!loaded" class="join-skeleton" aria-hidden="true">
+      <span class="skeleton join-skeleton-avatar" />
+      <span class="skeleton skeleton-line" />
+      <span class="skeleton join-skeleton-cover" />
+    </div>
 
-    <template v-else-if="preview && preview.kind === 'club' && club">
-      <p class="kicker">{{ t("join.kicker") }}</p>
-      <h2 class="display join-club">{{ club.name }}</h2>
-      <p v-if="error" class="error">{{ error }}</p>
+    <section v-else-if="loadFailed" class="join-dead">
+      <h2 class="join-dead-title">{{ t("join.loadFailed") }}</h2>
+      <button class="btn btn-primary btn-block" type="button" @click="load">{{ t("common.tryAgain") }}</button>
+    </section>
 
-      <template v-if="signedIn && notYours && !alreadyIn">
-        <p class="lede">{{ t("friends.personalInvite.notYours") }}</p>
-        <div class="stack">
-          <RouterLink class="btn btn-primary btn-block" to="/">{{ t("join.home") }}</RouterLink>
-        </div>
-      </template>
+    <section v-else-if="deadEnd" class="join-dead">
+      <h2 class="join-dead-title">{{ deadEnd.title }}</h2>
+      <p class="lede">{{ deadEnd.body }}</p>
+      <RouterLink v-if="deadEnd.action" class="btn btn-ghost btn-block" :to="deadEnd.action.to">
+        {{ deadEnd.action.label }}
+      </RouterLink>
+    </section>
 
-      <template v-else-if="signedIn">
-        <p v-if="alreadyIn" class="lede">{{ t("join.alreadyIn") }}</p>
-        <p v-else class="lede">{{ t("join.lede", { name: session.user?.username ?? "" }) }}</p>
-        <div class="stack">
-          <RouterLink v-if="alreadyIn" class="btn btn-primary btn-block" :to="`/c/${club.slug}`">
-            {{ t("join.open") }}
-          </RouterLink>
-          <button v-else class="btn btn-primary btn-block" type="button" :disabled="pending" @click="join">
-            {{ pending ? t("join.joining") : t("join.join", { club: club.name }) }}
-          </button>
-          <RouterLink class="btn btn-ghost btn-block" to="/">{{ t("join.notNow") }}</RouterLink>
-        </div>
-      </template>
-
-      <template v-else-if="personal">
-        <p class="lede">{{ t("friends.personalInvite.signedOut") }}</p>
-        <div class="stack">
-          <RouterLink class="btn btn-primary btn-block" :to="loginLink">{{ t("join.signIn") }}</RouterLink>
-        </div>
-      </template>
-
-      <template v-else>
-        <p class="lede">{{ t("join.signedOutLede") }}</p>
-        <div class="stack">
-          <RouterLink class="btn btn-primary btn-block" :to="signupLink">{{ t("join.signUp") }}</RouterLink>
-          <RouterLink class="btn btn-ghost btn-block" :to="loginLink">{{ t("join.signIn") }}</RouterLink>
-        </div>
-      </template>
-    </template>
-
-    <!-- A sign-up invite: it unlocks an account, not a club. -->
-    <template v-else-if="preview">
-      <p class="lede">{{ signedIn ? t("join.signupInviteSignedIn") : t("join.signupInvite") }}</p>
-      <div class="stack">
-        <RouterLink v-if="!signedIn" class="btn btn-primary btn-block" :to="signupLink">{{ t("join.signUp") }}</RouterLink>
-        <RouterLink v-else class="btn btn-primary btn-block" to="/">{{ t("join.home") }}</RouterLink>
+    <section v-else-if="preview && club" class="join-invite">
+      <div class="join-who">
+        <Avatar
+          v-if="inviter"
+          class="join-avatar"
+          :username="inviter.username"
+          :src="inviter.avatar_url"
+          size="lg"
+        />
+        <i18n-t
+          :keypath="inviter ? 'join.invitedBy' : 'join.invitedTo'"
+          tag="h2"
+          class="join-title"
+          scope="global"
+        >
+          <template #name>
+            <span class="join-inviter">{{ inviter?.username }}</span>
+          </template>
+          <template #club>
+            <span class="join-club">{{ club.name }}</span>
+          </template>
+        </i18n-t>
+        <p v-if="preview.member_count != null" class="join-members fine muted nums">
+          {{ tp("join.members", preview.member_count) }}
+        </p>
       </div>
-    </template>
 
-    <template v-else>
-      <p class="error">{{ error }}</p>
-      <p class="fine muted">{{ t("join.invalidHint") }}</p>
-      <div class="stack">
-        <RouterLink class="btn btn-ghost btn-block" :to="signedIn ? '/clubs' : '/login'">
-          {{ signedIn ? t("join.toClubs") : t("join.signIn") }}
+      <figure v-if="preview.pick" class="join-pick">
+        <div class="join-cover">
+          <BookCover :book="preview.pick" eager />
+        </div>
+        <figcaption>
+          <span class="fine subtle">{{ t("join.readingNow") }}</span>
+          <span class="join-pick-title">{{ preview.pick.title }}</span>
+          <span v-if="preview.pick.authors" class="fine muted">{{ preview.pick.authors }}</span>
+        </figcaption>
+      </figure>
+
+      <p v-if="personal && !signedIn" class="lede join-personal">{{ t("friends.personalInvite.signedOut") }}</p>
+      <p v-if="error" class="error" role="alert">{{ error }}</p>
+
+      <div class="join-actions">
+        <button
+          v-if="signedIn"
+          class="btn btn-primary btn-block join-button"
+          type="button"
+          :disabled="pending"
+          @click="join"
+        >
+          {{ pending ? t("join.joining") : t("join.joinNow") }}
+        </button>
+        <RouterLink v-else-if="personal" class="btn btn-primary btn-block" :to="loginLink">
+          {{ t("join.signInAndJoin") }}
         </RouterLink>
+        <template v-else>
+          <RouterLink class="btn btn-primary btn-block" :to="signupLink">{{ t("join.createAndJoin") }}</RouterLink>
+          <RouterLink class="text-btn join-login" :to="loginLink">{{ t("join.haveAccount") }}</RouterLink>
+        </template>
       </div>
-    </template>
+    </section>
+
+    <!-- A sign-up invite (signed out: signed in, the page went home): it unlocks an account, not a club. -->
+    <section v-else-if="preview" class="join-invite">
+      <h2 class="join-title">{{ t("join.signupTitle") }}</h2>
+      <p class="lede">{{ t("join.signupInvite") }}</p>
+      <div class="join-actions">
+        <RouterLink class="btn btn-primary btn-block" :to="signupLink">{{ t("auth.createAccount") }}</RouterLink>
+        <RouterLink class="text-btn join-login" :to="loginLink">{{ t("join.haveAccount") }}</RouterLink>
+      </div>
+    </section>
 
     <div class="auth-locale">
       <LanguageSwitch compact />
@@ -184,30 +254,188 @@ onMounted(load);
 </template>
 
 <style scoped>
-.join-skeleton {
-  height: 160px;
-  margin-top: var(--space-5);
+.join-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
 }
 
-.join-page .kicker {
-  margin-top: var(--space-5);
+.join-close {
+  margin-right: calc(-1 * var(--space-2));
+}
+
+.join-close-icon {
+  width: 22px;
+  height: 22px;
+}
+
+/* --------------------------------------------------------- skeleton */
+
+.join-skeleton {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-7);
+}
+
+.join-skeleton-avatar {
+  width: 72px;
+  height: 72px;
+  border-radius: var(--radius-pill);
+}
+
+.join-skeleton .skeleton-line {
+  width: 70%;
+  height: 1.4rem;
+}
+
+.join-skeleton-cover {
+  width: 132px;
+  aspect-ratio: 2 / 3;
+  border-radius: var(--radius-sm);
+}
+
+/* ----------------------------------------------------------- invite */
+
+.join-invite {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  margin-top: var(--space-7);
+}
+
+.join-who {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+}
+
+.join-title {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  line-height: var(--leading-snug);
+  letter-spacing: var(--tracking-tight);
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+.join-inviter {
+  font-weight: 700;
 }
 
 .join-club {
-  margin: var(--space-1) 0 var(--space-3);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.join-members {
+  margin: calc(-1 * var(--space-1)) 0 0;
+}
+
+.join-pick {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-4);
+  margin: var(--space-6) 0 0;
+}
+
+.join-cover {
+  width: 132px;
+  transform: rotate(-2deg);
+  box-shadow: var(--elev-cover);
+  border-radius: var(--radius-sm);
+}
+
+.join-pick figcaption {
+  display: grid;
+  gap: 2px;
+  max-width: 30ch;
+}
+
+.join-pick-title {
+  font-family: var(--serif);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  line-height: var(--leading-snug);
   overflow-wrap: anywhere;
 }
 
-.join-page .lede {
-  margin-bottom: var(--space-5);
+.join-personal {
+  margin: var(--space-5) 0 0;
 }
 
-.join-page .error {
-  margin-top: var(--space-5);
+.join-invite > .lede {
+  margin-top: var(--space-3);
+}
+
+.join-invite .error {
+  margin: var(--space-4) 0 0;
+}
+
+.join-actions {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  margin-top: var(--space-6);
+}
+
+.join-login {
+  font-size: var(--text-sm);
+}
+
+/* The one moment: the inviter appears, then their club's book lifts into place. */
+@media (prefers-reduced-motion: no-preference) {
+  .join-who {
+    animation: join-arrive var(--dur-slow) var(--ease-out) both;
+  }
+
+  .join-cover {
+    animation: join-lift 560ms var(--ease-out) 120ms both;
+  }
+}
+
+@keyframes join-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@keyframes join-lift {
+  from {
+    opacity: 0;
+    transform: translateY(18px) rotate(0deg);
+    box-shadow: none;
+  }
+}
+
+/* -------------------------------------------------------- dead ends */
+
+.join-dead {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-7);
+}
+
+.join-dead-title {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  line-height: var(--leading-snug);
+  overflow-wrap: anywhere;
+}
+
+.join-dead .lede {
+  margin: 0 0 var(--space-3);
 }
 
 .auth-locale {
-  margin-top: var(--space-5);
+  margin-top: var(--space-7);
 }
 
 .auth-legal {

@@ -82,6 +82,8 @@ describe("ClubMembersPage", () => {
     const { wrapper } = await mountAs("member", "mia");
     expect(wrapper.findAll(".member-card")).toHaveLength(4);
     expect(wrapper.get(".is-you").text()).toContain("mia");
+    // The viewer's own row opens their profile.
+    expect(wrapper.get(".is-you .member-link").attributes("href")).toBe("/me");
     expect(manageButtonsFor(wrapper)).toEqual([]);
     expect(wrapper.find(".invites").exists()).toBe(false);
     expect(api.clubInvites).not.toHaveBeenCalled();
