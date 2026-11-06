@@ -2,6 +2,8 @@
 
 Decided on 2026-10-27. This file records what was decided and why. The work itself is tracked in Forgejo issues #36–#67, grouped into five milestones.
 
+**Status (2026-11-06):** the private move is done. On 2026-11-05 the club moved from the Python app (v0.10.0, SQLite) to the Rust server (v0.11.1, Postgres) on the existing host and hostname: invite-only, with mail off. "Done" went out at 10:28 UTC (`docs/phase3/notes/move.md`, M4), and the rollback was given up the same day. The host has since been updated by hand within v0.11.x. CUT-R removed `backend/` from `main`; the Python app is kept on the `legacy-python` branch (tag `legacy-python-final`). Next is the public launch.
+
 ## Goal
 
 Many people want their own club or a personal reading tracker. Bookclub becomes a **hosted service**: one instance where anyone can sign up, track their reading alone, and create or join any number of private clubs. There will be store apps for iOS and Android.

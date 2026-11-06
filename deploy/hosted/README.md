@@ -2,7 +2,7 @@
 
 This directory runs the hosted service on one VM: `compose.yaml` starts the app and its Postgres, and `env.example` lists every setting. `backup.sh` and `restore-test.sh` back it up with restic, and `update.sh` follows the release tag, all from the systemd timers in `systemd/`. The commands below run as root on the VM, in `/opt/bookclub`, unless a step says otherwise.
 
-The private move (#52) runs this stack on the Python app's existing host, with mail off and without legal texts: `docs/phase3/private-move.md` is its runbook and says which steps here it takes.
+Since the private move (#52, 2026-11-05) this stack runs the private instance on the host the Python app ran on, with mail off and without legal texts. It runs without this file's backups and timers: the admin's VM backup covers it, and updates are applied by hand (`docs/phase3/private-move.md` §9). That file is the move's runbook and says which steps here it took.
 
 ## What runs where
 

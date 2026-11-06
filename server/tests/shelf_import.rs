@@ -20,7 +20,7 @@ use common::*;
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
 
-/// `backend/tests/fixtures/goodreads.csv`, copied byte for byte.
+/// The Python app's `tests/fixtures/goodreads.csv` (branch `legacy-python`), copied byte for byte.
 const FIXTURE: &[u8] = include_bytes!("fixtures/goodreads/goodreads.csv");
 
 const CIRCE_ISBN: &str = "9780316556347";

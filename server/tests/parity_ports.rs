@@ -22,7 +22,7 @@ use sqlx::PgPool;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, ResponseTemplate};
 
-/// `backend/tests/fixtures/goodreads.csv` (SHELF's copy, byte for byte).
+/// The Python app's `tests/fixtures/goodreads.csv` (SHELF's copy, byte for byte).
 const GOODREADS: &[u8] = include_bytes!("fixtures/goodreads/goodreads.csv");
 /// Open Library's answer to `search.json?q=isbn:9780316556347`, recorded 2026-10-27 (CAT).
 const OL_SEARCH_CIRCE: &str = include_str!("fixtures/openlibrary/search_isbn_9780316556347.json");

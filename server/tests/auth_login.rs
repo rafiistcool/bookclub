@@ -17,7 +17,7 @@ use tokio::time::timeout;
 const WAIT: Duration = Duration::from_secs(10);
 
 /// Made by the Python app's `argon2.PasswordHasher()` (argon2-cffi 25.1: argon2id, v=19,
-/// m=65536, t=3, p=4) for "correct horse battery staple" (backend/.venv, 2026-10-27).
+/// m=65536, t=3, p=4) for "correct horse battery staple" (the Python app's virtualenv, 2026-10-27).
 const LEGACY_HASH: &str = "$argon2id$v=19$m=65536,t=3,p=4$HriveBINAQZ51LoIBI0BgA$KL9lKfOZE02xEwFAY8SIj1fwtdBbdbNdM6KT3FTsUSw";
 /// The same hasher's hash of "pässwörd1".
 const LEGACY_UMLAUT_HASH: &str = "$argon2id$v=19$m=65536,t=3,p=4$NFXBxWeVqjJzxkA8rUU40Q$DRwLtlwftPydnyd3qMfZg9PiA5oCw6OHTSs92t1Lth4";
