@@ -337,7 +337,7 @@ describe("DiscoverPage search results", () => {
     await flushPromises();
     expect(wrapper.text()).toContain("Dune");
 
-    await wrapper.get("button.text-btn").trigger("click");
+    await wrapper.get("button.search-clear").trigger("click");
     await nextTick();
     expect(wrapper.text()).not.toContain("Dune");
 

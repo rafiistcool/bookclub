@@ -230,8 +230,10 @@ onMounted(() => {
   text-decoration: none;
 }
 
-.friends-row:hover {
-  border-color: var(--border-strong);
+@media (hover: hover) {
+  .friends-row:hover {
+    border-color: var(--border-strong);
+  }
 }
 
 .friends-row-label {

@@ -337,8 +337,10 @@ onMounted(() => {
   transition: border-color var(--dur-fast) var(--ease);
 }
 
-.theme-card:hover {
-  border-color: var(--border-strong);
+@media (hover: hover) {
+  .theme-card:hover {
+    border-color: var(--border-strong);
+  }
 }
 
 .theme-card.active {

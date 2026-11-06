@@ -579,8 +579,10 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.work-row:hover {
-  background: var(--surface-2);
+@media (hover: hover) {
+  .work-row:hover {
+    background: var(--surface-2);
+  }
 }
 
 .work-meta {

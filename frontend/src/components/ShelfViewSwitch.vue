@@ -22,7 +22,9 @@ const { t } = useI18n();
 .shelf-view-switch { display: inline-flex; gap: 3px; padding: 4px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface-2); }
 .shelf-view-switch a { display: flex; gap: 8px; align-items: center; justify-content: center; min-height: 36px; padding: 7px 17px; border-radius: var(--radius-pill); color: var(--text-muted); text-decoration: none; font-size: var(--text-sm); font-weight: 600; }
 .shelf-view-switch a[aria-current="page"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-1); }
-.shelf-view-switch a:hover { color: var(--accent); }
+@media (hover: hover) {
+  .shelf-view-switch a:hover { color: var(--accent); }
+}
 .shelf-view-switch svg { width: 17px; height: 17px; }
 @media (max-width: 600px) { .shelf-view-switch a { padding: 7px 13px; } }
 </style>

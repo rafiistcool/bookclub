@@ -120,9 +120,13 @@ const rows = computed(() =>
   visibility: hidden;
 }
 
-.bar-col.peak .bar-value,
-.bar-col:not(.zero):hover .bar-value {
+.bar-col.peak .bar-value {
   visibility: visible;
+}
+@media (hover: hover) {
+  .bar-col:not(.zero):hover .bar-value {
+    visibility: visible;
+  }
 }
 
 .labels span {

@@ -285,7 +285,7 @@ describe("FriendsPage", () => {
   it("does not offer an invitation to a reader who runs no club", async () => {
     const page = await mountPage(FULL, [{ ...READERS, role: "member" }]);
     await section(page, "your-friends").get(".options-btn").trigger("click");
-    const labels = page.get(".sheet").findAll("button").map((element) => element.text());
+    const labels = page.get(".sheet").findAll("button:not(.sheet-close)").map((element) => element.text());
     expect(labels).toEqual(["Remove from friends", "Block", "Cancel"]);
   });
 

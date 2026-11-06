@@ -33,6 +33,18 @@
   max-width: 62ch;
 }
 
+/* "← Back" reads as a small line but takes a full finger's height, reaching
+   up into the page's top padding rather than pushing the page down. */
+.back-link a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  margin-top: calc(-1 * var(--space-3));
+  margin-bottom: calc(-1 * var(--space-2));
+  font-weight: 600;
+  text-decoration: none;
+}
+
 /* --------------------------------------------------------------- layout */
 
 .page-head {
@@ -188,11 +200,15 @@
   color: var(--text);
   font-weight: 600;
   text-decoration: none;
-  transition: background var(--dur-fast) var(--ease);
+  transition:
+    background var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease-out);
 }
 
-.btn:hover:not(:disabled) {
-  background: var(--surface-3);
+@media (hover: hover) {
+  .btn:hover:not(:disabled) {
+    background: var(--surface-3);
+  }
 }
 
 .btn:disabled {
@@ -205,7 +221,13 @@
   color: var(--accent-ink);
 }
 
-.btn-primary:hover:not(:disabled) {
+@media (hover: hover) {
+  .btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+}
+
+.btn-primary:active:not(:disabled) {
   background: var(--accent-hover);
 }
 
@@ -214,8 +236,10 @@
   border-color: var(--border-strong);
 }
 
-.btn-ghost:hover:not(:disabled) {
-  background: var(--surface-2);
+@media (hover: hover) {
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--surface-2);
+  }
 }
 
 .btn-danger {
@@ -229,7 +253,7 @@
 }
 
 .btn-sm {
-  min-height: 38px;
+  min-height: 40px;
   padding: 0 var(--space-3);
   font-size: var(--text-sm);
 }
@@ -256,12 +280,16 @@
   min-height: var(--tap);
   border-radius: var(--radius-md);
   color: var(--text-muted);
-  transition: background var(--dur-fast) var(--ease);
+  transition:
+    background var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease-out);
 }
 
-.icon-btn:hover {
-  background: var(--surface-2);
-  color: var(--text);
+@media (hover: hover) {
+  .icon-btn:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
 }
 
 .btn-row {
@@ -270,12 +298,35 @@
   gap: var(--space-2);
 }
 
+/* ------------------------------------------------------------ pressing */
+
+/* Every control answers the finger at once: a quick press-in, and the
+   release springs back on the slower ease-out of the rule above. */
+.btn:active:not(:disabled),
+.icon-btn:active:not(:disabled),
+.chip:active,
+.segmented button:active,
+.text-btn:active:not(:disabled) {
+  transform: scale(var(--press-scale));
+  transition-duration: var(--dur-press);
+}
+
+.text-btn {
+  transition:
+    opacity var(--dur-press) var(--ease),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.text-btn:active:not(:disabled) {
+  opacity: 0.6;
+}
+
 /* ---------------------------------------------------- segmented control */
 
 .segmented {
   display: flex;
   gap: 2px;
-  padding: 3px;
+  padding: 2px;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-pill);
@@ -289,7 +340,7 @@
 
 .segmented button {
   flex: 1 0 auto;
-  min-height: 38px;
+  min-height: 42px;
   /* Tight enough that five labelled segments fit a 390px screen. */
   padding: 0 var(--space-2);
   border: 0;
@@ -300,8 +351,10 @@
   font-weight: 600;
   white-space: nowrap;
   transition:
-    background var(--dur-fast) var(--ease),
-    color var(--dur-fast) var(--ease);
+    background var(--dur-base) var(--ease-out),
+    color var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
 }
 
 .segmented button[aria-pressed="true"] {
@@ -343,8 +396,9 @@
 }
 
 .chip {
+  position: relative;
   flex: 0 0 auto;
-  min-height: 38px;
+  min-height: 40px;
   padding: 0 var(--space-3);
   border-radius: var(--radius-pill);
   border: 1px solid var(--border-strong);
@@ -355,10 +409,25 @@
   text-decoration: none;
   display: inline-flex;
   align-items: center;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease-out);
 }
 
-.chip:hover {
-  background: var(--surface-2);
+/* The chip's hit area reaches 44px into the row gap; the drawn pill stays
+   the size the row's rhythm wants. */
+.chip::before {
+  content: "";
+  position: absolute;
+  inset: -2px -2px;
+}
+
+@media (hover: hover) {
+  .chip:hover {
+    background: var(--surface-2);
+  }
 }
 
 .chip.active {
@@ -594,11 +663,20 @@
 .book-tile-cover {
   position: relative;
   display: block;
-  transition: transform var(--dur-base) var(--ease);
+  transition: transform var(--dur-slow) var(--ease-out);
 }
 
-.book-tile:hover .book-tile-cover {
-  transform: translateY(-3px);
+@media (hover: hover) {
+  .book-tile:hover .book-tile-cover {
+    transform: translateY(-3px);
+  }
+}
+
+/* A cover pressed under the finger sinks a little, like a book pushed
+   back onto the shelf, and springs back out on release. */
+.book-tile:active .book-tile-cover {
+  transform: scale(var(--press-scale));
+  transition-duration: var(--dur-press);
 }
 
 .book-tile-badge {
@@ -784,11 +862,17 @@
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + var(--space-4));
+  bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + var(--space-3));
   z-index: 60;
   display: grid;
   gap: var(--space-2);
   width: min(92vw, 440px);
+  /* Always mounted (so a leaving toast can animate); only toasts take taps. */
+  pointer-events: none;
+}
+
+.toast-host > * {
+  pointer-events: auto;
 }
 
 .toast {
@@ -810,7 +894,9 @@
   color: inherit;
   font-weight: 700;
   text-decoration: underline;
-  padding: var(--space-1) 0;
+  min-height: var(--tap);
+  margin: calc(-1 * var(--space-3)) calc(-1 * var(--space-2)) calc(-1 * var(--space-3)) 0;
+  padding: 0 var(--space-2);
   white-space: nowrap;
 }
 

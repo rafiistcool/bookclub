@@ -62,6 +62,7 @@
   },
   "common": {
     "cancel": "Cancel",
+    "close": "Close",
     "save": "Save",
     "remove": "Remove",
     "undo": "Undo",
