@@ -81,9 +81,13 @@ function withBallot(state: NextUpVoteState, id: number): NextUpVoteState {
     })
     .sort((a, b) => b.votes - a.votes || a.id - b.id);
   const first = state.my_vote_id == null;
+  // Like the server: the leader needs a vote, and a tie stays with the
+  // earlier nomination, which the sort puts first.
+  const top = nominations[0];
   return {
     ...state,
     nominations,
+    leader_id: top && top.votes > 0 ? top.id : null,
     my_vote_id: id,
     voted_count: state.voted_count + (first ? 1 : 0),
     not_voted: state.not_voted.filter((name) => name !== me),
@@ -174,7 +178,8 @@ defineExpose({ load });
     <p v-if="error" class="error">{{ error }}</p>
     <div v-else-if="!loaded" class="skeleton skeleton-block" aria-hidden="true" />
 
-    <TransitionGroup v-else-if="nominations.length" tag="ol" name="vote" class="vote-list">
+    <template v-else-if="nominations.length">
+    <TransitionGroup tag="ol" name="vote" class="vote-list">
       <li
         v-for="row in nominations"
         :key="row.id"
@@ -203,7 +208,7 @@ defineExpose({ load });
               </Transition>
             </span>
             <span class="finer subtle">{{ tp("vote.voteWord", row.votes) }}</span>
-            <span v-if="row.voters.length" class="finer subtle tally-voters">{{ row.voters.join(", ") }}</span>
+            <span v-if="row.voters.length" class="finer subtle tally-voters" :title="row.voters.join(', ')">{{ row.voters.join(", ") }}</span>
           </span>
         </div>
 
@@ -226,7 +231,7 @@ defineExpose({ load });
     </TransitionGroup>
 
     <button
-      v-if="canManage && nominations.length"
+      v-if="canManage"
       class="btn btn-ghost btn-block confirm-winner"
       type="button"
       :disabled="pendingId !== null"
@@ -234,6 +239,7 @@ defineExpose({ load });
     >
       {{ t("vote.confirmWinner") }}
     </button>
+    </template>
 
     <div v-else class="empty">
       <h3>{{ t("vote.noneTitle") }}</h3>
@@ -415,6 +421,7 @@ defineExpose({ load });
 
 .tally-line {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: var(--space-1) var(--space-2);
   min-width: 0;
@@ -429,10 +436,13 @@ defineExpose({ load });
 }
 
 .tally-voters {
+  flex-basis: 100%;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 /* The count rolls: the old number lifts away while the new one rises in

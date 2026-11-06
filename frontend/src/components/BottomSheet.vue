@@ -127,7 +127,10 @@ function onGripMove(event: PointerEvent) {
 }
 
 function onTouchStart(event: TouchEvent) {
-  if (event.touches.length !== 1 || (event.target as HTMLElement).closest(".sheet-grip")) return;
+  // A range input's thumb moves sideways under the finger; a slightly
+  // downward drag on it must not pull the sheet away with the draft.
+  const target = event.target as HTMLElement;
+  if (event.touches.length !== 1 || target.closest(".sheet-grip, input[type='range']")) return;
   begin(event.touches[0].clientY, true);
 }
 

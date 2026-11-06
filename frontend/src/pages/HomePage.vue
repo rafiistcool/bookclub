@@ -75,6 +75,10 @@ async function loadShelf() {
   }
 }
 
+// Only the newest save of a book can be undone: an older toast's "before"
+// would also undo the newer save.
+const undoToasts = new Map<number, number>();
+
 async function saveProgress(item: ShelfItem, value: number, undo = true) {
   const before = progress.value[item.id] ?? 0;
   progress.value = { ...progress.value, [item.id]: value };
@@ -83,11 +87,15 @@ async function saveProgress(item: ShelfItem, value: number, undo = true) {
     const updated = await api.patchShelf(item.id, { progress: value });
     reading.value = reading.value.map((row) => (row.id === item.id ? updated : row));
     progress.value = { ...progress.value, [item.id]: updated.progress ?? value };
+    const previous = undoToasts.get(item.id);
+    if (previous) toast.dismiss(previous);
+    undoToasts.delete(item.id);
     if (undo) {
-      toast.show(t("book.progressSaved", { n: value }), {
+      const id = toast.show(t("book.progressSaved", { n: value }), {
         label: t("common.undo"),
         run: () => saveProgress(updated, before, false),
       });
+      undoToasts.set(item.id, id);
     } else toast.show(t("progress.undone"));
   } catch (err) {
     progress.value = { ...progress.value, [item.id]: before };

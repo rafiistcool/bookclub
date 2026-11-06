@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { tp } from "../i18n";
 import BottomSheet from "./BottomSheet.vue";
 
 /**
@@ -31,9 +32,14 @@ function pageOf(value: number): number {
   return pageCount.value ? Math.round((value / 100) * pageCount.value) : 0;
 }
 
-const draft = computed(() =>
-  pageCount.value ? Math.min(100, Math.round((page.value / pageCount.value) * 100)) : percent.value,
-);
+// The page derived from the stored percent stands for that percent: with
+// fewer than 100 pages the round trip would otherwise move it (35 % of 50
+// pages is page 18, which is 36 %) and offer to save a value nobody chose.
+const draft = computed(() => {
+  if (!pageCount.value) return percent.value;
+  if (page.value === pageOf(stored.value)) return stored.value;
+  return Math.min(100, Math.round((page.value / pageCount.value) * 100));
+});
 const changed = computed(() => draft.value !== stored.value);
 
 function start() {
@@ -71,11 +77,17 @@ function save() {
   if (changed.value) emit("save", draft.value);
 }
 
+const valueText = computed(() =>
+  pageCount.value
+    ? `${t("progress.page", { page: page.value, pages: pageCount.value })}, ${t("progress.percent", { n: draft.value })}`
+    : t("progress.percent", { n: percent.value }),
+);
+
 const steps = computed(() => (pageCount.value ? [-10, -1, 1, 10] : [-5, -1, 1, 5]));
 
 function stepLabel(by: number): string {
   const n = Math.abs(by);
-  if (pageCount.value) return t(by < 0 ? "progress.backPages" : "progress.forwardPages", { n });
+  if (pageCount.value) return tp(by < 0 ? "progress.backPages" : "progress.forwardPages", n);
   return t(by < 0 ? "progress.backPercent" : "progress.forwardPercent", { n });
 }
 </script>
@@ -85,7 +97,7 @@ function stepLabel(by: number): string {
     class="progress-trigger"
     type="button"
     aria-haspopup="dialog"
-    :disabled="busy"
+    :aria-disabled="busy || undefined"
     :aria-label="t('progress.change', { label, n: stored })"
     @click="start"
   >
@@ -103,7 +115,8 @@ function stepLabel(by: number): string {
 
   <BottomSheet v-if="open" :title="label" @close="open = false">
     <p class="progress-book">{{ bookTitle }}</p>
-    <div class="progress-readout" aria-live="polite">
+    <span class="visually-hidden" aria-live="polite" aria-atomic="true">{{ valueText }}</span>
+    <div class="progress-readout">
       <template v-if="pageCount">
         <label class="page-field">
           <span class="visually-hidden">{{ t("progress.pageLabel") }}</span>
@@ -132,6 +145,7 @@ function stepLabel(by: number): string {
       step="1"
       :value="pageCount ? page : percent"
       :aria-label="label"
+      :aria-valuetext="valueText"
       :style="{ '--fill': `${draft}%` }"
       @input="onRange"
     />
@@ -168,14 +182,21 @@ function stepLabel(by: number): string {
   transition: transform var(--dur-fast) var(--ease-out);
 }
 
-.progress-trigger:active:not(:disabled) {
+.progress-trigger:active:not([aria-disabled="true"]) {
   transform: scale(0.98);
   transition-duration: var(--dur-press);
 }
 
-.progress-trigger:disabled {
+/* Not disabled: a disabled button drops the focus the sheet hands back. */
+.progress-trigger[aria-disabled="true"] {
   cursor: wait;
   opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-trigger:active:not([aria-disabled="true"]) {
+    transform: none;
+  }
 }
 
 .progress-line {

@@ -91,8 +91,8 @@
     "page": "p. {page} of {pages}",
     "pageLabel": "Page",
     "ofPages": "of {pages}",
-    "backPages": "Back {n} pages",
-    "forwardPages": "Forward {n} pages",
+    "backPages": "Back {n} page | Back {n} pages",
+    "forwardPages": "Forward {n} page | Forward {n} pages",
     "backPercent": "Back {n} percent",
     "forwardPercent": "Forward {n} percent",
     "undone": "Progress put back"
@@ -619,7 +619,7 @@
     "reasonWants": "{name} wants to read it",
     "reasonLikePicks": "Like past picks: {subjects}",
     "reasonRating": "Open Library rating {rating}",
-    "chooseWinner": "Which book becomes the club book?"
+    "chooseWinner": "Which book wins?"
   },
   "meeting": {
     "dateTime": "Meeting date and time",

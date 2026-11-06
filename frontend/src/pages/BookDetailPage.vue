@@ -8,6 +8,7 @@ import Avatar from "../components/Avatar.vue";
 import BookCover from "../components/BookCover.vue";
 import BookDiary from "../components/BookDiary.vue";
 import ProgressEditor from "../components/ProgressEditor.vue";
+import { whenIdle } from "../whenIdle";
 import QuoteList from "../components/QuoteList.vue";
 import ClubBookActions from "../components/ClubBookActions.vue";
 import ReportSheet, { isWithdrawn, type ReportTarget } from "../components/ReportSheet.vue";
@@ -229,16 +230,26 @@ async function patch(
 }
 
 /** Progress from the sheet, with an Undo; the diary's spoiler shields follow it. */
+// Only the newest progress save can be undone (an older toast's "before"
+// would undo the newer save too).
+let undoToast = 0;
+
 async function saveProgress(value: number, undo = true) {
+  // An Undo waits for a save still under way instead of being dropped.
+  if (!undo) await whenIdle(busy);
   const detail = book.value;
   if (!detail?.shelf_id || busy.value) return;
+  // The server keeps progress only while the book is being read.
+  if (!undo && detail.on_shelf !== "currently_reading") return;
   const before = detail.progress ?? 0;
   busy.value = true;
   try {
     adoptEntry(detail, await api.patchShelf(detail.shelf_id, { progress: value }));
     void diary.value?.reload();
+    if (undoToast) toast.dismiss(undoToast);
+    undoToast = 0;
     if (undo) {
-      toast.show(t("book.progressSaved", { n: value }), {
+      undoToast = toast.show(t("book.progressSaved", { n: value }), {
         label: t("common.undo"),
         run: () => saveProgress(before, false),
       });

@@ -91,11 +91,11 @@
     "page": "S. {page} von {pages}",
     "pageLabel": "Seite",
     "ofPages": "von {pages}",
-    "backPages": "{n} Seiten zurück",
-    "forwardPages": "{n} Seiten weiter",
+    "backPages": "{n} Seite zurück | {n} Seiten zurück",
+    "forwardPages": "{n} Seite weiter | {n} Seiten weiter",
     "backPercent": "{n} Prozent zurück",
     "forwardPercent": "{n} Prozent weiter",
-    "undone": "Fortschritt zurückgesetzt"
+    "undone": "Fortschritt wiederhergestellt"
   },
   "status": {
     "want_to_read": "Will ich lesen",
@@ -619,7 +619,7 @@
     "reasonWants": "{name} will es lesen",
     "reasonLikePicks": "Wie frühere Club-Bücher: {subjects}",
     "reasonRating": "Open-Library-Bewertung {rating}",
-    "chooseWinner": "Welches Buch wird Club-Buch?"
+    "chooseWinner": "Welches Buch gewinnt?"
   },
   "meeting": {
     "dateTime": "Datum und Uhrzeit des Treffens",

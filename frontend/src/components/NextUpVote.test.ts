@@ -43,6 +43,9 @@ describe("NextUpVote", () => {
   it("lets every member vote in this club, and only admins confirm or set a deadline", async () => {
     const member = await mountVote(false);
     expect(api.vote).toHaveBeenCalledWith("readers-ab12");
+    // A list, not the empty state under it, and no confirm for a member.
+    expect(member.find(".empty").exists()).toBe(false);
+    expect(member.find(".confirm-winner").exists()).toBe(false);
     expect(member.get(".vote-status").text()).toContain("2 of 3 voted");
     expect(member.get(".vote-status").text()).toContain("max");
     expect(member.text()).not.toContain("Confirm winner");
@@ -83,12 +86,27 @@ describe("NextUpVote", () => {
     const second = wrapper.findAll(".vote-row")[1]!;
     const count = (row: typeof second) => row.get(".tally-count:not(.count-leave-active)").text();
     expect(count(second)).toBe("1");
+    // The book with the most votes still leads, as the server would say.
+    expect(wrapper.findAll(".vote-row")[0]!.classes()).toContain("leading");
     expect(second.get(".vote-btn").attributes("aria-pressed")).toBe("true");
     expect(wrapper.get(".vote-status").text()).toContain("3 of 3 voted");
     refuse(new Error("offline"));
     await flushPromises();
     expect(count(wrapper.findAll(".vote-row")[1]!)).toBe("0");
     expect(wrapper.get(".vote-status").text()).toContain("2 of 3 voted");
+  });
+
+  it("shows only the skeleton while the vote loads", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    api.vote.mockReturnValue(new Promise(() => {}));
+    const wrapper = mount(NextUpVote, {
+      props: { slug: "readers-ab12", canManage: true },
+      global: { plugins: [pinia, i18n], stubs: { BookCover: true } },
+    });
+    await flushPromises();
+    expect(wrapper.find(".skeleton").exists()).toBe(true);
+    expect(wrapper.find(".empty").exists()).toBe(false);
   });
 
   it("sets the deadline in the club's zone", async () => {

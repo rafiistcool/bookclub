@@ -47,6 +47,17 @@ describe("ProgressEditor", () => {
     expect(wrapper.emitted("save")).toEqual([[100]]);
   });
 
+  it("keeps a stored percent that no whole page reaches until the page changes", async () => {
+    // 35 % of 50 pages is page 17.5: shown as page 18, still saved as 35 %.
+    const wrapper = mountEditor({ value: 35, pages: 50 });
+    await wrapper.get(".progress-trigger").trigger("click");
+    expect(wrapper.get(".readout-percent").text()).toBe("35%");
+    expect(wrapper.get(".sheet .btn-primary").attributes("disabled")).toBeDefined();
+    await wrapper.get('.sheet button[aria-label="Forward 1 page"]').trigger("click");
+    await wrapper.get('.sheet button[aria-label="Back 1 page"]').trigger("click");
+    expect(wrapper.get(".sheet .btn-primary").attributes("disabled")).toBeDefined();
+  });
+
   it("does not open while a save is under way", async () => {
     const wrapper = mountEditor({ value: 10, busy: true });
     await wrapper.get(".progress-trigger").trigger("click");
