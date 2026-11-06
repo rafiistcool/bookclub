@@ -81,6 +81,12 @@ function button(wrapper: Awaited<ReturnType<typeof mountBook>>, label: string) {
   return wrapper.findAll("button").find((node) => node.text().includes(label));
 }
 
+/** The admin's edits sit in the book page's "…" sheet. */
+async function openMore(wrapper: Awaited<ReturnType<typeof mountBook>>) {
+  await wrapper.get("button.more-btn").trigger("click");
+  await flushPromises();
+}
+
 describe("BookDetailPage: edit as admin", () => {
   beforeEach(() => {
     for (const mock of [book, editions, diary, requestWorkEdit, getEdition, adminEditWork, adminEditEdition, unused]) {
@@ -94,11 +100,14 @@ describe("BookDetailPage: edit as admin", () => {
   it("lets only an instance admin edit the book and the reader's edition directly", async () => {
     book.mockResolvedValue(detail({ edition_id: 13 }));
     const reader = await mountBook(false);
+    await openMore(reader);
     expect(button(reader, "as admin")).toBeUndefined();
     reader.unmount();
 
     const wrapper = await mountBook(true);
+    await openMore(wrapper);
     await button(wrapper, "Edit as admin")!.trigger("click");
+    await flushPromises();
     const form = wrapper.get("form.edit-request");
     expect(wrapper.get(".sheet").text()).toContain("Edit this book as admin");
     expect(form.find("textarea[name=note]").exists()).toBe(false);
@@ -112,6 +121,7 @@ describe("BookDetailPage: edit as admin", () => {
     expect(wrapper.find("form.edit-request").exists()).toBe(false);
 
     getEdition.mockResolvedValue(edition({ id: 13, work_id: 4, publisher: "Diogenes" }));
+    await openMore(wrapper);
     await button(wrapper, "Edit your edition as admin")!.trigger("click");
     await flushPromises();
     expect(getEdition).toHaveBeenCalledWith(13);

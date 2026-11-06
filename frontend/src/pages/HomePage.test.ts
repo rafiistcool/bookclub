@@ -64,6 +64,8 @@ describe("HomePage", () => {
     expect(api.activity).not.toHaveBeenCalled();
     expect(wrapper.find(".solo-prompt").exists()).toBe(true);
     expect(wrapper.find(".solo-prompt a[href='/clubs/new']").exists()).toBe(true);
+    // The greeting stands alone: the section headings say what follows.
+    expect(wrapper.find(".page-head .lede").exists()).toBe(false);
     // Personal things still work: what I'm reading, my notes, my favourites.
     expect(wrapper.findAll(".reading-title").map((row) => row.text())).toEqual(["Circe"]);
     expect(api.diaryFeed).toHaveBeenCalledWith(undefined, 8, undefined);

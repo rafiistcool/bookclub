@@ -46,7 +46,6 @@ async function submit() {
   <section class="new-club">
     <div class="page-head">
       <h1>{{ t("newClub.title") }}</h1>
-      <p class="lede">{{ t("newClub.lede") }}</p>
     </div>
 
     <p v-if="unverified" class="panel fine verify-note">
@@ -58,7 +57,15 @@ async function submit() {
       <p v-if="error" class="error">{{ error }}</p>
       <label class="field">
         <span>{{ t("newClub.name") }}</span>
-        <input v-model="name" name="club-name" maxlength="80" required :placeholder="t('newClub.namePlaceholder')" />
+        <input
+          v-model="name"
+          name="club-name"
+          maxlength="80"
+          required
+          aria-describedby="club-name-hint"
+          :placeholder="t('newClub.namePlaceholder')"
+        />
+        <span id="club-name-hint" class="field-hint">{{ t("newClub.lede") }}</span>
       </label>
       <label class="field">
         <span>{{ t("clubSettings.timezone") }}</span>

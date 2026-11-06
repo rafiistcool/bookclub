@@ -304,9 +304,14 @@ onMounted(load);
         </p>
       </section>
 
-      <section class="section milestone-section">
-        <MilestoneList :slug="slug" :pick-id="pick.id" :can-manage="canManage" :timezone="timezone" />
-      </section>
+      <!-- Its own root is the section: a member sees none while there are no milestones. -->
+      <MilestoneList
+        class="section milestone-section"
+        :slug="slug"
+        :pick-id="pick.id"
+        :can-manage="canManage"
+        :timezone="timezone"
+      />
 
       <section class="section thread-section">
         <BookDiary
@@ -346,7 +351,6 @@ onMounted(load);
             </span>
           </p>
         </span>
-        <span class="fine">{{ t("home.voteArrow") }}</span>
       </RouterLink>
       <div v-else class="next-up-empty">
         <p class="fine subtle">{{ t("home.noNominations") }}</p>

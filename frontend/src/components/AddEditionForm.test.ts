@@ -29,6 +29,9 @@ describe("AddEditionForm", () => {
     const wrapper = mountForm({ workId: 3 });
     expect(wrapper.get<HTMLInputElement>("input[name='isbn']").element.value).toBe("");
     expect(wrapper.text()).toContain("On the back cover or the copyright page. Optional.");
+    // No lede: the form opens on its first field.
+    expect(wrapper.get("form").element.firstElementChild?.querySelector("input[name='isbn']")).not.toBeNull();
+    expect(wrapper.text()).not.toContain("What you leave empty stays empty.");
     await wrapper.get("form").trigger("submit");
     expect(wrapper.text()).toContain("Fill in at least one field.");
     expect(addEdition).not.toHaveBeenCalled();

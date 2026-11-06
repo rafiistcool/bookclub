@@ -51,7 +51,9 @@ describe("the personal time zone", () => {
   it("offers this device's zone when the account has another one", async () => {
     // An imported account keeps the zone the importer gave it.
     const wrapper = mountWith("UTC");
-    expect(wrapper.get(".device-zone").text()).toContain("This device is set to Europe/Berlin.");
+    // The zone is named once, in the sentence; the button only says what it does.
+    expect(wrapper.get(".device-zone").text()).toBe("This device: Europe/Berlin. Use it");
+    expect(wrapper.get(".device-zone button").text()).toBe("Use it");
     savePreferences.mockResolvedValue(user({ timezone: "Europe/Berlin" }));
     await wrapper.get(".device-zone button").trigger("click");
     await flushPromises();

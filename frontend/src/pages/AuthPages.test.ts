@@ -140,6 +140,19 @@ describe("auth pages", () => {
     expect(router.currentRoute.value.path).toBe("/");
   });
 
+  it("opens sign-in with the form, and sign-up with a line only when it needs an invite", async () => {
+    const login = await mountAt(LoginPage, "/login");
+    expect(login.wrapper.find(".lede").exists()).toBe(false);
+    expect(login.wrapper.find("input[name=username]").exists()).toBe(true);
+    expect(login.wrapper.get(".field-hint").text()).toBe("Or the email address you confirmed.");
+
+    const invited = await mountAt(SignupPage, "/signup");
+    expect(invited.wrapper.get(".lede").text()).toBe("You need an invite code to sign up.");
+
+    const open = await mountAt(SignupPage, "/signup", "open");
+    expect(open.wrapper.find(".lede").exists()).toBe(false);
+  });
+
   it("names the account and confirms the address only on a tap", async () => {
     // Security review 2026-10-28 #8: a scanner that opens the link must verify nothing.
     api.previewVerifyEmail.mockResolvedValue({ username: "ada", email: "ada@example.com" });

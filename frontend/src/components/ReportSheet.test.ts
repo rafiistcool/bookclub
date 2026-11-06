@@ -58,6 +58,7 @@ describe("ReportSheet", () => {
     const wrapper = mountSheet(COVER);
     expect(wrapper.text()).toContain("Report this cover");
     expect(reasonsOf(wrapper)).toEqual(["wrong_book", "offensive", "copyright", "other"]);
+    expect(wrapper.get(".report-note").text()).toBe("An admin decides; with a confirmed address you hear back.");
     const send = wrapper.get('button[type="submit"]');
     expect(send.attributes("disabled")).toBeDefined();
     await wrapper.get('input[value="wrong_book"]').setValue(true);
@@ -222,11 +223,24 @@ describe("the report actions", () => {
     return wrapper;
   }
 
+  /** The book page's "…" sheet holds its report actions. */
+  async function openMore(wrapper: Awaited<ReturnType<typeof bookPage>>) {
+    await wrapper.get("button.more-btn").trigger("click");
+    await flushPromises();
+  }
+
   it("offers to report a book only when a reader added it", async () => {
-    expect((await bookPage(false)).find("button.report-book").exists()).toBe(false);
+    const catalog = await bookPage(false);
+    await openMore(catalog);
+    expect(catalog.find(".book-actions").exists()).toBe(true);
+    expect(catalog.find("button.report-book").exists()).toBe(false);
 
     const wrapper = await bookPage(true);
+    await openMore(wrapper);
     await wrapper.get("button.report-book").trigger("click");
+    await flushPromises();
+    // The report sheet takes the place of the "…" sheet.
+    expect(wrapper.findAll(".sheet")).toHaveLength(1);
     expect(wrapper.get(".sheet").text()).toContain("Report this book");
     api.reportWork.mockResolvedValue({ id: 10, status: "open" });
     await wrapper.get('.sheet input[value="copyright"]').setValue(true);
@@ -240,15 +254,20 @@ describe("the report actions", () => {
     i18n.global.locale.value = "de";
     const removed = await bookPage(true, REMOVED_TITLE);
     expect(removed.get("h1").text()).toBe("[entfernt]");
-    expect(removed.text()).toContain("Ein Admin hat nach einer Meldung entfernt, was jemand für dieses Buch eingetragen hatte.");
+    expect(removed.text()).toContain("Nach einer Meldung von einem Admin entfernt.");
 
     // The cover's alt text and its cloth title too (E2E check of the ADM2 merge), and nothing
     // is left to report (the server would close the report on arrival).
     expect(removed.get(".cover .binding-title").text()).toBe("[entfernt]");
     expect(removed.text()).not.toContain("[removed]");
+    await openMore(removed);
+    expect(removed.find(".book-actions").exists()).toBe(true);
     expect(removed.find("button.report-book").exists()).toBe(false);
-    await removed.get(".catalog-requests button").trigger("click");
-    expect(removed.get(".sheet").text()).toContain("„[entfernt]“");
+    await removed.findAll(".book-actions button").find((node) => node.text() === "Angaben falsch?")!.trigger("click");
+    await flushPromises();
+    // The correction sheet names no title for a reader any more (editRequest.blurb), and never the stored placeholder.
+    expect(removed.find("form.edit-request").exists()).toBe(true);
+    expect(removed.get(".sheet").text()).not.toContain("[removed]");
     expect(removed.find(".report-instead").exists()).toBe(false);
 
     i18n.global.locale.value = "en";
@@ -282,7 +301,10 @@ describe("the report actions", () => {
     const wrapper = mount(BookDetailPage, { global: { plugins: [pinia, router] } });
     await flushPromises();
     expect(wrapper.get(".cover img").attributes("alt")).toBe("Cover von [entfernt]");
+    await wrapper.get("button.more-btn").trigger("click");
+    await flushPromises();
     await wrapper.get("button.report-cover").trigger("click");
+    await flushPromises();
     expect(wrapper.get(".sheet .report-subject").text()).toBe("[entfernt]");
   });
 
@@ -295,7 +317,7 @@ describe("the report actions", () => {
   it("reports an edition a reader added from its correction sheet", async () => {
     const own = edition({ id: 13, title: "Mein Heft", publisher: "Basement Press", source: "user" });
     const wrapper = correctionSheet({ edition: own });
-    expect(wrapper.text()).toContain("Not a mistake, but offensive or infringing someone’s rights?");
+    expect(wrapper.text()).toContain("Offensive or infringing?");
     await wrapper.get(".report-instead button").trigger("click");
     expect(wrapper.text()).toContain("Report this edition");
     expect(wrapper.find('textarea[name="note"]').exists()).toBe(false);

@@ -17,6 +17,7 @@ const diary = vi.fn();
 const nominate = vi.fn();
 const uploadCover = vi.fn();
 const adminSetCover = vi.fn();
+const refreshBook = vi.fn();
 
 vi.mock("../api/client", () => ({
   ApiError: class ApiError extends Error {
@@ -42,6 +43,7 @@ vi.mock("../api/client", () => ({
     nominate: (...args: unknown[]) => nominate(...args),
     uploadCover: (...args: unknown[]) => uploadCover(...args),
     adminSetCover: (...args: unknown[]) => adminSetCover(...args),
+    refreshBook: (...args: unknown[]) => refreshBook(...args),
   },
 }));
 
@@ -65,7 +67,7 @@ function detail(overrides: Partial<BookDetail> = {}): BookDetail {
   });
 }
 
-async function mountBook(path = "/book/4", clubs: ClubSummary[] = [], isAdmin = false) {
+async function mountBook(path = "/book/4", clubs: ClubSummary[] = [], isAdmin = false, attach = false) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: "/book/:id", component: BookDetailPage }],
@@ -77,6 +79,7 @@ async function mountBook(path = "/book/4", clubs: ClubSummary[] = [], isAdmin = 
   useSession().user = user({ clubs, is_admin: isAdmin });
   const wrapper = mount(BookDetailPage, {
     global: { plugins: [pinia, router] },
+    ...(attach ? { attachTo: document.body } : {}),
   });
   await flushPromises();
   return { wrapper, router };
@@ -86,9 +89,30 @@ function button(wrapper: Awaited<ReturnType<typeof mountBook>>["wrapper"], label
   return wrapper.findAll("button").find((node) => node.text().includes(label));
 }
 
+type Page = Awaited<ReturnType<typeof mountBook>>["wrapper"];
+
+/** Open the "…" sheet, where the book's other actions are. */
+async function openMore(wrapper: Page) {
+  await wrapper.get("button.more-btn").trigger("click");
+  await flushPromises();
+}
+
+/** The group headings of the "…" sheet. */
+function headings(wrapper: Page) {
+  return wrapper.findAll(".book-actions h3").map((node) => node.text());
+}
+
+/** Choose `file` in the file input inside `selector`. */
+async function choose(wrapper: Page, selector: string, file: File) {
+  const input = wrapper.get(`${selector} input[type=file]`);
+  Object.defineProperty(input.element, "files", { value: [file], configurable: true });
+  await input.trigger("change");
+  await flushPromises();
+}
+
 describe("BookDetailPage", () => {
   beforeEach(() => {
-    for (const mock of [book, addFavorite, removeFavorite, addToShelf, patchShelf, removeFromShelf, editions, requestWorkEdit, diary, nominate, uploadCover, adminSetCover]) {
+    for (const mock of [book, addFavorite, removeFavorite, addToShelf, patchShelf, removeFromShelf, editions, requestWorkEdit, diary, nominate, uploadCover, adminSetCover, refreshBook]) {
       mock.mockReset();
     }
     book.mockResolvedValue(detail());
@@ -181,7 +205,7 @@ describe("BookDetailPage", () => {
   it("shelves a book by its work id and shows what the server stored", async () => {
     addToShelf.mockResolvedValue(shelfItem({ id: 30, status: "finished", rating: null, book: { id: 4 } }));
     const { wrapper } = await mountBook();
-    await wrapper.findAll(".status-control button").find((node) => node.text() === "Done")!.trigger("click");
+    await wrapper.findAll(".status-control button").find((node) => node.text() === "Read")!.trigger("click");
     await flushPromises();
     expect(addToShelf).toHaveBeenCalledWith({ work_id: 4, status: "finished" });
     expect(wrapper.find(".star-row").exists()).toBe(true);
@@ -203,14 +227,157 @@ describe("BookDetailPage", () => {
     expect(useToast().items.at(-1)?.message).toBe("Nominated in Readers");
   });
 
-  it("links to the cover report only for a stored cover", async () => {
+  it("keeps the hero short: a club badge, author · year, and one rating line with the locale's comma", async () => {
+    i18n.global.locale.value = "de";
+    const readers = { slug: "readers-ab12", name: "Leserunde" };
+    book.mockResolvedValue(detail({ club_picks: [readers], club_rating: 4.25, rating_count: 3 }));
+    const one = await mountBook();
+    expect(one.wrapper.find(".kicker").exists()).toBe(false);
+    expect(one.wrapper.get(".hero-pick").text()).toBe("Club-Buch · Leserunde");
+    expect(one.wrapper.get(".detail-authors").text()).toBe("Paulo Coelho · 2006");
+    expect(one.wrapper.get(".detail-authors .nums").attributes("title")).toBe("Erstveröffentlichung 2006");
+    expect(one.wrapper.text()).not.toContain("Erstveröffentlichung");
+    const rating = one.wrapper.get(".club-rating");
+    expect(rating.get("strong").text()).toBe("4,3");
+    expect(rating.text()).toContain("· 3 Stimmen");
+    // What the line was moved out of the hero for: the reader's note and the links.
+    expect(one.wrapper.find(".detail-intro").text()).not.toContain("Von Hand angelegt");
+    expect(one.wrapper.find(".detail-intro a").exists()).toBe(false);
+    one.wrapper.unmount();
+
+    i18n.global.locale.value = "en";
+    book.mockResolvedValue(detail({ club_picks: [readers, { slug: "night-cd34", name: "Night owls" }], year: null }));
+    const two = await mountBook();
+    const badge = two.wrapper.get(".hero-pick .badge");
+    // Every club by name, readable on a phone (no tooltip).
+    expect(badge.text()).toBe("Club pick · Leserunde, Night owls");
+    expect(badge.attributes("title")).toBeUndefined();
+    expect(two.wrapper.get(".detail-authors").text()).toBe("Paulo Coelho");
+    expect(two.wrapper.find(".club-rating").exists()).toBe(false);
+  });
+
+  it("gathers the book's other actions behind one “…” button", async () => {
+    book.mockResolvedValue(detail({ custom: false, source: "openlibrary", ol_work_key: "/works/OL4W", can_refresh: true }));
+    const { wrapper } = await mountBook();
+    const more = wrapper.get("button.more-btn");
+    expect(more.attributes("aria-label")).toBe("More for this book");
+    expect(more.attributes("aria-haspopup")).toBe("dialog");
+    expect(more.attributes("aria-expanded")).toBe("false");
+    expect(button(wrapper, "Wrong details?")).toBeUndefined();
+
+    await openMore(wrapper);
+    expect(more.attributes("aria-expanded")).toBe("true");
+    const sheet = wrapper.get(".book-actions .sheet");
+    expect(sheet.attributes("aria-label")).toBe("The Witch of Portobello");
+    expect(headings(wrapper)).toEqual(["About this book"]);
+    const link = sheet.get("a[href]");
+    expect(link.text()).toBe("View on Open Library");
+    expect(link.attributes("href")).toBe("https://openlibrary.org/works/OL4W");
+    expect(link.attributes("target")).toBe("_blank");
+    expect(link.attributes("rel")).toBe("noreferrer");
+    expect(sheet.findAll("button.btn").map((node) => node.text())).toEqual([
+      "Refresh details",
+      "Wrong details?",
+      "Same book as another one?",
+    ]);
+    // A catalog book is corrected, not reported.
+    expect(sheet.find(".report-book").exists()).toBe(false);
+
+    await sheet.get(".sheet-close").trigger("click");
+    expect(wrapper.find(".book-actions").exists()).toBe(false);
+    expect(more.attributes("aria-expanded")).toBe("false");
+  });
+
+  it("offers a book a reader added its note and report, without Open Library", async () => {
+    const { wrapper } = await mountBook();
+    await openMore(wrapper);
+    const sheet = wrapper.get(".book-actions");
+    expect(sheet.text()).toContain("Added by a reader — not on Open Library.");
+    expect(sheet.find("a[href]").exists()).toBe(false);
+    expect(sheet.find(".refresh-details").exists()).toBe(false);
+    expect(sheet.get("button.report-book").text()).toBe("Report this book");
+  });
+
+  it("shows “Refreshing…” in the sheet until the answer is in, then closes it", async () => {
+    book.mockResolvedValue(detail({ custom: false, source: "openlibrary", ol_work_key: "/works/OL4W", can_refresh: true }));
+    const { wrapper } = await mountBook();
+    let answer!: (value: BookDetail) => void;
+    refreshBook.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    await openMore(wrapper);
+    await wrapper.get(".refresh-details").trigger("click");
+    expect(wrapper.get(".refresh-details").text()).toBe("Refreshing…");
+    expect(wrapper.get(".refresh-details").attributes("disabled")).toBeDefined();
+    answer(detail({ custom: false, source: "openlibrary", ol_work_key: "/works/OL4W", title: "The Witch of Portobello (new)" }));
+    await flushPromises();
+    expect(refreshBook).toHaveBeenCalledWith(4);
+    expect(wrapper.find(".book-actions").exists()).toBe(false);
+    expect(wrapper.get("h1").text()).toBe("The Witch of Portobello (new)");
+    expect(useToast().items.at(-1)?.message).toBe("Details updated");
+  });
+
+  it("opens the next sheet only once the “…” sheet is gone, and gives focus back to “…”", async () => {
+    const { wrapper } = await mountBook("/book/4", [], false, true);
+    const more = wrapper.get("button.more-btn");
+    (more.element as HTMLButtonElement).focus();
+    await openMore(wrapper);
+    await button(wrapper, "Wrong details?")!.trigger("click");
+    await flushPromises();
+    // Never a sheet on a sheet: one Escape and one Tab trap at a time.
+    expect(wrapper.findAll(".sheet")).toHaveLength(1);
+    expect(wrapper.find(".book-actions").exists()).toBe(false);
+    expect(wrapper.find("form.edit-request").exists()).toBe(true);
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await flushPromises();
+    expect(wrapper.findAll(".sheet")).toHaveLength(0);
+    expect(document.activeElement).toBe(more.element);
+
+    // Escape on the "…" sheet itself closes it, and focus stays on "…".
+    await openMore(wrapper);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await flushPromises();
+    expect(wrapper.find(".book-actions").exists()).toBe(false);
+    expect(document.activeElement).toBe(more.element);
+    wrapper.unmount();
+  });
+
+  it("puts the cover report into the sheet, only for a stored cover", async () => {
     const plain = await mountBook();
+    await openMore(plain.wrapper);
+    expect(headings(plain.wrapper)).not.toContain("Cover");
     expect(button(plain.wrapper, "Report cover")).toBeUndefined();
     plain.wrapper.unmount();
     book.mockResolvedValue(detail({ cover_url: "/media/abc/l", cover_thumb_url: "/media/abc/s", cover_public_id: "abc" }));
     const covered = await mountBook();
+    // With a cover there is no link under it: the sheet suggests a photo instead.
+    expect(covered.wrapper.find(".hero-cover .cover-photo").exists()).toBe(false);
+    await openMore(covered.wrapper);
+    expect(headings(covered.wrapper)).toEqual(["About this book", "Cover"]);
+    expect(covered.wrapper.get(".book-actions .suggest-photo").text()).toBe("Suggest a photo of your copy");
     await button(covered.wrapper, "Report cover")!.trigger("click");
-    expect(covered.wrapper.text()).toContain("Report this cover");
+    await flushPromises();
+    expect(covered.wrapper.findAll(".sheet")).toHaveLength(1);
+    expect(covered.wrapper.get(".sheet").text()).toContain("Report this cover");
+  });
+
+  it("uploads a photo chosen in the sheet after the sheet has closed", async () => {
+    book.mockResolvedValue(detail({ cover_url: "/media/abc/l", cover_thumb_url: "/media/abc/s", cover_public_id: "abc", edition_id: 12 }));
+    const { wrapper } = await mountBook();
+    let answer!: (value: unknown) => void;
+    uploadCover.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    await openMore(wrapper);
+    const photo = new File(["x"], "front.jpg", { type: "image/jpeg" });
+    await choose(wrapper, ".book-actions .suggest-photo", photo);
+    // The sheet goes at once; the cover says the photo is on its way.
+    expect(wrapper.find(".book-actions").exists()).toBe(false);
+    expect(uploadCover).toHaveBeenCalledWith(4, photo, 12);
+    expect(wrapper.get(".hero-cover").attributes("aria-busy")).toBe("true");
+    expect(wrapper.get(".cover-status").text()).toBe("Uploading…");
+    answer({ request_id: 7 });
+    await flushPromises();
+    expect(wrapper.find(".cover-status").exists()).toBe(false);
+    expect(wrapper.get(".hero-cover").attributes("aria-busy")).toBe("false");
+    expect(useToast().items.at(-1)?.message).toBe("Thanks. An admin will look at your photo.");
   });
 
   it("asks a reader with a catalog book on the shelf for a photo in place of the small link", async () => {
@@ -229,16 +396,15 @@ describe("BookDetailPage", () => {
     expect(prompt.text()).toContain("This book has no cover yet");
     const covered = bookOut({ id: 4, cover_url: "/media/new/l", cover_thumb_url: "/media/new/s", cover_public_id: "new" });
     uploadCover.mockResolvedValue({ book: covered });
-    const input = prompt.get("input[type=file]");
     const photo = new File(["x"], "front.jpg", { type: "image/jpeg" });
-    Object.defineProperty(input.element, "files", { value: [photo], configurable: true });
-    await input.trigger("change");
-    await flushPromises();
+    await choose(wrapper, ".cover-prompt", photo);
     expect(uploadCover).toHaveBeenCalledWith(4, photo, 12);
-    // The page shows the new cover: the prompt goes, and the cover can be reported.
+    // The page shows the new cover: the prompt goes, and the sheet can report it or take a better photo.
     expect(wrapper.find(".cover-prompt").exists()).toBe(false);
+    expect(wrapper.find(".hero-cover .cover-photo").exists()).toBe(false);
+    await openMore(wrapper);
     expect(button(wrapper, "Report cover")).toBeTruthy();
-    expect(wrapper.get(".hero-cover .cover-photo").text()).toBe("Suggest a photo of your copy");
+    expect(wrapper.get(".book-actions .suggest-photo").text()).toBe("Suggest a photo of your copy");
   });
 
   it("leaves a book a reader added with the small link, on the shelf or not", async () => {
@@ -250,29 +416,31 @@ describe("BookDetailPage", () => {
 
   it("lets an instance admin set the book's cover, or any edition's, directly", async () => {
     const reader = await mountBook();
+    await openMore(reader.wrapper);
+    expect(headings(reader.wrapper)).not.toContain("Admin");
     expect(reader.wrapper.find(".admin-set-cover").exists()).toBe(false);
     reader.wrapper.unmount();
 
     // A page without an edition shows the work's cover: the answer is adopted.
     book.mockResolvedValue(detail({ custom: false, source: "dnb", shelf_id: 30, on_shelf: "finished" }));
     const { wrapper } = await mountBook("/book/4", [], true);
+    await openMore(wrapper);
+    expect(headings(wrapper)).toEqual(["About this book", "Admin"]);
     expect(wrapper.get(".admin-set-cover").text()).toBe("Set cover as admin");
     expect(wrapper.get(".admin-set-edition-cover").text()).toBe("Set an edition's cover as admin");
+    // No edition on the shelf, nothing of the viewer's to edit.
+    expect(button(wrapper, "Edit your edition as admin")).toBeUndefined();
 
     const covered = bookOut({ id: 4, cover_url: "/media/adm/l", cover_thumb_url: "/media/adm/s", cover_public_id: "adm" });
     adminSetCover.mockResolvedValue({ book: covered });
     const picture = new File(["x"], "cover.png", { type: "image/png" });
-    async function upload(selector: string) {
-      const input = wrapper.get(`${selector} input[type=file]`);
-      Object.defineProperty(input.element, "files", { value: [picture], configurable: true });
-      await input.trigger("change");
-      await flushPromises();
-    }
     book.mockClear();
-    await upload(".admin-set-cover");
+    await choose(wrapper, ".admin-set-cover", picture);
     expect(adminSetCover).toHaveBeenCalledWith(4, picture, null);
     expect(useToast().items.at(-1)?.message).toBe("The cover is set for everyone");
     expect(book).not.toHaveBeenCalled();
+    // The sheet closed on the pick, and the page still took the answer.
+    expect(wrapper.find(".book-actions").exists()).toBe(false);
     expect(wrapper.get(".hero-cover img").attributes("src")).toContain("/media/adm/");
     expect(wrapper.find(".cover-prompt").exists()).toBe(false);
     wrapper.unmount();
@@ -287,11 +455,9 @@ describe("BookDetailPage", () => {
       book: bookOut({ id: 4, cover_url: "/media/adm/l", cover_thumb_url: "/media/adm/s", cover_public_id: "adm" }),
     });
     book.mockClear();
-    const input = wrapper.get(".admin-set-cover input[type=file]");
+    await openMore(wrapper);
     const picture = new File(["x"], "cover.png", { type: "image/png" });
-    Object.defineProperty(input.element, "files", { value: [picture], configurable: true });
-    await input.trigger("change");
-    await flushPromises();
+    await choose(wrapper, ".admin-set-cover", picture);
     expect(adminSetCover).toHaveBeenCalledWith(4, picture, null);
     expect(book).toHaveBeenCalledWith(4);
     expect(wrapper.get(".hero-cover img").attributes("src")).toContain("/media/ed/");
@@ -306,8 +472,13 @@ describe("BookDetailPage", () => {
       ],
     });
     const { wrapper } = await mountBook("/book/4", [], true);
-    await wrapper.get(".admin-set-edition-cover button").trigger("click");
+    await openMore(wrapper);
+    await wrapper.get(".admin-set-edition-cover").trigger("click");
     await flushPromises();
+    // The edition list replaces the "…" sheet instead of opening on top of it.
+    expect(wrapper.findAll(".sheet")).toHaveLength(1);
+    expect(wrapper.get(".sheet").attributes("aria-label")).toBe("An edition's cover");
+    expect(editions).toHaveBeenCalledWith(4);
     const rows = wrapper.findAll(".edition-cover-row");
     expect(rows).toHaveLength(2);
     expect(rows[0]!.text()).toContain("Your edition");
@@ -323,12 +494,15 @@ describe("BookDetailPage", () => {
     expect(adminSetCover).toHaveBeenLastCalledWith(4, picture, 13);
     expect(book).toHaveBeenCalledWith(4);
     expect(wrapper.find(".edition-cover-row").exists()).toBe(false);
+    expect(wrapper.findAll(".sheet")).toHaveLength(0);
   });
 
   it("suggests a correction of the book's details with only what changed", async () => {
     book.mockResolvedValue(detail({ subjects: ["Fiction"], pages: null }));
     const { wrapper } = await mountBook();
+    await openMore(wrapper);
     await button(wrapper, "Wrong details?")!.trigger("click");
+    await flushPromises();
     const form = wrapper.get("form.edit-request");
     expect((form.get("input[name=title]").element as HTMLInputElement).value).toBe("The Witch of Portobello");
     await form.trigger("submit");

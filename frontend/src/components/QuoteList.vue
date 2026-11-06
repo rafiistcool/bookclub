@@ -4,12 +4,11 @@ import { onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
 import { bookPath } from "../constants";
-import { formatClubDate } from "../i18n/dates";
-import { useLocale } from "../stores/locale";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import type { QuoteOut, Visibility } from "../types";
 import BookCover from "./BookCover.vue";
+import RelativeTime from "./RelativeTime.vue";
 
 /**
  * Saved lines. On a book page (`workId`) the viewer's audience's quotes of
@@ -34,7 +33,6 @@ const emit = defineEmits<{ changed: [count: number] }>();
 const READER_LIMIT = 500;
 
 const { t } = useI18n();
-const locale = useLocale();
 const session = useSession();
 const toast = useToast();
 
@@ -151,9 +149,6 @@ async function remove(quote: QuoteOut) {
   }
 }
 
-function when(quote: QuoteOut): string {
-  return formatClubDate(quote.created_at, session.user?.timezone || "UTC", locale.locale) || quote.created_label;
-}
 
 onMounted(load);
 watch(
@@ -227,7 +222,7 @@ watch(
             <template v-if="!quote.mine">
               <RouterLink :to="`/u/${quote.author}`">{{ quote.author }}</RouterLink> ·
             </template>
-            {{ when(quote) }}
+            <RelativeTime :iso="quote.created_at" :zone="session.user?.timezone || 'UTC'" :fallback="quote.created_label" />
             <span v-if="quote.visibility === 'only_me'" class="badge only-me-badge" :title="t('quotes.onlyMeHint')">
               {{ t("diary.onlyMeBadge") }}
             </span>

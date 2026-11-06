@@ -82,7 +82,6 @@ watch(slug, () => void load(), { immediate: true });
     <template v-else>
       <header class="club-head">
         <div class="club-title">
-          <p class="kicker">{{ t("club.kicker") }}</p>
           <h1 class="display club-name">{{ club?.name ?? clubs.items.find((row) => row.slug === slug)?.name ?? "" }}</h1>
           <p v-if="club" class="fine subtle">
             {{ tp("club.memberCount", club.member_count) }}

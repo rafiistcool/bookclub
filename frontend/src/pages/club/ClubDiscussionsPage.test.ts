@@ -76,5 +76,29 @@ describe("ClubDiscussionsPage", () => {
     const wrapper = await mountAt("/c/readers-ab12/discussions");
     expect(api.pickThread).toHaveBeenCalledWith("readers-ab12", null);
     expect(wrapper.find(".compose").exists()).toBe(true);
+    // No lede: the tab names the page, and the spoiler rule sits at the spoiler control.
+    expect(wrapper.find(".discussions .lede").exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("Talk about the current pick");
+    expect(wrapper.find('a[href="/c/readers-ab12/discussions"].fine').exists()).toBe(false);
+  });
+
+  it("marks an earlier pick's discussion once, with the closed note and a way back", async () => {
+    api.club.mockResolvedValue(
+      clubOut({ ...READERS, current_pick: { id: 5, book: bookOut(), meeting_at: null } }),
+    );
+    api.pickThread.mockResolvedValue({
+      pick_id: 3,
+      can_post: false,
+      my_progress: null,
+      my_status: null,
+      items: [],
+      timezone: "Europe/Berlin",
+    });
+    const wrapper = await mountAt("/c/readers-ab12/discussions?pick=3");
+    expect(api.pickThread).toHaveBeenCalledWith("readers-ab12", 3);
+    expect(wrapper.find(".discussions .lede").exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("discussion of an earlier pick");
+    expect(wrapper.text()).toContain("This pick is over");
+    expect(wrapper.get('.thread > a[href="/c/readers-ab12/discussions"]').text()).toContain("Current pick");
   });
 });

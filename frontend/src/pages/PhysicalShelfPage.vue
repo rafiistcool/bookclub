@@ -284,15 +284,15 @@ onMounted(load);
       <PhysicalShelf :layout="layout" :items="items" :saving="saving" @select="select" @update-row="(index, row) => layout.rows[index] = row"
         @remove-row="removeRow" @drag-start="beginDrag" @drag-end="finishDrag" />
 
-      <p class="shelf-instruction">{{ t('physicalShelf.dragHint') }}</p>
+      <p v-if="items.length" class="shelf-instruction">{{ t('physicalShelf.dragHint') }}</p>
       <RouterLink v-if="!items.length" class="btn btn-primary empty-discover" to="/discover">{{ t('home.findBook') }}</RouterLink>
     </template>
 
-    <BottomSheet v-if="showDecorationPicker" :title="t('physicalShelf.decorate')" @close="showDecorationPicker = false">
+    <BottomSheet v-if="showDecorationPicker" :title="t('physicalShelf.addDecoration')" @close="showDecorationPicker = false">
       <p class="decoration-picker-hint muted">{{ t('physicalShelf.decorationHint') }}</p>
       <label class="decoration-row-label" for="decoration-row">{{ t('physicalShelf.position') }}</label>
       <select id="decoration-row" v-model.number="decorationRow" class="decoration-row" :disabled="saving"><option v-for="(_, index) in layout.rows" :key="index" :value="index">{{ t('physicalShelf.row', { number: index + 1 }) }}</option></select>
-      <div class="decoration-picker"><button v-for="kind in decorationKinds" :key="kind" type="button" class="decoration-choice" :data-kind="kind" :disabled="saving" @click="addDecoration(kind)"><span class="decoration-preview"><ShelfDecoration :kind="kind" :color="decorationColors[kind]" /></span><strong>{{ t(`physicalShelf.${kind}`) }}</strong><span class="finer subtle">{{ t(`physicalShelf.${kind}Hint`) }}</span></button></div>
+      <div class="decoration-picker"><button v-for="kind in decorationKinds" :key="kind" type="button" class="decoration-choice" :data-kind="kind" :disabled="saving" @click="addDecoration(kind)"><span class="decoration-preview"><ShelfDecoration :kind="kind" :color="decorationColors[kind]" /></span><strong>{{ t(`physicalShelf.${kind}`) }}</strong></button></div>
       <button type="button" class="btn btn-ghost btn-block" @click="showDecorationPicker = false">{{ t('physicalShelf.close') }}</button>
     </BottomSheet>
 

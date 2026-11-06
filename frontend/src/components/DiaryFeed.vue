@@ -4,14 +4,13 @@ import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
 import { bookPath } from "../constants";
 import { clubFeedPreview, EXCERPT_LENGTH, isShielded, positionMarker } from "../diary";
-import { formatClubDate } from "../i18n/dates";
 import { isClubGone, useClubs } from "../stores/clubs";
-import { useLocale } from "../stores/locale";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import { postTimeZone } from "../timezone";
 import type { DiaryFeedItem } from "../types";
 import BookCover from "./BookCover.vue";
+import RelativeTime from "./RelativeTime.vue";
 
 /**
  * "Recently written": diary entries and club posts, newest first. Without
@@ -29,7 +28,6 @@ const props = defineProps<{
 }>();
 
 const { t } = useI18n();
-const locale = useLocale();
 const session = useSession();
 const clubs = useClubs();
 const toast = useToast();
@@ -209,7 +207,11 @@ defineExpose({ reload: () => load() });
                 <template v-if="positionMarker(item.entry)">
                   {{ positionMarker(item.entry) }} ·
                 </template>
-                {{ formatClubDate(item.entry.created_at, postTimeZone(item.entry, session.user), locale.locale) || item.entry.created_label }}
+                <RelativeTime
+                  :iso="item.entry.created_at"
+                  :zone="postTimeZone(item.entry, session.user)"
+                  :fallback="item.entry.created_label"
+                />
                 <template v-if="item.entry.reactions.length">
                   · {{ item.entry.reactions.map((r) => `${r.emoji} ${r.count}`).join(" ") }}
                 </template>

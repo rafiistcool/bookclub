@@ -10,7 +10,6 @@ const { t } = useI18n();
   <section class="diary-page">
     <div class="page-head">
       <h1>{{ t("diaryPage.title") }}</h1>
-      <p class="lede">{{ t("diaryPage.lede") }}</p>
     </div>
     <DiaryFeed mine :page-size="12" :heading="t('diaryPage.yours')" :empty-text="t('diaryPage.empty')">
       <template #empty>

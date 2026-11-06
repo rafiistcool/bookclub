@@ -124,7 +124,7 @@ const title = computed(() => {
 <template>
   <ReportSheet v-if="reporting && reportTarget" :target="reportTarget" @close="emit('close')" />
   <BottomSheet v-else :title="title" @close="emit('close')">
-    <p class="fine muted">{{ admin ? t("admin.edit.blurb", { title: subject }) : t("editRequest.blurb", { title: subject }) }}</p>
+    <p class="fine muted">{{ admin ? t("admin.edit.blurb", { title: subject }) : t("editRequest.blurb") }}</p>
     <p v-if="reportTarget" class="fine report-instead">
       {{ t("report.instead") }}
       <button class="text-btn" type="button" @click="reporting = true">{{ t(`report.title.${reportTarget.kind}`) }}</button>

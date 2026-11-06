@@ -93,7 +93,6 @@ async function submit() {
 
 <template>
   <form class="stack add-edition" @submit.prevent="submit">
-    <p class="fine muted">{{ t("editions.addBlurb") }}</p>
     <label class="field">
       <span>{{ t("addBook.isbn") }}</span>
       <input v-model="isbn" name="isbn" type="text" maxlength="20" inputmode="numeric" autocomplete="off" spellcheck="false" :disabled="busy" />

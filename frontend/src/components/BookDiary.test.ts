@@ -94,13 +94,20 @@ describe("BookDiary", () => {
     expect(tags[0].attributes("href")).toBe("/c/readers-ab12/discussions");
   });
 
-  it("leaves the meeting out of a solo reader's prompts", async () => {
+  it("says only that nothing is written yet, and leaves the prompt to the composer", async () => {
     api.diary.mockResolvedValue({ work_id: 9, my_progress: null, my_status: null, items: [], timezone: "UTC" });
     const solo = await mountDiary({ workId: 9 }, null);
-    expect(solo.get(".diary-empty").text()).not.toContain("meeting");
-    expect(solo.get(".compose textarea").attributes("placeholder")).not.toContain("meeting");
+    expect(solo.get(".diary-empty p").text()).toBe("Nothing written yet.");
+    // A solo reader has no meeting to prepare for.
+    expect(solo.get(".compose textarea").attributes("placeholder")).toBe(i18n.global.t("diary.placeholderSolo"));
     const member = await mountDiary({ workId: 9 });
-    expect(member.get(".diary-empty").text()).toContain("meeting");
+    expect(member.get(".diary-empty p").text()).toBe("Nothing written yet.");
+    expect(member.get(".compose textarea").attributes("placeholder")).toBe(i18n.global.t("diary.placeholder"));
+
+    api.pickThread.mockResolvedValue(thread());
+    const club = await mountDiary({ club: { slug: CLUB.slug, pickId: null } });
+    expect(club.get(".diary-empty p").text()).toBe("Nothing written yet.");
+    expect(club.get(".diary-empty .btn").text()).toBe(i18n.global.t("diary.writeFirst"));
   });
 
   it("keeps an ended pick's discussion read-only", async () => {

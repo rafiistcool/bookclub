@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { EllipsisHorizontalIcon } from "@heroicons/vue/24/outline";
 import { vAutosize } from "../autosize";
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { api, ApiError } from "../api/client";
@@ -13,8 +14,9 @@ import QuoteList from "../components/QuoteList.vue";
 import ClubBookActions from "../components/ClubBookActions.vue";
 import ReportSheet, { isWithdrawn, type ReportTarget } from "../components/ReportSheet.vue";
 import EditionPicker from "../components/EditionPicker.vue";
-import CoverPhotoButton from "../components/CoverPhotoButton.vue";
+import CoverPhotoButton, { sendCoverPhoto, type CoverTarget } from "../components/CoverPhotoButton.vue";
 import AdminEditionCover from "../components/AdminEditionCover.vue";
+import BookActionsSheet, { type BookAction } from "../components/BookActionsSheet.vue";
 import CoverPrompt from "../components/CoverPrompt.vue";
 import MergeRequestSheet from "../components/MergeRequestSheet.vue";
 import EditRequestSheet from "../components/EditRequestSheet.vue";
@@ -23,7 +25,6 @@ import { asksForCoverPhoto } from "../covers";
 import { worthRetrying } from "../retry";
 import {
   bookPath,
-  openLibraryUrl,
   parseBookParam,
   STATUSES,
   statusLabel,
@@ -31,13 +32,14 @@ import {
   starLabel,
   type Status,
 } from "../constants";
-import { tp } from "../i18n";
+import { tp, type Locale } from "../i18n";
+import { formatRating } from "../stats";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import type { BookDetailOut, BookOut, EditionOut } from "../api/generated";
 import type { BookDetail, ClubRef, ShelfItem, Visibility } from "../types";
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 const route = useRoute();
 const router = useRouter();
@@ -66,6 +68,16 @@ const adminEditing = ref<"work" | "edition" | null>(null);
 const adminEdition = ref<EditionOut | null>(null);
 /** Bumped after an edition edit, so the edition picker reads the editions again. */
 const editionsVersion = ref(0);
+/** The "…" sheet with everything about the book that is not reading it. */
+const moreOpen = ref(false);
+const moreButton = ref<HTMLButtonElement | null>(null);
+/** An instance admin's list of the work's editions, each with a cover upload. */
+const adminEditionCover = ref(false);
+/** A photo chosen in a sheet is uploading; the sheet itself is gone by then. */
+// The work a photo from a sheet is being uploaded for: the page can move to
+// another book (Back) while it runs, and that book is not uploading.
+const coverUploadFor = ref<number | null>(null);
+const coverUploading = computed(() => coverUploadFor.value !== null && coverUploadFor.value === book.value?.id);
 
 const takeDraft = ref("");
 const reasonDraft = ref("");
@@ -74,7 +86,6 @@ const clubActions = ref<InstanceType<typeof ClubBookActions> | null>(null);
 
 const param = computed(() => String(route.params.id || ""));
 const longDescription = computed(() => (book.value?.description.length ?? 0) > 420);
-const catalogUrl = computed(() => openLibraryUrl(book.value?.ol_work_key));
 const canPick = computed(() => clubsFor("pick", session.user?.clubs).length > 0);
 const canNominate = computed(() => clubsFor("nominate", session.user?.clubs).length > 0);
 /** With one club to pick in, and the book already its pick, there is nothing to set. */
@@ -84,6 +95,7 @@ const pickDone = computed(() => {
   return clubs.length > 0 && clubs.every((club) => current.some((row) => row.slug === club.slug));
 });
 const pickNames = computed(() => (book.value?.club_picks ?? []).map((club) => club.name).join(", "));
+const hasCover = computed(() => Boolean(book.value?.cover_url || book.value?.cover_thumb_url));
 
 function syncDrafts(detail: BookDetail) {
   takeDraft.value = detail.take;
@@ -144,6 +156,8 @@ async function load() {
   retryable.value = false;
   expanded.value = false;
   reporting.value = null;
+  moreOpen.value = false;
+  adminEditionCover.value = false;
   loadAbort?.abort();
   if (target.kind === "invalid") {
     book.value = null;
@@ -406,6 +420,67 @@ async function adminEditionSaved() {
   }
 }
 
+/**
+ * Close the "…" sheet before anything it asked for: a second sheet on top of
+ * it would close with it on one Escape and trap Tab twice. Focus goes back to
+ * "…", so the next sheet returns it there when it closes.
+ */
+async function closeSheets() {
+  moreOpen.value = false;
+  adminEditionCover.value = false;
+  await nextTick();
+  moreButton.value?.focus({ preventScroll: true });
+}
+
+async function onMoreAction(action: BookAction) {
+  // The row shows "Refreshing…" until the answer is in; then the sheet goes.
+  if (action === "refresh") {
+    await refreshDetails();
+    if (moreOpen.value) await closeSheets();
+    return;
+  }
+  await closeSheets();
+  if (action === "edit") requestingEdit.value = true;
+  else if (action === "merge") requestingMerge.value = true;
+  else if (action === "report-book") reportBook();
+  else if (action === "report-cover") reportCover();
+  else if (action === "admin-edit") adminEditing.value = "work";
+  else if (action === "admin-edition") await editEditionAsAdmin();
+  else if (action === "admin-edition-cover") adminEditionCover.value = true;
+}
+
+/**
+ * A photo chosen in a sheet: the sheet closes at once and the page uploads
+ * it, so the answer still reaches the page (a closed sheet's emits are lost).
+ */
+async function uploadPicked(target: CoverTarget, file: File, done: (updated: BookOut) => void) {
+  await closeSheets();
+  // One upload at a time; a second pick says so instead of vanishing.
+  if (coverUploadFor.value !== null) {
+    toast.show(t("cover.waitForUpload"));
+    return;
+  }
+  coverUploadFor.value = target.workId;
+  try {
+    const updated = await sendCoverPhoto(target, file);
+    if (updated && book.value?.id === target.workId) done(updated);
+  } finally {
+    coverUploadFor.value = null;
+  }
+}
+
+function onMorePicked(kind: "photo" | "admin", file: File) {
+  const detail = book.value;
+  if (!detail) return;
+  if (kind === "admin") void uploadPicked({ workId: detail.id, editionId: null, admin: true }, file, adminCoverSet);
+  else void uploadPicked({ workId: detail.id, editionId: detail.edition_id }, file, adoptCover);
+}
+
+function onEditionCoverPicked(editionId: number, file: File) {
+  const detail = book.value;
+  if (detail) void uploadPicked({ workId: detail.id, editionId, admin: true }, file, () => void adminEditionSaved());
+}
+
 function reportCover() {
   const detail = book.value;
   if (detail?.cover_public_id) reporting.value = { kind: "cover", publicId: detail.cover_public_id, title: shownTitle.value };
@@ -483,96 +558,52 @@ watch(param, load);
 
     <template v-else-if="book">
       <div class="detail-hero">
-        <div class="hero-cover">
+        <div class="hero-cover" :class="{ uploading: coverUploading }" :aria-busy="coverUploading">
           <BookCover :book="withdrawn ? { ...book, title: shownTitle } : book" eager />
-          <button
-            v-if="book.cover_public_id"
-            class="text-btn finer report-cover"
-            type="button"
-            @click="reportCover"
-          >
-            {{ t("cover.report") }}
-          </button>
+          <p v-if="coverUploading" class="finer subtle cover-status" role="status">{{ t("cover.photoUploading") }}</p>
+          <!-- The only call to action on a bare cloth; with a cover, the "…" sheet suggests a photo.
+               Hidden, not removed, during a sheet's upload: its own upload must keep its listener. -->
           <CoverPhotoButton
-            v-if="!coverPrompted"
+            v-if="!coverPrompted && !hasCover"
+            v-show="!coverUploading"
             :work-id="book.id"
             :edition-id="book.edition_id"
-            :has-cover="Boolean(book.cover_url || book.cover_thumb_url)"
+            :has-cover="false"
             @covered="adoptCover"
           />
         </div>
         <div class="detail-side">
           <div class="detail-intro">
-            <p v-if="book.club_picks.length" class="kicker">{{ t("book.currentPickIn", { clubs: pickNames }) }}</p>
-            <h1 class="display">{{ shownTitle }}</h1>
+            <div class="intro-head">
+              <button
+                ref="moreButton"
+                class="icon-btn more-btn"
+                type="button"
+                aria-haspopup="dialog"
+                :aria-expanded="moreOpen"
+                :aria-label="t('book.moreActions')"
+                @click="moreOpen = true"
+              >
+                <EllipsisHorizontalIcon class="more-icon" aria-hidden="true" />
+              </button>
+              <p v-if="book.club_picks.length" class="hero-pick">
+                <span class="badge club-pick">{{ t("book.pickBadge", { club: pickNames }) }}</span>
+              </p>
+              <h1 class="display">{{ shownTitle }}</h1>
+            </div>
             <p v-if="withdrawn" class="fine subtle">{{ t("report.removedNote") }}</p>
             <p v-if="book.subtitle" class="detail-subtitle">{{ book.subtitle }}</p>
-            <p v-if="book.authors" class="detail-authors">{{ book.authors }}</p>
+            <p v-if="book.authors || book.year" class="detail-authors">
+              {{ book.authors }}<span v-if="book.year" class="detail-year"><span v-if="book.authors" aria-hidden="true"> · </span><span
+                class="nums"
+                :title="t('book.firstPublished', { year: book.year })"
+              >{{ book.year }}</span></span>
+            </p>
             <p v-if="book.rating_count" class="club-rating">
+              <span class="visually-hidden">{{ t("book.ratingLabel") }}</span>
               <span class="stars" aria-hidden="true">★</span>
-              <strong class="nums">{{ book.club_rating?.toFixed(1) }}</strong>
-              <span class="fine subtle">
-                {{ tp("book.clubRating", book.rating_count) }}
-              </span>
-            </p>
-            <p v-if="book.year" class="fine subtle nums">{{ t("book.firstPublished", { year: book.year }) }}</p>
-            <p v-if="book.custom" class="fine subtle">
-              {{ t("book.addedByReader") }}
-              <template v-if="!withdrawn">
-                <span aria-hidden="true"> · </span>
-                <button class="text-btn report-book" type="button" @click="reportBook">{{ t("report.action.work") }}</button>
-              </template>
-            </p>
-            <p v-else-if="catalogUrl || book.can_refresh" class="fine">
-              <a
-                v-if="catalogUrl"
-                :href="catalogUrl"
-                target="_blank"
-                rel="noreferrer"
-              >
-                {{ t("book.viewOpenLibrary") }}
-              </a>
-              <span v-if="catalogUrl && book.can_refresh" class="subtle"> · </span>
-              <button
-                v-if="book.can_refresh"
-                class="text-btn"
-                type="button"
-                :disabled="refreshing"
-                @click="refreshDetails"
-              >
-                {{ refreshing ? t("book.refreshing") : t("book.refreshDetails") }}
-              </button>
-            </p>
-            <p class="fine catalog-requests">
-              <button class="text-btn" type="button" @click="requestingEdit = true">{{ t("editRequest.openBook") }}</button>
-              <span class="subtle" aria-hidden="true"> · </span>
-              <button class="text-btn" type="button" @click="requestingMerge = true">{{ t("merge.open") }}</button>
-            </p>
-            <p v-if="session.user?.is_admin" class="fine catalog-requests admin-edit-links">
-              <button class="text-btn" type="button" @click="adminEditing = 'work'">{{ t("admin.editAsAdmin") }}</button>
-              <template v-if="book.edition_id != null">
-                <span class="subtle" aria-hidden="true"> · </span>
-                <button class="text-btn" type="button" @click="editEditionAsAdmin">{{ t("admin.editEditionAsAdmin") }}</button>
-              </template>
-              <span class="subtle" aria-hidden="true"> · </span>
-              <CoverPhotoButton
-                admin
-                look="inline"
-                class="admin-set-cover"
-                :label="t('admin.setCover')"
-                :work-id="book.id"
-                :edition-id="null"
-                :has-cover="Boolean(book.cover_url || book.cover_thumb_url)"
-                @covered="adminCoverSet"
-              />
-              <span class="subtle" aria-hidden="true"> · </span>
-              <AdminEditionCover
-                class="admin-set-edition-cover"
-                :work-id="book.id"
-                :edition-id="book.edition_id"
-                :title="shownTitle"
-                @covered="adminEditionSaved"
-              />
+              <strong class="nums">{{ formatRating(book.club_rating, locale as Locale) }}</strong>
+              <span class="subtle">· {{ tp("book.ratingVotes", book.rating_count) }}</span>
             </p>
           </div>
 
@@ -817,6 +848,26 @@ watch(param, load);
       @close="adminEditing = null"
     />
     <ReportSheet v-if="reporting" :target="reporting" @close="reporting = null" />
+    <BookActionsSheet
+      v-if="moreOpen && book"
+      :book="book"
+      :title="shownTitle"
+      :admin="Boolean(session.user?.is_admin)"
+      :cover-prompted="coverPrompted"
+      :withdrawn="withdrawn"
+      :refreshing="refreshing"
+      @act="onMoreAction"
+      @picked="onMorePicked"
+      @close="moreOpen = false"
+    />
+    <AdminEditionCover
+      v-if="adminEditionCover && book && session.user?.is_admin"
+      :work-id="book.id"
+      :edition-id="book.edition_id"
+      :title="shownTitle"
+      @picked="onEditionCoverPicked"
+      @close="adminEditionCover = false"
+    />
   </section>
 </template>
 
@@ -849,11 +900,23 @@ watch(param, load);
   border-radius: var(--radius-md);
 }
 
-.report-cover,
-.hero-cover :deep(.cover-photo) {
+.hero-cover :deep(.cover-photo),
+.cover-status {
   display: block;
   margin-top: var(--space-1);
   color: var(--text-subtle);
+}
+
+.cover-status {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap);
+}
+
+/* A photo from the "…" sheet is on its way: the sheet is gone, the cover says so. */
+.hero-cover.uploading :deep(.cover) {
+  opacity: 0.6;
+  transition: opacity var(--dur-base) var(--ease-out);
 }
 
 .check-row {
@@ -874,6 +937,30 @@ watch(param, load);
   font-size: var(--text-2xl);
 }
 
+/* "…" floats beside the title's first lines; the rest of the title takes the full width.
+   The negative margins line the icon up with the text while the target stays 44 px. */
+.more-btn {
+  float: inline-end;
+  margin: calc(-1 * var(--space-2)) calc(-1 * var(--space-2)) 0 var(--space-1);
+}
+
+.more-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.hero-pick {
+  margin: 0 0 var(--space-1);
+  line-height: 1;
+}
+
+/* Every club's name stays readable: the badge wraps rather than cutting. */
+.hero-pick .badge {
+  max-width: 100%;
+  white-space: normal;
+  line-height: 1.3;
+}
+
 .detail-subtitle {
   margin-top: calc(-1 * var(--space-1));
   font-family: var(--serif);
@@ -885,15 +972,17 @@ watch(param, load);
   font-size: var(--text-lg);
 }
 
-.club-rating {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-1);
-  margin-top: var(--space-1);
+/* "· 2019" never starts a line of its own. */
+.detail-year {
+  white-space: nowrap;
 }
 
-.club-rating strong {
-  font-size: var(--text-lg);
+.club-rating {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
 }
 
 .shelf-panel {
@@ -938,23 +1027,6 @@ watch(param, load);
 .panel-actions {
   padding-top: var(--space-3);
   border-top: 1px solid var(--border);
-}
-
-.detail-intro .text-btn {
-  display: inline;
-  padding: 0;
-  border: 0;
-  background: none;
-  font: inherit;
-  color: var(--accent);
-}
-
-/* The admin's cover uploads are labels: laid out like the text buttons beside them. */
-.detail-intro .admin-edit-links .cover-photo {
-  display: inline-flex;
-  align-items: center;
-  min-height: var(--tap);
-  text-align: center;
 }
 
 .description {

@@ -112,7 +112,6 @@ onMounted(() => {
       <div class="section-head">
         <h2 id="profile">{{ t("settings.profile") }}</h2>
       </div>
-      <p class="fine muted">{{ t("settings.profileBlurb") }}</p>
       <div class="profile-row">
         <Avatar :username="username" :src="session.user?.avatar_url" size="lg" />
         <div class="profile-actions">
@@ -152,7 +151,6 @@ onMounted(() => {
       <div class="section-head">
         <h2 id="language">{{ t("settings.language") }}</h2>
       </div>
-      <p class="fine muted">{{ t("settings.languageBlurb") }}</p>
       <div class="mode-row">
         <LanguageSwitch />
       </div>
@@ -177,11 +175,8 @@ onMounted(() => {
             {{ t(option.labelKey) }}
           </button>
         </div>
-        <p class="fine subtle">
-          <template v-if="theme.mode === 'system'">
-            {{ t("settings.followingDevice", { mode: t(`theme.${theme.resolvedMode}`) }) }}
-          </template>
-          <template v-else>{{ t("settings.alwaysMode", { mode: t(`theme.${theme.mode}`) }) }}</template>
+        <p v-if="theme.mode === 'system'" class="fine subtle mode-now">
+          {{ t("settings.followingDevice", { mode: t(`theme.${theme.resolvedMode}`) }) }}
         </p>
       </div>
 
@@ -214,7 +209,6 @@ onMounted(() => {
             {{ t(option.labelKey) }}
             <span v-if="theme.theme === option.id" class="badge club-pick">{{ t("common.active") }}</span>
           </span>
-          <span class="fine subtle">{{ t(option.blurbKey) }}</span>
         </button>
       </div>
     </section>
@@ -257,7 +251,6 @@ onMounted(() => {
       <div class="section-head">
         <h2 id="legal">{{ t("legal.settingsTitle") }}</h2>
       </div>
-      <p v-if="legalDocs.length" class="fine muted">{{ t("legal.settingsBlurb", { name: service.name }) }}</p>
       <ul v-if="legalDocs.length" class="legal-list">
         <li v-for="doc in legalDocs" :key="doc">
           <RouterLink :to="legalPath(doc)">{{ t(`legal.title.${doc}`) }}</RouterLink>

@@ -215,6 +215,28 @@ describe("ShelfPage favourites portrait", () => {
     wrapper.unmount();
   });
 
+  it("stacks each status filter's count under its label, and shows the counts only there", async () => {
+    const reading = { ...item(2, "Circe"), status: "currently_reading" as const };
+    const done = { ...item(3, "Dune"), status: "finished" as const };
+    const wrapper = await mountShelf([], [item(1, "Middlemarch"), reading, done]);
+    // The page head is the title alone: the filter below carries the numbers.
+    expect(wrapper.find(".shelf-head .lede").exists()).toBe(false);
+    const filter = wrapper.get(".shelf-filter");
+    expect(filter.classes()).toContain("stacked");
+    const segments = filter.findAll("button").map((button) => [button.get(".seg-label").text(), button.get(".seg-count").text()]);
+    expect(segments).toEqual([["All", "3"], ["To read", "1"], ["Reading", "1"], ["Read", "1"], ["DNF", "0"]]);
+    wrapper.unmount();
+  });
+
+  it("says only that an empty shelf is empty, next to the ways to fill it", async () => {
+    const wrapper = await mountShelf([]);
+    const empty = wrapper.get(".empty");
+    expect(empty.get("h3").text()).toBe("Your shelf is empty");
+    expect(empty.find("p").exists()).toBe(false);
+    expect(empty.findAll(".btn").map((link) => link.text())).toEqual(["Find a book", "Import from Goodreads"]);
+    wrapper.unmount();
+  });
+
   it("renders shelf hints in both languages instead of showing translation keys", async () => {
     const wrapper = await mountShelf([], [item(1, "A book")]);
     const previous = i18n.global.locale.value;

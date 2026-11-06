@@ -115,7 +115,6 @@ onMounted(() => {
   <section class="home" :class="{ solo: !hasClubs }">
     <div class="page-head">
       <h1>{{ session.user?.username ? t("home.hello", { name: session.user.username }) : t("home.title") }}</h1>
-      <p class="lede">{{ hasClubs ? t("home.lede") : t("home.soloLede") }}</p>
     </div>
 
     <section v-if="hasClubs" class="home-clubs" aria-labelledby="your-clubs">

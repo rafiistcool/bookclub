@@ -51,6 +51,13 @@ describe("MergeRequestSheet", () => {
     expect(wrapper.emitted("close")).toHaveLength(1);
   });
 
+  it("asks for the duplicate without repeating this book's title", () => {
+    const wrapper = mountSheet();
+    expect(wrapper.text()).toContain("Find the duplicate entry. An admin checks and joins the two.");
+    // The sheet's title already sets the scene; "Circe" appears only once a duplicate is chosen.
+    expect(wrapper.text()).not.toContain("Circe");
+  });
+
   it("opens a pasted link directly", async () => {
     api.book.mockResolvedValue(bookDetail({ id: 31, title: "Ich bin Circe" }));
     const wrapper = mountSheet();

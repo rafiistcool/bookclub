@@ -69,7 +69,6 @@ onMounted(loadSuggestions);
       <div class="section-head">
         <h2 id="suggestions">{{ t("vote.suggestions") }}</h2>
       </div>
-      <p class="fine muted suggestions-blurb">{{ t("vote.suggestionsBlurb") }}</p>
       <ul class="suggestion-list">
         <li v-for="row in suggestions" :key="row.book.id" class="suggestion">
           <RouterLink class="suggestion-book" :to="bookPath(row.book)">
@@ -97,11 +96,6 @@ onMounted(loadSuggestions);
 </template>
 
 <style scoped>
-.suggestions-blurb {
-  max-width: 62ch;
-  margin-bottom: var(--space-3);
-}
-
 .suggestion-list {
   list-style: none;
   margin: 0;

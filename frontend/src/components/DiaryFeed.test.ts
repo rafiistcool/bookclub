@@ -1,7 +1,7 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { bookOut, post } from "../test/fixtures";
+import { bookOut, post, user } from "../test/fixtures";
 import type { DiaryFeedItem } from "../types";
 
 const diaryFeed = vi.fn();
@@ -16,6 +16,8 @@ vi.mock("../api/client", () => ({
 }));
 
 import { i18n } from "../i18n";
+import { useLocale } from "../stores/locale";
+import { useSession } from "../stores/session";
 import DiaryFeed from "./DiaryFeed.vue";
 
 const SECRET = "The coconut pillow on p. 237 is a tell.";
@@ -134,6 +136,40 @@ describe("DiaryFeed (recently written)", () => {
       club: "readers-ab12",
     });
     expect(scoped.find(".feed-club").exists()).toBe(false);
+  });
+
+  it("dates a note relative to now, counting days in the reader's zone, a club post too", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      // 2 Sep 06:00 in Tokyo, still 1 Sep (17:00) in New York.
+      vi.setSystemTime(new Date("2026-09-01T21:00:00Z"));
+      const pinia = createPinia();
+      setActivePinia(pinia);
+      const club = { slug: "readers-ab12", name: "Readers" };
+      useSession().user = user({
+        timezone: "America/New_York",
+        clubs: [{ ...club, role: "member", timezone: "Asia/Tokyo", member_count: 2 }],
+      });
+      useLocale().locale = "de";
+      diaryFeed.mockResolvedValue({
+        items: [
+          feedItem({ club, entry: { ...feedItem().entry, id: 12, club } }),
+          feedItem(),
+        ],
+        has_more: false,
+        timezone: "UTC",
+      });
+      const wrapper = mount(DiaryFeed, { global: { plugins: [pinia, i18n], stubs: { BookCover: true } } });
+      await flushPromises();
+      const times = wrapper.findAll(".feed-foot time");
+      // Days counted in the reader's New York for both; the club's time stays in the title.
+      expect(times.map((time) => time.text())).toEqual(["vor 9 Std.", "vor 9 Std."]);
+      expect(times[0]!.attributes("datetime")).toBe("2026-09-01T12:00:00Z");
+      expect(times[0]!.attributes("title")).toBe("Di., 1. Sept. 2026, 21:00 GMT+9");
+      expect(times[1]!.attributes("title")).toBe("Di., 1. Sept. 2026, 08:00 GMT-4");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   describe("with mine (/diary)", () => {

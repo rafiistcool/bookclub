@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
 import { formatClubDate } from "../i18n/dates";
@@ -9,7 +9,10 @@ import { useLocale } from "../stores/locale";
 import { useToast } from "../stores/toast";
 import type { MilestoneOut, MilestoneUnit } from "../types";
 
-/** Reading stops for the current pick: "up to chapter 5 by Friday". Admins add and remove them. */
+/**
+ * Reading stops for the current pick: "up to chapter 5 by Friday". Admins add and remove them.
+ * A member, who can't add any, sees nothing at all (no heading) while there are none.
+ */
 const props = defineProps<{
   slug: string;
   pickId: number;
@@ -34,6 +37,8 @@ const unit = ref<MilestoneUnit | "">("");
 const rangeFrom = ref<number | "">("");
 const rangeTo = ref<number | "">("");
 const due = ref("");
+
+const shown = computed(() => props.canManage || items.value.length > 0 || error.value !== "");
 
 function fail(err: unknown, fallback: string): string {
   if (isClubGone(err)) clubs.markGone(props.slug);
@@ -117,7 +122,7 @@ onMounted(load);
 </script>
 
 <template>
-  <section class="milestones" aria-labelledby="milestones-heading">
+  <section v-if="shown" class="milestones" aria-labelledby="milestones-heading">
     <div class="section-head">
       <h2 id="milestones-heading">{{ t("milestones.heading") }}</h2>
       <button v-if="canManage && !adding" class="text-btn" type="button" @click="adding = true">
@@ -128,7 +133,7 @@ onMounted(load);
     <p v-if="error" class="error">{{ error }}</p>
     <div v-else-if="!loaded" class="skeleton milestone-skeleton" aria-hidden="true" />
     <p v-else-if="items.length === 0 && !adding" class="fine subtle">
-      {{ canManage ? t("milestones.emptyAdmin") : t("milestones.empty") }}
+      {{ t("milestones.emptyAdmin") }}
     </p>
     <ol v-else-if="items.length" class="milestone-list">
       <li v-for="row in items" :key="row.id" class="milestone" :class="{ passed: row.passed }">

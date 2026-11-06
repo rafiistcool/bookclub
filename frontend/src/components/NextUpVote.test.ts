@@ -55,7 +55,12 @@ describe("NextUpVote", () => {
     await member.findAll(".vote-actions .btn")[1]!.trigger("click");
     expect(api.castVote).toHaveBeenCalledWith("readers-ab12", 2);
 
+    // A member is told that voting alone does not swap the book.
+    expect(member.get(".vote-blurb").text()).toBe(i18n.global.t("vote.blurb"));
+    expect(member.get("#next-up-heading").text()).toBe("Next book");
+
     const admin = await mountVote(true);
+    expect(admin.get(".vote-blurb").text()).toBe(i18n.global.t("vote.blurbAdmin"));
     expect(admin.text()).toContain("Confirm winner");
     expect(admin.text()).toContain("Set a deadline");
   });
@@ -66,7 +71,12 @@ describe("NextUpVote", () => {
     api.applyVote.mockResolvedValue({ pick: clubPick({ id: 9, meeting_at: "2026-12-01T18:00:00Z" }), vote: vote() });
     // One confirm for the whole list: it asks which book, then when to meet.
     await wrapper.get(".confirm-winner").trigger("click");
+    // The chooser only lists the books; the consequence is said once, at the final confirm.
+    const blurb = i18n.global.t("vote.confirmBlurb");
+    expect(wrapper.get(".sheet").text()).not.toContain(blurb);
     await wrapper.findAll(".sheet .winner-choice")[0]!.trigger("click");
+    expect(wrapper.findAll(".sheet")).toHaveLength(1);
+    expect(wrapper.get(".sheet").text()).toContain(blurb);
     await wrapper.get(".sheet input[type=datetime-local]").setValue("2026-12-01T19:00");
     await wrapper.get(".sheet .btn-primary").trigger("click");
     await flushPromises();

@@ -148,19 +148,16 @@ describe("FriendsPage", () => {
     expect(blocked.get(".blocked-row").text()).toContain("max");
     // Answer 21: a block does not reach into shared clubs, and the page says so.
     expect(blocked.get(".block-note").text()).toBe(
-      "Blocking ends the friendship and hides their requests. It does not hide anything in clubs you share now or join later. To stop that, leave the club or ask its admin to remove them.",
+      "Blocking hides nothing in clubs you share, now or later. There, leave the club or ask its admins to remove them.",
     );
   });
 
-  it("has an empty state for every list", async () => {
+  it("shows only the friends list while every list is empty", async () => {
     const page = await mountPage(friendsOut());
-    expect(page.findAll(".empty-line").map((line) => line.text())).toEqual([
-      "No requests right now.",
-      "No invitations right now.",
-      "No friends yet. Send a request to someone's exact username above.",
-      "No open requests.",
-      "You have not blocked anyone.",
-    ]);
+    // Requests, invitations, sent requests and blocks appear once they hold a row.
+    expect(page.findAll("h2").map((heading) => heading.text())).toEqual(["Add a friend", "Your friends"]);
+    expect(page.findAll(".empty-line").map((line) => line.text())).toEqual(["No friends yet."]);
+    expect(page.find(".block-note").exists()).toBe(false);
   });
 
   it("sends a request by exact username and says what became of it", async () => {
@@ -214,7 +211,8 @@ describe("FriendsPage", () => {
     await flushPromises();
     expect(api.acceptFriendRequest).toHaveBeenCalledWith("mia");
     expect(toasts()).toContain("You and mia are friends now");
-    expect(incoming().text()).toContain("No requests right now.");
+    // The last request is answered: its section goes.
+    expect(page.find("section[aria-labelledby=friend-requests]").exists()).toBe(false);
     expect(section(page, "your-friends").text()).toContain("mia");
 
     await wrapper!.unmount();
@@ -231,7 +229,7 @@ describe("FriendsPage", () => {
     const sheet = third.get(".sheet");
     expect(sheet.get("h2").text()).toBe("Block mia?");
     expect(sheet.text()).toContain("mia is not told.");
-    expect(sheet.text()).toContain("It does not hide anything in clubs you share: there you still see each other.");
+    expect(sheet.text()).toContain("In clubs you share, now or later, you still see each other.");
     expect(api.blockAccount).not.toHaveBeenCalled();
     api.blockAccount.mockResolvedValue(friendsOut({ blocked: [blockedOut("mia")] }));
     await button(sheet, "Yes, block").trigger("click");
@@ -308,7 +306,9 @@ describe("FriendsPage", () => {
     await flushPromises();
     expect(api.declineClubInvite).toHaveBeenCalledWith(4);
     expect(toasts()).toContain("Invitation declined");
-    expect(section(page, "club-invitations").text()).toContain("No invitations right now.");
+    expect(page.find("section[aria-labelledby=club-invitations]").exists()).toBe(false);
+    expect(page.find("section[aria-labelledby=sent-requests]").exists()).toBe(false);
+    expect(page.find("section[aria-labelledby=blocked-accounts]").exists()).toBe(false);
   });
 
   it("loads the lists again when the request, the friend or the invitation is gone", async () => {
@@ -323,7 +323,7 @@ describe("FriendsPage", () => {
     await flushPromises();
     expect(toasts()).toContain("That request no longer exists");
     expect(api.friends).toHaveBeenCalledTimes(2);
-    expect(section(page, "friend-requests").text()).toContain("No requests right now.");
+    expect(page.find("section[aria-labelledby=friend-requests]").exists()).toBe(false);
 
     // Grace ended the friendship first: the confirmation closes and she leaves the list.
     now = { ...now, friends: [friendOut("hal")] };
@@ -343,7 +343,7 @@ describe("FriendsPage", () => {
     await button(section(page, "club-invitations"), "Decline").trigger("click");
     await flushPromises();
     expect(api.friends).toHaveBeenCalledTimes(4);
-    expect(section(page, "club-invitations").text()).toContain("No invitations right now.");
+    expect(page.find("section[aria-labelledby=club-invitations]").exists()).toBe(false);
   });
 
   it("says when the lists cannot be loaded, and tries again", async () => {

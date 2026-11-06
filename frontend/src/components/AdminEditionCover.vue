@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
 import type { EditionOut } from "../api/generated";
@@ -10,88 +10,64 @@ import CoverPhotoButton from "./CoverPhotoButton.vue";
 
 /**
  * An instance admin's direct cover for any edition of the book (#74): the
- * link opens the list of the work's editions, each with its cover and an
- * upload. The picture replaces that edition's cover at once
+ * sheet lists the work's editions, each with its cover and an upload. The
+ * picture replaces that edition's cover at once
  * (`PUT /api/admin/works/{work_id}/cover` with its `edition_id`). The
  * viewer's own edition is marked; the admin need not own the one they fix.
+ *
+ * A controlled sheet: the page mounts it with v-if and closes it on `close`.
+ * A chosen picture is handed on (`picked`) for the page to upload, so the
+ * sheet can close at once without losing the answer.
  */
 const props = defineProps<{ workId: number; editionId: number | null; title: string }>();
-const emit = defineEmits<{ covered: [] }>();
+const emit = defineEmits<{ close: []; picked: [editionId: number, file: File] }>();
 
 const { t } = useI18n();
-const open = ref(false);
 const editions = ref<EditionOut[] | null>(null);
 const error = ref("");
 
-async function show() {
-  open.value = true;
-  editions.value = null;
-  error.value = "";
+onMounted(async () => {
   try {
     editions.value = (await api.editions(props.workId)).items;
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : t("editions.loadFailed");
   }
-}
-
-function covered() {
-  open.value = false;
-  emit("covered");
-}
+});
 </script>
 
 <template>
-  <span class="admin-edition-cover">
-    <button class="text-btn" type="button" @click="show">{{ t("admin.setEditionCover") }}</button>
-    <BottomSheet v-if="open" :title="t('admin.editionCover.title')" @close="open = false">
-      <p class="fine muted">{{ t("admin.editionCover.blurb") }}</p>
-      <p v-if="error" class="error">{{ error }}</p>
-      <div v-else-if="!editions" class="skeleton editions-skeleton" aria-hidden="true" />
-      <p v-else-if="editions.length === 0" class="fine subtle">{{ t("admin.editionCover.none") }}</p>
-      <ul v-else class="edition-covers">
-        <li v-for="edition in editions" :key="edition.id" class="edition-cover-row">
-          <BookCover
-            :book="{ title: edition.title || title, cover_url: edition.cover_url, cover_thumb_url: edition.cover_thumb_url }"
-            size="xs"
-          />
-          <span class="edition-cover-text fine">
-            <strong v-if="edition.title">{{ edition.title }}</strong>
-            <span>{{ editionLine(edition) }}</span>
-            <span v-if="edition.id === editionId" class="subtle">{{ t("admin.editionCover.yours") }}</span>
-          </span>
-          <CoverPhotoButton
-            admin
-            look="ghost"
-            :label="t('admin.editionCover.upload')"
-            :work-id="workId"
-            :edition-id="edition.id"
-            :has-cover="Boolean(edition.cover_url || edition.cover_thumb_url)"
-            @covered="covered"
-          />
-        </li>
-      </ul>
-    </BottomSheet>
-  </span>
+  <BottomSheet class="admin-edition-cover" :title="t('admin.editionCover.title')" @close="emit('close')">
+    <p class="fine muted">{{ t("admin.editionCover.blurb") }}</p>
+    <p v-if="error" class="error">{{ error }}</p>
+    <div v-else-if="!editions" class="skeleton editions-skeleton" aria-hidden="true" />
+    <p v-else-if="editions.length === 0" class="fine subtle">{{ t("admin.editionCover.none") }}</p>
+    <ul v-else class="edition-covers">
+      <li v-for="edition in editions" :key="edition.id" class="edition-cover-row">
+        <BookCover
+          :book="{ title: edition.title || title, cover_url: edition.cover_url, cover_thumb_url: edition.cover_thumb_url }"
+          size="xs"
+        />
+        <span class="edition-cover-text fine">
+          <strong v-if="edition.title">{{ edition.title }}</strong>
+          <span>{{ editionLine(edition) }}</span>
+          <span v-if="edition.id === editionId" class="subtle">{{ t("admin.editionCover.yours") }}</span>
+        </span>
+        <CoverPhotoButton
+          admin
+          pick-only
+          look="ghost"
+          :label="t('admin.editionCover.upload')"
+          :work-id="workId"
+          :edition-id="edition.id"
+          :has-cover="Boolean(edition.cover_url || edition.cover_thumb_url)"
+          @picked="(file) => emit('picked', edition.id, file)"
+        />
+      </li>
+    </ul>
+  </BottomSheet>
 </template>
 
 <style scoped>
-/* The link sits in a line of small text links and reads like them: the book page's rule for
-   its text buttons does not reach into this component, so the link would be bold, padded and
-   centred on a line of its own. The sheet reads at body size. */
-.admin-edition-cover > .text-btn {
-  display: inline;
-  padding: 0;
-  border: 0;
-  background: none;
-  font: inherit;
-  color: var(--accent);
-}
-
-.admin-edition-cover :deep(.sheet) {
-  font-size: var(--text-md);
-  text-align: left;
-}
-
 .editions-skeleton {
   height: 120px;
 }

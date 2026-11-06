@@ -12,7 +12,6 @@ const session = useSession();
   <section class="quotes-page">
     <div class="page-head">
       <h1>{{ t("quotes.title") }}</h1>
-      <p class="lede">{{ t("quotes.lede") }}</p>
     </div>
     <QuoteList
       v-if="session.user"

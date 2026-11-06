@@ -68,7 +68,7 @@ async function send() {
 
 <template>
   <BottomSheet :title="t('merge.title')" @close="emit('close')">
-    <p class="fine muted">{{ t("merge.blurb", { title }) }}</p>
+    <p class="fine muted">{{ t("merge.blurb") }}</p>
     <form v-if="!chosen" class="stack merge-find" @submit.prevent="find">
       <label class="field">
         <span>{{ t("merge.other") }}</span>

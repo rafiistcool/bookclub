@@ -81,6 +81,15 @@ describe("NewClubPage", () => {
     }
   });
 
+  it("tells, under the name field, that the name can change later", async () => {
+    const { wrapper } = await mountPage();
+    expect(wrapper.find(".page-head .lede").exists()).toBe(false);
+    const input = wrapper.get("input[name=club-name]");
+    const hint = wrapper.get(`#${input.attributes("aria-describedby")}`);
+    expect(hint.text()).toBe("You can rename it later.");
+    expect(wrapper.text()).not.toContain("one book at a time");
+  });
+
   it("asks an unverified reader to confirm their address first", async () => {
     const { wrapper } = await mountPage(false);
     expect(wrapper.get(".verify-note").text()).toContain("ada@example.com");
