@@ -52,6 +52,8 @@ vi.mock("../api/client", () => ({
 
 import { ApiError } from "../api/client";
 import { i18n } from "../i18n";
+import ProgressEditor from "../components/ProgressEditor.vue";
+import { useFinish } from "../stores/finish";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import BookDetailPage from "./BookDetailPage.vue";
@@ -583,7 +585,8 @@ describe("BookDetailPage", () => {
       book.mockResolvedValue(detail({ ...FINISHED, rating_visibility: "only_me" }));
       const { wrapper } = await mountBook();
       removeFromShelf.mockResolvedValue(undefined);
-      await button(wrapper, "Remove")!.trigger("click");
+      // "Remove", not "Remove rating".
+      await wrapper.findAll("button").find((node) => node.text() === "Remove")!.trigger("click");
       await flushPromises();
       expect(removeFromShelf).toHaveBeenCalledWith(30);
       expect(wrapper.find(".star-row").exists()).toBe(false);
@@ -608,6 +611,103 @@ describe("BookDetailPage", () => {
       });
       expect(wrapper.find(".star-row").exists()).toBe(true);
       expect(onlyMeBox(wrapper).checked).toBe(true);
+    });
+  });
+
+  describe("finishing the book", () => {
+    const readers = { slug: "readers-ab12", name: "Readers" };
+    const finishedItem = (overrides: Parameters<typeof shelfItem>[0] = {}) =>
+      shelfItem({ id: 30, status: "finished", rating: null, book: { id: 4 }, ...overrides });
+    const readButton = (wrapper: Page) =>
+      wrapper.findAll(".status-control button").find((node) => node.text() === "Read")!;
+
+    it("opens the moment with the pick's club instead of the toast, and shows the stars it saved", async () => {
+      book.mockResolvedValue(detail({ club_picks: [readers], shelf_id: 30, on_shelf: "currently_reading", progress: 70 }));
+      const { wrapper } = await mountBook();
+      // No caps caption over the shelf controls.
+      expect(wrapper.find(".shelf-panel .caps").exists()).toBe(false);
+      patchShelf.mockResolvedValueOnce(finishedItem());
+      await readButton(wrapper).trigger("click");
+      await flushPromises();
+      expect(patchShelf).toHaveBeenCalledWith(30, { status: "finished", position: 0 });
+      const finish = useFinish();
+      expect(finish.item).toMatchObject({ id: 30, status: "finished" });
+      expect(finish.clubSlug).toBe("readers-ab12");
+      expect(useToast().items.map((row) => row.message)).not.toContain("Moved to Finished");
+
+      book.mockResolvedValue(detail({ club_picks: [readers], club_rating: 5, rating_count: 1 }));
+      finish.close(finishedItem({ rating: 5, take: "Yes." }));
+      await flushPromises();
+      expect(wrapper.findAll(".star-row .star-btn")[4].attributes("aria-pressed")).toBe("true");
+      expect((wrapper.get(".take-row textarea").element as HTMLTextAreaElement).value).toBe("Yes.");
+      // The club's average is read again after the moment's save.
+      expect(book).toHaveBeenCalledTimes(2);
+    });
+
+    it("opens no moment after a 409 whose entry was finished already", async () => {
+      addToShelf.mockRejectedValue(new ApiError("Already on your shelf", 409, "", { item: finishedItem({ rating: 3 }) }));
+      const { wrapper } = await mountBook();
+      await readButton(wrapper).trigger("click");
+      await flushPromises();
+      expect(patchShelf).not.toHaveBeenCalled();
+      expect(useFinish().item).toBeNull();
+      expect(useToast().items).toHaveLength(0);
+      expect(wrapper.findAll(".star-row .star-btn")[2].attributes("aria-pressed")).toBe("true");
+    });
+
+    it("opens the moment after a 409 whose entry was still being read", async () => {
+      addToShelf.mockRejectedValue(
+        new ApiError("Already on your shelf", 409, "", { item: finishedItem({ status: "currently_reading", progress: 40 }) }),
+      );
+      patchShelf.mockResolvedValue(finishedItem());
+      const { wrapper } = await mountBook();
+      await readButton(wrapper).trigger("click");
+      await flushPromises();
+      expect(patchShelf).toHaveBeenCalledWith(30, { status: "finished", position: 0 });
+      expect(useFinish().item).toMatchObject({ id: 30, status: "finished" });
+      expect(useFinish().clubSlug).toBeNull();
+    });
+
+    it("keeps the toast for any other status", async () => {
+      book.mockResolvedValue(detail({ shelf_id: 30, on_shelf: "finished", rating: 4 }));
+      const { wrapper } = await mountBook();
+      patchShelf.mockResolvedValue(finishedItem({ status: "currently_reading", rating: null }));
+      await wrapper.findAll(".status-control button").find((node) => node.text() === "Reading")!.trigger("click");
+      await flushPromises();
+      expect(useFinish().item).toBeNull();
+      expect(useToast().items.at(-1)?.message).toBe("Moved to Reading");
+    });
+
+    it("hands the progress sheet its entry and adopts the finish it reports, without a progress Undo", async () => {
+      book.mockResolvedValue(detail({ club_picks: [readers], shelf_id: 30, on_shelf: "currently_reading", progress: 60 }));
+      const { wrapper } = await mountBook();
+      const editor = wrapper.getComponent(ProgressEditor);
+      expect(editor.props("shelfId")).toBe(30);
+      expect(editor.props("clubSlug")).toBe("readers-ab12");
+      // An earlier progress save left an Undo; the finish takes it away.
+      patchShelf.mockResolvedValueOnce(shelfItem({ id: 30, status: "currently_reading", progress: 90, book: { id: 4 } }));
+      editor.vm.$emit("save", 90);
+      await flushPromises();
+      expect(useToast().items.at(-1)?.action?.label).toBe("Undo");
+      editor.vm.$emit("finished", finishedItem());
+      await flushPromises();
+      expect(useToast().items.some((row) => row.action)).toBe(false);
+      expect(wrapper.find(".star-row").exists()).toBe(true);
+      expect(wrapper.findComponent(ProgressEditor).exists()).toBe(false);
+    });
+
+    it("keeps the rating on a second tap of its star and clears it with “Remove rating”", async () => {
+      book.mockResolvedValue(detail({ shelf_id: 30, on_shelf: "finished", rating: 4 }));
+      const { wrapper } = await mountBook();
+      await wrapper.findAll(".star-row .star-btn")[3].trigger("click");
+      await flushPromises();
+      expect(patchShelf).not.toHaveBeenCalled();
+      patchShelf.mockResolvedValue(finishedItem({ rating: null }));
+      await button(wrapper, "Remove rating")!.trigger("click");
+      await flushPromises();
+      expect(patchShelf).toHaveBeenCalledWith(30, { rating: null });
+      expect(useToast().items.at(-1)?.message).toBe("Rating cleared");
+      expect(button(wrapper, "Remove rating")).toBeUndefined();
     });
   });
 });

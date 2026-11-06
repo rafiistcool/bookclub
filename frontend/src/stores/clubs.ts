@@ -72,6 +72,26 @@ export function defaultClubSlug(
 }
 
 /**
+ * The club Home puts first: the default club, else the one whose meeting
+ * comes soonest, else the first with a book, else the newest join.
+ */
+export function heroClubSlug(
+  clubs: readonly Pick<ClubOut, "slug" | "current_pick">[],
+  lastSlug: string | null,
+  now = Date.now(),
+): string | null {
+  const preferred = defaultClubSlug(clubs, lastSlug);
+  if (preferred) return preferred;
+  let soonest: { slug: string; at: number } | null = null;
+  for (const club of clubs) {
+    const at = club.current_pick?.meeting_at ? Date.parse(club.current_pick.meeting_at) : Number.NaN;
+    if (Number.isFinite(at) && at >= now && (!soonest || at < soonest.at)) soonest = { slug: club.slug, at };
+  }
+  if (soonest) return soonest.slug;
+  return (clubs.find((club) => club.current_pick) ?? clubs[0])?.slug ?? null;
+}
+
+/**
  * Where a club link without a slug leads (`/club`, the Club tab, old routes):
  * `sub` of the default club, else the club list, which is also the
  * create-or-join screen of a reader with no club.

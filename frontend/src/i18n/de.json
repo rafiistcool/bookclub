@@ -96,7 +96,9 @@
     "forwardPages": "{n} Seite weiter | {n} Seiten weiter",
     "backPercent": "{n} Prozent zurück",
     "forwardPercent": "{n} Prozent weiter",
-    "undone": "Fortschritt wiederhergestellt"
+    "undone": "Fortschritt wiederhergestellt",
+    "markFinished": "Als gelesen markieren",
+    "saveOnly": "Nur Fortschritt speichern"
   },
   "status": {
     "want_to_read": "Will ich lesen",
@@ -211,11 +213,9 @@
     "hello": "Hallo, {name}",
     "title": "Start",
     "loadFailed": "Das Club-Buch konnte nicht geladen werden",
-    "readingNow": "Lesen wir gerade",
     "chosenBy": "Ausgewählt von {name}",
     "noMeeting": "Noch kein Treffen geplant.",
     "openBook": "Buch öffnen",
-    "seeDetails": "Details ansehen",
     "startReading": "Lesen beginnen",
     "addedToReading": "Zu Lese ich hinzugefügt",
     "alreadyOnShelf": "Schon im Regal als {status}",
@@ -240,10 +240,7 @@
     "meetingTitle": "Treffen",
     "saveMeeting": "Treffen speichern",
     "yourProgress": "Dein Fortschritt",
-    "yourClubs": "Deine Clubs",
     "allClubs": "Alle Clubs",
-    "soloTitle": "Gemeinsam lesen",
-    "soloBody": "Lest ein Buch gemeinsam, trefft euch und stimmt über das nächste ab.",
     "joinWithCode": "Mit Code beitreten",
     "currentlyReading": "Lese ich gerade",
     "toShelf": "Regal",
@@ -259,7 +256,18 @@
     "noPickMemberBody": "Ein Admin legt das nächste Buch fest. Nominiere bis dahin eins für die Abstimmung.",
     "toVote": "Abstimmen",
     "seeOverlap": "Gemeinsame Wünsche ansehen",
-    "toDiary": "Dein Tagebuch"
+    "toDiary": "Dein Tagebuch",
+    "inHours": "in {n} Stunde | in {n} Stunden",
+    "inMinutes": "in {n} Min.",
+    "toDiscussion": "Zum Gespräch",
+    "start": "Anfangen",
+    "rate": "Bewerten",
+    "alsoIn": "Auch:",
+    "otherClubs": "Deine anderen Clubs",
+    "noBookYet": "Noch kein Buch",
+    "seeAll": "Alle ansehen",
+    "soloLine": "Gemeinsam lesen?",
+    "meetingWhen": "Treffen {when} · {date}"
   },
   "shelf": {
     "title": "Mein Regal",
@@ -351,13 +359,13 @@
     "overlapFailed": "Die Überschneidung konnte nicht geladen werden",
     "noOverlap": "Noch keine gemeinsamen Wünsche. Legt Bücher auf „Will ich lesen“.",
     "memberCount": "{n} Mitglied | {n} Mitglieder",
-    "switch": "Club wechseln",
     "allClubs": "Alle Clubs",
     "notFoundTitle": "Club nicht gefunden",
     "notFoundBody": "Diesen Club gibt es nicht, oder du bist (nicht mehr) Mitglied.",
     "toYourClubs": "Deine Clubs",
     "toHome": "Start",
-    "onlyYouMemberBody": "Frag einen Admin nach einer Einladung."
+    "onlyYouMemberBody": "Frag einen Admin nach einer Einladung.",
+    "yourClubs": "Deine Clubs"
   },
   "discover": {
     "title": "Entdecken",
@@ -471,7 +479,6 @@
     "viewOpenLibrary": "Bei Open Library ansehen",
     "refreshDetails": "Details aktualisieren",
     "refreshing": "Aktualisiere…",
-    "yourShelf": "Dein Regal",
     "shelfStatus": "Regalstatus",
     "notOnShelf": "Wähle einen Status, um es ins Regal zu stellen.",
     "progress": "Fortschritt",
@@ -519,7 +526,8 @@
     "groupAdmin": "Admin",
     "pickBadge": "Club-Buch · {club}",
     "ratingVotes": "{n} Stimme | {n} Stimmen",
-    "ratingLabel": "Bewertung"
+    "ratingLabel": "Bewertung",
+    "clearRating": "Bewertung entfernen"
   },
   "diary": {
     "heading": "Tagebuch",
@@ -828,13 +836,16 @@
   },
   "clubNav": {
     "label": "Bereiche des Clubs",
-    "home": "Club-Buch",
-    "discussions": "Gespräch",
-    "vote": "Abstimmung",
-    "members": "Mitglieder",
     "overlap": "Gemeinsame Wünsche",
     "events": "Aktivität",
-    "stats": "Jahr"
+    "stats": "Jahr",
+    "homeShort": "Buch",
+    "discussionsShort": "Gespräch",
+    "voteShort": "Wahl",
+    "membersShort": "Mitglieder",
+    "more": "Mehr",
+    "moreOn": "Mehr, gerade: {section}",
+    "invite": "Einladen"
   },
   "clubs": {
     "title": "Clubs",
@@ -1654,5 +1665,23 @@
       "bottom": "untere",
       "left": "linke"
     }
+  },
+  "finish": {
+    "title": "Fertig!",
+    "rate": "Wie war’s?",
+    "addTake": "+ Ein Satz",
+    "onlyMe": "Nur für mich",
+    "clubLine": "{n} von {total} im Club ist durch | {n} von {total} im Club sind durch",
+    "clubAll": "Alle {total} im Club sind durch",
+    "done": "Fertig",
+    "skip": "Überspringen"
+  },
+  "rings": {
+    "reading": "{name}: {n} %",
+    "finished": "{name}: fertig",
+    "status": "{name}: {status}",
+    "more": "{n} weitere",
+    "notStarted": "{n} noch nicht angefangen",
+    "notYet": "noch nicht"
   }
 }

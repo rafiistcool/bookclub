@@ -29,6 +29,8 @@ vi.mock("vue-router", () => ({
 }));
 
 import { ApiError } from "../api/client";
+import { useFinish } from "../stores/finish";
+import { useToast } from "../stores/toast";
 import ScanPage from "./ScanPage.vue";
 
 const ISBN = "9780316769488";
@@ -127,6 +129,34 @@ describe("ScanPage", () => {
     await flushPromises();
     expect(patchShelf).toHaveBeenCalledWith(12, { edition_id: 40, status: "finished", position: 0 });
     expect(w.text()).toContain("On your shelf: Finished");
+    // It was on the list to read: finished just now, so the moment opens.
+    expect(useFinish().item).toMatchObject({ id: 12, status: "finished" });
+  });
+
+  it("opens the finished moment instead of the toast when the book is added as read", async () => {
+    lookupIsbn.mockResolvedValue(isbnHit());
+    addToShelf.mockResolvedValue(shelfItem({ id: 5, status: "finished" }));
+    const w = await mountPage();
+    await scan(w);
+    await button(w, "Read").trigger("click");
+    await flushPromises();
+    expect(addToShelf).toHaveBeenCalledWith({ work_id: 9, edition_id: 40, status: "finished" });
+    expect(useFinish().item).toMatchObject({ id: 5, status: "finished" });
+    expect(useToast().items).toHaveLength(0);
+    expect(w.text()).toContain("On your shelf: Finished");
+  });
+
+  it("opens no moment when the entry that was there was finished already", async () => {
+    lookupIsbn.mockResolvedValue(isbnHit());
+    const existing = shelfItem({ id: 12, status: "finished", rating: 4 });
+    addToShelf.mockRejectedValue(apiError(409, "Already on your shelf", { item: existing }));
+    patchShelf.mockResolvedValue(existing);
+    const w = await mountPage();
+    await scan(w);
+    await button(w, "Read").trigger("click");
+    await flushPromises();
+    expect(useFinish().item).toBeNull();
+    expect(useToast().items.at(-1)?.message).toBe("On your shelf: Finished");
   });
 
   it("offers a photo when the edition has no cover, and not when it has one", async () => {

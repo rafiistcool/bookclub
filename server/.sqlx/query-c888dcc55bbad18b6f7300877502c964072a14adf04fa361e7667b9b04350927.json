@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE events e\n         SET payload = CASE\n             WHEN e.payload ? 'private' THEN $3::jsonb || '{\"private\": true}'::jsonb\n             ELSE $3::jsonb\n         END\n         WHERE e.id = (\n                 SELECT l.id FROM events l\n                 WHERE l.actor_id = $1 AND l.club_id IS NULL AND l.work_id = $2\n                   AND l.kind IN ('shelf_added', 'shelf_moved', 'shelf_finished',\n                                  'shelf_dnf', 'shelf_removed')\n                 ORDER BY l.id DESC\n                 LIMIT 1)\n           AND e.kind = 'shelf_finished'\n           AND e.created_at > now() - make_interval(mins => $4)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Jsonb",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c888dcc55bbad18b6f7300877502c964072a14adf04fa361e7667b9b04350927"
+}

@@ -21,6 +21,7 @@ vi.mock("../api/client", () => ({
   },
 }));
 
+import { useFinish } from "../stores/finish";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import ShelfPage from "./ShelfPage.vue";
@@ -317,5 +318,61 @@ describe("ShelfPage favourites portrait", () => {
     });
     expect(myShelf).toHaveBeenCalledTimes(2);
     wrapper.unmount();
+  });
+
+  describe("finishing a book from the status sheet", () => {
+    const club: ClubSummary = { slug: "readers-ab12", name: "Readers", role: "member", timezone: "UTC", member_count: 3 };
+
+    async function finishFirst(wrapper: Awaited<ReturnType<typeof mountShelf>>) {
+      await wrapper.findAll("button.shelf-status")[0].trigger("click");
+      await wrapper.findAll(".sheet .status-choice").find((button) => button.text() === "Finished")!.trigger("click");
+      await flushPromises();
+    }
+
+    it("opens the moment instead of the toast, with the club whose pick it is, and shows the stars it saved", async () => {
+      clubs.mockResolvedValue({
+        items: [{
+          slug: club.slug, name: club.name, timezone: "UTC", role: "member", member_count: 3,
+          created_at: "2026-01-01T00:00:00Z",
+          current_pick: { id: 5, book: shelfItem({ id: 1 }).book, meeting_at: null },
+        }],
+      });
+      const reading = { ...item(1, "Circe"), status: "currently_reading" as const, progress: 80 };
+      const wrapper = await mountShelf([], [reading], [club]);
+      const done = { ...reading, status: "finished" as const, progress: null, finished_at: "2026-11-06T10:00:00Z" };
+      patchShelf.mockResolvedValueOnce(done);
+      await finishFirst(wrapper);
+      expect(patchShelf).toHaveBeenLastCalledWith(1, { status: "finished", position: 0 });
+      expect(wrapper.find(".sheet").exists()).toBe(false);
+      const finish = useFinish();
+      expect(finish.item).toStrictEqual(done);
+      expect(finish.clubSlug).toBe(club.slug);
+      expect(useToast().items.map((toast) => toast.message)).not.toContain("Moved to Finished");
+
+      finish.close({ ...done, rating: 5 });
+      await flushPromises();
+      expect(wrapper.getComponent(ShelfBoard).props("items")[0]).toMatchObject({ id: 1, status: "finished", rating: 5 });
+      wrapper.unmount();
+    });
+
+    it("keeps the toast and opens no moment for any other status", async () => {
+      const finished = { ...item(1, "Circe"), status: "finished" as const, rating: 4 };
+      const wrapper = await mountShelf([], [finished]);
+      await wrapper.findAll("button.shelf-status")[0].trigger("click");
+      patchShelf.mockResolvedValueOnce({ ...finished, status: "currently_reading", rating: null });
+      await wrapper.findAll(".sheet .status-choice").find((button) => button.text() === "Reading")!.trigger("click");
+      await flushPromises();
+      expect(useFinish().item).toBeNull();
+      expect(useToast().items.at(-1)?.message).toBe("Moved to Reading");
+      wrapper.unmount();
+    });
+
+    it("opens no moment when the server answers with another status", async () => {
+      const wrapper = await mountShelf([], [item(1, "Circe")]);
+      patchShelf.mockResolvedValueOnce({ ...item(1, "Circe"), status: "want_to_read" });
+      await finishFirst(wrapper);
+      expect(useFinish().item).toBeNull();
+      wrapper.unmount();
+    });
   });
 });

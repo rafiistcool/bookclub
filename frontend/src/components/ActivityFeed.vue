@@ -22,6 +22,10 @@ const props = defineProps<{
   heading?: string;
   emptyText?: string;
   pageSize?: number;
+  /** A short preview (Home): this many rows a page instead of `pageSize`. */
+  limit?: number;
+  /** Where the whole feed is: a "See all" link there replaces "Show more". */
+  moreTo?: string;
 }>();
 
 const { t } = useI18n();
@@ -43,7 +47,7 @@ async function load(more = false) {
   busy.value = true;
   try {
     const before = more ? items.value[items.value.length - 1]?.id : undefined;
-    const page = await api.activity({ before, limit: props.pageSize ?? 15, club: props.club });
+    const page = await api.activity({ before, limit: props.limit ?? props.pageSize ?? 15, club: props.club });
     items.value = more ? [...items.value, ...page.items] : page.items;
     hasMore.value = page.has_more;
     feedZone.value = page.timezone;
@@ -118,7 +122,8 @@ watch(
           </span>
         </li>
       </ol>
-      <button v-if="hasMore" class="text-btn activity-more" type="button" :disabled="busy" @click="load(true)">
+      <RouterLink v-if="hasMore && moreTo" class="activity-all" :to="moreTo">{{ t("home.seeAll") }}</RouterLink>
+      <button v-else-if="hasMore" class="text-btn activity-more" type="button" :disabled="busy" @click="load(true)">
         {{ t("common.showMore") }}
       </button>
     </template>
@@ -140,17 +145,18 @@ watch(
   margin: 0;
   padding: 0;
   display: grid;
-  gap: var(--space-2);
+}
+
+/* Light rows: no card, a hairline between one event and the next. */
+.activity-row + .activity-row {
+  border-top: 1px solid var(--border);
 }
 
 .activity-row {
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
-  padding: var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  padding: var(--space-3) 0;
 }
 
 .activity-cover {
@@ -191,5 +197,14 @@ watch(
 .activity-more {
   justify-self: start;
   font-size: var(--text-sm);
+}
+
+.activity-all {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  font-size: var(--text-sm);
+  font-weight: 600;
 }
 </style>

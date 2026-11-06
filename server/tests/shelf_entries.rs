@@ -895,7 +895,8 @@ async fn concurrent_reorders_keep_the_column_dense(db: PgPool) {
 }
 
 /// The shelf events (docs/phase1/spec/shelf.md §2.6): kinds, payloads without nulls, one
-/// `progress` event per real change, none for rating edits; all personal (no club).
+/// `progress` event per real change, none for rating edits (one right after finishing rewrites
+/// the finish's payload instead); all personal (no club).
 #[sqlx::test]
 async fn shelf_writes_record_their_events(db: PgPool) {
     let app = TestApp::new(db).await;
@@ -946,10 +947,11 @@ async fn shelf_writes_record_their_events(db: PgPool) {
                 json!({"status": "currently_reading"})
             ),
             ("progress".to_owned(), json!({"progress": 50})),
-            // The removal sealed them to the reader (security review 2026-10-28 #2).
+            // The rating edit right after finishing rewrote the payload; the removal sealed it
+            // to the reader (security review 2026-10-28 #2).
             (
                 "shelf_finished".to_owned(),
-                json!({"rating": 4, "take": "Great", "private": true})
+                json!({"rating": 5, "take": "Even better", "private": true})
             ),
             ("shelf_dnf".to_owned(), json!({})),
             ("shelf_finished".to_owned(), json!({})),
@@ -975,6 +977,185 @@ async fn shelf_writes_record_their_events(db: PgPool) {
         .await,
         7
     );
+}
+
+/// The `shelf_finished` payloads the client recorded, oldest first.
+async fn finish_payloads(app: &TestApp, user: &TestClient) -> Vec<Value> {
+    events(app, user)
+        .await
+        .into_iter()
+        .filter(|(kind, _)| kind == "shelf_finished")
+        .map(|(_, payload)| payload)
+        .collect()
+}
+
+/// The payloads of the `shelf_finished` items in the viewer's home feed, newest first.
+async fn feed_finishes(viewer: &TestClient) -> Vec<Value> {
+    let res = viewer.get("/api/activity").await;
+    res.assert_status(200);
+    res.json()["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["kind"] == "shelf_finished")
+        .map(|item| item["payload"].clone())
+        .collect()
+}
+
+/// Moves the client's newest `shelf_finished` event `minutes` into the past.
+async fn age_last_finish(app: &TestApp, user: &TestClient, minutes: i32) {
+    sqlx::query(
+        "UPDATE events SET created_at = created_at - make_interval(mins => $2)
+         WHERE id = (SELECT max(id) FROM events WHERE actor_id = $1 AND kind = 'shelf_finished')",
+    )
+    .bind(user.id())
+    .bind(minutes)
+    .execute(&app.db)
+    .await
+    .unwrap();
+}
+
+/// Stars and a take given right after finishing (the finished moment's own PATCH) rewrite the
+/// finish's event, so the feeds show them; no second event is recorded, and a later edit of
+/// the same finish keeps the payload in step while the window lasts.
+#[sqlx::test]
+async fn a_rating_right_after_finishing_reaches_the_finish_event(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let (ada, grace) = friends(&app).await;
+    let item = add(
+        &ada,
+        &circe(&app).await,
+        json!({"status": "currently_reading"}),
+    )
+    .await;
+    patch(
+        &ada,
+        &item["id"],
+        json!({"status": "finished", "position": 0}),
+    )
+    .await;
+    assert_eq!(feed_finishes(&grace).await, [json!({})]);
+
+    patch(&ada, &item["id"], json!({"rating": 4, "take": "Witchy"})).await;
+    assert_eq!(
+        finish_payloads(&app, &ada).await,
+        [json!({"rating": 4, "take": "Witchy"})]
+    );
+    assert_eq!(
+        feed_finishes(&grace).await,
+        [json!({"rating": 4, "take": "Witchy"})]
+    );
+
+    // Clearing the take (and a PATCH that changes nothing shown) keeps one event in step.
+    patch(&ada, &item["id"], json!({"take": null})).await;
+    patch(&ada, &item["id"], json!({"rating": 4, "progress": null})).await;
+    assert_eq!(finish_payloads(&app, &ada).await, [json!({"rating": 4})]);
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM events WHERE actor_id = {}",
+            ada.id()
+        ))
+        .await,
+        2,
+        "shelf_added and one shelf_finished"
+    );
+}
+
+/// After the window a rating edit leaves the finish's event as it was written, and only the
+/// newest finish of the work is ever rewritten.
+#[sqlx::test]
+async fn a_late_rating_leaves_the_finish_event_alone(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let item = add(
+        &ada,
+        &circe(&app).await,
+        json!({"status": "finished", "rating": 3}),
+    )
+    .await;
+    age_last_finish(&app, &ada, 31).await;
+    patch(
+        &ada,
+        &item["id"],
+        json!({"rating": 5, "take": "Grew on me"}),
+    )
+    .await;
+    assert_eq!(finish_payloads(&app, &ada).await, [json!({"rating": 3})]);
+
+    // A re-read: the new finish is rewritten, the old one keeps its payload.
+    patch(&ada, &item["id"], json!({"status": "currently_reading"})).await;
+    patch(&ada, &item["id"], json!({"status": "finished"})).await;
+    patch(&ada, &item["id"], json!({"rating": 4})).await;
+    assert_eq!(
+        finish_payloads(&app, &ada).await,
+        [json!({"rating": 3}), json!({"rating": 4})]
+    );
+
+    // Just inside the window still counts.
+    age_last_finish(&app, &ada, 29).await;
+    patch(&ada, &item["id"], json!({"rating": 2})).await;
+    assert_eq!(
+        finish_payloads(&app, &ada).await,
+        [json!({"rating": 3}), json!({"rating": 2})]
+    );
+}
+
+/// An only-me rating given right after finishing is sealed in the rewritten payload: the
+/// others never see it, the reader does, and the seal stays when the reader shares the rating
+/// again inside the window (activity::seal_finished_ratings, conventions.md §6.4).
+#[sqlx::test]
+async fn an_only_me_rating_after_finishing_stays_sealed(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let (ada, grace) = friends(&app).await;
+    let item = add(&ada, &circe(&app).await, json!({})).await;
+    patch(
+        &ada,
+        &item["id"],
+        json!({"status": "finished", "position": 0}),
+    )
+    .await;
+    patch(
+        &ada,
+        &item["id"],
+        json!({"rating": 5, "take": "Mine alone", "rating_visibility": "only_me"}),
+    )
+    .await;
+    assert_eq!(
+        finish_payloads(&app, &ada).await,
+        [json!({"rating": 5, "take": "Mine alone", "private": true})]
+    );
+    assert_eq!(feed_finishes(&grace).await, [json!({})]);
+    assert_eq!(
+        feed_finishes(&ada).await,
+        [json!({"rating": 5, "take": "Mine alone"})]
+    );
+
+    patch(
+        &ada,
+        &item["id"],
+        json!({"rating_visibility": "audience", "rating": 4}),
+    )
+    .await;
+    assert_eq!(
+        finish_payloads(&app, &ada).await,
+        [json!({"rating": 4, "take": "Mine alone", "private": true})]
+    );
+    assert_eq!(feed_finishes(&grace).await, [json!({})]);
+
+    // Making a shared rating only-me inside the window seals the rewritten payload as well.
+    let song = add(&ada, &app.ol_work("OL2W", "Song", "").await, json!({})).await;
+    patch(
+        &ada,
+        &song["id"],
+        json!({"status": "finished", "rating": 3}),
+    )
+    .await;
+    patch(&ada, &song["id"], json!({"rating_visibility": "only_me"})).await;
+    assert_eq!(
+        finish_payloads(&app, &ada).await[1],
+        json!({"rating": 3, "private": true})
+    );
+    assert_eq!(feed_finishes(&grace).await, [json!({}), json!({})]);
 }
 
 /// Every shelf route needs a session.

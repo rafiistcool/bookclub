@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { CalendarDaysIcon } from "@heroicons/vue/24/outline";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../../api/client";
 import Avatar from "../../components/Avatar.vue";
@@ -8,6 +9,7 @@ import BookDiary from "../../components/BookDiary.vue";
 import MeetingSheet from "../../components/MeetingSheet.vue";
 import MilestoneList from "../../components/MilestoneList.vue";
 import ProgressEditor from "../../components/ProgressEditor.vue";
+import ReaderRings from "../../components/ReaderRings.vue";
 import { whenIdle } from "../../whenIdle";
 import { bookPath, relativeDay, starLabel, statusLabel, statusShort } from "../../constants";
 import { formatClubDate } from "../../i18n/dates";
@@ -16,7 +18,7 @@ import { isClubAdmin, isClubGone, useClubs, useCurrentClub } from "../../stores/
 import { useLocale } from "../../stores/locale";
 import { useSession } from "../../stores/session";
 import { useToast } from "../../stores/toast";
-import type { ClubPick, NextUpVote } from "../../types";
+import type { ClubPick, NextUpVote, ShelfItem } from "../../types";
 
 const { t } = useI18n();
 const locale = useLocale();
@@ -54,7 +56,35 @@ const finishedCount = computed(
   () => readers.value.filter((row) => row.status === "finished").length,
 );
 
-const meetingCountdown = computed(() => relativeDay(pick.value?.meeting_at, timezone.value));
+/** Out of the whole club, not only those who have it on their shelf. */
+const readerTotal = computed(() => Math.max(readers.value.length, club.value.member_count));
+
+const ringReaders = computed(() =>
+  readers.value.map((row) => ({
+    username: row.username,
+    avatar_url: row.avatar_url,
+    progress: row.progress,
+    status: row.status,
+  })),
+);
+
+const takes = computed(() => readers.value.filter((row) => row.take));
+
+// The countdown counts hours on the meeting's own day; a minute clock keeps it current.
+const now = ref(Date.now());
+let clock = 0;
+onMounted(() => {
+  clock = window.setInterval(() => (now.value = Date.now()), 60_000);
+});
+onUnmounted(() => window.clearInterval(clock));
+
+const meetingCountdown = computed(() => {
+  const at = pick.value?.meeting_at;
+  const ahead = at ? new Date(at).getTime() - now.value : Number.NaN;
+  if (ahead > 0 && ahead < 60 * 60_000) return t("home.inMinutes", { n: Math.max(1, Math.round(ahead / 60_000)) });
+  if (ahead > 0 && ahead < 24 * 60 * 60_000) return tp("home.inHours", Math.round(ahead / (60 * 60_000)));
+  return relativeDay(at, timezone.value);
+});
 
 const leader = computed(() => {
   const nominations = vote.value?.nominations ?? [];
@@ -145,6 +175,17 @@ async function saveProgress(value: number, undo = true) {
   }
 }
 
+/** ProgressEditor marked the book read (and opened the finished moment). */
+function onFinished(item: ShelfItem) {
+  const current = pick.value;
+  if (!current) return;
+  current.on_shelf = item.status;
+  if (undoToast) toast.dismiss(undoToast);
+  undoToast = 0;
+  void load();
+  void diary.value?.reload();
+}
+
 async function beginReading() {
   const current = pick.value;
   if (!current?.shelf_id || busy.value) return;
@@ -183,125 +224,115 @@ onMounted(load);
 
     <div v-if="!loaded" class="hero hero-skeleton" aria-hidden="true">
       <span class="skeleton hero-cover-skeleton" />
-      <div class="hero-body">
-        <span class="skeleton skeleton-line" />
-        <span class="skeleton skeleton-line short" />
-      </div>
+      <span class="skeleton skeleton-line" />
+      <span class="skeleton skeleton-line short" />
     </div>
 
     <template v-else-if="pick">
-      <article class="hero">
-        <RouterLink class="hero-cover" :to="bookPath(pick.book)">
+      <article class="hero" aria-labelledby="pick-title">
+        <RouterLink class="hero-cover" :to="bookPath(pick.book)" tabindex="-1" aria-hidden="true">
           <BookCover :book="pick.book" eager />
         </RouterLink>
-        <div class="hero-body">
-          <p class="kicker">{{ t("home.readingNow") }}</p>
-          <RouterLink class="hero-title" :to="bookPath(pick.book)">
-            <h2 class="display">{{ pick.book.title }}</h2>
-          </RouterLink>
-          <p v-if="pick.book.authors" class="hero-authors">{{ pick.book.authors }}</p>
-          <p class="fine subtle">
-            <template v-if="pick.set_by">{{ t("home.chosenBy", { name: pick.set_by }) }}</template>
-            <template v-if="pick.book.year"> · {{ pick.book.year }}</template>
-          </p>
+        <RouterLink class="hero-title" :to="bookPath(pick.book)">
+          <h2 id="pick-title" class="display">{{ pick.book.title }}</h2>
+        </RouterLink>
+        <p v-if="pick.book.authors" class="hero-authors">{{ pick.book.authors }}</p>
+        <p v-if="pick.set_by" class="fine subtle">{{ t("home.chosenBy", { name: pick.set_by }) }}</p>
 
-          <p v-if="pick.meeting_at" class="meeting">
-            <strong>{{ formatClubDate(pick.meeting_at, timezone, locale.locale) || pick.meeting_label }}</strong>
-            <span v-if="meetingCountdown" class="subtle">{{ meetingCountdown }}</span>
-            <a class="fine" :href="api.meetingIcsPath(slug)" download>{{ t("home.addToCalendar") }}</a>
+        <div class="meeting">
+          <p v-if="pick.meeting_at" class="meeting-when">
+            <CalendarDaysIcon class="meeting-icon" aria-hidden="true" />
+            <span>
+              <strong v-if="meetingCountdown" class="countdown">{{ meetingCountdown }}</strong>
+              <span class="meeting-date">
+                {{ formatClubDate(pick.meeting_at, timezone, locale.locale) || pick.meeting_label }}
+              </span>
+            </span>
           </p>
           <p v-else class="fine subtle">{{ t("home.noMeeting") }}</p>
-
-          <p v-if="pick.note" class="note">{{ pick.note }}</p>
-
-          <div v-if="pick.on_shelf === 'currently_reading' && pick.shelf_id" class="hero-progress">
-            <ProgressEditor
-              :value="me?.progress ?? 0"
-              :pages="pick.book.pages"
-              :label="t('home.yourProgress')"
-              :book-title="pick.book.title"
-              :busy="busy"
-              @save="saveProgress"
-            />
-          </div>
-
-          <div class="btn-row hero-actions">
-            <RouterLink class="btn btn-primary" :to="bookPath(pick.book)">
-              {{ pick.on_shelf ? t("home.openBook") : t("home.seeDetails") }}
-            </RouterLink>
-            <button
-              v-if="!pick.on_shelf"
-              class="btn btn-ghost"
-              type="button"
-              :disabled="busy"
-              @click="startReading"
-            >
-              {{ t("home.startReading") }}
-            </button>
-            <button
-              v-else-if="pick.on_shelf === 'want_to_read' && pick.shelf_id"
-              class="btn btn-ghost"
-              type="button"
-              :disabled="busy"
-              @click="beginReading"
-            >
-              {{ t("home.startReading") }}
-            </button>
-            <span v-else class="badge" :class="pick.on_shelf">
-              {{ statusShort(pick.on_shelf) }}
-            </span>
+          <p class="meeting-links">
+            <a v-if="pick.meeting_at" class="fine" :href="api.meetingIcsPath(slug)" download>
+              {{ t("home.addToCalendar") }}
+            </a>
             <button
               v-if="canManage"
-              class="btn btn-ghost meeting-edit"
+              class="text-btn fine meeting-edit"
               type="button"
               @click="editingMeeting = true"
             >
               {{ pick.meeting_at ? t("home.changeMeeting") : t("home.addMeeting") }}
             </button>
-          </div>
+          </p>
         </div>
+
+        <!-- The viewer's one next step with this book. -->
+        <div class="hero-action">
+          <ProgressEditor
+            v-if="pick.on_shelf === 'currently_reading' && pick.shelf_id"
+            :value="me?.progress ?? 0"
+            :pages="pick.book.pages"
+            :label="t('home.yourProgress')"
+            :book-title="pick.book.title"
+            :busy="busy"
+            :shelf-id="pick.shelf_id"
+            :club-slug="slug"
+            @save="saveProgress"
+            @finished="onFinished"
+          />
+          <button
+            v-else-if="!pick.on_shelf"
+            class="btn btn-primary btn-block start-reading"
+            type="button"
+            :disabled="busy"
+            @click="startReading"
+          >
+            {{ t("home.startReading") }}
+          </button>
+          <button
+            v-else-if="pick.on_shelf === 'want_to_read' && pick.shelf_id"
+            class="btn btn-primary btn-block start-reading"
+            type="button"
+            :disabled="busy"
+            @click="beginReading"
+          >
+            {{ t("home.startReading") }}
+          </button>
+          <RouterLink
+            v-else-if="pick.on_shelf === 'finished'"
+            class="btn btn-ghost btn-block to-discussion"
+            :to="`/c/${slug}/discussions`"
+          >
+            {{ t("home.toDiscussion") }}
+          </RouterLink>
+          <span v-else class="badge" :class="pick.on_shelf">{{ statusShort(pick.on_shelf) }}</span>
+        </div>
+        <p v-if="pick.note" class="note hero-note">{{ pick.note }}</p>
       </article>
 
       <section class="section progress-section" aria-labelledby="progress">
         <div class="section-head">
           <h2 id="progress">{{ t("home.whereEveryone") }}</h2>
           <span class="fine subtle nums">
-            {{ t("home.finishedOf", { finished: finishedCount, total: readers.length }) }}
+            {{ t("home.finishedOf", { finished: finishedCount, total: readerTotal }) }}
           </span>
         </div>
-        <template v-if="readers.length">
-          <div class="rail reader-rail">
-            <RouterLink
-              v-for="row in readers"
-              :key="row.username"
-              class="reader-chip"
-              :to="`/u/${row.username}`"
-            >
-              <Avatar :username="row.username" :src="row.avatar_url" size="sm" />
-              <span class="reader-name">{{ row.username }}</span>
-              <span class="badge" :class="row.status">{{ statusShort(row.status) }}</span>
-              <span v-if="row.progress != null" class="progress-track" aria-hidden="true">
-                <span class="progress-fill" :style="{ width: `${row.progress}%` }" />
-              </span>
-              <span v-if="row.progress != null" class="finer subtle nums">
-                {{ row.progress }}%
-              </span>
-              <span v-else-if="row.rating" class="finer stars">
-                {{ starLabel(row.rating) }}
-              </span>
-            </RouterLink>
-          </div>
-          <ul v-if="readers.some((row) => row.take)" class="reader-takes">
-            <li v-for="row in readers.filter((reader) => reader.take)" :key="row.username">
+        <ReaderRings
+          v-if="readers.length"
+          :readers="ringReaders"
+          :member-count="club.member_count"
+          size="md"
+        />
+        <p v-else class="fine subtle">{{ t("home.nobodyAdded") }}</p>
+        <ul v-if="takes.length" class="reader-takes">
+          <li v-for="row in takes" :key="row.username">
+            <RouterLink class="take-who" :to="`/u/${row.username}`">
+              <Avatar :username="row.username" :src="row.avatar_url" size="xs" />
               <strong>{{ row.username }}</strong>
-              <span v-if="row.rating" class="finer stars">{{ starLabel(row.rating) }}</span>
-              <p>{{ row.take }}</p>
-            </li>
-          </ul>
-        </template>
-        <p v-else class="fine subtle">
-          {{ t("home.nobodyAdded") }}
-        </p>
+            </RouterLink>
+            <span v-if="row.rating" class="finer stars">{{ starLabel(row.rating) }}</span>
+            <p>{{ row.take }}</p>
+          </li>
+        </ul>
       </section>
 
       <!-- Its own root is the section: a member sees none while there are no milestones. -->
@@ -312,18 +343,6 @@ onMounted(load);
         :can-manage="canManage"
         :timezone="timezone"
       />
-
-      <section class="section thread-section">
-        <BookDiary
-          ref="diary"
-          :club="{ slug, pickId: null }"
-          :preview="3"
-          :heading="t('home.discussion')"
-        />
-        <RouterLink class="fine thread-link" :to="`/c/${slug}/discussions`">
-          {{ t("home.wholeDiscussion") }}
-        </RouterLink>
-      </section>
     </template>
 
     <div v-else class="empty">
@@ -340,9 +359,9 @@ onMounted(load);
         <h2 id="next-up">{{ t("home.nextUp") }}</h2>
         <RouterLink :to="`/c/${slug}/vote`">{{ t("home.toVote") }}</RouterLink>
       </div>
-      <RouterLink v-if="leader" class="book-row next-up-card" :to="`/c/${slug}/vote`">
+      <RouterLink v-if="leader" class="next-up-card" :to="`/c/${slug}/vote`">
         <BookCover :book="leader.book" size="sm" />
-        <span class="book-row-meta">
+        <span class="next-up-meta">
           <h3>{{ leader.book.title }}</h3>
           <p class="fine">
             {{ tp("home.leadingVotes", leader.votes) }}
@@ -359,6 +378,18 @@ onMounted(load);
           <RouterLink class="btn btn-ghost btn-sm" to="/discover">{{ t("home.findBook") }}</RouterLink>
         </div>
       </div>
+    </section>
+
+    <section v-if="pick" class="section thread-section">
+      <BookDiary
+        ref="diary"
+        :club="{ slug, pickId: null }"
+        :preview="3"
+        :heading="t('home.discussion')"
+      />
+      <RouterLink class="fine thread-link" :to="`/c/${slug}/discussions`">
+        {{ t("home.wholeDiscussion") }}
+      </RouterLink>
     </section>
 
     <section v-if="history.length" class="section past-section" aria-labelledby="past">
@@ -394,51 +425,51 @@ onMounted(load);
 </template>
 
 <style scoped>
+/* The pick stands in the middle of the page: a large cover, its title, the
+   meeting, and the one thing the viewer does next. */
 .hero {
   display: grid;
-  grid-template-columns: 128px 1fr;
-  gap: var(--space-4);
-  align-items: start;
+  justify-items: center;
+  text-align: center;
+  gap: var(--space-1);
 }
 
 .hero-skeleton {
-  min-height: 200px;
+  gap: var(--space-3);
+}
+
+.hero-skeleton .skeleton-line {
+  width: 60%;
 }
 
 .hero-cover-skeleton {
+  width: 128px;
   aspect-ratio: 2 / 3;
   border-radius: var(--radius-md);
 }
 
 .hero-cover {
   display: block;
+  width: 128px;
+  margin-bottom: var(--space-3);
   border-radius: var(--radius-sm);
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 
-.hero-body {
-  min-width: 0;
-  display: grid;
-  gap: var(--space-1);
-  align-content: start;
+.hero-cover:active {
+  transform: scale(var(--press-scale));
+  transition-duration: var(--dur-press);
 }
 
 .hero-title {
   color: inherit;
   text-decoration: none;
+  max-width: 32ch;
 }
 
-.hero-body .display {
+.hero .display {
   font-size: var(--text-2xl);
-}
-
-.hero-progress {
-  margin-top: var(--space-2);
-  max-width: 420px;
-}
-
-.next-up-empty {
-  display: grid;
-  gap: var(--space-2);
+  overflow-wrap: anywhere;
 }
 
 .hero-authors {
@@ -447,107 +478,160 @@ onMounted(load);
 }
 
 .meeting {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-1) var(--space-2);
-  margin-top: var(--space-2);
-}
-
-.hero-actions {
-  align-items: center;
+  display: grid;
+  justify-items: center;
+  gap: 0;
   margin-top: var(--space-3);
 }
 
-.reader-rail {
-  align-items: stretch;
+.meeting-when {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  text-align: left;
 }
 
-.reader-chip {
-  width: 150px;
+.meeting-when > span {
   display: grid;
-  gap: var(--space-1);
-  align-content: start;
-  padding: var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  color: inherit;
-  text-decoration: none;
 }
 
-@media (hover: hover) {
-  .reader-chip:hover {
-    border-color: var(--border-strong);
-  }
+.meeting-icon {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  color: var(--accent);
 }
 
-/* Takes are shown in full: the chips are too narrow for a whole sentence. */
-.reader-takes {
+.countdown {
+  font-weight: 700;
+}
+
+.meeting-date {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.meeting-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 0 var(--space-4);
+}
+
+.meeting-links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  font-weight: 600;
+}
+
+.meeting-edit {
+  font-size: var(--text-sm);
+}
+
+.hero-note {
+  max-width: 40ch;
+  margin-top: var(--space-3);
+  overflow-wrap: anywhere;
+}
+
+.hero-action {
+  justify-self: stretch;
+  display: grid;
+  justify-items: stretch;
+  width: 100%;
+  max-width: 420px;
+  margin: var(--space-3) auto 0;
+  text-align: left;
+}
+
+.hero-action .badge {
+  justify-self: center;
+}
+
+.next-up-empty {
   display: grid;
   gap: var(--space-2);
-  margin: var(--space-3) 0 0;
+}
+
+/* Takes as light rows under the rings, a hairline between them. */
+.reader-takes {
+  margin: var(--space-4) 0 0;
   padding: 0;
   list-style: none;
 }
 
 .reader-takes li {
-  padding: var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border);
 }
 
-.reader-takes strong {
-  margin-right: var(--space-2);
+.take-who {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  color: inherit;
+  text-decoration: none;
 }
 
 .reader-takes p {
-  margin-top: var(--space-1);
+  flex-basis: 100%;
   color: var(--text-muted);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
-.reader-name {
+/* The leader of the vote as one light row. */
+.next-up-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-2) 0;
+  color: inherit;
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.next-up-card:active {
+  transform: scale(var(--press-scale));
+  transition-duration: var(--dur-press);
+}
+
+.next-up-meta {
+  min-width: 0;
+}
+
+.next-up-meta h3 {
+  font-family: var(--serif);
+  font-size: var(--text-md);
   font-weight: 650;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.reader-chip :deep(.avatar) {
-  margin-bottom: var(--space-1);
-}
-
-.reader-chip .badge {
-  justify-self: start;
-}
-
-.progress-track {
-  height: 5px;
-  border-radius: var(--radius-pill);
-  background: var(--surface-3);
-  overflow: hidden;
-  margin-top: var(--space-1);
-}
-
-.progress-fill {
-  display: block;
-  height: 100%;
-  background: var(--accent);
-}
-
-.thread-link {
-  display: inline-block;
-  margin-top: var(--space-3);
-  font-weight: 600;
+.next-up-meta p {
+  color: var(--text-muted);
 }
 
 @media (hover: hover) {
-  .next-up-card:hover {
-    border-color: var(--border-strong);
+  .next-up-card:hover h3 {
+    color: var(--accent);
   }
+}
+
+.thread-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  margin-top: var(--space-2);
+  font-weight: 600;
 }
 
 .past-tile {
@@ -555,27 +639,18 @@ onMounted(load);
 }
 
 @media (min-width: 720px) {
-  .hero {
-    grid-template-columns: 208px 1fr;
-    gap: var(--space-6);
+  .hero-cover,
+  .hero-cover-skeleton {
+    width: 200px;
   }
 
-  .hero-body .display {
+  .hero .display {
     font-size: var(--text-3xl);
   }
 }
 
 @media (min-width: 1024px) {
-  .hero {
-    grid-template-columns: 244px 1fr;
-    align-items: center;
-    padding: var(--space-6);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-xl);
-  }
-
-  /* Discussion is the long column; the vote card rides alongside it. */
+  /* Discussion is the long column; the vote rides alongside it. */
   .club-home {
     display: grid;
     grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);

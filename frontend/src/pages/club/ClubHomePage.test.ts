@@ -1,7 +1,8 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { bookOut, clubOut, clubPick, nomination, user, vote } from "../../test/fixtures";
+import { bookOut, clubOut, clubPick, nomination, shelfItem, user, vote } from "../../test/fixtures";
+import type { ClubPick } from "../../types";
 
 const api = {
   clubPick: vi.fn(),
@@ -31,19 +32,23 @@ const PICK = clubPick({
   note: "Bring snacks",
 });
 
-async function mountAs(role: "owner" | "admin" | "member") {
+// The diary stub answers the page's reload after a progress save or a finish.
+const BookDiary = { name: "BookDiary", template: "<div class=\"diary-stub\" />", methods: { reload: () => Promise.resolve() } };
+const STUBS = { BookCover: true, BookDiary, MilestoneList: true, ProgressEditor: true };
+
+async function mountAs(role: "owner" | "admin" | "member", pick: ClubPick = PICK) {
   const pinia = createPinia();
   setActivePinia(pinia);
-  const club = clubOut({ role });
+  const club = clubOut({ role, member_count: 4 });
   useSession().user = user({ clubs: [{ ...club }] });
   useClubs().current = club;
-  api.clubPick.mockResolvedValue({ pick: PICK, timezone: "Europe/Berlin" });
+  api.clubPick.mockResolvedValue({ pick, timezone: "Europe/Berlin" });
   api.clubPickHistory.mockResolvedValue({ items: [], timezone: "Europe/Berlin" });
   api.vote.mockResolvedValue(vote({ nominations: [nomination({ id: 2, votes: 2 })] }));
   const wrapper = mount(ClubHomePage, {
     global: {
       plugins: [pinia, i18n],
-      stubs: { BookCover: true, BookDiary: true, MilestoneList: true },
+      stubs: STUBS,
     },
   });
   await flushPromises();
@@ -72,14 +77,60 @@ describe("ClubHomePage", () => {
     // The milestone list is the section itself, with no wrapper that would stay when it renders nothing.
     expect(wrapper.get("milestone-list-stub").classes()).toEqual(["section", "milestone-section"]);
     expect(wrapper.get("milestone-list-stub").element.parentElement?.classList.contains("club-home")).toBe(true);
-    // German says the club reads it now, not that it was read.
-    i18n.global.locale.value = "de";
-    try {
-      await flushPromises();
-      expect(wrapper.get(".hero .kicker").text()).toBe("Lesen wir gerade");
-    } finally {
-      i18n.global.locale.value = "en";
-    }
+    // No caps kicker over the title, and the cover and title are the links (no "Open book" button).
+    expect(wrapper.find(".hero .kicker").exists()).toBe(false);
+    expect(wrapper.find(".hero-actions").exists()).toBe(false);
+    expect(wrapper.get(".hero-title").attributes("href")).toBe("/book/9");
+  });
+
+  it("puts the one next step under the pick, by the viewer's shelf", async () => {
+    const fresh = await mountAs("member");
+    expect(fresh.get(".hero-action .start-reading").text()).toBe("Start reading");
+    fresh.unmount();
+    const done = await mountAs("member", { ...PICK, on_shelf: "finished", shelf_id: 30 });
+    expect(done.get(".hero-action .to-discussion").attributes("href")).toBe("/c/readers-ab12/discussions");
+    expect(done.find(".hero-action .start-reading").exists()).toBe(false);
+  });
+
+  it("finishes the book from the progress editor and reloads where everyone is", async () => {
+    const reading = {
+      ...PICK,
+      on_shelf: "currently_reading" as const,
+      shelf_id: 30,
+      readers: [
+        { username: "ada", status: "currently_reading" as const, progress: 90, rating: null, take: "", dnf_reason: "", avatar_url: null },
+        { username: "grace", status: "finished" as const, progress: null, rating: 4, take: "Loved it", dnf_reason: "", avatar_url: null },
+      ],
+    };
+    const wrapper = await mountAs("member", reading);
+    const editor = wrapper.findComponent({ name: "ProgressEditor" });
+    expect(editor.props("shelfId")).toBe(30);
+    expect(editor.props("clubSlug")).toBe("readers-ab12");
+    expect(wrapper.text()).toContain("1 of 4 finished");
+    // The rings get the readers and the club's size; the takes follow as rows.
+    const rings = wrapper.findComponent({ name: "ReaderRings" });
+    expect(rings.props("size")).toBe("md");
+    expect(rings.props("memberCount")).toBe(4);
+    expect(rings.props("readers").map((row: { username: string }) => row.username)).toEqual(["ada", "grace"]);
+    expect(rings.findAll("li .visually-hidden").map((row) => row.text())).toContain("grace: finished");
+    expect(wrapper.get(".reader-takes").text()).toContain("Loved it");
+
+    api.clubPick.mockResolvedValue({
+      pick: { ...reading, on_shelf: "finished", readers: reading.readers.map((row) => ({ ...row, status: "finished" as const, progress: null })) },
+      timezone: "Europe/Berlin",
+    });
+    editor.vm.$emit("finished", shelfItem({ id: 30, status: "finished" }));
+    await flushPromises();
+    expect(api.clubPick).toHaveBeenCalledTimes(2);
+    expect(wrapper.findComponent({ name: "ProgressEditor" }).exists()).toBe(false);
+    expect(wrapper.find(".hero-action .to-discussion").exists()).toBe(true);
+    expect(wrapper.text()).toContain("2 of 4 finished");
+  });
+
+  it("counts the last day before the meeting in hours", async () => {
+    const soon = new Date(Date.now() + 3 * 60 * 60_000 + 5 * 60_000).toISOString();
+    const wrapper = await mountAs("member", { ...PICK, meeting_at: soon });
+    expect(wrapper.get(".meeting .countdown").text()).toBe("in 3 hours");
   });
 
   it("hides the meeting edit from members", async () => {
@@ -115,7 +166,7 @@ describe("ClubHomePage", () => {
     const wrapper = await mountAs("member");
     api.clubPick.mockResolvedValue({ pick: null, timezone: "Europe/Berlin" });
     const empty = mount(ClubHomePage, {
-      global: { plugins: [i18n], stubs: { BookCover: true, BookDiary: true, MilestoneList: true } },
+      global: { plugins: [i18n], stubs: STUBS },
     });
     await flushPromises();
     expect(empty.get(".empty").text()).toContain("An admin sets the next book");

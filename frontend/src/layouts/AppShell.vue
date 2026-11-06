@@ -36,12 +36,19 @@ function matches(query: string): boolean {
 // A new page arrives with a short move that says where it came from: across
 // for a sibling tab (from the side the tab sits on), up for a page opened
 // from this one. Only the path counts: a query change (a tab inside a page)
-// is the page's own business.
+// is the page's own business, and so is a section change inside one club:
+// the club's sticky bar stays put and its tab underline moves instead.
+function clubOf(path: string): string | null {
+  return /^\/c\/([^/]+)/.exec(path)?.[1] ?? null;
+}
+
 watch(
   () => route.path,
   (now, before) => {
     const element = view.value;
     if (!element || typeof element.animate !== "function" || now === before) return;
+    const club = clubOf(now);
+    if (club && club === clubOf(before)) return;
     const from = bottomItems.findIndex((item) => isActive(before, item));
     const to = bottomItems.findIndex((item) => isActive(now, item));
     if (matches("(prefers-reduced-motion: reduce)")) {

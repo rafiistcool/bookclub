@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { api, ApiError } from "../api/client";
 import { tp } from "../i18n";
+import { useFinish } from "../stores/finish";
+import type { ShelfItem } from "../types";
 import BottomSheet from "./BottomSheet.vue";
 
 /**
@@ -9,6 +12,11 @@ import BottomSheet from "./BottomSheet.vue";
  * page: a stray thumb on a range input used to save (and post to the club)
  * at once. The sheet counts in pages when the book has a page count, and
  * saves only on "Save". The server keeps a percent; pages are derived.
+ *
+ * With `shelfId`, a draft at the last page offers "Mark as read": the editor
+ * itself moves the entry to finished (no progress 100 first, so no progress
+ * event and no progress Undo), opens the finished moment and emits
+ * `finished` with the stored entry. "Just save progress" keeps the old save.
  */
 const props = defineProps<{
   value: number | null;
@@ -16,9 +24,13 @@ const props = defineProps<{
   label: string;
   bookTitle: string;
   busy?: boolean;
+  /** The reader's shelf entry: with it, the last page offers to mark the book as read. */
+  shelfId?: number | null;
+  /** The club whose current pick this is, for the moment's "2 of 4" line. */
+  clubSlug?: string | null;
 }>();
 
-const emit = defineEmits<{ save: [percent: number] }>();
+const emit = defineEmits<{ save: [percent: number]; finished: [item: ShelfItem] }>();
 const { t } = useI18n();
 
 const open = ref(false);
@@ -41,9 +53,14 @@ const draft = computed(() => {
   return Math.min(100, Math.round((page.value / pageCount.value) * 100));
 });
 const changed = computed(() => draft.value !== stored.value);
+/** At the end of the book: "Mark as read" takes the primary place. */
+const offersFinish = computed(() => props.shelfId != null && draft.value >= 100);
+const finishing = ref(false);
+const finishError = ref("");
 
 function start() {
-  if (props.busy) return;
+  if (props.busy || finishing.value) return;
+  finishError.value = "";
   percent.value = stored.value;
   page.value = pageOf(stored.value);
   open.value = true;
@@ -73,8 +90,32 @@ function tick() {
 }
 
 function save() {
+  if (finishing.value) return;
   open.value = false;
   if (changed.value) emit("save", draft.value);
+}
+
+function close() {
+  if (!finishing.value) open.value = false;
+}
+
+/** One PATCH to finished; the sheet closes first, so the moment never stacks on it. */
+async function markFinished() {
+  const id = props.shelfId;
+  if (id == null || finishing.value) return;
+  finishing.value = true;
+  finishError.value = "";
+  try {
+    const item = await api.patchShelf(id, { status: "finished", position: 0 });
+    open.value = false;
+    emit("finished", item);
+    // Looked up here, not at setup: a parent without a finish path needs no store.
+    void useFinish().celebrate({ item, clubSlug: props.clubSlug ?? null });
+  } catch (err) {
+    finishError.value = err instanceof ApiError ? err.message : t("book.saveFailed");
+  } finally {
+    finishing.value = false;
+  }
 }
 
 const valueText = computed(() =>
@@ -97,7 +138,7 @@ function stepLabel(by: number): string {
     class="progress-trigger"
     type="button"
     aria-haspopup="dialog"
-    :aria-disabled="busy || undefined"
+    :aria-disabled="busy || finishing || undefined"
     :aria-label="t('progress.change', { label, n: stored })"
     @click="start"
   >
@@ -113,7 +154,7 @@ function stepLabel(by: number): string {
     </span>
   </button>
 
-  <BottomSheet v-if="open" :title="label" @close="open = false">
+  <BottomSheet v-if="open" :title="label" @close="close">
     <p class="progress-book">{{ bookTitle }}</p>
     <span class="visually-hidden" aria-live="polite" aria-atomic="true">{{ valueText }}</span>
     <div class="progress-readout">
@@ -161,7 +202,18 @@ function stepLabel(by: number): string {
         {{ by > 0 ? `+${by}` : `−${-by}` }}
       </button>
     </div>
-    <button class="btn btn-primary btn-block" type="button" :disabled="!changed" @click="save">
+    <template v-if="offersFinish">
+      <p v-if="finishError" class="error" role="alert">{{ finishError }}</p>
+      <div class="progress-actions">
+        <button class="btn btn-primary btn-block" type="button" :disabled="finishing" @click="markFinished">
+          {{ t("progress.markFinished") }}
+        </button>
+        <button class="btn btn-ghost btn-block" type="button" :disabled="!changed || finishing" @click="save">
+          {{ t("progress.saveOnly") }}
+        </button>
+      </div>
+    </template>
+    <button v-else class="btn btn-primary btn-block" type="button" :disabled="!changed" @click="save">
       {{ t("common.save") }}
     </button>
   </BottomSheet>
@@ -335,6 +387,11 @@ function stepLabel(by: number): string {
   border-radius: 50%;
   background: var(--accent);
   box-shadow: var(--elev-panel);
+}
+
+.progress-actions {
+  display: grid;
+  gap: var(--space-2);
 }
 
 .progress-steps {

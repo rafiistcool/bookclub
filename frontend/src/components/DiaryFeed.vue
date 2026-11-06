@@ -25,6 +25,10 @@ const props = defineProps<{
   /** Shown when nothing is written yet. */
   emptyText?: string;
   pageSize?: number;
+  /** A short preview (Home): this many rows a page instead of `pageSize`. */
+  limit?: number;
+  /** Where the whole feed is: a "See all" link there replaces "Show more". */
+  moreTo?: string;
 }>();
 
 const { t } = useI18n();
@@ -46,8 +50,8 @@ async function load(more = false) {
   try {
     const before = more ? cursor.value : undefined;
     const page = props.mine
-      ? await api.diaryFeed(before, props.pageSize ?? 10, undefined, true)
-      : await api.diaryFeed(before, props.pageSize ?? 8, props.club);
+      ? await api.diaryFeed(before, props.limit ?? props.pageSize ?? 10, undefined, true)
+      : await api.diaryFeed(before, props.limit ?? props.pageSize ?? 8, props.club);
     feed.value = more ? [...feed.value, ...page.items] : page.items;
     hasMore.value = page.has_more;
     cursor.value = page.items[page.items.length - 1]?.entry.id ?? before;
@@ -229,8 +233,9 @@ defineExpose({ reload: () => load() });
           </article>
         </li>
       </ol>
+      <RouterLink v-if="hasMore && moreTo" class="feed-all" :to="moreTo">{{ t("home.seeAll") }}</RouterLink>
       <button
-        v-if="hasMore"
+        v-else-if="hasMore"
         class="text-btn feed-load-more"
         type="button"
         :disabled="busy"
@@ -257,17 +262,18 @@ defineExpose({ reload: () => load() });
   margin: 0;
   padding: 0;
   display: grid;
-  gap: var(--space-2);
+}
+
+/* Light rows: no card, a hairline between one note and the next. */
+.feed-list > li + li {
+  border-top: 1px solid var(--border);
 }
 
 .feed-row {
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
-  padding: var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  padding: var(--space-3) 0;
 }
 
 .feed-cover {
@@ -319,6 +325,15 @@ defineExpose({ reload: () => load() });
 .feed-load-more {
   justify-self: start;
   font-size: var(--text-sm);
+}
+
+.feed-all {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  font-size: var(--text-sm);
+  font-weight: 600;
 }
 
 .feed-foot {

@@ -12,6 +12,7 @@ import ShelfViewSwitch from "../components/ShelfViewSwitch.vue";
 import TileSkeleton from "../components/TileSkeleton.vue";
 import { clubsFor } from "../clubActions";
 import { STATUSES, statusLabel, statusShort, type Status } from "../constants";
+import { isFinishTransition, useFinish } from "../stores/finish";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import { clubDate, orderedShelf, readingMonth, shelfDropPosition, visibleShelf } from "../shelf";
@@ -22,6 +23,7 @@ type Filter = "all" | Status;
 const { t } = useI18n();
 const session = useSession();
 const toast = useToast();
+const finish = useFinish();
 
 const items = ref<ShelfItem[]>([]);
 const favorites = ref<Favorite[]>([]);
@@ -146,12 +148,21 @@ async function changeStatus(status: Status) {
       if (row.status === oldStatus && row.position > item.position) return { ...row, position: row.position - 1 };
       return row;
     });
-    toast.show(t("shelf.movedTo", { status: statusLabel(status) }));
+    // A book just finished gets its moment instead of the toast; the status sheet is gone by now.
+    if (isFinishTransition(oldStatus, saved)) void celebrate(saved);
+    else toast.show(t("shelf.movedTo", { status: statusLabel(status) }));
   } catch (err) {
     toast.show(err instanceof ApiError ? err.message : t("shelf.moveFailed"));
   } finally {
     saving.value = false;
   }
+}
+
+/** The moment for a finished book; the stars it saves show on the shelf. */
+async function celebrate(item: ShelfItem) {
+  const clubSlug = clubPicks.value.find((row) => row.workId === item.book.id)?.club.slug ?? null;
+  const rated = await finish.celebrate({ item, clubSlug });
+  if (rated) items.value = items.value.map((row) => (row.id === rated.id ? rated : row));
 }
 
 function bookAction(action: "remove" | "pick" | "nominate") {
