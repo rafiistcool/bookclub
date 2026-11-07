@@ -22,6 +22,7 @@ import CoverChooserSheet, {
   type CoverRestore,
 } from "../components/CoverChooserSheet.vue";
 import FavoritePortrait from "../components/FavoritePortrait.vue";
+import { isWithdrawn } from "../components/ReportSheet.vue";
 import ShelfBoard from "../components/ShelfBoard.vue";
 import ShelfViewSwitch from "../components/ShelfViewSwitch.vue";
 import TileSkeleton from "../components/TileSkeleton.vue";
@@ -50,6 +51,17 @@ const filter = ref<Filter>("all");
 const removing = ref<ShelfItem | null>(null);
 /** The entry whose own cover the reader is choosing ("Cover wählen"). */
 const choosingCover = ref<ShelfItem | null>(null);
+/** The chooser's title: a withdrawn book's placeholder in the reader's language. */
+const choosingTitle = computed(() => {
+  const book = choosingCover.value?.book;
+  if (!book) return "";
+  return isWithdrawn(book) ? t("report.removedTitle") : book.title;
+});
+/**
+ * The entry whose own photo is being scanned and uploaded: one at a time, and
+ * no chooser meanwhile (its Undo would point at the cover before the photo).
+ */
+const uploadingCoverFor = ref<ShelfItem | null>(null);
 /** The current pick of each of the viewer's clubs, for the "Club" badge. */
 const clubPicks = ref<{ workId: number; club: ClubRef }[]>([]);
 const clubPickIds = computed(() => clubPicks.value.map((row) => row.workId));
@@ -192,7 +204,10 @@ function bookAction(action: "remove" | "pick" | "nominate" | "cover") {
     return;
   }
   if (action === "cover") {
-    choosingCover.value = item;
+    // A withdrawn book keeps its cover, as on the book page.
+    if (isWithdrawn(item.book)) return;
+    if (uploadingCoverFor.value) toast.show(t("cover.waitForUpload"));
+    else choosingCover.value = item;
     return;
   }
   clubActions.value?.start(action, {
@@ -225,9 +240,18 @@ async function saveDate(clear = false) {
   }
 }
 
-/** Put a changed entry in its place; one no longer on the shelf stays gone. */
+/**
+ * Put a changed entry in its place; one no longer on the shelf stays gone. A
+ * favourite shows the entry's cover, so it follows a cover change.
+ */
 function replaceItem(saved: ShelfItem) {
   items.value = items.value.map((row) => (row.id === saved.id ? saved : row));
+  const { cover_url, cover_thumb_url, cover_public_id, spine_color } = saved.book;
+  favorites.value = favorites.value.map((row) =>
+    row.book.id === saved.book.id
+      ? { ...row, book: { ...row.book, cover_url, cover_thumb_url, cover_public_id, spine_color } }
+      : row,
+  );
 }
 
 /** The chooser saved a cover: the shelf shows it, with an Undo that puts the previous one back. */
@@ -241,8 +265,17 @@ async function onPersonalPhoto(file: File, restore: CoverRestore | null) {
   const entry = choosingCover.value;
   choosingCover.value = null;
   if (!entry) return;
-  const item = await sendPersonalCover(entry.id, file);
-  if (item) onCoverChanged(item, restore);
+  if (uploadingCoverFor.value) {
+    toast.show(t("cover.waitForUpload"));
+    return;
+  }
+  uploadingCoverFor.value = entry;
+  try {
+    const item = await sendPersonalCover(entry.id, file);
+    if (item) onCoverChanged(item, restore);
+  } finally {
+    uploadingCoverFor.value = null;
+  }
 }
 
 async function confirmRemove() {
@@ -305,6 +338,11 @@ onMounted(load);
     </div>
 
     <p v-if="error" class="error">{{ error }}</p>
+
+    <!-- The chooser is gone while the own photo is scanned and uploaded: this says it is under way, in view while the shelf scrolls. -->
+    <p v-if="uploadingCoverFor" class="finer cover-upload-status" role="status">
+      {{ t("coverChoice.uploading", { title: isWithdrawn(uploadingCoverFor.book) ? t("report.removedTitle") : uploadingCoverFor.book.title }) }}
+    </p>
 
     <div v-if="loaded && !error" class="shelf-view-toolbar">
       <ShelfViewSwitch active="books" />
@@ -394,7 +432,7 @@ onMounted(load);
                 <ArrowDownIcon class="sheet-icon" aria-hidden="true" /><span class="sheet-label">{{ t('shelf.moveNext') }}</span>
               </button>
             </li>
-            <li>
+            <li v-if="!isWithdrawn(editing.item.book)">
               <button type="button" class="sheet-row choose-cover" aria-haspopup="dialog" @click="bookAction('cover')">
                 <Squares2X2Icon class="sheet-icon" aria-hidden="true" /><span class="sheet-label">{{ t('coverChoice.title') }}</span>
               </button>
@@ -436,7 +474,7 @@ onMounted(load);
       v-if="choosingCover"
       :entry-id="choosingCover.id"
       :work-id="choosingCover.book.id"
-      :title="choosingCover.book.title"
+      :title="choosingTitle"
       :personal-cover="Boolean(choosingCover.personal_cover)"
       :cover-public-id="choosingCover.book.cover_public_id"
       @changed="onCoverChanged"
@@ -478,6 +516,22 @@ onMounted(load);
 .favorites-toggle svg { width: 26px; height: 26px; }
 .favorites-toggle[aria-expanded="true"] { color: var(--accent); }
 .shelf-favorites { margin-bottom: var(--space-5); }
+.cover-upload-status {
+  position: sticky;
+  top: calc(var(--header-h) + env(safe-area-inset-top) + var(--space-2));
+  z-index: 5;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto var(--space-3);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-translucent-strong);
+  color: var(--text-muted);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 @media (min-width: 1024px) {
   .shelf-filter { max-width: 560px; }
 }

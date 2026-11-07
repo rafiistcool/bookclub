@@ -4,8 +4,8 @@
 //! the photo of the reader's own copy is `PUT …/cover/photo` (`media::cover`).
 //!
 //! The choice is `shelf_entries.cover_media_id`. Wherever an entry's book shows (the shelf,
-//! Home, the book page for the reader, the shelf as friends and club mates see it, the year in
-//! review), [`personal_covers`] loads it and [`apply_personal_cover`] puts it into the entry's
+//! Home, the book page for the reader, the shelf as friends and club mates see it, the owner's
+//! favourites, the year in review), [`personal_covers`] loads it and [`apply_personal_cover`] puts it into the entry's
 //! [`BookOut`]: the personal cover wins over the edition's and the work's. `BookRef` and
 //! `book_outs` stay as they are (frozen): the choice belongs to an entry, not to a book.
 //!

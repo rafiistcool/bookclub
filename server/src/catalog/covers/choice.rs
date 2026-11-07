@@ -3,10 +3,13 @@
 //!
 //! Only sources the catalog already uses, never Google (docs/plan.md, "Catalog"):
 //! 1. the reader's current choice, first (also a photo of their own copy);
-//! 2. with `DNB_PORTAL_COVERS` (private instance only): for at most [`PORTAL_EDITIONS`]
-//!    German-group editions without a cover, the publisher's cover from the DNB portal, which
-//!    becomes the edition's cover under the provenance rules (`dnb`, only where there is none),
-//!    as the cover search would make it, and then lists as the edition's cover;
+//! 2. with `DNB_PORTAL_COVERS` (private instance only), for a book on the reader's shelf: for at
+//!    most [`PORTAL_EDITIONS`] German-group editions without a cover that the portal had none
+//!    for in the last [`PORTAL_RECHECK_DAYS`] days (`editions.portal_checked_at`), the
+//!    publisher's cover from the DNB portal, which becomes the edition's cover under the
+//!    provenance rules (`dnb`, only where there is none), as the cover search would make it,
+//!    and then lists as the edition's cover. Never on a book a takedown concerns (also through a
+//!    work merged into it), checked again under the work's lock before the write;
 //! 3. the work's and its editions' covers in the catalog;
 //! 4. Open Library: the covers of the Open Library work's editions (`works/{id}/editions.json`,
 //!    also editions that are not in the catalog) and of the work record, or, for a work without
@@ -30,6 +33,7 @@ use utoipa::ToSchema;
 
 use crate::AppState;
 use crate::auth::extract::CurrentUser;
+use crate::catalog::covers::search::under_takedown;
 use crate::catalog::detail::require_local_work;
 use crate::catalog::shared::ingest::{self, CoverTarget, Source};
 use crate::catalog::shared::isbn::{Isbn13, is_german_group, parse_isbn};
@@ -47,6 +51,8 @@ pub const MAX_CANDIDATES: usize = 24;
 pub const ISBN_CHECKS: usize = 3;
 /// German-group editions without a cover the DNB portal is asked about per list.
 pub const PORTAL_EDITIONS: usize = 3;
+/// Days before an edition the portal had no cover for is asked again.
+pub const PORTAL_RECHECK_DAYS: i32 = 7;
 /// The media source of a publisher cover (migration 3901).
 const PORTAL_SOURCE: &str = "dnb_portal";
 
@@ -283,19 +289,23 @@ async fn facts(
     portal_on: bool,
 ) -> sqlx::Result<Facts> {
     let work = sqlx::query!(
-        r#"SELECT w.ol_work_id, w.source,
-                  EXISTS (SELECT 1 FROM cover_search c
-                          WHERE c.work_id = w.id AND c.takedown_at IS NOT NULL) AS "takedown!"
-           FROM works w WHERE w.id = $1"#,
+        "SELECT w.ol_work_id, w.source FROM works w WHERE w.id = $1",
         work_id
     )
     .fetch_one(&mut *conn)
     .await?;
+    // As the cover search: a takedown on this work or on a work merged into it.
+    let takedown = under_takedown(&mut *conn, work_id).await?;
     let editions = sqlx::query!(
-        r#"SELECT id, isbn13 AS "isbn13!", cover_media_id IS NULL AS "uncovered!"
+        r#"SELECT id, isbn13 AS "isbn13!",
+                  cover_media_id IS NULL
+                      AND (portal_checked_at IS NULL
+                           OR portal_checked_at < now() - make_interval(days => $2))
+                      AS "askable!"
            FROM editions WHERE work_id = $1 AND isbn13 IS NOT NULL
            ORDER BY id"#,
-        work_id
+        work_id,
+        PORTAL_RECHECK_DAYS
     )
     .fetch_all(&mut *conn)
     .await?;
@@ -310,6 +320,7 @@ async fn facts(
     )
     .fetch_optional(&mut *conn)
     .await?;
+    let on_shelf = entry.is_some();
     let chosen = entry.as_ref().and_then(|entry| entry.cover_media_id);
     let standard = entry
         .map(|entry| {
@@ -321,7 +332,7 @@ async fn facts(
         .unwrap_or_default();
     let parsed: Vec<(i64, Isbn13, bool)> = editions
         .into_iter()
-        .filter_map(|e| parse_isbn(&e.isbn13).map(|isbn| (e.id, isbn, e.uncovered)))
+        .filter_map(|e| parse_isbn(&e.isbn13).map(|isbn| (e.id, isbn, e.askable)))
         .collect();
     let isbns = if work.ol_work_id.is_none() {
         parsed
@@ -333,11 +344,12 @@ async fn facts(
         Vec::new()
     };
     // As the cover search: never for a book a reader added, and no picture without an admin on
-    // a book whose cover was taken down.
-    let portal_allowed = portal_on && work.source != "user" && !work.takedown;
+    // a book whose cover was taken down. Only for a book on the reader's shelf (the chooser's
+    // book), and not again for an edition the portal had nothing for lately.
+    let portal_allowed = portal_on && on_shelf && work.source != "user" && !takedown;
     let portal = parsed
         .into_iter()
-        .filter(|(_, isbn, uncovered)| portal_allowed && *uncovered && is_german_group(isbn))
+        .filter(|(_, isbn, askable)| portal_allowed && *askable && is_german_group(isbn))
         .map(|(id, isbn, _)| (id, isbn))
         .take(PORTAL_EDITIONS)
         .collect();
@@ -452,13 +464,18 @@ async fn local_candidates(
 
 /// Asks the DNB portal for the publisher's cover of each edition and makes a found one the
 /// edition's cover (provenance `dnb`, only where there is none), media row first (conventions
-/// §7.2). Returns whether a request had no answer.
+/// §7.2), then the work's lock, under which the edition must still be the work's and no takedown
+/// may concern the work (as `search::attach_publisher_cover` checks). An edition the portal had
+/// no usable picture for gets `portal_checked_at`. Returns whether a request had no answer.
 async fn ask_portal(state: &AppState, work_id: i64, editions: &[(i64, Isbn13)]) -> ApiResult<bool> {
     let mut failed = false;
     for (edition_id, isbn) in editions {
         let bytes = match state.lookup.publisher_cover(isbn).await {
             Ok(Some(bytes)) => bytes,
-            Ok(None) => continue,
+            Ok(None) => {
+                portal_checked(&state.db, *edition_id).await?;
+                continue;
+            }
             Err(LookupError::Db(error)) => return Err(error.into()),
             Err(LookupError::Throttled | LookupError::Unavailable) => {
                 failed = true;
@@ -472,7 +489,11 @@ async fn ask_portal(state: &AppState, work_id: i64, editions: &[(i64, Isbn13)]) 
             .await
         {
             Ok(Some(stored)) => stored,
-            Ok(None) => continue,
+            // No usable picture (not an image, or the bytes of a taken-down one).
+            Ok(None) => {
+                portal_checked(&mut *conn, *edition_id).await?;
+                continue;
+            }
             Err(error) => {
                 tracing::warn!(error = %error, "cannot store a publisher cover");
                 failed = true;
@@ -483,6 +504,12 @@ async fn ask_portal(state: &AppState, work_id: i64, editions: &[(i64, Isbn13)]) 
         let attached = async {
             let mut tx = conn.begin().await?;
             let media_id = register(&mut tx, &public_id, &media).await?;
+            // The work's lock (the order `set_cover` and a takedown's `clear_media` use, media
+            // rows first): a takedown that cleared the book's cover while the portal answered is
+            // seen here, and one that comes later clears this picture too.
+            sqlx::query_scalar!("SELECT id FROM works WHERE id = $1 FOR UPDATE", work_id)
+                .fetch_optional(&mut *tx)
+                .await?;
             // The edition must still belong to the book (a merge may have moved it).
             let still = sqlx::query_scalar!(
                 r#"SELECT EXISTS (SELECT 1 FROM editions WHERE id = $1 AND work_id = $2)
@@ -492,7 +519,9 @@ async fn ask_portal(state: &AppState, work_id: i64, editions: &[(i64, Isbn13)]) 
             )
             .fetch_one(&mut *tx)
             .await?;
+            // No picture without an admin on a book a takedown concerns.
             let set = still
+                && !under_takedown(&mut tx, work_id).await?
                 && ingest::set_cover(
                     &mut tx,
                     CoverTarget::Edition(*edition_id),
@@ -519,6 +548,18 @@ async fn ask_portal(state: &AppState, work_id: i64, editions: &[(i64, Isbn13)]) 
         }
     }
     Ok(failed)
+}
+
+/// Records that the portal had no usable cover for the edition (asked again after
+/// [`PORTAL_RECHECK_DAYS`]).
+async fn portal_checked(db: impl sqlx::PgExecutor<'_>, edition_id: i64) -> sqlx::Result<()> {
+    sqlx::query!(
+        "UPDATE editions SET portal_checked_at = now() WHERE id = $1",
+        edition_id
+    )
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
 /// The Open Library covers of the book, edition covers (with their labels) first, each cover id

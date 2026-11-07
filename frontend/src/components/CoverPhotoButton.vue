@@ -79,8 +79,10 @@ const props = withDefaults(
     look?: "fine" | "inline" | "primary" | "ghost" | "row" | "tile";
     admin?: boolean;
     pickOnly?: boolean;
+    /** The parent is busy (a sheet saving a choice): the picker does not open. */
+    disabled?: boolean;
   }>(),
-  { label: undefined, look: "fine", admin: false, pickOnly: false },
+  { label: undefined, look: "fine", admin: false, pickOnly: false, disabled: false },
 );
 const emit = defineEmits<{ covered: [book: BookOut]; picked: [file: File] }>();
 
@@ -107,10 +109,12 @@ async function onFile(event: Event) {
   const file = input.files?.[0];
   input.value = "";
   if (!file || busy.value) return;
+  // A picker opened before the parent got busy still hands its file on: the parent says why it waits.
   if (props.pickOnly) {
     emit("picked", file);
     return;
   }
+  if (props.disabled) return;
   busy.value = true;
   try {
     const book = await sendCoverPhoto({ workId: props.workId, editionId: props.editionId, admin: props.admin }, file);
@@ -122,11 +126,11 @@ async function onFile(event: Event) {
 </script>
 
 <template>
-  <label class="cover-photo" :class="[LOOKS[look], { busy }]">
+  <label class="cover-photo" :class="[LOOKS[look], { busy, disabled: disabled && !busy }]">
     <input
       type="file"
       accept="image/jpeg,image/png,image/webp,image/gif"
-      :disabled="busy"
+      :disabled="busy || disabled"
       @change="onFile"
     />
     <template v-if="look === 'row'">
@@ -163,5 +167,14 @@ async function onFile(event: Event) {
 
 .cover-photo.busy {
   opacity: 0.6;
+}
+
+.cover-photo.disabled,
+.cover-photo.disabled input {
+  cursor: default;
+}
+
+.cover-photo.disabled {
+  opacity: 0.55;
 }
 </style>

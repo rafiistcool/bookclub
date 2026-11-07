@@ -293,7 +293,7 @@ async fn edition_cover(
 }
 
 /// Whether a takedown cleared the cover of this work or of a work merged into it.
-async fn under_takedown(conn: &mut PgConnection, work_id: i64) -> sqlx::Result<bool> {
+pub(crate) async fn under_takedown(conn: &mut PgConnection, work_id: i64) -> sqlx::Result<bool> {
     sqlx::query_scalar!(
         r#"SELECT EXISTS (
                SELECT 1 FROM cover_search cs JOIN works w ON w.id = cs.work_id

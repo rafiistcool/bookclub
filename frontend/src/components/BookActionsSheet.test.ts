@@ -38,4 +38,18 @@ describe("BookActionsSheet", () => {
     const withdrawn = mountSheet({ shelf_id: 30, on_shelf: "finished", custom: true, source: "user" }, { withdrawn: true });
     expect(withdrawn.find(".choose-cover").exists()).toBe(false);
   });
+
+  it("offers no photo for everyone and no cover report while the reader shows their own cover", () => {
+    const cover = { cover_url: "/media/std/l", cover_thumb_url: "/media/std/s", cover_public_id: "std" };
+    const standard = mountSheet({ shelf_id: 30, on_shelf: "finished", ...cover });
+    expect(standard.get(".suggest-photo").text()).toBe("Suggest a photo of your copy");
+    expect(standard.find(".report-cover").exists()).toBe(true);
+
+    // Their own cover hides whether the catalog has one: a "suggestion" could go live for everyone at once,
+    // and a report would be of their own choice.
+    const own = mountSheet({ shelf_id: 30, on_shelf: "finished", personal_cover: true, cover_url: "/media/own/l", cover_thumb_url: "/media/own/s", cover_public_id: "own" });
+    expect(own.find(".suggest-photo").exists()).toBe(false);
+    expect(own.find(".report-cover").exists()).toBe(false);
+    expect(own.find(".choose-cover").exists()).toBe(true);
+  });
 });

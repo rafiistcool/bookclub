@@ -11,7 +11,7 @@ mod cover;
 use bookclub_server::catalog::merge_works;
 use bookclub_server::catalog::shared::ingest::{self, CoverTarget, Source};
 use common::*;
-use cover::{jpeg, ol_media, set_cover};
+use cover::{cover_of, jpeg, ol_media, set_cover};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use wiremock::matchers::{method, path, query_param};
@@ -190,6 +190,10 @@ async fn a_choice_shows_wherever_the_readers_shelf_shows(db: PgPool) {
     let viewers = common::visibility::Viewers::new(&app).await;
     let owner = &viewers.owner;
     let entry = add(owner, work, "currently_reading").await;
+    owner
+        .post(&format!("/api/auth/me/favorites/{work}"), json!({}))
+        .await
+        .assert_status(200);
     let standard = public_id_of_ol(&app, 100).await;
     // Before a choice, the entry shows the standard cover: that candidate is the chosen one.
     let before = candidates(owner, work).await;
@@ -226,7 +230,16 @@ async fn a_choice_shows_wherever_the_readers_shelf_shows(db: PgPool) {
             viewer.username()
         );
         assert_eq!(shown["personal_cover"], true);
+        // The favourites row of the same shelf shows the choice too.
+        assert_eq!(
+            favourite_cover(viewer, "owner").await,
+            chosen,
+            "{}",
+            viewer.username()
+        );
     }
+    let mine = owner.get("/api/auth/me/favorites").await.json();
+    assert_eq!(mine["items"][0]["book"]["cover_public_id"], chosen);
     let friends = viewers.friend.get("/api/friends").await.json();
     let preview = friends["friends"]
         .as_array()
@@ -275,6 +288,14 @@ async fn a_choice_shows_wherever_the_readers_shelf_shows(db: PgPool) {
     assert_eq!(res.json()["book"]["cover_public_id"], standard);
     let shown = shelf_item(&viewers.friend, "owner", work).await;
     assert_eq!(shown["book"]["cover_public_id"], standard);
+    assert_eq!(favourite_cover(&viewers.friend, "owner").await, standard);
+}
+
+/// The cover of the first favourite on `owner`'s shelf as `viewer` sees it.
+async fn favourite_cover(viewer: &TestClient, owner: &str) -> Value {
+    let res = viewer.get(&format!("/api/shelf?username={owner}")).await;
+    res.assert_status(200);
+    res.json()["favorites"][0]["book"]["cover_public_id"].clone()
 }
 
 /// The book page shows the cover of the edition on the viewer's shelf entry (it showed the
@@ -312,6 +333,14 @@ async fn the_book_page_and_the_stats_show_the_readers_cover(db: PgPool) {
     let page = ada.get(&format!("/api/books/works/{work}")).await.json();
     assert_eq!(page["cover_public_id"], public_id_of_ol(&app, 300).await);
     assert_eq!(page["title"], "Circe");
+    // A favourite shows the entry's edition cover, as the shelf does.
+    ada.post(&format!("/api/auth/me/favorites/{work}"), json!({}))
+        .await
+        .assert_status(200);
+    assert_eq!(
+        favourite_cover(&ada, "ada").await,
+        public_id_of_ol(&app, 300).await
+    );
 
     let photo = upload_photo(&ada, entry, jpeg([20, 120, 60])).await;
     photo.assert_status(200);
@@ -570,6 +599,7 @@ async fn the_portal_and_the_isbn_cover_feed_the_list(db: PgPool) {
         .on_publisher_cover(ISBN, Ok(Some(jpeg([120, 40, 30]))));
     app.catalog.on_isbn_cover(ISBN, Some(301));
     let ada = app.user("ada").await;
+    add(&ada, work.id, "want_to_read").await;
 
     let list = candidates(&ada, work.id).await;
     assert_eq!(app.catalog.publisher_calls(), [ISBN]);
@@ -592,6 +622,134 @@ async fn the_portal_and_the_isbn_cover_feed_the_list(db: PgPool) {
     // The edition has its cover now: the portal is not asked again.
     candidates(&ada, work.id).await;
     assert_eq!(app.catalog.publisher_calls(), [ISBN]);
+}
+
+/// The portal is asked only for a book on the reader's shelf, and an edition it had no cover for
+/// is not asked again for `PORTAL_RECHECK_DAYS`; one it had no answer for is.
+#[sqlx::test]
+async fn the_portal_is_not_asked_again_for_an_edition_without_a_publisher_cover(db: PgPool) {
+    const ISBN: &str = "9783462050493";
+    const OTHER: &str = "9783498035433";
+    let app = TestApp::with_env(db, &[("DNB_PORTAL_COVERS", "true")]).await;
+    let (work, edition) = app.dnb_work("Tyll", "Daniel Kehlmann", ISBN).await;
+    app.catalog
+        .on_publisher_cover(OTHER, Err(FakeError::Unavailable));
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+
+    // Not on bob's shelf: no portal request.
+    candidates(&bob, work.id).await;
+    assert!(app.catalog.publisher_calls().is_empty());
+
+    add(&ada, work.id, "want_to_read").await;
+    let list = candidates(&ada, work.id).await;
+    assert_eq!(app.catalog.publisher_calls(), [ISBN]);
+    assert_eq!(list["partial"], false);
+    let list = candidates(&ada, work.id).await;
+    assert_eq!(app.catalog.publisher_calls(), [ISBN]);
+    assert_eq!(list["partial"], false);
+    // After the wait the portal is asked again.
+    sqlx::query("UPDATE editions SET portal_checked_at = now() - interval '8 days' WHERE id = $1")
+        .bind(edition.id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    candidates(&ada, work.id).await;
+    assert_eq!(app.catalog.publisher_calls(), [ISBN, ISBN]);
+
+    // No answer: nothing is recorded, the list is partial, and the next list asks again.
+    let other = app
+        .edition(
+            &TestWork {
+                id: work.id,
+                title: "Tyll".into(),
+            },
+            OTHER,
+        )
+        .await;
+    assert_eq!(candidates(&ada, work.id).await["partial"], true);
+    assert_eq!(candidates(&ada, work.id).await["partial"], true);
+    assert_eq!(app.catalog.publisher_calls(), [ISBN, ISBN, OTHER, OTHER]);
+    assert_eq!(
+        app.scalar_i64(&format!(
+            "SELECT count(*) FROM editions WHERE id = {} AND portal_checked_at IS NOT NULL",
+            other.id
+        ))
+        .await,
+        0
+    );
+}
+
+/// No publisher cover goes on a book a takedown concerns: one whose cover was taken down
+/// before a merge brought it in, or one whose cover is taken down while the portal answers.
+#[sqlx::test]
+async fn the_portal_leaves_a_book_a_takedown_concerns(db: PgPool) {
+    const ISBN: &str = "9783462050493";
+    let app = TestApp::with_env(db, &[("DNB_PORTAL_COVERS", "true")]).await;
+    let (work, edition) = app.dnb_work("Tyll", "Daniel Kehlmann", ISBN).await;
+    app.catalog
+        .on_publisher_cover(ISBN, Ok(Some(jpeg([120, 40, 30]))));
+    let ada = app.user("ada").await;
+    add(&ada, work.id, "want_to_read").await;
+    let edition_cover = |app: &TestApp| {
+        let sql = format!(
+            "SELECT count(*) FROM editions WHERE id = {} AND cover_media_id IS NOT NULL",
+            edition.id
+        );
+        let db = app.db.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql))
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        }
+    };
+
+    // A takedown while the portal answers: the work's lock sees it before the write.
+    app.catalog.during_publisher_cover(
+        app.db.clone(),
+        &format!(
+            "INSERT INTO cover_search (work_id, takedown_at) VALUES ({}, now())
+             ON CONFLICT (work_id) DO UPDATE SET takedown_at = now()",
+            work.id
+        ),
+    );
+    candidates(&ada, work.id).await;
+    assert_eq!(app.catalog.publisher_calls(), [ISBN]);
+    assert_eq!(edition_cover(&app).await, 0);
+    assert!(cover_of(&app, work.id).await.is_none());
+    assert!(app.media.keys().is_empty(), "{:?}", app.media.keys());
+
+    // A takedown on a work merged into this one: the portal is not asked.
+    let (merged, _) = app
+        .dnb_work(
+            "Die Vermessung der Welt",
+            "Daniel Kehlmann",
+            "9783498035433",
+        )
+        .await;
+    let duplicate = app.work("Tyll (duplicate)").await.id;
+    sqlx::query("DELETE FROM cover_search WHERE work_id = $1")
+        .bind(work.id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO cover_search (work_id, takedown_at) VALUES ($1, now())")
+        .bind(duplicate)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let mut conn = app.db.acquire().await.unwrap();
+    merge_works(&mut conn, duplicate, work.id).await.unwrap();
+    drop(conn);
+    candidates(&ada, work.id).await;
+    assert_eq!(app.catalog.publisher_calls(), [ISBN]);
+    assert_eq!(edition_cover(&app).await, 0);
+    assert!(cover_of(&app, work.id).await.is_none());
+    // Without a takedown the portal step runs (the control).
+    add(&ada, merged.id, "want_to_read").await;
+    candidates(&ada, merged.id).await;
+    assert_eq!(app.catalog.publisher_calls(), [ISBN, "9783498035433"]);
 }
 
 #[sqlx::test]
@@ -686,4 +844,114 @@ async fn merge_export_and_deletion_handle_the_choice(db: PgPool) {
         !app.media.keys().iter().any(|key| key.contains(&photo)),
         "the photo's files are still there"
     );
+}
+
+/// Waits until another session of this test's database waits for a lock.
+async fn until_a_lock_wait(app: &TestApp) {
+    for _ in 0..2000 {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity
+             WHERE datname = current_database() AND wait_event_type = 'Lock'
+               AND pid <> pg_backend_pid()",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        if waiting > 0 {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    }
+    panic!("nobody waits for a lock");
+}
+
+fn spawn_merge(
+    app: &TestApp,
+    loser: i64,
+    winner: i64,
+) -> tokio::task::JoinHandle<sqlx::Result<bookclub_server::catalog::MergeReport>> {
+    let db = app.db.clone();
+    tokio::spawn(async move {
+        let mut conn = db.acquire().await?;
+        merge_works(&mut conn, loser, winner).await
+    })
+}
+
+/// A choice for the entry the merge drops, made while the merge locks (the choice takes no
+/// users lock): the merge starts over and keeps it on the kept entry.
+#[sqlx::test]
+async fn a_merge_keeps_a_choice_made_while_it_locks(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let work = circe(&app).await;
+    let duplicate = app.work("Circe (duplicate)").await.id;
+    let ada = app.user("ada").await;
+    // The finished entry wins (`shelf_winner`).
+    let dropped = add(&ada, work, "want_to_read").await;
+    add(&ada, duplicate, "finished").await;
+    let picture = ol_media(&app, 202).await;
+
+    // The choice as `PUT /api/shelf/{entry_id}/cover` writes it, not yet committed.
+    let mut choice = app.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM media WHERE id = $1 FOR SHARE")
+        .bind(picture)
+        .execute(&mut *choice)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE shelf_entries SET cover_media_id = $2 WHERE id = $1")
+        .bind(dropped)
+        .bind(picture)
+        .execute(&mut *choice)
+        .await
+        .unwrap();
+    let merge = spawn_merge(&app, duplicate, work);
+    until_a_lock_wait(&app).await;
+    choice.commit().await.unwrap();
+    merge.await.unwrap().unwrap();
+
+    let (kept, cover): (i64, Option<i64>) =
+        sqlx::query_as("SELECT id, cover_media_id FROM shelf_entries")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_ne!(kept, dropped);
+    assert_eq!(cover, Some(picture));
+}
+
+/// A takedown locks the reported picture, then its copies. A merge that holds a copy (the
+/// work's cover) and waits for the reported picture (an entry's choice) gives way instead of
+/// deadlocking with it, and both go through.
+#[sqlx::test]
+async fn a_merge_gives_way_to_a_takedown_that_holds_a_picture(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let work = circe(&app).await;
+    let work_cover = ol_media(&app, 100).await;
+    let duplicate = app.work("Circe (duplicate)").await.id;
+    let ada = app.user("ada").await;
+    let entry = add(&ada, work, "want_to_read").await;
+    let chosen = ol_media(&app, 202).await;
+    assert!(chosen > work_cover);
+    sqlx::query("UPDATE shelf_entries SET cover_media_id = $2 WHERE id = $1")
+        .bind(entry)
+        .bind(chosen)
+        .execute(&app.db)
+        .await
+        .unwrap();
+
+    // The takedown of the chosen picture: that row first, then its copy, the work's cover.
+    let mut takedown = app.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM media WHERE id = $1 FOR UPDATE")
+        .bind(chosen)
+        .execute(&mut *takedown)
+        .await
+        .unwrap();
+    let merge = spawn_merge(&app, duplicate, work);
+    until_a_lock_wait(&app).await;
+    sqlx::query("SELECT id FROM media WHERE id = $1 FOR UPDATE")
+        .bind(work_cover)
+        .execute(&mut *takedown)
+        .await
+        .expect("the takedown gets the copy");
+    takedown.commit().await.unwrap();
+    let report = merge.await.unwrap().expect("the merge goes through");
+    assert_eq!(report.winner, work);
 }

@@ -32,6 +32,11 @@ const LANGUAGES: ReadonlyArray<readonly [code: string, iso1: string]> = [
 /** Codes the browser names but that say nothing about an edition's language. */
 const NOT_A_LANGUAGE = new Set(["und", "mul", "zxx", "mis"]);
 
+/** False for the codes that say nothing about a language (`und`, `mul`, `zxx`, `mis`): a label leaves them out. */
+export function isRealLanguage(code: string): boolean {
+  return !NOT_A_LANGUAGE.has(code);
+}
+
 /**
  * "Deutsch" for `ger` in German, "German" in English. A code the list does not
  * have (Open Library's `rum`, `nob`) is named by the browser when it knows it;

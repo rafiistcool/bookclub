@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, isbn13 AS \"isbn13!\", cover_media_id IS NULL AS \"uncovered!\"\n           FROM editions WHERE work_id = $1 AND isbn13 IS NOT NULL\n           ORDER BY id",
+  "query": "SELECT id, isbn13 AS \"isbn13!\",\n                  cover_media_id IS NULL\n                      AND (portal_checked_at IS NULL\n                           OR portal_checked_at < now() - make_interval(days => $2))\n                      AS \"askable!\"\n           FROM editions WHERE work_id = $1 AND isbn13 IS NOT NULL\n           ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -27,14 +27,15 @@
       },
       {
         "ordinal": 2,
-        "name": "uncovered!",
+        "name": "askable!",
         "type_info": "Bool",
         "origin": "Expression"
       }
     ],
     "parameters": {
       "Left": [
-        "Int8"
+        "Int8",
+        "Int4"
       ]
     },
     "nullable": [
@@ -43,5 +44,5 @@
       null
     ]
   },
-  "hash": "32b5c9d5d62cb5759b8fd891ad5f971aae7d70df9f242edad40c62fd8a83139a"
+  "hash": "bd66fda6d372ac29e6ff35dc9340dc3a0580f20a9c1f06c63b91b3ce8bcf102a"
 }

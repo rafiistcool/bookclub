@@ -17,12 +17,13 @@ Added on 2026-11-07 (branch `design/cover-choice`). A reader chooses the cover a
 - `shelf_entries.cover_media_id bigint NULL REFERENCES media ON DELETE SET NULL`, with a partial index. NULL means the standard cover (the edition's, else the work's).
 - `media.personal boolean NOT NULL DEFAULT false`: a photo of the reader's copy uploaded as their own cover. A CHECK keeps it to uploaded covers. `ingest::set_cover` refuses such a row, so it never becomes a catalog cover, not even through an admin's write.
 - `media.unused_since timestamptz NULL`: personal photos only; the sweeper's mark (below).
+- Migration 3903 (after the review): `editions.portal_checked_at timestamptz NULL`, when the candidate list last asked the DNB portal for the edition and it had no usable cover (below).
 
 ## Endpoints
 
 - **`GET /api/books/works/{work_id}/cover-candidates` → `CoverCandidatesOut {items, partial}`** (`catalog::covers::choice`, operation `catalog_cover_candidates`). `CoverCandidateOut {key, source, cover_url, cover_thumb_url, cover_public_id, edition_label, chosen}`, `source` one of `catalog`, `openlibrary`, `dnb_portal`, `photo`; `CoverEditionLabel {title, publisher, year, language, isbn13}`, each nullable. The order of the list:
   1. The reader's current choice, when it is still usable. A personal photo is listed only here.
-  2. With `DNB_PORTAL_COVERS`: up to 3 of the work's German-group editions without a cover ask the portal (`CatalogLookup::publisher_cover`). Not for a book a reader added, or one whose cover a takedown cleared (`cover_search.takedown_at`), as in the cover search. A picture is stored (`MediaService::store_found_cover`) and set as the edition's cover with provenance `dnb`, only where there is none (`set_cover(…, only_if_empty = true)`). It then lists as the catalog's cover with `source: "dnb_portal"`. `set_cover` of an edition also fills an empty work cover, as everywhere.
+  2. With `DNB_PORTAL_COVERS`, and only for a book on the caller's shelf: up to 3 of the work's German-group editions without a cover ask the portal (`CatalogLookup::publisher_cover`). Not for a book a reader added, or one a takedown concerns (`cover_search.takedown_at` on the work or on a work merged into it: `search::under_takedown`, as in the cover search). Not again for an edition the portal had no usable cover for in the last `PORTAL_RECHECK_DAYS` (7) days (`editions.portal_checked_at`, written on a 404, a non-image answer or a picture `store_found_cover` refuses; no answer records nothing and leaves the list `partial`). A picture is stored (`MediaService::store_found_cover`); then, in one transaction, the media row is registered, the work is locked `FOR UPDATE`, the edition must still be the work's and `under_takedown` is read again, and the picture is set as the edition's cover with provenance `dnb`, only where there is none (`set_cover(…, only_if_empty = true)`). Otherwise the transaction rolls back and the stored files go (`discard_cover`). It then lists as the catalog's cover with `source: "dnb_portal"`. `set_cover` of an edition also fills an empty work cover, as everywhere.
   3. The work's cover, then its editions' covers by edition id, each picture once. A work cover that is also an edition's gets the edition's label.
   4. Open Library. For a work with an Open Library id: `works/{id}/editions.json?limit=50` (the new `CatalogService::ol_work_editions`, labels from the edition record) and the work record's `covers` (`ol_work`). For a work without one: `CatalogLookup::cover_by_isbn` for up to 3 of its ISBNs (`/isbn/{isbn}.json`). Cover ids already listed are skipped; a listed picture without a label takes the Open Library edition's.
   - `chosen` marks the picture the reader's entry shows now: their choice, else the standard cover (the entry's edition's, else the work's) when the list has it. No entry: none is chosen.
@@ -51,14 +52,17 @@ Added on 2026-11-07 (branch `design/cover-choice`). A reader chooses the cover a
 - `shelf::stats`: the top and longest book of the year in review (`YearTotals.top_entry`, `longest_entry`).
 - `catalog::detail::book_detail`: the viewer's own entry. It also fixes a gap: the book page now shows the cover of the edition on the viewer's entry (it showed the work's), while the title and pages stay the work's.
 - `media::spine`: the colour backfill samples the chosen picture.
+- `shelf::favorites::favorite_outs` (after the review): a favourite on the owner's shelf shows as that entry, the choice, else the entry's edition's cover, else the work's, in the shelf's favourites row (`ShelfListOut.favorites`) and `/api/auth/me/favorites`. Its callers check that the viewer may see the owner, and so their shelf. A favourite that is not on the shelf shows the work's cover.
 
-Not personal: search hits, club picks (Home's hero), the activity feed, favourites, report lists.
+Not personal: search hits, club picks (Home's hero), the activity feed, report lists.
 
 ## Lifecycle
 
 - **Takedown.** `ingest::clear_references`, under `clear_media` and `clear_gone_media`, also clears `shelf_entries.cover_media_id`, after works and editions, not counted. The entry shows its standard cover again.
 - **Reports.** A shelf visitor can report a chosen cover like any cover (`POST /api/media/{public_id}/reports`). `media::reports::shown_on` falls back to the work of an entry that chose the picture, so the admin sees the book. The report never names the entry or the reader. A personal photo's takedown reaches its uploader's statement of reasons through `media.uploaded_by`, as for any upload.
-- **Merge.** `merge_in` locks the personal covers of the two works' entries `FOR SHARE` before the works. `merge_shelves` gives the kept entry its own choice, else the dropped entry's, when that one was locked (not taken down).
+- **Merge.** `merge_in` locks the works' covers and the personal covers of the two works' entries `FOR SHARE` before the works, in one statement in id order (`lock_pictures`). `merge_shelves` gives the kept entry its own choice, else the dropped entry's, when that one was locked (not taken down).
+  - A choice made after that lock (the choice takes no users lock) is seen under the entries' `FOR UPDATE`: the merge starts over and locks it then (`merge_shelves` returns false before the last try). Before the review, a choice on the dropped entry could get lost.
+  - A takedown locks the reported picture before its copies (`cover_copies`), not in id order, so a merge holding a copy (a work's cover) and waiting for the reported picture (an entry's choice) deadlocked with it (40P01, a 500 for one of the two admins). The merge now waits for the pictures' locks only `MEDIA_LOCK_TIMEOUT` (200 ms `lock_timeout`, below Postgres' 1 s `deadlock_timeout`), then rolls its savepoint back and starts over after a pause of 50 ms times the try; a deadlock is retried too. `RETRIES` is 4 (it was 2, for the loser's cover only); the last try waits as long as it takes.
 - **Removal and Undo.** Removing a book deletes the entry and its choice. The client's Undo adds the book again and sends the same key. A personal photo stays findable for 7 days.
 - **The sweeper** (`auth::sweep_personal_covers`, in the hourly cleanup job after `delete_rejected_cover_photos`):
   - Each run marks the personal photos no entry chooses with `unused_since = now()` and unmarks those chosen again.
@@ -96,6 +100,7 @@ Not personal: search hits, club picks (Home's hero), the activity feed, favourit
   - the portal with and without the setting, and the ISBN cover;
   - an Open Library outage gives `partial`;
   - merge, export and account deletion.
+  - after the review: the favourites row shows the choice (and the entry's edition cover); the portal only for a book on the shelf, once per edition without a publisher cover for 7 days, again after no answer (`the_portal_is_not_asked_again_for_an_edition_without_a_publisher_cover`); no publisher cover on a book whose cover a takedown cleared during the portal request (`FakeCatalog::during_publisher_cover`) or on a work merged into it (`the_portal_leaves_a_book_a_takedown_concerns`); a choice made while a merge locks survives it (`a_merge_keeps_a_choice_made_while_it_locks`); a merge gives way to a takedown that holds the chosen picture and wants the work's cover (`a_merge_gives_way_to_a_takedown_that_holds_a_picture`, a 40P01 before).
 - **`server/tests/jobs.rs`:** `MEDIA_REFERENCES`, the chosen photo of a rejected request, and `personal_cover_photos_go_seven_days_after_their_last_choice`.
 - **`server/tests/catalog_detail.rs`:** the `BookDetailOut` field list.
 - **Unit:** `shelf::cover::tests::keys_parse_in_their_two_forms_only`.
@@ -106,3 +111,8 @@ Not personal: search hits, club picks (Home's hero), the activity feed, favourit
 - **Storage.** Lazy Open Library rows of candidates nobody chose stay, as the search's do, but their bytes exist only once someone loaded the thumbnail (`s`) or the large picture. A sweeper that drops the stored bytes of unreferenced Open Library rows after 30 days is possible later.
 - **Choosing any Open Library row.** `ol:` and `media:` keys of an Open Library row are accepted for any book. The picture is public catalog content anyway, and the choice is the reader's own.
 - **Takedown "wrong book".** A takedown judged `wrong_book` takes down only the copies the same book shows as a catalog cover (`cover_copies`); a personal choice of a copy is not among them.
+
+## Frontend after the review
+
+- `ShelfPage.vue` `replaceItem` copies a changed cover (`book.cover_*`, `book.spine_color`) onto the matching favourite, after a choice and after its Undo. The server sends the choice in `ShelfListOut.favorites`.
+- While `personal_cover` is true the "…" sheet hides "Suggest a photo" and "Report cover" (both would act on the reader's own choice); a `has_catalog_cover` field would let them stay.

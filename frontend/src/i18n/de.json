@@ -1712,7 +1712,7 @@
     "title": "Cover wählen",
     "ownPhoto": "Eigenes Foto",
     "standard": "Standard-Cover",
-    "standardHint": "Das Cover, das alle sehen",
+    "standardHint": "Das Cover aus dem Katalog",
     "blurb": "Gilt nur für dich und für alle, die dein Regal ansehen.",
     "changed": "Cover geändert",
     "loadFailed": "Die Cover konnten nicht geladen werden.",
@@ -1726,6 +1726,8 @@
       "dnb_portal": "Verlag",
       "photo": "Dein Foto"
     },
-    "chosen": "Gewählt"
+    "chosen": "Gewählt",
+    "waitForSave": "Warte, bis das Cover gespeichert ist.",
+    "uploading": "Dein Foto für „{title}“ wird hochgeladen …"
   }
 }

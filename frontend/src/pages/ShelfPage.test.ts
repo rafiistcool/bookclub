@@ -11,6 +11,10 @@ const removeFromShelf = vi.fn();
 const addToShelf = vi.fn();
 const coverCandidates = vi.fn();
 const chooseCover = vi.fn();
+const uploadPersonalCover = vi.fn();
+
+// No scanner is mounted here: the cover scan hands each photo back as it is.
+vi.mock("../stores/coverScan", () => import("../test/coverScan"));
 
 vi.mock("../api/client", () => ({
   ApiError: class ApiError extends Error {},
@@ -22,6 +26,7 @@ vi.mock("../api/client", () => ({
     addToShelf: (...args: unknown[]) => addToShelf(...args),
     coverCandidates: (...args: unknown[]) => coverCandidates(...args),
     chooseCover: (...args: unknown[]) => chooseCover(...args),
+    uploadPersonalCover: (...args: unknown[]) => uploadPersonalCover(...args),
   },
 }));
 
@@ -30,6 +35,7 @@ import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import ShelfPage from "./ShelfPage.vue";
 import ShelfBoard from "../components/ShelfBoard.vue";
+import FavoritePortrait from "../components/FavoritePortrait.vue";
 import { i18n } from "../i18n";
 
 function favorite(position: number, title: string): Favorite {
@@ -72,6 +78,7 @@ describe("ShelfPage favourites portrait", () => {
     addToShelf.mockReset();
     coverCandidates.mockReset();
     chooseCover.mockReset();
+    uploadPersonalCover.mockReset();
     Object.defineProperty(window, "matchMedia", {
       writable: true,
       configurable: true,
@@ -362,6 +369,84 @@ describe("ShelfPage favourites portrait", () => {
     expect(chooseCover).toHaveBeenCalledWith(1, "ol:2");
     expect(wrapper.getComponent(ShelfBoard).props("items")).toEqual([chosen]);
     expect(useToast().items.at(-1)?.message).toBe("Cover changed");
+    wrapper.unmount();
+  });
+
+  it("shows a new cover on the matching favourite too", async () => {
+    const circe = shelfItem({ id: 1, book: { id: 4, title: "Circe", cover_url: "/media/std/l", cover_thumb_url: "/media/std/s", cover_public_id: "std" } });
+    const favorites = [
+      favoriteRow(1, { id: 4, title: "Circe", cover_url: "/media/std/l", cover_thumb_url: "/media/std/s", cover_public_id: "std" }),
+      favoriteRow(2, { id: 7, title: "Galatea", cover_url: "/media/gal/l", cover_thumb_url: "/media/gal/s", cover_public_id: "gal" }),
+    ];
+    const wrapper = await mountShelf(favorites, [circe]);
+    coverCandidates.mockResolvedValue({
+      partial: false,
+      items: [{ key: "ol:2", source: "openlibrary", cover_url: "/media/ol2/l", cover_thumb_url: "/media/ol2/s", cover_public_id: "ol2", edition_label: null, chosen: false }],
+    });
+    await wrapper.findAll("button.shelf-status")[0]!.trigger("click");
+    await wrapper.get(".sheet .choose-cover").trigger("click");
+    await flushPromises();
+    chooseCover.mockResolvedValue(
+      shelfItem({ id: 1, personal_cover: true, book: { id: 4, title: "Circe", cover_url: "/media/ol2/l", cover_thumb_url: "/media/ol2/s", cover_public_id: "ol2", spine_color: "#334455" } }),
+    );
+    await wrapper.get(".cover-tile").trigger("click");
+    await vi.waitFor(() => expect(wrapper.find(".cover-chooser").exists()).toBe(false));
+    await wrapper.get(".favorites-toggle").trigger("click");
+    const shown = wrapper.getComponent(FavoritePortrait).props("items") as Favorite[];
+    expect(shown.map((row) => [row.book.id, row.book.cover_url, row.book.cover_public_id])).toEqual([
+      [4, "/media/ol2/l", "ol2"],
+      [7, "/media/gal/l", "gal"],
+    ]);
+    expect(shown[0]!.book.spine_color).toBe("#334455");
+    expect(shown[0]!.book.title).toBe("Circe");
+    wrapper.unmount();
+  });
+
+  it("offers no cover choice for a withdrawn book, as the book page does", async () => {
+    const withdrawn = shelfItem({ id: 1, book: { id: 4, title: "[removed]", custom: true, source: "user" } });
+    const wrapper = await mountShelf([], [withdrawn]);
+    await wrapper.findAll("button.shelf-status")[0]!.trigger("click");
+    expect(wrapper.find(".sheet .remove-row").exists()).toBe(true);
+    expect(wrapper.find(".sheet .choose-cover").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("says that the own photo uploads, and opens no chooser and no second upload meanwhile", async () => {
+    const circe = shelfItem({ id: 1, book: { id: 4, title: "Circe", cover_url: "/media/std/l", cover_thumb_url: "/media/std/s", cover_public_id: "std" } });
+    const wrapper = await mountShelf([], [circe]);
+    coverCandidates.mockResolvedValue({ partial: false, items: [] });
+    let answer!: (value: unknown) => void;
+    uploadPersonalCover.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    const openChooser = async () => {
+      await wrapper.findAll("button.shelf-status")[0]!.trigger("click");
+      await wrapper.get(".sheet .choose-cover").trigger("click");
+      await flushPromises();
+    };
+    await openChooser();
+    const input = wrapper.get(".own-photo input[type=file]");
+    const photo = new File(["x"], "copy.jpg", { type: "image/jpeg" });
+    Object.defineProperty(input.element, "files", { value: [photo], configurable: true });
+    await input.trigger("change");
+    await flushPromises();
+    expect(wrapper.find(".cover-chooser").exists()).toBe(false);
+    expect(uploadPersonalCover).toHaveBeenCalledWith(1, photo);
+    expect(wrapper.get(".cover-upload-status").text()).toBe("Uploading your photo for “Circe” …");
+    expect(wrapper.get(".cover-upload-status").attributes("role")).toBe("status");
+
+    // A second choice now would race the upload, with an Undo to the cover before both.
+    await openChooser();
+    expect(wrapper.find(".cover-chooser").exists()).toBe(false);
+    expect(coverCandidates).toHaveBeenCalledTimes(1);
+    expect(useToast().items.at(-1)?.message).toBe("Wait until the photo has uploaded.");
+
+    const mine = shelfItem({ id: 1, personal_cover: true, book: { id: 4, title: "Circe", cover_url: "/media/mine/l", cover_thumb_url: "/media/mine/s", cover_public_id: "mine" } });
+    answer(mine);
+    await flushPromises();
+    expect(wrapper.find(".cover-upload-status").exists()).toBe(false);
+    expect(wrapper.getComponent(ShelfBoard).props("items")).toEqual([mine]);
+    expect(useToast().items.at(-1)?.message).toBe("Cover changed");
+    await openChooser();
+    expect(wrapper.find(".cover-chooser").exists()).toBe(true);
     wrapper.unmount();
   });
 

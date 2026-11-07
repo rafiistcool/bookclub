@@ -29,6 +29,7 @@ vi.mock("../api/client", () => ({
 }));
 
 import { ApiError } from "../api/client";
+import { COVER_RETRY_MS } from "../covers";
 import { i18n } from "../i18n";
 import { useToast } from "../stores/toast";
 import CoverChooserSheet, { announceCoverChange, sendPersonalCover } from "./CoverChooserSheet.vue";
@@ -93,11 +94,15 @@ describe("CoverChooserSheet", () => {
     expect(shown).toHaveLength(3);
     expect(shown.map((tile) => tile.get("img").attributes("src"))).toEqual(["/media/cat/s", "/media/ol2/s", "/media/ol3/s"]);
     expect(shown.every((tile) => tile.get("img").attributes("loading") === "lazy")).toBe(true);
-    expect(shown.map((tile) => tile.get(".tile-label").text())).toEqual([
-      "Diogenes · 2019 · Deutsch",
-      "2018 · Englisch",
-      "Open Library",
+    // Year and language first, the publisher on its own line: what tells editions apart is never cut off.
+    expect(shown.map((tile) => tile.get(".label-facts").text())).toEqual(["2019 · Deutsch", "2018 · Englisch", "Open Library"]);
+    expect(shown.map((tile) => tile.find(".label-publisher").exists() ? tile.get(".label-publisher").text() : null)).toEqual([
+      "Diogenes",
+      null,
+      null,
     ]);
+    // The whole label as the tooltip.
+    expect(shown.map((tile) => tile.attributes("title"))).toEqual(["2019 · Deutsch · Diogenes", "2018 · Englisch", "Open Library"]);
     // The cover the reader sees now is ringed with a check.
     expect(shown.map((tile) => tile.attributes("aria-pressed"))).toEqual(["true", "false", "false"]);
     expect(shown[0]!.find(".tile-check").exists()).toBe(true);
@@ -106,21 +111,106 @@ describe("CoverChooserSheet", () => {
     wrapper.unmount();
   });
 
-  it("hides a tile whose picture fails, after trying the large one", async () => {
-    coverCandidates.mockResolvedValue({ partial: true, items: [candidate({ key: "ol:2" }), candidate({ key: "ol:3" })] });
+  it("asks for a failed picture once more after a pause, then the large one, then hides the tile", async () => {
+    vi.useFakeTimers();
+    try {
+      coverCandidates.mockResolvedValue({ partial: true, items: [candidate({ key: "ol:2" }), candidate({ key: "ol:3" })] });
+      const wrapper = mountSheet();
+      await flushPromises();
+      expect(wrapper.text()).toContain("Nicht jede Quelle hat geantwortet");
+      const first = tiles(wrapper)[0]!.get("img").element;
+      await tiles(wrapper)[0]!.get("img").trigger("error");
+      // A busy Open Library (429, 502) answers again later: the tile waits, empty, instead of going.
+      expect(tiles(wrapper)).toHaveLength(2);
+      expect(tiles(wrapper)[0]!.find("img").exists()).toBe(false);
+      await vi.advanceTimersByTimeAsync(COVER_RETRY_MS);
+      // The same picture again, in a new element so the browser asks again.
+      expect(tiles(wrapper)[0]!.get("img").attributes("src")).toBe("/media/ol2/s");
+      expect(tiles(wrapper)[0]!.get("img").element).not.toBe(first);
+      await tiles(wrapper)[0]!.get("img").trigger("error");
+      expect(tiles(wrapper)[0]!.get("img").attributes("src")).toBe("/media/ol2/l");
+      await tiles(wrapper)[0]!.get("img").trigger("error");
+      expect(tiles(wrapper)).toHaveLength(1);
+      expect(tiles(wrapper)[0]!.get("img").attributes("src")).toBe("/media/ol3/s");
+      await tiles(wrapper)[0]!.get("img").trigger("error");
+      await vi.advanceTimersByTimeAsync(COVER_RETRY_MS);
+      await tiles(wrapper)[0]!.get("img").trigger("error");
+      await tiles(wrapper)[0]!.get("img").trigger("error");
+      expect(tiles(wrapper)).toHaveLength(0);
+      // The own photo always remains.
+      expect(wrapper.text()).toContain("Keine weiteren Cover gefunden");
+      wrapper.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a tile whose retry worked, and stops a waiting retry when the sheet goes", async () => {
+    vi.useFakeTimers();
+    try {
+      coverCandidates.mockResolvedValue({ partial: false, items: [candidate({ key: "ol:2" })] });
+      const wrapper = mountSheet();
+      await flushPromises();
+      await tiles(wrapper)[0]!.get("img").trigger("error");
+      await vi.advanceTimersByTimeAsync(COVER_RETRY_MS);
+      await tiles(wrapper)[0]!.get("img").trigger("load");
+      expect(tiles(wrapper)[0]!.get("img").attributes("src")).toBe("/media/ol2/s");
+      expect(wrapper.text()).not.toContain("Keine weiteren Cover gefunden");
+
+      // A sheet that goes leaves as many timers behind with a retry waiting as without one.
+      const timersLeftBy = async (failing: boolean) => {
+        const sheet = mountSheet();
+        await flushPromises();
+        if (failing) await tiles(sheet)[0]!.get("img").trigger("error");
+        const before = vi.getTimerCount() - (failing ? 1 : 0);
+        sheet.unmount();
+        const left = vi.getTimerCount() - before;
+        vi.clearAllTimers();
+        return left;
+      };
+      expect(await timersLeftBy(true)).toBe(await timersLeftBy(false));
+      wrapper.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves out a code that names no language", async () => {
+    coverCandidates.mockResolvedValue({
+      partial: false,
+      items: [
+        candidate({ key: "ol:2", edition_label: { title: null, publisher: "Diogenes", year: 2019, language: "und", isbn13: null } }),
+        candidate({ key: "ol:3", edition_label: { title: null, publisher: null, year: null, language: "mul", isbn13: null } }),
+      ],
+    });
     const wrapper = mountSheet();
     await flushPromises();
-    expect(wrapper.text()).toContain("Nicht jede Quelle hat geantwortet");
-    await tiles(wrapper)[0]!.get("img").trigger("error");
-    expect(tiles(wrapper)[0]!.get("img").attributes("src")).toBe("/media/ol2/l");
-    await tiles(wrapper)[0]!.get("img").trigger("error");
-    expect(tiles(wrapper)).toHaveLength(1);
-    expect(tiles(wrapper)[0]!.get("img").attributes("src")).toBe("/media/ol3/s");
-    await tiles(wrapper)[0]!.get("img").trigger("error");
-    await tiles(wrapper)[0]!.get("img").trigger("error");
-    expect(tiles(wrapper)).toHaveLength(0);
-    // The own photo always remains.
-    expect(wrapper.text()).toContain("Keine weiteren Cover gefunden");
+    expect(tiles(wrapper).map((tile) => tile.attributes("title"))).toEqual(["2019 · Diogenes", "Open Library"]);
+    expect(wrapper.findAll(".tile-label").map((node) => node.text())).toEqual(["2019Diogenes", "Open Library"]);
+    wrapper.unmount();
+  });
+
+  it("keeps the own photo's picker closed while a choice saves, and says so for a file picked anyway", async () => {
+    coverCandidates.mockResolvedValue({ partial: false, items: [candidate({ key: "ol:2" })] });
+    let answer!: (value: unknown) => void;
+    chooseCover.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    const wrapper = mountSheet();
+    await flushPromises();
+    const input = wrapper.get(".own-photo input[type=file]");
+    expect((input.element as HTMLInputElement).disabled).toBe(false);
+    await tiles(wrapper)[0]!.trigger("click");
+    expect((input.element as HTMLInputElement).disabled).toBe(true);
+    expect(wrapper.get(".own-photo").classes()).toContain("disabled");
+    // A picker opened just before the tap still hands its file over: not silently lost.
+    const photo = new File(["x"], "copy.jpg", { type: "image/jpeg" });
+    Object.defineProperty(input.element, "files", { value: [photo], configurable: true });
+    // (Test utils skip events on a disabled element; the browser's picker does not.)
+    input.element.dispatchEvent(new Event("change"));
+    await flushPromises();
+    expect(wrapper.emitted("picked")).toBeUndefined();
+    expect(useToast().items.at(-1)?.message).toBe("Warte, bis das Cover gespeichert ist.");
+    answer(shelfItem({ id: 30, personal_cover: true }));
+    await vi.waitFor(() => expect(wrapper.emitted("close")).toHaveLength(1));
     wrapper.unmount();
   });
 
@@ -180,6 +270,8 @@ describe("CoverChooserSheet", () => {
     expect(tiles(wrapper)[0]!.get(".tile-label").text()).toBe("Dein Foto");
     const row = wrapper.get(".standard-cover");
     expect(row.text()).toContain("Standard-Cover");
+    // The catalog's cover (the entry's edition's, else the work's), not one "everyone" sees.
+    expect(row.text()).toContain("Das Cover aus dem Katalog");
     await row.trigger("click");
     expect(clearPersonalCover).toHaveBeenCalledWith(30);
     await vi.waitFor(() => expect(wrapper.emitted("close")).toHaveLength(1));

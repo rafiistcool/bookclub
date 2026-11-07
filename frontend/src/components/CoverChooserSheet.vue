@@ -71,8 +71,8 @@ import { ArrowUturnLeftIcon, CameraIcon, CheckIcon } from "@heroicons/vue/24/out
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import type { CoverCandidateOut } from "../types";
-import { coverSources } from "../covers";
-import { languageName } from "../languages";
+import { COVER_RETRY_MS, coverSources } from "../covers";
+import { isRealLanguage, languageName } from "../languages";
 import BottomSheet from "./BottomSheet.vue";
 import CoverPhotoButton from "./CoverPhotoButton.vue";
 
@@ -84,7 +84,9 @@ import CoverPhotoButton from "./CoverPhotoButton.vue";
  *
  * A grid of the candidates' thumbnails, all from our own `/media` (the server
  * fetches Open Library's pictures on the first request, so each `<img>` loads
- * lazily, and a tile whose picture fails goes away). A tap applies the choice
+ * lazily). A picture that fails is asked for once more after a pause, like
+ * `BookCover` (a busy or slow Open Library answers 429 or 502 for a moment),
+ * then in the large size; a tile whose pictures all fail goes away. A tap applies the choice
  * at once: the ring moves to the tile, then the sheet closes and the page
  * shows "Cover changed" with an Undo (`changed`).
  *
@@ -124,6 +126,13 @@ const pending = ref<string | null>(null);
 const busy = computed(() => pending.value !== null);
 /** How far each tile is down its sources (thumbnail, then the large picture); past the end it is hidden. */
 const attempts = ref<Record<string, number>>({});
+/** Tiles that had their one retry; the next failure moves on to the next source. */
+const retried = new Set<string>();
+/** Tiles waiting for their retry: the frame stays, empty. */
+const waiting = ref<Record<string, boolean>>({});
+/** Bumped per tile for the retry: a new `<img>`, so the browser asks the server again. */
+const reloads = ref<Record<string, number>>({});
+const retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let loadAbort: AbortController | null = null;
 let settleTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -134,7 +143,9 @@ function sourcesOf(candidate: CoverCandidateOut): string[] {
 const tiles = computed(() =>
   (candidates.value ?? []).flatMap((candidate) => {
     const src = sourcesOf(candidate)[attempts.value[candidate.key] ?? 0];
-    return src ? [{ candidate, src }] : [];
+    if (!src) return [];
+    const reload = reloads.value[candidate.key] ?? 0;
+    return [{ candidate, src: waiting.value[candidate.key] ? null : src, reload }];
   }),
 );
 
@@ -146,18 +157,45 @@ const restore = computed<CoverRestore | null>(() => {
   return props.coverPublicId ? { key: `media:${props.coverPublicId}` } : null;
 });
 
-/** "Diogenes · 2019 · Deutsch", short; the source's name when the edition says nothing. */
-function label(candidate: CoverCandidateOut): string {
+/**
+ * A tile's label in two lines: what tells editions apart first ("2019 ·
+ * Deutsch"), then the publisher; the source's name when the edition says
+ * nothing. A code that names no language (`und`, `mul`) is left out.
+ */
+function labelLines(candidate: CoverCandidateOut): { facts: string; publisher: string } {
   const edition = candidate.edition_label;
-  const parts: string[] = [];
-  if (edition?.publisher) parts.push(edition.publisher);
-  if (edition?.year) parts.push(String(edition.year));
-  if (edition?.language) parts.push(languageName(edition.language, locale.value));
-  return parts.length ? parts.join(" · ") : t(`coverChoice.source.${candidate.source}`);
+  const facts: string[] = [];
+  if (edition?.year) facts.push(String(edition.year));
+  if (edition?.language && isRealLanguage(edition.language)) facts.push(languageName(edition.language, locale.value));
+  const publisher = edition?.publisher ?? "";
+  if (!facts.length && !publisher) return { facts: t(`coverChoice.source.${candidate.source}`), publisher: "" };
+  return { facts: facts.join(" · "), publisher };
+}
+
+/** The whole label on one line, for the tile's tooltip. */
+function label(candidate: CoverCandidateOut): string {
+  const { facts, publisher } = labelLines(candidate);
+  return [facts, publisher].filter(Boolean).join(" · ");
 }
 
 function onImageError(candidate: CoverCandidateOut) {
-  attempts.value = { ...attempts.value, [candidate.key]: (attempts.value[candidate.key] ?? 0) + 1 };
+  const key = candidate.key;
+  if (retryTimers.has(key)) return;
+  if (!retried.has(key)) {
+    retried.add(key);
+    waiting.value = { ...waiting.value, [key]: true };
+    retryTimers.set(
+      key,
+      setTimeout(() => {
+        retryTimers.delete(key);
+        waiting.value = { ...waiting.value, [key]: false };
+        reloads.value = { ...reloads.value, [key]: (reloads.value[key] ?? 0) + 1 };
+      }, COVER_RETRY_MS),
+    );
+    return;
+  }
+  attempts.value = { ...attempts.value, [key]: (attempts.value[key] ?? 0) + 1 };
+  reloads.value = { ...reloads.value, [key]: (reloads.value[key] ?? 0) + 1 };
 }
 
 /** A 1×1 placeholder is no cover either. */
@@ -209,8 +247,10 @@ function choose(candidate: CoverCandidateOut) {
   void apply(candidate.key);
 }
 
+/** A photo picked while a choice saves would be lost with the sheet: say so instead. */
 function onPicked(file: File) {
-  if (!busy.value) emit("picked", file, restore.value);
+  if (busy.value) toast.show(t("coverChoice.waitForSave"));
+  else emit("picked", file, restore.value);
 }
 
 /** The sheet stays while a choice is saved, so its answer reaches the page. */
@@ -235,6 +275,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   loadAbort?.abort();
   if (settleTimer !== null) clearTimeout(settleTimer);
+  for (const timer of retryTimers.values()) clearTimeout(timer);
+  retryTimers.clear();
 });
 </script>
 
@@ -267,6 +309,7 @@ onBeforeUnmount(() => {
           :work-id="workId"
           :edition-id="null"
           :has-cover="true"
+          :disabled="busy"
           @picked="onPicked"
         >
           <template #icon><CameraIcon class="photo-tile-icon" aria-hidden="true" /></template>
@@ -278,17 +321,20 @@ onBeforeUnmount(() => {
           <span class="skeleton skeleton-line short" />
         </li>
       </template>
-      <li v-for="{ candidate, src } in tiles" :key="candidate.key" class="grid-cell">
+      <li v-for="{ candidate, src, reload } in tiles" :key="candidate.key" class="grid-cell">
         <button
           class="cover-tile"
           :class="{ chosen: candidate.chosen, pressing: pending === candidate.key }"
           type="button"
+          :title="label(candidate)"
           :aria-pressed="candidate.chosen"
           :disabled="busy && pending !== candidate.key"
           @click="choose(candidate)"
         >
           <span class="tile-frame">
             <img
+              v-if="src"
+              :key="reload"
               :src="src"
               alt=""
               loading="lazy"
@@ -303,7 +349,10 @@ onBeforeUnmount(() => {
               <span class="visually-hidden">{{ t("coverChoice.chosen") }}</span>
             </span>
           </span>
-          <span class="tile-label">{{ label(candidate) }}</span>
+          <span class="tile-label">
+            <span class="label-facts">{{ labelLines(candidate).facts }}</span>
+            <span v-if="labelLines(candidate).publisher" class="label-publisher">{{ labelLines(candidate).publisher }}</span>
+          </span>
         </button>
       </li>
     </ul>
@@ -366,6 +415,10 @@ onBeforeUnmount(() => {
   text-align: center;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+}
+
+.cover-tile {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .tile-frame,
@@ -434,15 +487,25 @@ onBeforeUnmount(() => {
   stroke-width: 2.5;
 }
 
+/* Year and language on the first line, the publisher on the second: the parts
+   that tell editions apart are never cut off by a long publisher. */
 .tile-label {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  display: grid;
+  min-width: 0;
   font-size: var(--text-xs);
   line-height: 1.3;
   color: var(--text-muted);
-  overflow-wrap: anywhere;
+}
+
+.label-facts,
+.label-publisher {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.label-facts {
+  font-weight: 600;
 }
 
 /* "Own photo": a dashed cover of its own, the camera over its words. */

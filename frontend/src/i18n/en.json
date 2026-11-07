@@ -1712,7 +1712,7 @@
     "title": "Choose cover",
     "ownPhoto": "Own photo",
     "standard": "Standard cover",
-    "standardHint": "The cover everyone sees",
+    "standardHint": "The cover from the catalog",
     "blurb": "Only for you, and for anyone who looks at your shelf.",
     "changed": "Cover changed",
     "loadFailed": "The covers could not be loaded.",
@@ -1726,6 +1726,8 @@
       "dnb_portal": "Publisher",
       "photo": "Your photo"
     },
-    "chosen": "Chosen"
+    "chosen": "Chosen",
+    "waitForSave": "Wait until the cover is saved.",
+    "uploading": "Uploading your photo for “{title}” …"
   }
 }

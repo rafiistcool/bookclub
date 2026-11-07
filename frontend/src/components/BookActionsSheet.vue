@@ -67,9 +67,16 @@ const id = useId();
 
 const catalogUrl = computed(() => (props.book.custom ? null : openLibraryUrl(props.book.ol_work_key)));
 const hasCover = computed(() => Boolean(props.book.cover_url || props.book.cover_thumb_url));
+/**
+ * The reader's own cover hides the catalog's: whether the book has one is not
+ * known here, so a photo for everyone and a report of the cover wait until
+ * the reader shows the standard cover again ("Choose cover" offers "Own photo"
+ * meanwhile). A report would be of their own choice.
+ */
+const ownCover = computed(() => Boolean(props.book.personal_cover));
 /** Without a cover, the page keeps the "Add a photo" link under the cloth instead. */
-const offersPhoto = computed(() => !props.coverPrompted && hasCover.value);
-const offersCoverReport = computed(() => Boolean(props.book.cover_public_id));
+const offersPhoto = computed(() => !props.coverPrompted && hasCover.value && !ownCover.value);
+const offersCoverReport = computed(() => Boolean(props.book.cover_public_id) && !ownCover.value);
 const canRefresh = computed(() => !props.book.custom && props.book.can_refresh);
 const offersChoice = computed(() => props.book.shelf_id != null && !props.withdrawn);
 </script>

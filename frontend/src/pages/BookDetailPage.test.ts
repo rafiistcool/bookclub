@@ -61,6 +61,7 @@ vi.mock("../api/client", () => ({
 import { ApiError } from "../api/client";
 import { i18n } from "../i18n";
 import ProgressEditor from "../components/ProgressEditor.vue";
+import EditionPicker from "../components/EditionPicker.vue";
 import { useFinish } from "../stores/finish";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
@@ -895,6 +896,61 @@ describe("BookDetailPage", () => {
       expect(addToShelf).toHaveBeenCalledWith(expect.objectContaining({ work_id: 4, status: "want_to_read" }));
       expect(chooseCover).toHaveBeenCalledWith(31, "media:mine");
       expect(heroSrc(wrapper)).toBe("/media/mine/l");
+    });
+
+    it("shows the cover of the edition the reader picks, and the catalog's again off the shelf", async () => {
+      book.mockResolvedValue(detail({ ...ON_SHELF, edition_id: 11, cover_url: "/media/a/l", cover_thumb_url: "/media/a/s", cover_public_id: "a" }));
+      const { wrapper } = await mountBook();
+      expect(heroSrc(wrapper)).toBe("/media/a/l");
+
+      patchShelf.mockResolvedValue(
+        shelfItem({ id: 30, edition: edition({ id: 12, work_id: 4 }), book: { id: 4, cover_url: "/media/b/l", cover_thumb_url: "/media/b/s", cover_public_id: "b" } }),
+      );
+      wrapper.findComponent(EditionPicker).vm.$emit("choose", 12);
+      await flushPromises();
+      expect(patchShelf).toHaveBeenCalledWith(30, { edition_id: 12 });
+      // The entry's book carries the new edition's cover: the hero follows without a reload.
+      expect(heroSrc(wrapper)).toBe("/media/b/l");
+
+      // Off the shelf, no edition is the reader's: the page reads the cover everyone without one sees.
+      removeFromShelf.mockResolvedValue(undefined);
+      book.mockResolvedValue(detail({ ...ON_SHELF, shelf_id: null, on_shelf: null }));
+      await wrapper.findAll("button").find((node) => node.text() === "Remove")!.trigger("click");
+      await flushPromises();
+      expect(book).toHaveBeenCalledTimes(2);
+      expect(heroSrc(wrapper)).toBe("/media/std/l");
+
+      // Undo brings the entry back in its edition, with that edition's cover.
+      addToShelf.mockResolvedValue(
+        shelfItem({ id: 31, edition: edition({ id: 12, work_id: 4 }), book: { id: 4, cover_url: "/media/b/l", cover_thumb_url: "/media/b/s", cover_public_id: "b" } }),
+      );
+      await useToast().run(useToast().items.at(-1)!.id);
+      await flushPromises();
+      expect(addToShelf).toHaveBeenCalledWith(expect.objectContaining({ edition_id: 12 }));
+      expect(heroSrc(wrapper)).toBe("/media/b/l");
+    });
+
+    it("keeps the chooser closed while the reader's own photo uploads", async () => {
+      book.mockResolvedValue(detail(ON_SHELF));
+      coverCandidates.mockResolvedValue({ partial: false, items: [] });
+      let answer!: (value: unknown) => void;
+      uploadPersonalCover.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      const { wrapper } = await mountBook();
+      await openChooser(wrapper);
+      await choose(wrapper, ".own-photo", new File(["x"], "copy.jpg", { type: "image/jpeg" }));
+      expect(wrapper.get(".hero-cover").attributes("aria-busy")).toBe("true");
+
+      // A choice now would be overwritten by the photo, whose Undo points at the cover before both.
+      await openChooser(wrapper);
+      expect(wrapper.find(".cover-chooser").exists()).toBe(false);
+      expect(coverCandidates).toHaveBeenCalledTimes(1);
+      expect(useToast().items.at(-1)?.message).toBe("Wait until the photo has uploaded.");
+
+      answer(entry("mine", true));
+      await flushPromises();
+      expect(heroSrc(wrapper)).toBe("/media/mine/l");
+      await openChooser(wrapper);
+      expect(wrapper.find(".cover-chooser").exists()).toBe(true);
     });
 
     it("re-adds a book without its own cover without choosing one", async () => {

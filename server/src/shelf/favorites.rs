@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgConnection;
 use utoipa::ToSchema;
 
+use super::cover::{apply_personal_cover, personal_covers};
 use super::lock_user;
 use crate::AppState;
 use crate::auth::extract::CurrentUser;
@@ -284,23 +285,42 @@ async fn favorite_works(conn: &mut PgConnection, user_id: i64) -> sqlx::Result<V
     .await
 }
 
-/// The user's favourites, by position. Callers check that the viewer may see this user.
+/// The user's favourites, by position. Callers check that the viewer may see this user (and so
+/// their shelf). A favourite on the user's shelf shows as the shelf shows it
+/// (docs/phase3/notes/cover-choice.md): the entry's personal cover choice, else its edition's
+/// cover, else the work's.
 pub async fn favorite_outs(
     conn: &mut PgConnection,
     user_id: i64,
 ) -> sqlx::Result<Vec<FavoriteOut>> {
     let rows = sqlx::query!(
-        "SELECT work_id, position FROM user_favorites WHERE user_id = $1 ORDER BY position, work_id",
+        r#"SELECT f.work_id, f.position, s.id AS "entry_id?", s.edition_id AS "edition_id?"
+           FROM user_favorites f
+           LEFT JOIN shelf_entries s ON s.user_id = f.user_id AND s.work_id = f.work_id
+           WHERE f.user_id = $1
+           ORDER BY f.position, f.work_id"#,
         user_id
     )
     .fetch_all(&mut *conn)
     .await?;
-    let refs: Vec<BookRef> = rows.iter().map(|row| BookRef::work(row.work_id)).collect();
+    let book_ref = |work_id: i64, edition_id: Option<i64>| BookRef {
+        work_id,
+        edition_id,
+    };
+    let refs: Vec<BookRef> = rows
+        .iter()
+        .map(|row| book_ref(row.work_id, row.edition_id))
+        .collect();
     let mut books = book_outs(conn, &refs).await?;
+    let entry_ids: Vec<i64> = rows.iter().filter_map(|row| row.entry_id).collect();
+    let personal = personal_covers(conn, &entry_ids).await?;
     Ok(rows
         .into_iter()
         .filter_map(|row| {
-            let book = books.remove(&BookRef::work(row.work_id))?;
+            let mut book = books.remove(&book_ref(row.work_id, row.edition_id))?;
+            if let Some(cover) = row.entry_id.and_then(|id| personal.get(&id)) {
+                apply_personal_cover(&mut book, cover);
+            }
             Some(FavoriteOut {
                 position: row.position,
                 book,

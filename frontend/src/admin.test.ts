@@ -19,7 +19,7 @@ import {
   toLocalInput,
 } from "./admin";
 import { i18n } from "./i18n";
-import { languageName, languageOptions } from "./languages";
+import { isRealLanguage, languageName, languageOptions } from "./languages";
 
 const request = (kind: string, payload: Record<string, unknown>) => ({
   kind,
@@ -87,6 +87,7 @@ describe("the admin queue", () => {
     expect(languageName("rum", "de")).toBe("Rumänisch");
     expect(languageName("nob", "en")).toBe("Norwegian Bokmål");
     expect(languageName("und", "en")).toBe("und");
+    expect(["ger", "rum", "und", "mul", "zxx", "mis"].map(isRealLanguage)).toEqual([true, true, false, false, false, false]);
     const options = languageOptions("en", "xyz");
     expect(options.map((row) => row.code)).toContain("xyz");
     expect(options[0]!.name.localeCompare(options[1]!.name)).toBeLessThan(0);

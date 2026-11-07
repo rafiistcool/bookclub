@@ -145,9 +145,14 @@ function adoptEntryCover(detail: BookDetail, item: ShelfItem) {
   detail.personal_cover = Boolean(item.personal_cover);
 }
 
-/** Copy the viewer's shelf entry onto the page after a write. */
+/**
+ * Copy the viewer's shelf entry onto the page after a write. The page shows
+ * the entry's cover (the reader's own, else its edition's, else the work's),
+ * so another edition brings its cover along.
+ */
 function adoptEntry(detail: BookDetail, item: ShelfItem) {
   detail.shelf_id = item.id;
+  adoptEntryCover(detail, item);
   detail.on_shelf = item.status;
   detail.edition_id = item.edition?.id ?? null;
   detail.rating = item.rating;
@@ -402,7 +407,8 @@ async function remove() {
     detail.dnf_reason = "";
     detail.progress = null;
     syncDrafts(detail);
-    if (coverKey) void showStandardCover(detail);
+    // The entry's cover (its own, or its edition's) goes with it.
+    if (coverKey || previous.edition_id != null) void showStandardCover(detail);
     toast.show(t("book.removed"), {
       label: t("common.undo"),
       run: async () => {
@@ -571,7 +577,11 @@ async function onMoreAction(action: BookAction) {
   else if (action === "admin-edit") adminEditing.value = "work";
   else if (action === "admin-edition") await editEditionAsAdmin();
   else if (action === "admin-edition-cover") adminEditionCover.value = true;
-  else if (action === "choose-cover") choosingCover.value = true;
+  else if (action === "choose-cover") {
+    // A photo still uploading would land after this choice, with an Undo to the cover before both.
+    if (coverUploading.value) toast.show(t("cover.waitForUpload"));
+    else choosingCover.value = true;
+  }
 }
 
 /**
