@@ -13,6 +13,7 @@ use utoipa::ToSchema;
 
 use crate::catalog::shared::books::{BookRef, book_outs};
 use crate::dto::{BookOut, ClubRef, UserSummary, UserSummaryRow};
+use crate::shelf::cover::{apply_personal_cover, personal_covers};
 
 /// How many currently-reading books a friend's card previews (as a club member's card does).
 const PREVIEW_BOOKS: i64 = 3;
@@ -105,10 +106,10 @@ pub async fn friends_out(conn: &mut PgConnection, viewer: i64) -> sqlx::Result<F
     .fetch_all(&mut *conn)
     .await?;
     let reading = sqlx::query!(
-        r#"SELECT r.user_id AS "user_id!", r.work_id AS "work_id!", r.edition_id, r.progress,
-                  r.total AS "total!"
+        r#"SELECT r.id AS "id!", r.user_id AS "user_id!", r.work_id AS "work_id!", r.edition_id,
+                  r.progress, r.total AS "total!"
            FROM (
-               SELECT s.user_id, s.work_id, s.edition_id, s.progress,
+               SELECT s.id, s.user_id, s.work_id, s.edition_id, s.progress,
                       row_number() OVER (PARTITION BY s.user_id ORDER BY s.position, s.id) AS rn,
                       count(*) OVER (PARTITION BY s.user_id) AS total
                FROM bc_visible_shelf($1) s
@@ -130,6 +131,8 @@ pub async fn friends_out(conn: &mut PgConnection, viewer: i64) -> sqlx::Result<F
         })
         .collect();
     let books = book_outs(conn, &refs).await?;
+    let entry_ids: Vec<i64> = reading.iter().map(|row| row.id).collect();
+    let personal = personal_covers(conn, &entry_ids).await?;
     let mut previews: HashMap<i64, (i64, Vec<FriendReadingOut>)> = HashMap::new();
     for row in &reading {
         let entry = previews
@@ -140,8 +143,12 @@ pub async fn friends_out(conn: &mut PgConnection, viewer: i64) -> sqlx::Result<F
             edition_id: row.edition_id,
         };
         if let Some(book) = books.get(&key) {
+            let mut book = book.clone();
+            if let Some(cover) = personal.get(&row.id) {
+                apply_personal_cover(&mut book, cover);
+            }
             entry.1.push(FriendReadingOut {
-                book: book.clone(),
+                book,
                 progress: row.progress,
             });
         }

@@ -13,6 +13,7 @@ use crate::config::Config;
 use crate::dto::BookOut;
 use crate::error::{ApiResult, AppError, msg};
 use crate::media::shared::urls::avatar_url;
+use crate::shelf::cover::{apply_personal_cover, personal_covers};
 
 /// How many currently-reading books a member card previews.
 const PREVIEW_BOOKS: i64 = 3;
@@ -200,10 +201,10 @@ pub async fn member_outs(
     .fetch_all(&mut *conn)
     .await?;
     let reading = sqlx::query!(
-        r#"SELECT r.user_id AS "user_id!", r.work_id AS "work_id!", r.edition_id,
+        r#"SELECT r.id AS "id!", r.user_id AS "user_id!", r.work_id AS "work_id!", r.edition_id,
                   r.total AS "total!"
            FROM (
-               SELECT s.user_id, s.work_id, s.edition_id,
+               SELECT s.id, s.user_id, s.work_id, s.edition_id,
                       row_number() OVER (PARTITION BY s.user_id ORDER BY s.position, s.id) AS rn,
                       count(*) OVER (PARTITION BY s.user_id) AS total
                FROM bc_visible_shelf($2) s
@@ -227,6 +228,8 @@ pub async fn member_outs(
         })
         .collect();
     let books = book_outs(conn, &refs).await?;
+    let entry_ids: Vec<i64> = reading.iter().map(|row| row.id).collect();
+    let personal = personal_covers(conn, &entry_ids).await?;
     let mut previews: HashMap<i64, (i64, Vec<BookOut>)> = HashMap::new();
     for row in &reading {
         let entry = previews
@@ -237,7 +240,11 @@ pub async fn member_outs(
             edition_id: row.edition_id,
         };
         if let Some(book) = books.get(&key) {
-            entry.1.push(book.clone());
+            let mut book = book.clone();
+            if let Some(cover) = personal.get(&row.id) {
+                apply_personal_cover(&mut book, cover);
+            }
+            entry.1.push(book);
         }
     }
     Ok(members

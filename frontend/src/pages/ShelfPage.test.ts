@@ -9,6 +9,8 @@ const clubs = vi.fn();
 const patchShelf = vi.fn();
 const removeFromShelf = vi.fn();
 const addToShelf = vi.fn();
+const coverCandidates = vi.fn();
+const chooseCover = vi.fn();
 
 vi.mock("../api/client", () => ({
   ApiError: class ApiError extends Error {},
@@ -18,6 +20,8 @@ vi.mock("../api/client", () => ({
     clubs: (...args: unknown[]) => clubs(...args),
     removeFromShelf: (...args: unknown[]) => removeFromShelf(...args),
     addToShelf: (...args: unknown[]) => addToShelf(...args),
+    coverCandidates: (...args: unknown[]) => coverCandidates(...args),
+    chooseCover: (...args: unknown[]) => chooseCover(...args),
   },
 }));
 
@@ -66,6 +70,8 @@ describe("ShelfPage favourites portrait", () => {
     patchShelf.mockReset();
     removeFromShelf.mockReset();
     addToShelf.mockReset();
+    coverCandidates.mockReset();
+    chooseCover.mockReset();
     Object.defineProperty(window, "matchMedia", {
       writable: true,
       configurable: true,
@@ -330,6 +336,53 @@ describe("ShelfPage favourites portrait", () => {
       progress: null,
     });
     expect(myShelf).toHaveBeenCalledTimes(2);
+    // The standard cover needs no choice.
+    expect(chooseCover).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("chooses the reader's own cover from the status sheet's more actions, and the shelf shows it", async () => {
+    const circe = shelfItem({ id: 1, book: { id: 4, title: "Circe", cover_url: "/media/std/l", cover_thumb_url: "/media/std/s", cover_public_id: "std" } });
+    const wrapper = await mountShelf([], [circe]);
+    coverCandidates.mockResolvedValue({
+      partial: false,
+      items: [{ key: "ol:2", source: "openlibrary", cover_url: "/media/ol2/l", cover_thumb_url: "/media/ol2/s", cover_public_id: "ol2", edition_label: null, chosen: false }],
+    });
+    await wrapper.findAll("button.shelf-status")[0]!.trigger("click");
+    await wrapper.get(".sheet .choose-cover").trigger("click");
+    await flushPromises();
+    // The status sheet made way for the chooser.
+    expect(wrapper.findAll(".sheet")).toHaveLength(1);
+    expect(coverCandidates).toHaveBeenCalledWith(4, expect.anything());
+
+    const chosen = shelfItem({ id: 1, personal_cover: true, book: { id: 4, title: "Circe", cover_url: "/media/ol2/l", cover_thumb_url: "/media/ol2/s", cover_public_id: "ol2" } });
+    chooseCover.mockResolvedValue(chosen);
+    await wrapper.get(".cover-tile").trigger("click");
+    await vi.waitFor(() => expect(wrapper.find(".cover-chooser").exists()).toBe(false));
+    expect(chooseCover).toHaveBeenCalledWith(1, "ol:2");
+    expect(wrapper.getComponent(ShelfBoard).props("items")).toEqual([chosen]);
+    expect(useToast().items.at(-1)?.message).toBe("Cover changed");
+    wrapper.unmount();
+  });
+
+  it("puts back the reader's own cover when a removal is undone", async () => {
+    const own = shelfItem({ id: 1, personal_cover: true, book: { id: 4, title: "Circe", cover_public_id: "mine" } });
+    const wrapper = await mountShelf([], [own]);
+    await wrapper.findAll("button.shelf-status")[0]!.trigger("click");
+    await wrapper.get(".sheet .remove-row").trigger("click");
+    removeFromShelf.mockResolvedValue(undefined);
+    await wrapper.findAll(".sheet .btn-danger").find((button) => button.text() === "Remove")!.trigger("click");
+    await flushPromises();
+
+    addToShelf.mockResolvedValue(shelfItem({ id: 2, book: { id: 4, title: "Circe" } }));
+    chooseCover.mockResolvedValue(shelfItem({ id: 2, personal_cover: true, book: { id: 4, title: "Circe", cover_public_id: "mine" } }));
+    await useToast().run(useToast().items.at(-1)!.id);
+    await flushPromises();
+    expect(addToShelf).toHaveBeenCalledWith(expect.objectContaining({ work_id: 4 }));
+    expect(chooseCover).toHaveBeenCalledWith(2, "media:mine");
+    // The shelf is read again after both, so it shows the cover once more.
+    expect(myShelf).toHaveBeenCalledTimes(2);
+    expect(myShelf.mock.invocationCallOrder[1]).toBeGreaterThan(chooseCover.mock.invocationCallOrder[0]!);
     wrapper.unmount();
   });
 

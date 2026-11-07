@@ -110,7 +110,7 @@ where
         }
     }
 
-    /// The cached answer, if any (tests).
+    /// The cached answer, if any (tests, and the cover choice's check before it takes a turn).
     pub async fn get(&self, key: &K) -> Option<V> {
         self.cache.get(key).await
     }

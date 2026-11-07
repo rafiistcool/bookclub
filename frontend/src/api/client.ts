@@ -9,6 +9,7 @@ import type {
   ClubOut,
   ClubPatchIn,
   ClubStatsOut,
+  CoverCandidatesOut,
   CoverRequested,
   CoverSet,
   ClubPickCurrentOut,
@@ -300,6 +301,21 @@ export const api = {
   patchShelf: (id: number, body: ShelfPatchIn) =>
     request<ShelfItemOut>(`/api/shelf/${id}`, json("PATCH", body)),
   removeFromShelf: (id: number) => request<void>(`/api/shelf/${id}`, { method: "DELETE" }),
+  /**
+   * The pictures a reader may choose as their own cover of a work: the
+   * catalog's, Open Library's editions', the DNB portal's and their own photos.
+   */
+  coverCandidates: (workId: number | string, init: RequestInit = {}) =>
+    request<CoverCandidatesOut>(`${workPath(workId)}/cover-candidates`, init),
+  /** A candidate (`key`) becomes the cover of this entry, for its reader and their audience only. */
+  chooseCover: (entryId: number, key: string) =>
+    request<ShelfItemOut>(`/api/shelf/${entryId}/cover`, json("PUT", { key })),
+  /** The reader's photo (after the cover scanner) becomes the cover of this entry, at once and for them only. */
+  uploadPersonalCover: (entryId: number, file: File) =>
+    request<ShelfItemOut>(`/api/shelf/${entryId}/cover/photo`, { method: "PUT", body: upload(file) }),
+  /** Back to the standard cover everyone sees. */
+  clearPersonalCover: (entryId: number) =>
+    request<ShelfItemOut>(`/api/shelf/${entryId}/cover`, { method: "DELETE" }),
   physicalShelfLayout: (username?: string) =>
     request<PhysicalShelfLayout>(
       `/api/shelf/physical-layout${username ? `?username=${enc(username)}` : ""}`,

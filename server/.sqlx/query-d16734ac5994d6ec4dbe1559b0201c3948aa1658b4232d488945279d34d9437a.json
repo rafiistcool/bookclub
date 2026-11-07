@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (SELECT 1 FROM editions WHERE id = $1 AND work_id = $2)\n                       AS \"still!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "still!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "d16734ac5994d6ec4dbe1559b0201c3948aa1658b4232d488945279d34d9437a"
+}

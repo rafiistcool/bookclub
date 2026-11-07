@@ -75,8 +75,8 @@ const props = withDefaults(
     hasCover: boolean;
     /** The text instead of "Add/Suggest a photo of your copy". */
     label?: string;
-    /** `fine`: the small link under a cover; `inline`: a link in running text; `primary`/`ghost`: a small button; `row`: a light row of a sheet (`.sheet-row`, with the `icon` slot). */
-    look?: "fine" | "inline" | "primary" | "ghost" | "row";
+    /** `fine`: the small link under a cover; `inline`: a link in running text; `primary`/`ghost`: a small button; `row`: a light row of a sheet (`.sheet-row`, with the `icon` slot); `tile`: a cover-sized tile of a grid (with the `icon` slot, styled by the grid). */
+    look?: "fine" | "inline" | "primary" | "ghost" | "row" | "tile";
     admin?: boolean;
     pickOnly?: boolean;
   }>(),
@@ -90,6 +90,7 @@ const LOOKS = {
   primary: "btn btn-primary btn-sm",
   ghost: "btn btn-ghost btn-sm",
   row: "sheet-row",
+  tile: "photo-tile",
 } as const;
 
 const { t } = useI18n();
@@ -131,6 +132,10 @@ async function onFile(event: Event) {
     <template v-if="look === 'row'">
       <slot name="icon" />
       <span class="sheet-label">{{ text }}</span>
+    </template>
+    <template v-else-if="look === 'tile'">
+      <slot name="icon" />
+      <span class="photo-tile-label">{{ text }}</span>
     </template>
     <template v-else>{{ text }}</template>
   </label>

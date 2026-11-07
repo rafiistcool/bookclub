@@ -1,0 +1,148 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT m.id AS \"media_id!\", m.public_id AS \"public_id!\", m.source AS \"source!\",\n                  m.ol_cover_id, e.id AS \"edition_id?\", e.title AS \"title?\",\n                  e.subtitle AS \"subtitle?\", e.publisher AS \"publisher?\",\n                  e.publication_year AS \"year?\", e.language AS \"language?\",\n                  e.isbn13 AS \"isbn13?\"\n           FROM (SELECT w.cover_media_id AS media_id, NULL::int8 AS edition_id, 0 AS rank\n                 FROM works w WHERE w.id = $1\n                 UNION ALL\n                 SELECT e.cover_media_id, e.id, 1 FROM editions e\n                 WHERE e.work_id = $1 AND e.cover_media_id IS NOT NULL) c\n           JOIN media m ON m.id = c.media_id\n           LEFT JOIN editions e ON e.id = c.edition_id\n           WHERE m.kind = 'cover' AND m.removed_at IS NULL AND m.ol_gone_at IS NULL\n             AND NOT EXISTS (SELECT 1 FROM media_removed_hashes h\n                             WHERE h.sha256 = m.sha256 AND h.blocks_covers)\n           ORDER BY c.rank, c.edition_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "media_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "public_id!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "public_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "source!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "source"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "ol_cover_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "ol_cover_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "edition_id?",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "title?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "subtitle?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "subtitle"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "publisher?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "publisher"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "year?",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "publication_year"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "language?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "language"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "isbn13?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "editions",
+            "name": "isbn13"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "4cb83fad339edb900e0830c49b7fc4ed4fac2dc5af9ce7cb1bd1aaeb147ccd44"
+}

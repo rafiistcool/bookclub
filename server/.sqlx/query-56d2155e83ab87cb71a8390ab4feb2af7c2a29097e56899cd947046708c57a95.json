@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT m.id FROM media m\n           WHERE (m.ol_cover_id = $1 OR m.public_id = $2)\n             AND m.kind = 'cover' AND m.removed_at IS NULL AND m.ol_gone_at IS NULL\n             AND NOT EXISTS (SELECT 1 FROM media_removed_hashes h\n                             WHERE h.sha256 = m.sha256 AND h.blocks_covers)\n             AND (m.source = 'openlibrary'\n                  OR (m.personal AND m.uploaded_by = $3)\n                  OR m.id IN (SELECT w.cover_media_id FROM shelf_entries s\n                              JOIN works w ON w.id = s.work_id WHERE s.id = $4)\n                  OR m.id IN (SELECT e.cover_media_id FROM shelf_entries s\n                              JOIN editions e ON e.work_id = s.work_id WHERE s.id = $4))\n           FOR SHARE OF m",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "56d2155e83ab87cb71a8390ab4feb2af7c2a29097e56899cd947046708c57a95"
+}

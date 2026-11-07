@@ -126,6 +126,17 @@ async fn merge_in(
     )
     .fetch_all(&mut *conn)
     .await?;
+    // The personal covers of the two works' shelf entries (the cover choice) too: a reader's
+    // choice may move to the kept entry, and a takedown that clears it waits for the merge.
+    let chosen = sqlx::query_scalar!(
+        "SELECT id FROM media
+         WHERE id IN (SELECT cover_media_id FROM shelf_entries WHERE work_id = ANY($1))
+           AND removed_at IS NULL
+         ORDER BY id FOR SHARE",
+        &pair[..]
+    )
+    .fetch_all(&mut *conn)
+    .await?;
     let locked = sqlx::query!(
         "SELECT id, cover_media_id FROM works WHERE id = ANY($1) AND merged_into_id IS NULL
          ORDER BY id FOR NO KEY UPDATE",
@@ -157,7 +168,7 @@ async fn merge_in(
     // that shows them when the entry it was written for hid them (only-me, or gone): sealed
     // before the entries merge, and again once the kept entry's visibility is final.
     seal_finished_ratings(conn, None, Some(&pair[..])).await?;
-    merge_shelves(conn, loser, winner, &mut report).await?;
+    merge_shelves(conn, loser, winner, &chosen, &mut report).await?;
     merge_favourites(conn, loser, winner, &mut report).await?;
     merge_nominations(conn, loser, winner, &mut report).await?;
     merge_fields(conn, loser, winner, &covers, &mut report).await?;
@@ -183,16 +194,20 @@ fn visibility_str(visibility: Visibility) -> &'static str {
     }
 }
 
+/// One reader's entries of the two works become one: the winner of `shelf_winner` keeps its row,
+/// the fields merge by `merge_shelf_fields`, and a personal cover choice is the kept entry's, else
+/// the dropped one's (when it is one of the `chosen` pictures locked before, so not taken down).
 async fn merge_shelves(
     conn: &mut PgConnection,
     loser: i64,
     winner: i64,
+    chosen: &[i64],
     report: &mut MergeReport,
 ) -> sqlx::Result<()> {
     let rows = sqlx::query!(
         r#"SELECT id, user_id, work_id, status AS "status: ShelfStatus", updated_at, rating,
                   rating_visibility AS "rating_visibility: Visibility", take, dnf_reason,
-                  progress, started_at, finished_at, edition_id
+                  progress, started_at, finished_at, edition_id, cover_media_id
            FROM shelf_entries
            WHERE work_id = ANY($1)
              AND user_id IN (SELECT user_id FROM shelf_entries WHERE work_id = $2)
@@ -203,6 +218,10 @@ async fn merge_shelves(
     .fetch_all(&mut *conn)
     .await?;
     let mut by_user: BTreeMap<i64, Vec<ShelfFacts>> = BTreeMap::new();
+    let covers: BTreeMap<i64, i64> = rows
+        .iter()
+        .filter_map(|row| row.cover_media_id.map(|cover| (row.id, cover)))
+        .collect();
     for row in rows {
         by_user.entry(row.user_id).or_default().push(ShelfFacts {
             id: row.id,
@@ -225,6 +244,12 @@ async fn merge_shelves(
             sorted.sort_by(|a, b| shelf_winner(b, a));
             let (mut keep, drop) = (sorted[0].clone(), sorted[1].clone());
             merge_shelf_fields(&mut keep, &drop);
+            let cover = covers.get(&keep.id).copied().or_else(|| {
+                covers
+                    .get(&drop.id)
+                    .copied()
+                    .filter(|cover| chosen.contains(cover))
+            });
             sqlx::query!("DELETE FROM shelf_entries WHERE id = $1", drop.id)
                 .execute(&mut *conn)
                 .await?;
@@ -232,7 +257,7 @@ async fn merge_shelves(
                 "UPDATE shelf_entries
                  SET work_id = $2, rating = $3, rating_visibility = $4, take = $5,
                      dnf_reason = $6, progress = $7, started_at = $8, finished_at = $9,
-                     edition_id = $10
+                     edition_id = $10, cover_media_id = $11
                  WHERE id = $1",
                 keep.id,
                 winner,
@@ -243,7 +268,8 @@ async fn merge_shelves(
                 keep.progress,
                 keep.started_at,
                 keep.finished_at,
-                keep.edition_id
+                keep.edition_id,
+                cover
             )
             .execute(&mut *conn)
             .await?;

@@ -30,6 +30,7 @@ use crate::auth::extract::CurrentUser;
 use crate::dto::{CatalogSource, ClubRef, ShelfStatus, Visibility, user_summaries};
 use crate::error::{ApiResult, AppError, ErrorBody, is_deadlock, msg};
 use crate::extract::ApiPath;
+use crate::shelf::cover::{apply_personal_cover, personal_covers};
 use crate::text::round_half_even;
 
 /// Another reader of a book, from the viewer's audience.
@@ -55,9 +56,14 @@ pub struct BookDetailOut {
     pub subtitle: String,
     pub authors: String,
     pub year: Option<i32>,
+    /// The viewer's cover of this book: their personal choice (`personal_cover`), else the cover
+    /// of the edition on their shelf entry, else the work's.
     pub cover_url: Option<String>,
     pub cover_thumb_url: Option<String>,
     pub cover_public_id: Option<String>,
+    /// The viewer chose this book's cover (`PUT /api/shelf/{entry_id}/cover`); the cover fields
+    /// show it.
+    pub personal_cover: bool,
     /// `""` when unknown.
     pub description: String,
     pub subjects: Vec<String>,
@@ -122,6 +128,28 @@ pub async fn book_detail(
     )
     .fetch_optional(&mut *conn)
     .await?;
+    // The viewer's cover: their choice, else their edition's cover, else the work's (the
+    // edition's title and pages stay out: the page is the work's).
+    let mut cover = book.clone();
+    if let Some(edition_id) = own.as_ref().and_then(|entry| entry.edition_id)
+        && let Some(edition) = book_out(
+            conn,
+            BookRef {
+                work_id,
+                edition_id: Some(edition_id),
+            },
+        )
+        .await?
+    {
+        cover = edition;
+    }
+    let personal = match &own {
+        Some(entry) => personal_covers(conn, &[entry.id]).await?.remove(&entry.id),
+        None => None,
+    };
+    if let Some(chosen) = &personal {
+        apply_personal_cover(&mut cover, chosen);
+    }
     let reader_rows = sqlx::query!(
         r#"SELECT s.user_id AS "user_id!", s.status AS "status!: ShelfStatus", s.rating,
                   s.progress
@@ -188,9 +216,10 @@ pub async fn book_detail(
         subtitle: work.subtitle,
         authors: book.authors,
         year: book.year,
-        cover_url: book.cover_url,
-        cover_thumb_url: book.cover_thumb_url,
-        cover_public_id: book.cover_public_id,
+        cover_url: cover.cover_url,
+        cover_thumb_url: cover.cover_thumb_url,
+        cover_public_id: cover.cover_public_id,
+        personal_cover: personal.is_some(),
         description: work.description,
         subjects: work.subjects,
         pages: book.pages,

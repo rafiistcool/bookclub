@@ -80,6 +80,7 @@ export function shelfItem(
     take: "",
     dnf_reason: "",
     progress: null,
+    personal_cover: false,
     ...rest,
     book: bookOut({ id, ...book }),
   };
@@ -146,6 +147,7 @@ export function bookDetail(overrides: Partial<BookDetail> = {}): BookDetail {
     favorite_position: null,
     club_picks: [],
     can_refresh: true,
+    personal_cover: false,
     ...overrides,
   };
 }

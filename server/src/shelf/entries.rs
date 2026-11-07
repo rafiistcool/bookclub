@@ -15,6 +15,7 @@ use sqlx::PgConnection;
 use time::{Date, OffsetDateTime};
 use utoipa::ToSchema;
 
+use super::cover::{apply_personal_cover, personal_covers};
 use super::favorites::{FavoriteOut, favorite_outs};
 use super::layout::remove_from_layout;
 use super::ordering::{
@@ -58,8 +59,12 @@ pub struct ShelfItemOut {
     pub started_at: Option<OffsetDateTime>,
     #[serde(with = "time::serde::rfc3339::option")]
     pub finished_at: Option<OffsetDateTime>,
-    /// The work, with the entry's edition as context (its title, pages and cover win).
+    /// The work, with the entry's edition as context (its title, pages and cover win). With a
+    /// personal cover (`personal_cover`), the cover and spine colour are the owner's choice.
     pub book: BookOut,
+    /// The owner chose this book's cover (`PUT /api/shelf/{entry_id}/cover`): `book` shows it,
+    /// for everyone who sees the shelf.
+    pub personal_cover: bool,
     /// The edition the owner reads or owns.
     pub edition: Option<EditionOut>,
     /// 1 to 5, only for finished books.
@@ -952,7 +957,8 @@ pub async fn item_out(
 
 /// The owner's entries as `viewer` sees them (read through `bc_visible_shelf`, so another
 /// viewer gets `only_me` ratings redacted and an empty list for an owner they cannot see),
-/// ordered by status text, position and id. `only` restricts the entries. Entries whose work
+/// ordered by status text, position and id. The owner's personal cover choice shows to every
+/// viewer of the entry. `only` restricts the entries. Entries whose work
 /// is missing are skipped.
 pub async fn item_outs(
     conn: &mut PgConnection,
@@ -985,13 +991,19 @@ pub async fn item_outs(
     let mut books = book_outs(conn, &refs).await?;
     let edition_ids: Vec<i64> = rows.iter().filter_map(|row| row.edition_id).collect();
     let mut editions = edition_outs(conn, &edition_ids).await?;
+    let entry_ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
+    let personal = personal_covers(conn, &entry_ids).await?;
     Ok(rows
         .into_iter()
         .filter_map(|row| {
-            let book = books.remove(&BookRef {
+            let mut book = books.remove(&BookRef {
                 work_id: row.work_id,
                 edition_id: row.edition_id,
             })?;
+            let chosen = personal.get(&row.id);
+            if let Some(cover) = chosen {
+                apply_personal_cover(&mut book, cover);
+            }
             Some(ShelfItemOut {
                 id: row.id,
                 status: row.status,
@@ -1001,6 +1013,7 @@ pub async fn item_outs(
                 started_at: row.started_at,
                 finished_at: row.finished_at,
                 book,
+                personal_cover: chosen.is_some(),
                 edition: row.edition_id.and_then(|id| editions.remove(&id)),
                 rating: row.rating,
                 rating_visibility: row.rating_visibility,

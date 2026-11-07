@@ -1296,11 +1296,12 @@ async fn a_session_that_ends_early_leaves_its_last_use_on_the_account(db: PgPool
 /// Every foreign key to `media`: `auth::delete_rejected_cover_photos` keeps a photo that any of
 /// them references (other than a request that is due). A new one fails
 /// [`rejected_cover_photos_go_with_their_request`] until the function considers it.
-const MEDIA_REFERENCES: [&str; 6] = [
+const MEDIA_REFERENCES: [&str; 7] = [
     "catalog_edit_requests.media_id",
     "editions.cover_media_id",
     "media_removed_hashes.media_id",
     "reports.media_id",
+    "shelf_entries.cover_media_id",
     "users.avatar_media_id",
     "works.cover_media_id",
 ];
@@ -1466,12 +1467,30 @@ async fn rejected_cover_photos_go_with_their_request(db: PgPool) {
     )
     .await;
 
+    // Kept with its request: a reader chose the photo as the cover of a book on their shelf.
+    let (chosen_photo, chosen_prefix) = stored_photo(&app, ada, 'i').await;
+    let chosen = cover_request(
+        &app,
+        (work, chosen_photo, ada, root),
+        "rejected",
+        past.0,
+        past.1,
+    )
+    .await;
+    exec(
+        &app.db,
+        "INSERT INTO shelf_entries (user_id, work_id, status, cover_media_id)
+         VALUES ({ada}, {work}, 'want_to_read', {photo})",
+        &[("ada", ada), ("work", work), ("photo", chosen_photo)],
+    )
+    .await;
+
     let mut conn = app.db.acquire().await.unwrap();
     auth::cleanup(&mut conn).await.unwrap();
     // The cleanup leaves the due request to the photo's deletion.
     assert_eq!(
         ids(&app.db, "SELECT id FROM catalog_edit_requests ORDER BY id").await,
-        [due, young, open, reported]
+        [due, young, open, reported, chosen]
     );
     let deleted = auth::delete_rejected_cover_photos(&mut conn, app.media.as_ref())
         .await
@@ -1480,7 +1499,7 @@ async fn rejected_cover_photos_go_with_their_request(db: PgPool) {
 
     assert_eq!(
         ids(&app.db, "SELECT id FROM catalog_edit_requests ORDER BY id").await,
-        [young, open, reported]
+        [young, open, reported, chosen]
     );
     assert_eq!(
         ids(&app.db, "SELECT id FROM media ORDER BY id").await,
@@ -1489,7 +1508,8 @@ async fn rejected_cover_photos_go_with_their_request(db: PgPool) {
             open_photo,
             reported_photo,
             cover_photo,
-            removed_photo
+            removed_photo,
+            chosen_photo
         ]
     );
     let keys = app.media.keys();
@@ -1497,7 +1517,13 @@ async fn rejected_cover_photos_go_with_their_request(db: PgPool) {
         !keys.iter().any(|key| key.starts_with(&due_prefix)),
         "the rejected photo's files are still there: {keys:?}"
     );
-    for prefix in [young_prefix, open_prefix, reported_prefix, cover_prefix] {
+    for prefix in [
+        young_prefix,
+        open_prefix,
+        reported_prefix,
+        cover_prefix,
+        chosen_prefix,
+    ] {
         assert!(
             keys.iter().any(|key| key.starts_with(&prefix)),
             "{prefix} was deleted"
@@ -1511,6 +1537,135 @@ async fn rejected_cover_photos_go_with_their_request(db: PgPool) {
             .unwrap(),
         0
     );
+}
+
+/// A personal cover photo (the cover choice) is deleted 7 days after no shelf entry chooses it
+/// any more, with its files: the first sweep marks it unused, a choice in between clears the
+/// mark, and a photo an open report names, or one that was taken down, stays.
+#[sqlx::test]
+async fn personal_cover_photos_go_seven_days_after_their_last_choice(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let root = app.admin("root").await.id();
+    let ada = app.user("ada").await.id();
+    let work = app.work("Circe").await.id;
+    let db = app.db.clone();
+    let personal = |id: i64| {
+        let db = db.clone();
+        async move {
+            exec(
+                &db,
+                "UPDATE media SET personal = true WHERE id = {id}",
+                &[("id", id)],
+            )
+            .await;
+        }
+    };
+    // Chosen: stays, and stays unmarked.
+    let (chosen, chosen_prefix) = stored_photo(&app, ada, 'c').await;
+    personal(chosen).await;
+    exec(
+        &app.db,
+        "INSERT INTO shelf_entries (user_id, work_id, status, cover_media_id)
+         VALUES ({ada}, {work}, 'want_to_read', {photo})",
+        &[("ada", ada), ("work", work), ("photo", chosen)],
+    )
+    .await;
+    // Unused for 8 days: deleted. Unused for 6 days: kept.
+    let (old, old_prefix) = stored_photo(&app, ada, 'd').await;
+    personal(old).await;
+    let (young, young_prefix) = stored_photo(&app, ada, 'e').await;
+    personal(young).await;
+    // Unused for 8 days but chosen again since: kept, mark cleared.
+    let (again, again_prefix) = stored_photo(&app, ada, 'f').await;
+    personal(again).await;
+    let other = app.work("Ariadne").await.id;
+    exec(
+        &app.db,
+        "INSERT INTO shelf_entries (user_id, work_id, status, cover_media_id)
+         VALUES ({ada}, {work}, 'finished', {photo})",
+        &[("ada", ada), ("work", other), ("photo", again)],
+    )
+    .await;
+    // Unused for 8 days, but an open report names it: kept for the admin.
+    let (reported, reported_prefix) = stored_photo(&app, ada, 'g').await;
+    personal(reported).await;
+    report(&app.db, (reported, work, root), "open", "1 day", None).await;
+    // Not personal (a catalog contribution) and unused: never the sweeper's.
+    let (catalog, catalog_prefix) = stored_photo(&app, ada, 'h').await;
+    // Taken down: its row stays.
+    let removed: i64 = sqlx::query_scalar(
+        "INSERT INTO media (public_id, kind, source, uploaded_by, removed_at, personal)
+         VALUES (repeat('i', 26), 'cover', 'upload', $1, now() - interval '9 days', true)
+         RETURNING id",
+    )
+    .bind(ada)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+
+    let mut conn = app.db.acquire().await.unwrap();
+    assert_eq!(
+        auth::sweep_personal_covers(&mut conn, app.media.as_ref())
+            .await
+            .unwrap(),
+        0,
+        "the first sweep only marks"
+    );
+    assert_eq!(
+        ids(
+            &app.db,
+            "SELECT id FROM media WHERE unused_since IS NOT NULL ORDER BY id"
+        )
+        .await,
+        [old, young, reported]
+    );
+    exec(
+        &app.db,
+        "UPDATE media SET unused_since = now() - interval '8 days' WHERE id IN ({old}, {again}, {reported});
+         UPDATE media SET unused_since = now() - interval '6 days' WHERE id = {young}",
+        &[
+            ("old", old),
+            ("again", again),
+            ("reported", reported),
+            ("young", young),
+        ],
+    )
+    .await;
+    assert_eq!(
+        auth::sweep_personal_covers(&mut conn, app.media.as_ref())
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        ids(&app.db, "SELECT id FROM media ORDER BY id").await,
+        [chosen, young, again, reported, catalog, removed]
+    );
+    assert_eq!(
+        ids(
+            &app.db,
+            "SELECT id FROM media WHERE unused_since IS NOT NULL ORDER BY id"
+        )
+        .await,
+        [young, reported]
+    );
+    let keys = app.media.keys();
+    assert!(
+        !keys.iter().any(|key| key.starts_with(&old_prefix)),
+        "the unused photo's files are still there: {keys:?}"
+    );
+    for prefix in [
+        chosen_prefix,
+        young_prefix,
+        again_prefix,
+        reported_prefix,
+        catalog_prefix,
+    ] {
+        assert!(
+            keys.iter().any(|key| key.starts_with(&prefix)),
+            "{prefix} was deleted"
+        );
+    }
 }
 
 /// The hourly job runs `delete_rejected_cover_photos` after `cleanup`: its run at startup deletes

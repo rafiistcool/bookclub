@@ -605,6 +605,7 @@ async fn work_details_for_unknown_book(db: PgPool) {
         "cover_url",
         "cover_thumb_url",
         "cover_public_id",
+        "personal_cover",
         "description",
         "subjects",
         "pages",
@@ -631,7 +632,7 @@ async fn work_details_for_unknown_book(db: PgPool) {
     ] {
         assert!(keys.contains(&key), "missing {key}");
     }
-    assert_eq!(keys.len(), 32);
+    assert_eq!(keys.len(), 33);
 
     // The first view imports the work; later reads are local even without the RAM caches.
     app.state.catalog.clear_caches();

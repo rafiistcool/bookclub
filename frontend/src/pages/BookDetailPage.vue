@@ -19,10 +19,15 @@ import CoverPhotoButton, { sendCoverPhoto, type CoverTarget } from "../component
 import AdminEditionCover from "../components/AdminEditionCover.vue";
 import BookActionsSheet, { type BookAction } from "../components/BookActionsSheet.vue";
 import CoverPrompt from "../components/CoverPrompt.vue";
+import CoverChooserSheet, {
+  announceCoverChange,
+  sendPersonalCover,
+  type CoverRestore,
+} from "../components/CoverChooserSheet.vue";
 import MergeRequestSheet from "../components/MergeRequestSheet.vue";
 import EditRequestSheet from "../components/EditRequestSheet.vue";
 import { clubsFor } from "../clubActions";
-import { asksForCoverPhoto } from "../covers";
+import { asksForCoverPhoto, personalCoverKey } from "../covers";
 import { worthRetrying } from "../retry";
 import {
   bookPath,
@@ -76,6 +81,8 @@ const moreOpen = ref(false);
 const moreButton = ref<HTMLButtonElement | null>(null);
 /** An instance admin's list of the work's editions, each with a cover upload. */
 const adminEditionCover = ref(false);
+/** The reader's own cover of the book on their shelf ("Cover wählen"). */
+const choosingCover = ref(false);
 /** A photo chosen in a sheet is uploading; the sheet itself is gone by then. */
 // The work a photo from a sheet is being uploaded for: the page can move to
 // another book (Back) while it runs, and that book is not uploading.
@@ -117,13 +124,25 @@ function syncDrafts(detail: BookDetail) {
  */
 const coverPrompted = computed(() => (book.value ? asksForCoverPhoto(book.value) : false));
 
-/** A photo became the cover: show it without reloading the page. */
+/**
+ * A photo became the book's cover: show it without reloading the page. A
+ * reader with their own cover keeps seeing theirs, so then nothing changes.
+ */
 function adoptCover(updated: BookOut) {
   const detail = book.value;
-  if (!detail) return;
+  if (!detail || detail.personal_cover) return;
   detail.cover_url = updated.cover_url;
   detail.cover_thumb_url = updated.cover_thumb_url;
   detail.cover_public_id = updated.cover_public_id;
+}
+
+/** The reader chose a cover (or went back to the standard one): the entry's book carries it. */
+function adoptEntryCover(detail: BookDetail, item: ShelfItem) {
+  if (detail.shelf_id !== item.id) return;
+  detail.cover_url = item.book.cover_url;
+  detail.cover_thumb_url = item.book.cover_thumb_url;
+  detail.cover_public_id = item.book.cover_public_id;
+  detail.personal_cover = Boolean(item.personal_cover);
 }
 
 /** Copy the viewer's shelf entry onto the page after a write. */
@@ -167,6 +186,7 @@ async function load() {
   reporting.value = null;
   moreOpen.value = false;
   adminEditionCover.value = false;
+  choosingCover.value = false;
   loadAbort?.abort();
   if (target.kind === "invalid") {
     book.value = null;
@@ -358,6 +378,8 @@ async function setRatingVisibility(event: Event) {
 async function remove() {
   const detail = book.value;
   if (!detail?.shelf_id) return;
+  // The reader's own cover goes with the entry; Undo chooses it again.
+  const coverKey = personalCoverKey(detail);
   const previous = {
     work_id: detail.id,
     edition_id: detail.edition_id,
@@ -380,16 +402,72 @@ async function remove() {
     detail.dnf_reason = "";
     detail.progress = null;
     syncDrafts(detail);
+    if (coverKey) void showStandardCover(detail);
     toast.show(t("book.removed"), {
       label: t("common.undo"),
       run: async () => {
-        adoptEntry(detail, await api.addToShelf(previous));
+        const item = await api.addToShelf(previous);
+        adoptEntry(detail, item);
+        if (coverKey) await reapplyCover(detail, item.id, coverKey);
       },
     });
   } catch (err) {
     toast.show(err instanceof ApiError ? err.message : t("shelf.removeFailed"));
   } finally {
     busy.value = false;
+  }
+}
+
+/** Off the shelf, the page shows the cover everyone sees again. */
+async function showStandardCover(detail: BookDetail) {
+  detail.personal_cover = false;
+  try {
+    const fresh = await api.book(detail.id);
+    // Added back meanwhile (Undo): the entry's cover is the page's again.
+    if (detail.shelf_id !== null) return;
+    detail.cover_url = fresh.cover_url;
+    detail.cover_thumb_url = fresh.cover_thumb_url;
+    detail.cover_public_id = fresh.cover_public_id;
+  } catch {
+    /* Cosmetic; the next load catches up. */
+  }
+}
+
+/** Undo of a removal: the entry is back, and so is the reader's own cover. */
+async function reapplyCover(detail: BookDetail, entryId: number, key: string) {
+  try {
+    adoptEntryCover(detail, await api.chooseCover(entryId, key));
+  } catch (err) {
+    toast.show(err instanceof ApiError ? err.message : t("coverChoice.undoFailed"));
+  }
+}
+
+/** The chooser saved a cover: show it, with an Undo that puts the previous one back. */
+function onCoverChanged(item: ShelfItem, restore: CoverRestore | null) {
+  const detail = book.value;
+  if (!detail) return;
+  adoptEntryCover(detail, item);
+  announceCoverChange(item.id, restore, (restored) => {
+    if (book.value === detail) adoptEntryCover(detail, restored);
+  });
+}
+
+/** "Own photo" in the chooser: it closed at once; the page scans and uploads the photo. */
+async function onPersonalPhoto(file: File, restore: CoverRestore | null) {
+  const detail = book.value;
+  await closeSheets();
+  const entryId = detail?.shelf_id;
+  if (!detail || entryId == null) return;
+  if (coverUploadFor.value !== null) {
+    toast.show(t("cover.waitForUpload"));
+    return;
+  }
+  coverUploadFor.value = detail.id;
+  try {
+    const item = await sendPersonalCover(entryId, file);
+    if (item && book.value === detail) onCoverChanged(item, restore);
+  } finally {
+    coverUploadFor.value = null;
   }
 }
 
@@ -473,6 +551,7 @@ async function adminEditionSaved() {
 async function closeSheets() {
   moreOpen.value = false;
   adminEditionCover.value = false;
+  choosingCover.value = false;
   await nextTick();
   moreButton.value?.focus({ preventScroll: true });
 }
@@ -492,6 +571,7 @@ async function onMoreAction(action: BookAction) {
   else if (action === "admin-edit") adminEditing.value = "work";
   else if (action === "admin-edition") await editEditionAsAdmin();
   else if (action === "admin-edition-cover") adminEditionCover.value = true;
+  else if (action === "choose-cover") choosingCover.value = true;
 }
 
 /**
@@ -939,6 +1019,17 @@ watch(param, load);
       @act="onMoreAction"
       @picked="onMorePicked"
       @close="moreOpen = false"
+    />
+    <CoverChooserSheet
+      v-if="choosingCover && book?.shelf_id != null"
+      :entry-id="book.shelf_id"
+      :work-id="book.id"
+      :title="shownTitle"
+      :personal-cover="Boolean(book.personal_cover)"
+      :cover-public-id="book.cover_public_id"
+      @changed="onCoverChanged"
+      @picked="onPersonalPhoto"
+      @close="closeSheets"
     />
     <AdminEditionCover
       v-if="adminEditionCover && book && session.user?.is_admin"

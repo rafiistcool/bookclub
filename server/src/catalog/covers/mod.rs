@@ -8,7 +8,10 @@
 //! - [`dead`]: Open Library pictures that failed, fetched again and, when gone, cleared.
 //! - [`job`]: the background search every 10 minutes, with its breaker.
 //! - [`admin`]: the admin's suggestions, the books without a cover and "Search now".
+//! - [`choice`]: the covers a reader can choose for a book on their shelf
+//!   (docs/phase3/notes/cover-choice.md).
 pub mod admin;
+pub mod choice;
 pub mod dead;
 pub mod job;
 pub mod matching;

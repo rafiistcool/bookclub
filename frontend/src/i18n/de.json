@@ -769,7 +769,8 @@
     "invalidValueFor": "Dieser Wert für „{field}“ geht nicht",
     "reportedBookMerged": "Dieses Buch wurde seit der Meldung mit einem anderen zusammengeführt. Schließ die Meldung und korrigiere das andere Buch mit „Als Admin bearbeiten“, falls es den gemeldeten Text übernommen hat.",
     "pictureGone": "Das gemeldete Bild ist nicht mehr online: Wer es hochgeladen hat, hat es ersetzt oder gelöscht. Schließ die Meldung.",
-    "coverExists": "Dieses Buch hat inzwischen ein Cover."
+    "coverExists": "Dieses Buch hat inzwischen ein Cover.",
+    "coverNotChoosable": "Dieses Cover ist nicht mehr verfügbar."
   },
   "physicalShelf": {
     "title": "Dein Bücherregal",
@@ -1706,5 +1707,25 @@
     "photoSaved": "Profilbild gespeichert",
     "photoRemoved": "Profilbild entfernt",
     "photoFailed": "Bild konnte nicht gespeichert werden"
+  },
+  "coverChoice": {
+    "title": "Cover wählen",
+    "ownPhoto": "Eigenes Foto",
+    "standard": "Standard-Cover",
+    "standardHint": "Das Cover, das alle sehen",
+    "blurb": "Gilt nur für dich und für alle, die dein Regal ansehen.",
+    "changed": "Cover geändert",
+    "loadFailed": "Die Cover konnten nicht geladen werden.",
+    "none": "Keine weiteren Cover gefunden. Ein eigenes Foto geht immer.",
+    "partial": "Nicht jede Quelle hat geantwortet; später gibt es vielleicht mehr.",
+    "failed": "Das Cover konnte nicht gespeichert werden.",
+    "undoFailed": "Dein voriges Cover konnte nicht zurückgeholt werden.",
+    "source": {
+      "catalog": "Katalog",
+      "openlibrary": "Open Library",
+      "dnb_portal": "Verlag",
+      "photo": "Dein Foto"
+    },
+    "chosen": "Gewählt"
   }
 }

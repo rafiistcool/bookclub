@@ -373,6 +373,95 @@ pub fn map_cover_docs(docs: &Value) -> Vec<CoverDoc> {
     out
 }
 
+/// Editions per `works/{id}/editions.json` request of the cover choice.
+pub const WORK_EDITIONS_LIMIT: u32 = 50;
+
+/// One Open Library edition with a cover, as the cover choice lists it
+/// (docs/phase3/notes/cover-choice.md).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OlEditionCover {
+    /// The edition's first positive cover id.
+    pub cover_id: i64,
+    /// The cleaned title (with its subtitle after `": "`), when it has one.
+    pub title: Option<String>,
+    /// The first publisher.
+    pub publisher: Option<String>,
+    /// The first four-digit year of `publish_date` (−5000..3000).
+    pub year: Option<i32>,
+    /// The first language as a MARC code (`/languages/ger` → `ger`).
+    pub language: Option<String>,
+    /// The first valid ISBN-13 (or ISBN-10, converted).
+    pub isbn13: Option<String>,
+}
+
+/// The first four-digit number of a free-text `publish_date` (`"March 3, 1999"`, `"1999"`).
+fn publish_year(value: Option<&Value>) -> Option<i32> {
+    let date = text(value);
+    let bytes = date.as_bytes();
+    (0..bytes.len().saturating_sub(3))
+        .find(|&at| {
+            bytes[at..at + 4].iter().all(u8::is_ascii_digit)
+                && (at == 0 || !bytes[at - 1].is_ascii_digit())
+                && bytes.get(at + 4).is_none_or(|b| !b.is_ascii_digit())
+        })
+        .and_then(|at| date[at..at + 4].parse::<i32>().ok())
+        .filter(|year| (-5000..=3000).contains(year))
+}
+
+/// Maps the `entries` of `works/{id}/editions.json`, leniently: non-objects and editions
+/// without a positive cover id are skipped, and a cover id seen before is skipped too (the
+/// first edition with it wins).
+pub fn map_edition_covers(entries: &Value) -> Vec<OlEditionCover> {
+    let Value::Array(items) = entries else {
+        return Vec::new();
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for item in items.iter().filter(|item| item.is_object()) {
+        let Some(cover_id) = item.get("covers").and_then(|c| first_positive_cover(&[c])) else {
+            continue;
+        };
+        if !seen.insert(cover_id) {
+            continue;
+        }
+        let title = clean_text(item.get("title"), 1000);
+        let subtitle = clean_text(item.get("subtitle"), 1000);
+        let title = match (title.is_empty(), subtitle.is_empty()) {
+            (true, _) => None,
+            (false, true) => Some(title),
+            (false, false) => Some(format!("{title}: {subtitle}")),
+        };
+        let first = |key: &str| match item.get(key) {
+            Some(Value::Array(values)) => values.first().cloned(),
+            Some(value @ Value::String(_)) => Some(value.clone()),
+            _ => None,
+        };
+        let publisher =
+            Some(clean_text(first("publishers").as_ref(), 300)).filter(|p| !p.is_empty());
+        let language = first("languages")
+            .and_then(|language| {
+                language
+                    .get("key")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .and_then(|key| key.rsplit('/').next().map(str::to_owned))
+            .filter(|code| code.len() == 3 && code.bytes().all(|b| b.is_ascii_lowercase()));
+        let isbn13 = doc_isbn(item.get("isbn_13"))
+            .or_else(|| doc_isbn(item.get("isbn_10")))
+            .map(|isbn| isbn.as_str().to_owned());
+        out.push(OlEditionCover {
+            cover_id,
+            title,
+            publisher,
+            year: publish_year(item.get("publish_date")),
+            language,
+            isbn13,
+        });
+    }
+    out
+}
+
 /// `num_found` (or `numFound`) of a search payload; non-numeric → 0.
 pub fn num_found(payload: &Value) -> i64 {
     let raw = match payload.get("num_found") {
@@ -697,6 +786,42 @@ impl CatalogService {
         let url = self.ol_url(&format!("works/{ol_work_id}.json"));
         self.ol_json(format!("work|{ol_work_id}"), url, bypass, |_| true)
             .await
+    }
+
+    /// `works/{id}/editions.json?limit=50`: the editions of an Open Library work that have a
+    /// cover, for the cover choice (docs/phase3/notes/cover-choice.md). Through the response
+    /// cache (18 hours, coalesced) and the `ol_api` throttle like every Open Library call; an
+    /// answer without editions is not cached. `Err(Fetch::Missing)` for an unknown work.
+    pub async fn ol_work_editions(&self, ol_work_id: &str) -> Result<Vec<OlEditionCover>, Fetch> {
+        let mut url = self.ol_url(&format!("works/{ol_work_id}/editions.json"));
+        url.query_pairs_mut()
+            .append_pair("limit", &WORK_EDITIONS_LIMIT.to_string());
+        let payload = self
+            .ol_json(
+                format!("work-editions|{ol_work_id}"),
+                url,
+                false,
+                |payload| has_items(payload, "entries"),
+            )
+            .await?;
+        Ok(payload
+            .get("entries")
+            .map(map_edition_covers)
+            .unwrap_or_default())
+    }
+
+    /// Whether [`CatalogService::ol_work_editions`] of `ol_work_id` would be answered from the
+    /// cache, without asking Open Library.
+    pub async fn ol_work_editions_cached(&self, ol_work_id: &str) -> bool {
+        self.json
+            .get(&format!("work-editions|{ol_work_id}"))
+            .await
+            .is_some()
+    }
+
+    /// Whether [`CatalogService::ol_work`] of `ol_work_id` would be answered from the cache.
+    pub async fn ol_work_cached(&self, ol_work_id: &str) -> bool {
+        self.json.get(&format!("work|{ol_work_id}")).await.is_some()
     }
 
     /// The search doc of one work (`q=key:/works/{id}`, [`WORK_SEARCH_FIELDS`]); best effort:

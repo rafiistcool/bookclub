@@ -18,6 +18,7 @@ use sqlx::PgConnection;
 use time::{OffsetDateTime, UtcOffset};
 use utoipa::{IntoParams, ToSchema};
 
+use super::cover::{apply_personal_cover, personal_covers};
 use super::{OwnerQuery, resolve_owner};
 use crate::AppState;
 use crate::auth::extract::CurrentUser;
@@ -403,6 +404,9 @@ struct YearTotals {
     ratings: Vec<i32>,
     top: Option<BookRef>,
     longest: Option<BookRef>,
+    /// The entries behind `top` and `longest`: their owner's personal cover choice shows.
+    top_entry: Option<i64>,
+    longest_entry: Option<i64>,
     quotes: i64,
 }
 
@@ -415,10 +419,12 @@ fn year_totals(log: &ReadingLog, owner: i64, year: i32) -> YearTotals {
         ratings: Vec::new(),
         top: None,
         longest: None,
+        top_entry: None,
+        longest_entry: None,
         quotes: log.quotes.get(&(owner, year)).copied().unwrap_or(0),
     };
     let mut top: Option<(i32, i64, BookRef)> = None;
-    let mut longest: Option<(i64, BookRef)> = None;
+    let mut longest: Option<(i64, BookRef, i64)> = None;
     for entry in log
         .entries
         .iter()
@@ -438,12 +444,14 @@ fn year_totals(log: &ReadingLog, owner: i64, year: i32) -> YearTotals {
             }
         }
         // The first entry with the most pages wins a tie (entries are in id order).
-        if entry.pages > 0 && longest.is_none_or(|(most, _)| entry.pages > most) {
-            longest = Some((entry.pages, entry.book()));
+        if entry.pages > 0 && longest.is_none_or(|(most, _, _)| entry.pages > most) {
+            longest = Some((entry.pages, entry.book(), entry.id));
         }
     }
     totals.top = top.map(|(_, _, book)| book);
-    totals.longest = longest.map(|(_, book)| book);
+    totals.top_entry = top.map(|(_, id, _)| id);
+    totals.longest = longest.map(|(_, book, _)| book);
+    totals.longest_entry = longest.map(|(_, _, id)| id);
     totals
 }
 
@@ -464,7 +472,18 @@ async fn member_years(
         .flat_map(|t| t.top.into_iter().chain(t.longest))
         .collect();
     let books = book_outs(conn, &refs).await?;
-    let book = |r: Option<BookRef>| r.and_then(|r| books.get(&r).cloned());
+    let entry_ids: Vec<i64> = totals
+        .iter()
+        .flat_map(|t| t.top_entry.into_iter().chain(t.longest_entry))
+        .collect();
+    let personal = personal_covers(conn, &entry_ids).await?;
+    let book = |r: Option<BookRef>, entry: Option<i64>| {
+        let mut book = r.and_then(|r| books.get(&r).cloned())?;
+        if let Some(cover) = entry.and_then(|id| personal.get(&id)) {
+            apply_personal_cover(&mut book, cover);
+        }
+        Some(book)
+    };
     Ok(owners
         .iter()
         .zip(totals)
@@ -476,8 +495,8 @@ async fn member_years(
                 pages: totals.pages,
                 average_rating: mean(&totals.ratings),
                 five_stars: totals.ratings.iter().filter(|&&r| r == 5).count() as i64,
-                top_book: book(totals.top),
-                longest_book: book(totals.longest),
+                top_book: book(totals.top, totals.top_entry),
+                longest_book: book(totals.longest, totals.longest_entry),
                 quotes: totals.quotes,
             };
             (member, totals)

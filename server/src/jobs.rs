@@ -42,8 +42,8 @@ pub fn spawn_all(state: AppState, shutdown: CancellationToken) -> JoinSet<()> {
     jobs
 }
 
-/// Runs `auth::cleanup`, then `auth::delete_rejected_cover_photos` (it needs the media store),
-/// every hour until `shutdown`.
+/// Runs `auth::cleanup`, then `auth::delete_rejected_cover_photos` and
+/// `auth::sweep_personal_covers` (both need the media store), every hour until `shutdown`.
 async fn auth_cleanup_loop(state: AppState, shutdown: CancellationToken) {
     let mut every = tokio::time::interval(CLEANUP_EVERY);
     every.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -62,6 +62,8 @@ async fn auth_cleanup_loop(state: AppState, shutdown: CancellationToken) {
                     auth::cleanup(conn).await?;
                     let photos = auth::delete_rejected_cover_photos(conn, media.as_ref()).await?;
                     tracing::info!(photos, "deleted the photos of rejected cover requests");
+                    let personal = auth::sweep_personal_covers(conn, media.as_ref()).await?;
+                    tracing::info!(personal, "deleted personal cover photos nobody chooses");
                     Ok(())
                 })
             },

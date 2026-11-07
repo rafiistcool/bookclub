@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT public_id, kind, source, content_type, variants, width, height, byte_size,\n                storage_key, created_at, removed_at\n         FROM media\n         WHERE (uploaded_by = $1 OR id = (SELECT avatar_media_id FROM users WHERE id = $1))\n           AND NOT (kind = 'avatar' AND removed_at IS NULL\n                    AND id IS DISTINCT FROM (SELECT avatar_media_id FROM users WHERE id = $1))\n         ORDER BY id",
+  "query": "SELECT public_id, kind, source, content_type, variants, width, height, byte_size,\n                storage_key, created_at, removed_at, personal\n         FROM media\n         WHERE (uploaded_by = $1 OR id = (SELECT avatar_media_id FROM users WHERE id = $1))\n           AND NOT (kind = 'avatar' AND removed_at IS NULL\n                    AND id IS DISTINCT FROM (SELECT avatar_media_id FROM users WHERE id = $1))\n         ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -123,6 +123,17 @@
             "name": "removed_at"
           }
         }
+      },
+      {
+        "ordinal": 11,
+        "name": "personal",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "personal"
+          }
+        }
       }
     ],
     "parameters": {
@@ -141,8 +152,9 @@
       true,
       true,
       false,
-      true
+      true,
+      false
     ]
   },
-  "hash": "391c5b12619f8af3e6ba34e39e7b85b0dfe4ddce5cc5da02bcbdb0ebba2d8ec1"
+  "hash": "a6410025a528e921d8681c0fdeb9126821b05ea3ddf1b73c7c7af32b81f02a4a"
 }
