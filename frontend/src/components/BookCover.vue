@@ -44,6 +44,17 @@ const width = computed(() =>
 const height = computed(() => (width.value ? Math.round(width.value * 1.5) : undefined));
 // The stamped author line of the cloth: the names as the catalog writes them.
 const author = computed(() => props.book.authors?.trim() ?? "");
+// The stamped title shrinks to fit its longest word on one line, so
+// "Persuasion" is never set as "Persuasio-n": hyphenation is no help for a
+// title in another language than the page's, or where the browser has no
+// dictionary.
+const titleFit = computed(() => {
+  const longest = Math.max(0, ...props.book.title.split(/\s+/).map((word) => word.length));
+  if (longest > 14) return "longest-word";
+  if (longest > 12) return "very-long-word";
+  if (longest > 9) return "long-word";
+  return undefined;
+});
 
 function clearRetry() {
   if (retryTimer !== null) clearTimeout(retryTimer);
@@ -91,7 +102,7 @@ onBeforeUnmount(clearRetry);
          binding, the initial alone where a title cannot be set. -->
     <span class="binding-face" aria-hidden="true">
       <span class="monogram">{{ monogram(book.title) }}</span>
-      <span class="binding-title">{{ book.title }}</span>
+      <span class="binding-title" :class="titleFit">{{ book.title }}</span>
       <span class="binding-rule"></span>
       <span v-if="author" class="binding-author">{{ author }}</span>
     </span>

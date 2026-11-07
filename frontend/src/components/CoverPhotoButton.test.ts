@@ -120,7 +120,9 @@ describe("CoverPhotoButton", () => {
       props: { workId: 9, editionId: null, hasCover: true, admin: true, pickOnly: true, look: "row", label: "Set cover as admin" },
     });
     expect(wrapper.element.tagName).toBe("LABEL");
-    expect(wrapper.classes()).toEqual(expect.arrayContaining(["btn", "btn-ghost", "btn-block"]));
+    expect(wrapper.classes()).toContain("sheet-row");
+    expect(wrapper.classes()).not.toContain("btn");
+    expect(wrapper.get(".sheet-label").text()).toBe("Set cover as admin");
     const picture = new File(["x"], "cover.png", { type: "image/png" });
     await pick(wrapper, picture);
     expect(wrapper.emitted("picked")).toEqual([[picture]]);

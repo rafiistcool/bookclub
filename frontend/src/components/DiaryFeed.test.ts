@@ -48,7 +48,18 @@ async function mountClub(items: DiaryFeedItem[], props: { club?: string; mine?: 
   return mountFeed(props);
 }
 
-async function mountFeed(props: { club?: string; mine?: boolean; pageSize?: number; limit?: number; moreTo?: string } = {}) {
+async function mountFeed(
+  props: {
+    club?: string;
+    mine?: boolean;
+    pageSize?: number;
+    limit?: number;
+    moreTo?: string;
+    heading?: string;
+    headingHidden?: boolean;
+    threadWork?: number | null;
+  } = {},
+) {
   const wrapper = mount(DiaryFeed, {
     props,
     global: {
@@ -138,6 +149,23 @@ describe("DiaryFeed (recently written)", () => {
     expect(scoped.find(".feed-club").exists()).toBe(false);
   });
 
+  it("leaves out the club's posts on the thread the page shows, reading on past a page of them", async () => {
+    const club = { slug: "readers-ab12", name: "Readers" };
+    const threadPost = (id: number) =>
+      feedItem({ club, book: bookOut({ id: 7, title: "Kairos" }), entry: { ...feedItem().entry, id, club } });
+    const otherBook = feedItem({ club, entry: { ...feedItem().entry, id: 3, club } });
+    const diaryEntry = feedItem({ book: bookOut({ id: 7, title: "Kairos" }), entry: { ...feedItem().entry, id: 2 } });
+    diaryFeed
+      .mockResolvedValueOnce({ items: [threadPost(9), threadPost(8)], has_more: true, timezone: "UTC" })
+      .mockResolvedValueOnce({ items: [threadPost(5), otherBook, diaryEntry], has_more: false, timezone: "UTC" });
+    const wrapper = await mountFeed({ club: "readers-ab12", threadWork: 7 });
+    expect(diaryFeed).toHaveBeenNthCalledWith(1, undefined, 8, "readers-ab12");
+    expect(diaryFeed).toHaveBeenNthCalledWith(2, 8, 8, "readers-ab12");
+    // A member's own diary entry on that book is not in the club thread, so it stays.
+    expect(wrapper.findAll(".feed-list > li")).toHaveLength(2);
+    expect(wrapper.find(".feed-load-more").exists()).toBe(false);
+  });
+
   it("dates a note relative to now, counting days in the reader's zone, a club post too", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
@@ -206,6 +234,21 @@ describe("DiaryFeed (recently written)", () => {
       expect(wrapper.find(".feed-load-more").exists()).toBe(false);
     });
 
+    it("keeps the switch on the foot line and sets the book title as a title", async () => {
+      diaryFeed.mockResolvedValue({ items: [own(10)], has_more: false, timezone: "UTC" });
+      const wrapper = await mountFeed({ mine: true });
+      expect(wrapper.find(".feed-foot-row .feed-only-me").exists()).toBe(true);
+      expect(wrapper.get(".feed-head .feed-title").text()).toBe("The Wedding People");
+    });
+
+    it("can keep its heading for screen readers only, under a page title that says it", async () => {
+      diaryFeed.mockResolvedValue({ items: [own(10)], has_more: false, timezone: "UTC" });
+      const wrapper = await mountFeed({ mine: true, heading: "Your entries", headingHidden: true });
+      const heading = wrapper.get(".section-head h2");
+      expect(heading.text()).toBe("Your entries");
+      expect(heading.classes()).toContain("visually-hidden");
+    });
+
     it("switches an entry to only me and back", async () => {
       diaryFeed.mockResolvedValue({ items: [own(10)], has_more: false, timezone: "UTC" });
       editDiaryEntry.mockResolvedValue(post({ id: 10, mine: true, visibility: "only_me" }));
@@ -221,6 +264,30 @@ describe("DiaryFeed (recently written)", () => {
       expect(editDiaryEntry).toHaveBeenLastCalledWith(10, { visibility: "audience" });
       expect(wrapper.find(".only-me-badge").exists()).toBe(false);
     });
+  });
+});
+
+describe("DiaryFeed rows", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    diaryFeed.mockReset();
+  });
+
+  it("keeps each reaction's emoji and count together", async () => {
+    const item = feedItem();
+    item.entry.spoiler_upto = null;
+    item.entry.reactions = [
+      { emoji: "😮", count: 1, mine: false, users: ["ada"] },
+      { emoji: "❤️", count: 2, mine: false, users: ["ada", "bo"] },
+    ];
+    const wrapper = await mountClub([item], { club: "readers-ab12" });
+    expect(wrapper.findAll(".feed-reaction").map((r) => r.text())).toEqual(["😮\u00a01", "❤️\u00a02"]);
+  });
+
+  it("shows rows shaped like the feed while it loads", () => {
+    diaryFeed.mockReturnValue(new Promise(() => {}));
+    const wrapper = mount(DiaryFeed, { global: { plugins: [createPinia(), i18n], stubs: { BookCover: true } } });
+    expect(wrapper.findAll(".skeleton-rows .skeleton-row")).toHaveLength(3);
   });
 });
 

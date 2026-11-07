@@ -80,6 +80,10 @@ describe("ClubDiscussionsPage", () => {
     expect(wrapper.find(".discussions .lede").exists()).toBe(false);
     expect(wrapper.text()).not.toContain("Talk about the current pick");
     expect(wrapper.find('a[href="/c/readers-ab12/discussions"].fine').exists()).toBe(false);
+    // The tab names the page, so the thread is headed by its book.
+    expect(wrapper.get(".thread h2").text()).toBe("Book 1");
+    // The feed below leaves out the posts the thread already shows.
+    expect(wrapper.getComponent({ name: "DiaryFeed" }).props("threadWork")).toBe(bookOut().id);
   });
 
   it("marks an earlier pick's discussion once, with the closed note and a way back", async () => {
@@ -100,5 +104,8 @@ describe("ClubDiscussionsPage", () => {
     expect(wrapper.text()).not.toContain("discussion of an earlier pick");
     expect(wrapper.text()).toContain("This pick is over");
     expect(wrapper.get('.thread > a[href="/c/readers-ab12/discussions"]').text()).toContain("Current pick");
+    // Not the current pick's title over an earlier pick's thread.
+    expect(wrapper.get(".thread h2").text()).toBe(i18n.global.t("discussions.heading"));
+    expect(wrapper.getComponent({ name: "DiaryFeed" }).props("threadWork")).toBeNull();
   });
 });

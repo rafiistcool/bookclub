@@ -19,6 +19,7 @@ import { useSession } from "../../stores/session";
 import { useToast } from "../../stores/toast";
 import BookCover from "../BookCover.vue";
 import CoverPhotoButton from "../CoverPhotoButton.vue";
+import AdminDisclosure from "./AdminDisclosure.vue";
 import { useQueue } from "./useQueue";
 
 /**
@@ -205,10 +206,10 @@ onMounted(() => suggestions.load());
 
 <template>
   <section class="admin-queue admin-covers" aria-labelledby="admin-covers">
-    <div class="section-head">
-      <h2 id="admin-covers">{{ t("admin.covers.title") }}</h2>
-    </div>
-    <p class="fine muted">{{ t("admin.covers.blurb") }}</p>
+    <h2 id="admin-covers" class="visually-hidden">{{ t("admin.covers.title") }}</h2>
+    <AdminDisclosure class="admin-howto" :summary="t('admin.howTo')">
+      <p class="fine muted">{{ t("admin.covers.blurb") }} {{ t("admin.covers.howTo") }}</p>
+    </AdminDisclosure>
 
     <div class="segmented cover-sections" role="group" :aria-label="t('admin.covers.views')">
       <button type="button" :aria-pressed="section === 'suggestions'" @click="showSection('suggestions')">
@@ -222,7 +223,7 @@ onMounted(() => suggestions.load());
     </div>
 
     <template v-if="section === 'suggestions'">
-      <p class="fine subtle">{{ t("admin.covers.suggestionsBlurb") }}</p>
+      <p class="fine muted section-blurb">{{ t("admin.covers.suggestionsBlurb") }}</p>
       <div class="segmented queue-views" role="group" :aria-label="t('admin.views')">
         <button type="button" :aria-pressed="suggestions.view.value === 'open'" @click="showView('open')">
           {{ t("admin.openView") }}
@@ -236,12 +237,20 @@ onMounted(() => suggestions.load());
         {{ suggestions.error.value }}
         <button class="text-btn" type="button" @click="suggestions.load">{{ t("common.tryAgain") }}</button>
       </p>
-      <div v-else-if="!suggestions.loaded.value" class="skeleton admin-skeleton" aria-hidden="true" />
+      <ol v-else-if="!suggestions.loaded.value" class="skeleton-rows admin-skeleton" aria-hidden="true">
+        <li v-for="n in 3" :key="n" class="skeleton-row">
+          <span class="skeleton skeleton-cover-xs" />
+          <span class="skeleton-row-lines">
+            <span class="skeleton skeleton-line short" />
+            <span class="skeleton skeleton-line" />
+          </span>
+        </li>
+      </ol>
       <p v-else-if="suggestions.items.value.length === 0" class="fine subtle">
         {{ suggestions.view.value === "open" ? t("admin.covers.noSuggestions") : t("admin.noHistory") }}
       </p>
       <ol v-else class="admin-list">
-        <li v-for="suggestion in suggestions.items.value" :key="suggestion.id" class="panel admin-item suggestion-item">
+        <li v-for="suggestion in suggestions.items.value" :key="suggestion.id" class="admin-item suggestion-item">
           <p class="admin-item-head fine">
             <span v-if="suggestions.view.value === 'resolved'" class="badge" :class="`status-${suggestion.status}`">
               {{ coverStatusLabel(suggestion.status) }}
@@ -256,7 +265,7 @@ onMounted(() => suggestions.load());
               <RouterLink v-if="suggestion.book" :to="bookPath(suggestion.book)" class="compare-book">
                 <BookCover :book="suggestion.book" size="md" />
                 <span class="compare-text">
-                  <strong>{{ suggestion.book.title }}</strong>
+                  <span class="admin-book-title">{{ suggestion.book.title }}</span>
                   <span v-if="suggestion.book.authors" class="fine subtle">{{ suggestion.book.authors }}</span>
                 </span>
               </RouterLink>
@@ -272,7 +281,7 @@ onMounted(() => suggestions.load());
                 />
                 <span v-else class="finer subtle no-picture">{{ t("admin.covers.noCandidatePicture") }}</span>
                 <span class="compare-text">
-                  <strong>{{ suggestion.title }}</strong>
+                  <span class="admin-book-title">{{ suggestion.title }}</span>
                   <span v-if="suggestion.authors" class="fine subtle">{{ suggestion.authors }}</span>
                   <span v-if="candidateFacts(suggestion)" class="finer subtle">{{ candidateFacts(suggestion) }}</span>
                   <a
@@ -343,7 +352,7 @@ onMounted(() => suggestions.load());
     </template>
 
     <template v-else>
-      <p class="fine subtle">{{ t("admin.covers.missingBlurb") }}</p>
+      <p class="fine muted section-blurb">{{ t("admin.covers.missingBlurb") }}</p>
       <div class="segmented queue-views" role="group" :aria-label="t('admin.covers.scope')">
         <button type="button" :aria-pressed="missing.view.value === 'in_use'" @click="missing.show('in_use')">
           {{ t("admin.covers.scopeInUse") }}
@@ -357,14 +366,22 @@ onMounted(() => suggestions.load());
         {{ missing.error.value }}
         <button class="text-btn" type="button" @click="missing.load">{{ t("common.tryAgain") }}</button>
       </p>
-      <div v-else-if="!missing.loaded.value" class="skeleton admin-skeleton" aria-hidden="true" />
+      <ol v-else-if="!missing.loaded.value" class="skeleton-rows admin-skeleton" aria-hidden="true">
+        <li v-for="n in 3" :key="n" class="skeleton-row">
+          <span class="skeleton skeleton-cover-xs" />
+          <span class="skeleton-row-lines">
+            <span class="skeleton skeleton-line short" />
+            <span class="skeleton skeleton-line" />
+          </span>
+        </li>
+      </ol>
       <p v-else-if="missing.items.value.length === 0" class="fine subtle">{{ t("admin.covers.noMissing") }}</p>
       <ol v-else class="admin-list">
-        <li v-for="row in missing.items.value" :key="row.id" class="panel admin-item missing-item">
+        <li v-for="row in missing.items.value" :key="row.id" class="admin-item missing-item">
           <div class="missing-book">
             <BookCover :book="row.book" size="sm" />
             <span class="compare-text">
-              <strong>{{ row.book.title }}</strong>
+              <span class="admin-book-title">{{ row.book.title }}</span>
               <span v-if="row.book.authors" class="fine subtle">{{ row.book.authors }}</span>
               <span v-if="row.in_use || row.imported" class="missing-badges">
                 <span v-if="row.in_use" class="badge">{{ t("admin.covers.inUse") }}</span>
@@ -413,38 +430,15 @@ onMounted(() => suggestions.load());
 <style scoped>
 .cover-sections {
   max-width: 26rem;
-  margin: var(--space-3) 0;
+  margin: var(--space-2) 0 var(--space-3);
 }
 
-.queue-views {
-  max-width: 22rem;
-  margin: var(--space-3) 0;
-}
-
-.admin-skeleton {
-  height: 160px;
-}
-
-.admin-list {
-  list-style: none;
-  margin: var(--space-3) 0 0;
-  padding: 0;
-  display: grid;
-  gap: var(--space-3);
-}
-
-.admin-item {
-  display: grid;
-  gap: var(--space-3);
-  min-width: 0;
-}
-
-.admin-item-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
+.section-blurb {
   margin: 0;
+}
+
+.compare-side figcaption {
+  font-weight: 600;
 }
 
 .badge.status-approved {
@@ -475,12 +469,6 @@ onMounted(() => suggestions.load());
   gap: var(--space-2);
   min-width: 0;
   margin: 0;
-}
-
-.compare-side figcaption {
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  font-weight: 700;
 }
 
 .compare-book {
@@ -531,9 +519,5 @@ onMounted(() => suggestions.load());
   padding: 0;
   list-style: none;
   color: var(--text-muted);
-}
-
-.load-more {
-  margin-top: var(--space-3);
 }
 </style>

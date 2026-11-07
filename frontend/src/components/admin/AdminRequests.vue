@@ -193,9 +193,7 @@ onMounted(load);
 
 <template>
   <section class="admin-queue" aria-labelledby="admin-requests">
-    <div class="section-head">
-      <h2 id="admin-requests">{{ t("admin.requests") }}</h2>
-    </div>
+    <h2 id="admin-requests" class="visually-hidden">{{ t("admin.requests") }}</h2>
     <p class="fine muted">{{ t("admin.requestsBlurb") }}</p>
 
     <div class="segmented queue-views" role="group" :aria-label="t('admin.views')">
@@ -207,7 +205,15 @@ onMounted(load);
       {{ error }}
       <button class="text-btn" type="button" @click="load">{{ t("common.tryAgain") }}</button>
     </p>
-    <div v-else-if="!loaded" class="skeleton admin-skeleton" aria-hidden="true" />
+    <ol v-else-if="!loaded" class="skeleton-rows admin-skeleton" aria-hidden="true">
+      <li v-for="n in 3" :key="n" class="skeleton-row">
+        <span class="skeleton skeleton-cover-xs" />
+        <span class="skeleton-row-lines">
+          <span class="skeleton skeleton-line short" />
+          <span class="skeleton skeleton-line" />
+        </span>
+      </li>
+    </ol>
     <p v-else-if="items.length === 0" class="fine subtle">
       {{ view === "open" ? t("admin.noRequests") : t("admin.noHistory") }}
     </p>
@@ -215,26 +221,27 @@ onMounted(load);
       <li
         v-for="request in items"
         :key="request.id"
-        class="panel admin-item request-item"
+        class="admin-item request-item"
         :class="{ overdue: view === 'open' && overdue(request) }"
       >
         <p class="admin-item-head fine">
           <span class="badge">{{ requestKindLabel(request.kind) }}</span>
           <span v-if="view === 'resolved'" class="badge" :class="`status-${request.status}`">{{ t(`admin.status.${request.status}`) }}</span>
-          <span class="subtle">
-            {{ t("admin.byOn", { name: request.created_by?.username ?? t("admin.someone"), when: when(request.created_at) }) }}
-          </span>
+          <!-- An open request says how long it has waited; the date is its title, so the line stays one row. -->
           <template v-if="view === 'open'">
-            <span class="age subtle">{{ t("admin.waiting", { age: waited(request) }) }}</span>
+            <span class="subtle">{{ request.created_by?.username ?? t("admin.someone") }} · <span class="age" :title="when(request.created_at)">{{ t("admin.waiting", { age: waited(request) }) }}</span></span>
             <span v-if="overdue(request)" class="badge overdue-badge">{{ t("admin.overdue") }}</span>
           </template>
+          <span v-else class="subtle">
+            {{ t("admin.byOn", { name: request.created_by?.username ?? t("admin.someone"), when: when(request.created_at) }) }}
+          </span>
         </p>
 
         <div class="admin-book">
           <RouterLink v-if="request.book" :to="bookPath(request.book)" class="admin-book-link">
             <BookCover :book="request.book" size="sm" />
             <span>
-              <strong>{{ request.book.title }}</strong>
+              <span class="admin-book-title">{{ request.book.title }}</span>
               <span v-if="request.book.authors" class="fine subtle">{{ request.book.authors }}</span>
               <span v-if="request.edition_id" class="finer subtle">{{ t("admin.edition", { id: request.edition_id }) }}</span>
             </span>
@@ -275,7 +282,7 @@ onMounted(load);
           <RouterLink v-if="extraBooks[mergeTarget(request)!]" :to="bookPath(mergeTarget(request)!)" class="admin-book-link">
             <BookCover :book="extraBooks[mergeTarget(request)!]!" size="sm" />
             <span>
-              <strong>{{ extraBooks[mergeTarget(request)!]!.title }}</strong>
+              <span class="admin-book-title">{{ extraBooks[mergeTarget(request)!]!.title }}</span>
               <span v-if="extraBooks[mergeTarget(request)!]!.authors" class="fine subtle">{{ extraBooks[mergeTarget(request)!]!.authors }}</span>
             </span>
           </RouterLink>
@@ -334,55 +341,11 @@ onMounted(load);
 </template>
 
 <style scoped>
-.queue-views {
-  max-width: 22rem;
-  margin: var(--space-3) 0;
-}
-
-.admin-skeleton {
-  height: 160px;
-}
-
-.admin-item.overdue {
-  border-color: var(--danger-border);
-}
-
-.overdue-badge {
-  color: var(--danger);
-  background: transparent;
-  box-shadow: inset 0 0 0 1px var(--danger-border);
-}
-
 .badge.status-rejected {
   color: var(--danger);
 }
 
 .decision {
-  margin: 0;
-}
-
-.load-more {
-  margin-top: var(--space-3);
-}
-
-.admin-list {
-  list-style: none;
-  margin: var(--space-3) 0 0;
-  padding: 0;
-  display: grid;
-  gap: var(--space-3);
-}
-
-.admin-item {
-  display: grid;
-  gap: var(--space-3);
-}
-
-.admin-item-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
   margin: 0;
 }
 
@@ -395,7 +358,7 @@ onMounted(load);
 
 .admin-book-link {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-3);
   min-width: 0;
   color: inherit;
@@ -419,7 +382,7 @@ onMounted(load);
 
 .proposed-cover {
   display: grid;
-  justify-items: center;
+  justify-items: start;
   gap: var(--space-1);
   margin: 0;
 }

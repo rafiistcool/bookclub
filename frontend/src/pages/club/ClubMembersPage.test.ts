@@ -65,7 +65,7 @@ async function mountAs(role: "owner" | "admin" | "member", me: string, invites =
 
 function manageButtonsFor(wrapper: Awaited<ReturnType<typeof mountAs>>["wrapper"]): string[] {
   return wrapper
-    .findAll(".member-card")
+    .findAll(".member-row")
     .filter((row) => row.find(".manage-btn").exists())
     .map((row) => row.get(".member-meta strong").text());
 }
@@ -80,7 +80,7 @@ describe("ClubMembersPage", () => {
 
   it("lists everyone, the viewer included, and hides admin actions from members", async () => {
     const { wrapper } = await mountAs("member", "mia");
-    expect(wrapper.findAll(".member-card")).toHaveLength(4);
+    expect(wrapper.findAll(".member-row")).toHaveLength(4);
     expect(wrapper.get(".is-you").text()).toContain("mia");
     // The viewer's own row opens their profile.
     expect(wrapper.get(".is-you .member-link").attributes("href")).toBe("/me");
@@ -94,13 +94,13 @@ describe("ClubMembersPage", () => {
 
   it("sums up each member in one line: badges, since when, and how many books they read", async () => {
     const { wrapper } = await mountAs("member", "mia");
-    const card = (name: string) => wrapper.findAll(".member-card").find((row) => row.get(".member-meta strong").text() === name)!;
+    const card = (name: string) => wrapper.findAll(".member-row").find((row) => row.get(".member-meta strong").text() === name)!;
     // Under the name there is exactly one line.
     for (const row of wrapper.findAll(".member-meta")) expect(row.findAll(".finer")).toHaveLength(1);
 
     const olga = card("olga").get(".member-line");
     expect(olga.findAll(".badge").map((badge) => badge.text())).toEqual(["Owner"]);
-    expect(olga.get(".member-facts").text()).toMatch(/^Since .*2026$/);
+    expect(olga.findAll(".member-facts .fact").map((fact) => fact.text())).toEqual([expect.stringMatching(/^Since .*2026$/)]);
 
     const mia = card("mia").get(".member-line");
     expect(mia.findAll(".badge").map((badge) => badge.text())).toEqual(["You"]);
@@ -126,8 +126,13 @@ describe("ClubMembersPage", () => {
 
     const [adam, mia] = wrapper.findAll(".member-line");
     expect(adam!.findAll(".badge").map((badge) => badge.text())).toEqual(["Admin"]);
-    expect(adam!.get(".member-facts").text()).toMatch(/^Since .* · reading 2$/);
-    expect(mia!.get(".member-facts").text()).toMatch(/^Since [^·]*$/);
+    // Each fact wraps as a unit; the dot between them comes from CSS, so a
+    // wrapped line never starts with one.
+    expect(adam!.findAll(".member-facts .fact").map((fact) => fact.text())).toEqual([
+      expect.stringMatching(/^Since .*2026$/),
+      "reading 2",
+    ]);
+    expect(mia!.findAll(".member-facts .fact").map((fact) => fact.text())).toEqual([expect.stringMatching(/^Since [^·]*$/)]);
   });
 
   it("lets admins remove members only, and manage invites", async () => {
@@ -150,7 +155,7 @@ describe("ClubMembersPage", () => {
 
     // An admin removes a member after a second, confirming tap.
     api.removeMember.mockResolvedValue(undefined);
-    const mia = wrapper.findAll(".member-card").find((row) => row.text().includes("mia"))!;
+    const mia = wrapper.findAll(".member-row").find((row) => row.text().includes("mia"))!;
     await mia.get(".manage-btn").trigger("click");
     const sheet = wrapper.get(".sheet");
     expect(sheet.text()).not.toContain("Make admin");
@@ -168,10 +173,13 @@ describe("ClubMembersPage", () => {
       invite({ id: 6, code: "GGGG6666GG", created_by: "olga", personal: true, invitee: null }),
       invite({ id: 7, code: "HHHH7777HH", created_by: "olga" }),
     ]);
-    const lines = wrapper.findAll(".invite-row:not(.past) .invite-meta .finer").map((line) => line.text());
-    expect(lines[0]).toMatch(/^Personal invite for grace · expires .* · by adam$/);
-    expect(lines[1]).toMatch(/^Personal invite · expires .* · by olga$/);
-    expect(lines[2]).toMatch(/^Single use · expires .* · by olga$/);
+    const lines = wrapper
+      .findAll(".invite-row:not(.past) .invite-meta .facts")
+      .map((line) => line.findAll(".fact").map((fact) => fact.text()));
+    const expires = expect.stringMatching(/^expires .*2026$/);
+    expect(lines[0]).toEqual(["Personal invite for grace", expires, "by adam"]);
+    expect(lines[1]).toEqual(["Personal invite", expires, "by olga"]);
+    expect(lines[2]).toEqual(["Single use", expires, "by olga"]);
     // A personal invite is withdrawn like any other.
     expect(wrapper.findAll(".invite-row:not(.past)")[1]!.text()).toContain("Withdraw");
   });
@@ -181,7 +189,7 @@ describe("ClubMembersPage", () => {
     expect(manageButtonsFor(wrapper)).toEqual(["adam", "mia", "max"]);
     expect(wrapper.text()).not.toContain("Leave the club");
 
-    const adam = wrapper.findAll(".member-card").find((row) => row.text().includes("adam"))!;
+    const adam = wrapper.findAll(".member-row").find((row) => row.text().includes("adam"))!;
     await adam.get(".manage-btn").trigger("click");
     expect(wrapper.get(".sheet").text()).toContain("Make a regular member");
     api.transferClub.mockResolvedValue(clubOut({ role: "admin" }));

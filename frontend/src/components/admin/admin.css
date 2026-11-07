@@ -1,0 +1,96 @@
+/*
+ * What the admin page's queues share (imported by AdminPage.vue, so every
+ * rule sits under .admin-page). The queues are light rows split by
+ * hairlines, as in Settings, not a stack of bordered cards; forms sit flat
+ * under their heading.
+ */
+
+.admin-page .admin-queue > .fine {
+  margin: 0 0 var(--space-1);
+}
+
+.admin-page .admin-howto {
+  margin-bottom: var(--space-2);
+}
+
+.admin-page .admin-howto p {
+  margin: 0;
+}
+
+.admin-page .queue-views {
+  max-width: 22rem;
+  margin: var(--space-3) 0;
+}
+
+.admin-page .admin-list {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+}
+
+.admin-page .admin-item {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-4) 0;
+}
+
+.admin-page .admin-item + .admin-item {
+  border-top: 1px solid var(--border);
+}
+
+/* An overdue item keeps its row and gets a red rule at its start. */
+.admin-page .admin-item.overdue {
+  padding-left: var(--space-3);
+  border-left: 3px solid var(--danger-border);
+}
+
+.admin-page .admin-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  margin: 0;
+}
+
+.admin-page .overdue-badge {
+  color: var(--danger);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--danger-border);
+}
+
+/* A book's title in a queue, in the serif like everywhere else, two lines at most. */
+.admin-page .admin-book-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  font-family: var(--serif);
+  font-size: var(--text-md);
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.admin-page .admin-skeleton {
+  margin-top: var(--space-2);
+}
+
+.admin-page .load-more {
+  margin-top: var(--space-3);
+}
+
+/* A form at the head of a tab (new invite, suspend): flat, closed off by a hairline. */
+.admin-page .admin-form {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-3) 0 var(--space-4);
+  padding-bottom: var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-page .admin-form .field,
+.admin-page .admin-form p {
+  margin: 0;
+}

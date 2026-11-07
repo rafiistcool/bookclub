@@ -6,9 +6,9 @@ import { useLocale } from "../stores/locale";
 import { monthName, monthSeries } from "../stats";
 
 /**
- * Books finished per month of one year: one series, so no legend; the busiest
- * month carries its number, every bar shows its own on hover or focus, and a
- * table beside it says the same for screen readers.
+ * Books finished per month of one year: one series, so no legend; every month
+ * with a book carries its number (the busiest in full weight), and a table
+ * beside it says the same for screen readers. The bars grow in once.
  */
 const props = defineProps<{ year: number; months: readonly MonthCount[] }>();
 
@@ -36,13 +36,13 @@ const rows = computed(() =>
     <div class="plot" aria-hidden="true">
       <div class="bars">
         <span
-          v-for="row in rows"
+          v-for="(row, i) in rows"
           :key="row.month"
           class="bar-col"
           :class="{ peak: row.peak, zero: !row.finished }"
           :title="t('stats.monthFinished', { month: row.long, n: row.finished })"
         >
-          <span class="bar" :style="{ height: row.height }">
+          <span class="bar" :style="{ height: row.height, '--i': i }">
             <span class="bar-value">{{ row.finished }}</span>
           </span>
         </span>
@@ -80,7 +80,7 @@ const rows = computed(() =>
 .labels {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
-  gap: 2px;
+  gap: var(--space-1);
 }
 
 .bars {
@@ -103,9 +103,25 @@ const rows = computed(() =>
 .bar {
   position: relative;
   display: block;
-  width: min(100%, 28px);
+  width: min(64%, 22px);
   background: var(--accent);
-  border-radius: 4px 4px 0 0;
+  border-radius: 3px 3px 0 0;
+  transform-origin: bottom;
+}
+
+/* The page's one moment: the bars rise in turn, once. Without motion they
+   simply stand there (no delay at scale 0 either). */
+@media (prefers-reduced-motion: no-preference) {
+  .bar {
+    animation: bar-in var(--dur-slow) var(--ease-out) both;
+    animation-delay: calc(var(--i, 0) * 30ms);
+  }
+}
+
+@keyframes bar-in {
+  from {
+    transform: scaleY(0);
+  }
 }
 
 .bar-value {
@@ -114,19 +130,19 @@ const rows = computed(() =>
   left: 50%;
   transform: translateX(-50%);
   font-size: var(--text-2xs);
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.1rem;
   color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.bar-col.zero .bar-value {
   visibility: hidden;
 }
 
 .bar-col.peak .bar-value {
-  visibility: visible;
-}
-@media (hover: hover) {
-  .bar-col:not(.zero):hover .bar-value {
-    visibility: visible;
-  }
+  font-weight: 700;
+  color: var(--text);
 }
 
 .labels span {

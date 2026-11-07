@@ -16,6 +16,7 @@ const api: Record<string, ReturnType<typeof vi.fn>> = {
   saveNotifications: vi.fn(),
   dismissEmailPrompt: vi.fn(),
   deleteAccount: vi.fn(),
+  clubs: vi.fn(),
 };
 
 vi.mock("../api/client", () => ({
@@ -131,6 +132,9 @@ describe("the account page", () => {
     const { wrapper } = await mountWith(AccountSettings);
     await wrapper.get(".email-row").trigger("click");
     const form = wrapper.get(".email-sheet form");
+    // The hint sits under the address it is about, inside that field.
+    const hint = form.get("input[type=email]").element.parentElement?.querySelector(".field-hint");
+    expect(hint?.textContent).toContain("stays until");
     await form.get("input[type=email]").setValue("next@example.com");
     await form.get("input[type=password]").setValue("secret pw");
     api.changeEmail.mockResolvedValue(undefined);
@@ -212,6 +216,26 @@ describe("the signed-in devices", () => {
     expect(wrapper.findAll(".session-row")).toHaveLength(1);
   });
 
+  it("puts this device first, and says when each was last used relative to now", async () => {
+    api.sessions.mockResolvedValue({
+      items: [
+        { ...SESSIONS.items[1]!, id: 3, label: "curl/8.5.0", last_used_at: "2026-10-28T09:00:00Z" },
+        SESSIONS.items[0]!,
+        SESSIONS.items[1]!,
+      ],
+    });
+    const { wrapper } = await mountWith(SessionList);
+    const rows = wrapper.findAll(".session-row");
+    expect(rows.map((row) => row.find(".session-here").exists())).toEqual([true, false, false]);
+    expect(rows.slice(1).map((row) => row.get(".session-label").text())).toEqual(["curl/8.5.0", "Phone"]);
+    // The exact time is the title; the line itself stays short.
+    const time = rows[0]!.get("time");
+    expect(time.attributes("datetime")).toBe("2026-10-28T08:00:00Z");
+    expect(time.attributes("title")).toMatch(/2026/);
+    expect(rows[0]!.text()).toMatch(/last used /);
+    expect(rows[0]!.text()).not.toContain(time.attributes("title")!);
+  });
+
   it("signing out this device ends the session here", async () => {
     const { wrapper } = await mountWith(SessionList);
     api.endSession.mockResolvedValue(undefined);
@@ -269,16 +293,33 @@ describe("deleting the account", () => {
     document.body.innerHTML = "";
   });
 
-  it("names the clubs to hand over first and deletes with the password", async () => {
-    const clubs: ClubSummary[] = [
-      { slug: "readers-ab12", name: "Readers", role: "owner", timezone: "UTC", member_count: 3 },
-      { slug: "solo-cd34", name: "Just me", role: "owner", timezone: "UTC", member_count: 1 },
-      { slug: "owls-ef56", name: "Owls", role: "member", timezone: "UTC", member_count: 5 },
-    ];
-    const { wrapper } = await mountWith(DeleteAccount, user({ clubs }));
-    expect(wrapper.get(".owned-clubs").text()).toContain("Readers");
-    expect(wrapper.get(".owned-clubs").text()).not.toContain("Just me");
-    expect(wrapper.get(".owned-clubs").text()).not.toContain("Owls");
+  const CLUBS: ClubSummary[] = [
+    { slug: "readers-ab12", name: "Readers", role: "owner", timezone: "UTC", member_count: 3 },
+    { slug: "solo-cd34", name: "Just me", role: "owner", timezone: "UTC", member_count: 1 },
+    { slug: "owls-ef56", name: "Owls", role: "member", timezone: "UTC", member_count: 5 },
+  ];
+
+  it("names the clubs to hand over first, as rows, and keeps the form shut until then", async () => {
+    api.clubs.mockRejectedValue(new Error("offline"));
+    const { wrapper } = await mountWith(DeleteAccount, user({ clubs: CLUBS }));
+    const owned = wrapper.get(".owned-clubs");
+    expect(owned.findAll(".owned-row").map((row) => row.text())).toEqual(["Readers"]);
+    expect(owned.get(".owned-row").attributes("href")).toBe("/c/readers-ab12/members");
+    expect(owned.text()).not.toContain("Just me");
+    expect(owned.text()).not.toContain("Owls");
+    // No password goes in while a club is in the way: the server would only refuse it.
+    expect(wrapper.get("fieldset").attributes("disabled")).toBeDefined();
+    expect(wrapper.get(".btn-danger").attributes("disabled")).toBeDefined();
+  });
+
+  it("reads the clubs fresh, and deletes with the password once none is in the way", async () => {
+    // The others left Readers since the account was read.
+    api.clubs.mockResolvedValue({ items: CLUBS.map((club) => (club.slug === "readers-ab12" ? { ...club, member_count: 1 } : club)) });
+    const { wrapper } = await mountWith(DeleteAccount, user({ clubs: CLUBS }));
+    await flushPromises();
+    expect(api.clubs).toHaveBeenCalled();
+    expect(wrapper.find(".owned-clubs").exists()).toBe(false);
+    expect(wrapper.get("fieldset").attributes("disabled")).toBeUndefined();
     // Nothing goes before the password is typed.
     expect(wrapper.get(".btn-danger").attributes("disabled")).toBeDefined();
     await wrapper.get("input[type=password]").setValue("my pw");

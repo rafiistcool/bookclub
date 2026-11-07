@@ -55,6 +55,12 @@ watch(includeReading, load);
   <section aria-labelledby="overlap">
     <div class="section-head">
       <h2 id="overlap">{{ t("club.overlap") }}</h2>
+    </div>
+    <p class="fine muted overlap-blurb">
+      {{ includeReading ? t("club.overlapBlurbReading") : t("club.overlapBlurb") }}
+    </p>
+    <!-- Under the blurb, not in the head: there it squeezed the heading onto two lines. -->
+    <div class="overlap-filter">
       <button
         class="chip"
         type="button"
@@ -65,9 +71,6 @@ watch(includeReading, load);
         {{ t("club.includeReading") }}
       </button>
     </div>
-    <p class="fine muted overlap-blurb">
-      {{ includeReading ? t("club.overlapBlurbReading") : t("club.overlapBlurb") }}
-    </p>
 
     <p v-if="error" class="error">{{ error }}</p>
     <div v-else-if="!loaded" class="skeleton overlap-skeleton" aria-hidden="true" />
@@ -117,25 +120,33 @@ watch(includeReading, load);
 
 .overlap-blurb {
   max-width: 62ch;
+  margin-bottom: var(--space-2);
+}
+
+.overlap-filter {
   margin-bottom: var(--space-3);
 }
 
+/* Light rows split by hairlines. */
 .overlap-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  gap: var(--space-2);
 }
 
 .overlap-row {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  padding: var(--space-3) 0;
+}
+
+.overlap-row + .overlap-row {
+  border-top: 1px solid var(--border);
+}
+
+.overlap-row > .btn {
+  flex: none;
 }
 
 .overlap-book {

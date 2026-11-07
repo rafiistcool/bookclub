@@ -215,6 +215,38 @@ describe("AdminPage", () => {
     expect(api.book.mock.calls.map(([id]) => id)).toEqual([31]);
   });
 
+  it("starts with the way back to Settings, and lays the queue out as rows that keep one meta line", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-27T14:00:00Z"));
+    api.adminEditRequestPage.mockResolvedValue(page([editRequest(), editRequest({ id: 2, kind: "cover_replace", cover_thumb_url: "/media/p/s" })]));
+    const { wrapper } = await mountAdmin();
+    expect(wrapper.get(".back-link a").attributes("href")).toBe("/settings");
+    expect(wrapper.get(".back-link a").text()).toBe("← Settings");
+    // No lede, and the tab's heading is for screen readers: the tabs already say it.
+    expect(wrapper.find(".page-head .lede").exists()).toBe(false);
+    expect(wrapper.get("#admin-requests").classes()).toContain("visually-hidden");
+    expect(wrapper.get(".admin-tabs").classes()).not.toContain("segmented");
+    const items = wrapper.findAll(".request-item");
+    expect(items.every((item) => !item.classes().includes("panel"))).toBe(true);
+    // An open request says who and how long; the date is the age's title.
+    const head = items[0]!.get(".admin-item-head");
+    // Who and how long are one span, so the head's flex gap never splits "ada ·" from its age.
+    expect(head.findAll(":scope > span").map((node) => node.text())).toEqual(["Book details", "ada · waiting 4 hours"]);
+    expect(head.get(".age").attributes("title")).toMatch(/2026/);
+    // The title is the serif title line, not bold body text.
+    expect(items[1]!.get(".admin-book-link .admin-book-title").text()).toBe("Circe");
+  });
+
+  it("keeps the how-to of a tab behind a disclosure, under a one-line blurb", async () => {
+    api.adminSuspendedUsers.mockResolvedValue({ items: [] });
+    const { wrapper } = await mountAdmin("/admin?tab=users");
+    const howto = wrapper.get("details.admin-howto");
+    expect(howto.get("summary").text()).toBe("How this works");
+    expect(howto.text()).toContain("the operator does it by hand");
+    expect(wrapper.get(".admin-queue > p.fine").text()).toBe("A suspended account cannot sign in; what it wrote stays.");
+    expect(wrapper.find("form.panel").exists()).toBe(false);
+  });
+
   it("rejects with a note, and drops a request someone else decided", async () => {
     api.adminEditRequestPage.mockResolvedValue(page([editRequest(), editRequest({ id: 2 })]));
     const { wrapper } = await mountAdmin();

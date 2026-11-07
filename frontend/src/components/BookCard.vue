@@ -28,13 +28,13 @@ const monthLabel = computed(() => readingMonthLabel(month.value, locale.value));
     <BookTile :book="item.book" :status="item.status" :rating="item.rating" hide-status
       :club-pick="clubPickIds?.includes(item.book.id)" show-authors />
     <span v-if="readonly" class="shelf-status">
-      <span class="status-label">{{ statusShort(item.status) }}<span v-if="item.status === 'currently_reading' && item.progress != null" class="nums"> {{ item.progress }}%</span></span>
+      <span class="status-label">{{ statusShort(item.status) }}<span v-if="item.status === 'currently_reading' && item.progress != null" class="nums"> {{ t('progress.percent', { n: item.progress }) }}</span></span>
     </span>
     <button v-else class="shelf-status no-drag" type="button"
       :disabled="disabled" aria-haspopup="dialog"
       :aria-label="t('shelf.statusFor', { title: item.book.title, status: statusLabel(item.status) })"
       @click="emit('action', 'status')">
-      <span class="status-label">{{ statusShort(item.status) }}<span v-if="item.status === 'currently_reading' && item.progress != null" class="nums"> {{ item.progress }}%</span></span>
+      <span class="status-label">{{ statusShort(item.status) }}<span v-if="item.status === 'currently_reading' && item.progress != null" class="nums"> {{ t('progress.percent', { n: item.progress }) }}</span></span>
       <ChevronDownIcon class="status-chevron" aria-hidden="true" />
     </button>
     <p v-if="item.status === 'finished'" class="visually-hidden">

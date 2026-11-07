@@ -58,11 +58,14 @@ export const useTheme = defineStore("theme", {
     theme: DEFAULT_THEME as ThemeId,
     mode: DEFAULT_MODE as ColorMode,
     watching: false,
+    /** The OS preference, kept as state so resolvedMode follows a live
+        switch: a getter reading matchMedia directly would stay cached. */
+    systemDark: false,
   }),
   getters: {
     /** The mode actually painted: "system" resolved against the OS. */
     resolvedMode(state): "light" | "dark" {
-      if (state.mode === "system") return prefersDark() ? "dark" : "light";
+      if (state.mode === "system") return state.systemDark ? "dark" : "light";
       return state.mode;
     },
   },
@@ -73,12 +76,14 @@ export const useTheme = defineStore("theme", {
       const mode = read(MODE_KEY);
       if (isTheme(theme)) this.theme = theme;
       if (isMode(mode)) this.mode = mode;
+      this.systemDark = prefersDark();
       this.apply();
       if (this.watching) return;
       this.watching = true;
       window
         .matchMedia("(prefers-color-scheme: dark)")
-        .addEventListener("change", () => {
+        .addEventListener("change", (event) => {
+          this.systemDark = event.matches;
           if (this.mode === "system") this.apply();
         });
     },
@@ -88,7 +93,7 @@ export const useTheme = defineStore("theme", {
       root.setAttribute("data-mode", this.resolvedMode);
       write(THEME_KEY, this.theme);
       write(MODE_KEY, this.mode);
-      applyClubAccent(useService().$state, this.theme);
+      applyClubAccent(useService().$state, this.theme, this.resolvedMode);
       applyThemeColor();
     },
     /** Take the server's stored preference as the source of truth on login. */

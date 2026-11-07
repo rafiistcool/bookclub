@@ -19,7 +19,7 @@ const { t } = useI18n();
         <span class="finer subtle">{{ statusLabel(item.status) }}</span>
         <span v-if="item.status === 'currently_reading' && item.progress != null" class="sheet-progress">
           <span class="progress-track" aria-hidden="true"><span class="progress-fill" :style="{ width: `${item.progress}%` }" /></span>
-          <span class="finer subtle nums">{{ item.progress }}%</span>
+          <span class="finer subtle nums">{{ t('progress.percent', { n: item.progress }) }}</span>
         </span>
       </div>
       <slot />

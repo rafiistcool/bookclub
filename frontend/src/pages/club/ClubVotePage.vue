@@ -96,22 +96,26 @@ onMounted(loadSuggestions);
 </template>
 
 <style scoped>
+/* Light rows split by hairlines, like the nominations above. */
 .suggestion-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  gap: var(--space-2);
 }
 
 .suggestion {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  padding: var(--space-3) 0;
+}
+
+.suggestion + .suggestion {
+  border-top: 1px solid var(--border);
+}
+
+.suggestion > .btn {
+  flex: none;
 }
 
 .suggestion-book {

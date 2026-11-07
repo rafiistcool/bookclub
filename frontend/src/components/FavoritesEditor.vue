@@ -182,7 +182,10 @@ function clearAll() {
   margin: 0;
 }
 
+/* The padding only widens the target: the text lines up with the rows. */
 .fav-clear-all {
+  justify-self: start;
   min-height: var(--tap);
+  margin-inline-start: calc(-1 * var(--space-2));
 }
 </style>

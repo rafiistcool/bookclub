@@ -261,6 +261,76 @@ describe("BookDetailPage", () => {
     expect(two.wrapper.find(".club-rating").exists()).toBe(false);
   });
 
+  it("draws the shelf panel without a card, its other actions as light rows and Remove last", async () => {
+    const club: ClubSummary = { slug: "readers-ab12", name: "Readers", role: "admin", timezone: "UTC", member_count: 3 };
+    book.mockResolvedValue(detail({ shelf_id: 30, on_shelf: "want_to_read" }));
+    const { wrapper } = await mountBook("/book/4", [club]);
+    const panel = wrapper.get(".shelf-panel");
+    expect(panel.classes()).not.toContain("panel");
+    expect(panel.find(".btn-sm").exists()).toBe(false);
+    expect(panel.findAll(".panel-actions button.sheet-row").map((node) => node.text())).toEqual([
+      "Favourite",
+      "Set as club pick",
+      "Nominate for next up",
+    ]);
+    const remove = panel.get("button.remove-btn");
+    expect(remove.text()).toBe("Remove");
+    expect(remove.classes()).toEqual(expect.arrayContaining(["text-btn", "danger"]));
+  });
+
+  it("lists other readers as whole-row links with the locale's percent", async () => {
+    i18n.global.locale.value = "de";
+    book.mockResolvedValue(
+      detail({
+        readers: [
+          { username: "mara", status: "currently_reading", progress: 35, rating: null, avatar_url: null },
+          { username: "jonas", status: "finished", progress: null, rating: 4, avatar_url: null },
+        ],
+      }),
+    );
+    const { wrapper } = await mountBook();
+    const rows = wrapper.findAll(".reader-list li");
+    expect(rows).toHaveLength(2);
+    const link = rows[0]!.get("a.reader-row");
+    expect(link.attributes("href")).toBe("/u/mara");
+    // Avatar, name, badge and progress all sit inside the one link.
+    expect(link.find(".avatar").exists()).toBe(true);
+    expect(link.get(".reader-name").text()).toBe("mara");
+    expect(link.text()).toContain("35 %");
+  });
+
+  it("steps a very long title down a size and keeps each author's name whole", async () => {
+    book.mockResolvedValue(
+      detail({
+        title: "Die unglaubliche, aber größtenteils wahre Geschichte der verschwundenen Leihbücher",
+        authors: "Annegret Feldmann, Jo Brandt",
+        year: 2019,
+      }),
+    );
+    const { wrapper } = await mountBook();
+    expect(wrapper.get("h1.display").classes()).toContain("long-title");
+    expect(wrapper.findAll(".detail-authors .author-name").map((node) => node.text())).toEqual([
+      "Annegret Feldmann",
+      "Jo Brandt",
+    ]);
+    expect(wrapper.get(".detail-authors").text()).toBe("Annegret Feldmann, Jo Brandt · 2019");
+    wrapper.unmount();
+
+    book.mockResolvedValue(detail());
+    const short = await mountBook();
+    expect(short.wrapper.get("h1.display").classes()).not.toContain("long-title");
+  });
+
+  it("holds the page's shape while it loads: title, status control and panel lines", async () => {
+    book.mockReturnValue(new Promise(() => {}));
+    const { wrapper } = await mountBook();
+    const skeleton = wrapper.get(".detail-skeleton");
+    expect(skeleton.attributes("aria-hidden")).toBe("true");
+    expect(skeleton.find(".skeleton-title").exists()).toBe(true);
+    expect(skeleton.find(".skeleton-panel .skeleton-status").exists()).toBe(true);
+    expect(skeleton.findAll(".skeleton-panel .skeleton-line")).toHaveLength(2);
+  });
+
   it("gathers the book's other actions behind one “…” button", async () => {
     book.mockResolvedValue(detail({ custom: false, source: "openlibrary", ol_work_key: "/works/OL4W", can_refresh: true }));
     const { wrapper } = await mountBook();
@@ -280,7 +350,10 @@ describe("BookDetailPage", () => {
     expect(link.attributes("href")).toBe("https://openlibrary.org/works/OL4W");
     expect(link.attributes("target")).toBe("_blank");
     expect(link.attributes("rel")).toBe("noreferrer");
-    expect(sheet.findAll("button.btn").map((node) => node.text())).toEqual([
+    // Light rows like the club's "More" sheet, under a sentence-case head (no caps kicker).
+    expect(sheet.find(".caps").exists()).toBe(false);
+    expect(sheet.find(".btn").exists()).toBe(false);
+    expect(sheet.findAll("button.sheet-row").map((node) => node.text())).toEqual([
       "Refresh details",
       "Wrong details?",
       "Same book as another one?",

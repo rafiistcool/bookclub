@@ -99,7 +99,11 @@ describe("HomeHero", () => {
     expect(wrapper.get(".hero-club").attributes("href")).toBe("/c/readers-ab12");
     expect(wrapper.get(".hero-title").text()).toBe("Circe");
     expect(wrapper.get(".hero-authors").text()).toBe("Madeline Miller");
-    expect(wrapper.get(".hero-meeting").text()).toBe("Meeting in 13 days · Thu 19 Nov");
+    // The "·" stays at the end of the first line when the date wraps.
+    expect(wrapper.get(".hero-meeting").text()).toBe("Meeting in 13 days\u00a0· Thu 19 Nov");
+    // The date never breaks inside ("Nov" alone on a line).
+    expect(wrapper.get(".hero-meeting .meeting-date").text()).toBe("Thu 19 Nov");
+    expect(wrapper.get(".hero-meeting .meeting-when").text()).toBe("in 13 days");
     expect(wrapper.get(".hero-meeting time").attributes("datetime")).toBe("2026-11-19T18:30:00Z");
     // My ring and grace's, plus the two members who have not started.
     expect(wrapper.findAll(".reader-rings li .visually-hidden").map((row) => row.text())).toEqual([

@@ -26,6 +26,19 @@ describe("monthly shelf", () => {
     expect(wrapper.find(".club-pick").exists()).toBe(true);
     wrapper.unmount();
   });
+  it("heads the unfinished books apart from the status words, and reads a tile title, author, stars", () => {
+    const reading = { ...item(2, "currently_reading"), progress: 35 };
+    const rated = shelfItem({ id: 5, position: 5, status: "finished", rating: 4, finished_at: "2026-09-12T12:00:00Z",
+      book: { id: 5, title: "Middlemarch", authors: "George Eliot" } });
+    const wrapper = mount(ShelfBoard, { props: { items: [reading, rated] }, global: { stubs: { VueDraggable: draggable } } });
+    expect(wrapper.get(".shelf-section-heading").text()).toBe("Not finished yet");
+    // The progress uses the locale's percent, like the progress sheet ("35%" in English, "35 %" in German).
+    expect(wrapper.findAll(".shelf-status")[0]!.get(".nums").text()).toBe("35%");
+    const tile = wrapper.findAll(".book-tile")[1]!;
+    const lines = tile.findAll(".book-tile-title, .book-tile-sub").map(node => node.classes().includes("stars") ? "stars" : node.text());
+    expect(lines).toEqual(["Middlemarch", "George Eliot", "stars"]);
+    wrapper.unmount();
+  });
   it("keeps direct touch-delayed dragging and separates unfinished books from month targets", () => {
     const wrapper = render();
     const groups = wrapper.findAllComponents(draggable);

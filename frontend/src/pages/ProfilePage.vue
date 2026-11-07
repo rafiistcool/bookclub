@@ -216,14 +216,16 @@ onMounted(() => {
         <h2 id="profile-favorites">{{ t("favorites.heading") }}</h2>
         <button
           v-if="favorites.length"
-          class="text-btn fine edit-favorites"
+          class="text-btn edit-favorites"
           type="button"
           @click="favoritesSheet = true"
         >
           {{ t("common.edit") }}
         </button>
       </div>
-      <div v-if="!shelfLoaded" class="skeleton favorites-skeleton" aria-hidden="true" />
+      <div v-if="!shelfLoaded" class="favorites-skeleton" aria-hidden="true">
+        <span v-for="n in 3" :key="n" class="skeleton favorite-skeleton" />
+      </div>
       <p v-else-if="shelfFailed" class="fine subtle favorites-failed" role="alert">
         {{ t("shelf.loadFailed") }}
         <button class="text-btn fine" type="button" @click="loadShelf">{{ t("common.tryAgain") }}</button>
@@ -399,6 +401,17 @@ onMounted(() => {
   height: 24px;
 }
 
+/* On a wide screen the sidebar's gear sits right beside this one. */
+@media (min-width: 1024px) {
+  .profile-head {
+    padding-right: 0;
+  }
+
+  .profile-settings {
+    display: none;
+  }
+}
+
 /* --------------------------------------------------------------- numbers */
 
 .numbers {
@@ -482,21 +495,20 @@ onMounted(() => {
 
 /* ------------------------------------------------------------ favourites */
 
-.edit-favorites {
-  position: relative;
-  font-weight: 600;
-  color: var(--accent);
-}
+/* "Edit" is a section-head action (components.css): flush right, small,
+   with its 44px hit area outside the text. */
 
-.edit-favorites::after {
-  content: "";
-  position: absolute;
-  inset: -11px -8px;
-}
-
+/* Three covers the size of the portrait's, under the room of its ranks. */
 .favorites-skeleton {
-  height: 120px;
+  display: flex;
+  gap: var(--space-3);
+  padding-top: calc(var(--text-2xs) * 1.5 + var(--space-1));
   margin-bottom: var(--space-5);
+}
+
+.favorite-skeleton {
+  width: 72px;
+  aspect-ratio: 2 / 3;
 }
 
 .sheet-blurb {
@@ -621,74 +633,6 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-
-/* --------------------------------------------- sheet rows (ClubMoreSheet) */
-
-.sheet-rows {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.sheet-rows li + li {
-  border-top: 1px solid var(--border);
-}
-
-.sheet-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  width: 100%;
-  min-height: 52px;
-  padding: 0 var(--space-1);
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-weight: 600;
-  text-align: left;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: transform var(--dur-fast) var(--ease-out);
-}
-
-.sheet-row:active {
-  transform: scale(var(--press-scale));
-  transition-duration: var(--dur-press);
-}
-
-.sheet-row:focus-visible,
-.sheet-row:has(input:focus-visible) {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.sheet-row.danger,
-.sheet-row.danger .sheet-icon {
-  color: var(--danger);
-}
-
-@media (hover: hover) {
-  .sheet-row:hover .sheet-label {
-    color: var(--accent);
-  }
-
-  .sheet-row.danger:hover .sheet-label {
-    color: var(--danger);
-  }
-}
-
-.sheet-icon {
-  flex: none;
-  width: 22px;
-  height: 22px;
-  color: var(--text-muted);
-}
-
-.sheet-label {
-  flex: 1;
-  min-width: 0;
-}
 
 @media (min-width: 1024px) {
   .profile {

@@ -125,7 +125,7 @@ describe("FinishedMoment", () => {
     await wrapper.get(".moment-only-me input").setValue(true);
     const saved = { ...item, rating: 5, take: "Gods, but human.", rating_visibility: "only_me" as const };
     patchShelf.mockResolvedValue(saved);
-    await wrapper.findAll("button").find((node) => node.text() === "Done")!.trigger("click");
+    await wrapper.findAll("button").find((node) => node.text() === "Save")!.trigger("click");
     await flushPromises();
     expect(patchShelf).toHaveBeenCalledTimes(1);
     expect(patchShelf).toHaveBeenCalledWith(9, { rating: 5, take: "Gods, but human.", rating_visibility: "only_me" });
@@ -139,7 +139,7 @@ describe("FinishedMoment", () => {
     const { wrapper } = open();
     await stars(wrapper)[2].trigger("click");
     patchShelf.mockResolvedValue(finished({ rating: 3 }));
-    await wrapper.findAll("button").find((node) => node.text() === "Done")!.trigger("click");
+    await wrapper.findAll("button").find((node) => node.text() === "Save")!.trigger("click");
     await flushPromises();
     expect(patchShelf).toHaveBeenCalledWith(9, { rating: 3 });
     wrapper.unmount();
@@ -147,7 +147,7 @@ describe("FinishedMoment", () => {
 
   it("closes without a request on “Done” with nothing set, and on “Skip”", async () => {
     const first = open();
-    await first.wrapper.findAll("button").find((node) => node.text() === "Done")!.trigger("click");
+    await first.wrapper.findAll("button").find((node) => node.text() === "Save")!.trigger("click");
     await expect(first.answer).resolves.toBeNull();
     first.wrapper.unmount();
 
@@ -164,7 +164,7 @@ describe("FinishedMoment", () => {
     const { wrapper, finish } = open();
     await stars(wrapper)[0].trigger("click");
     patchShelf.mockRejectedValue(new ApiError("Book not on your shelf", 404, "Book not on your shelf"));
-    await wrapper.findAll("button").find((node) => node.text() === "Done")!.trigger("click");
+    await wrapper.findAll("button").find((node) => node.text() === "Save")!.trigger("click");
     await flushPromises();
     expect(wrapper.get("[role=alert]").text()).toBe("Book not on your shelf");
     expect(finish.item).not.toBeNull();
@@ -214,7 +214,7 @@ describe("FinishedMoment", () => {
     patchShelf.mockReturnValue(new Promise((resolve) => (saved = resolve)));
     await stars(wrapper)[3]!.trigger("click");
     await wrapper.get(".moment-actions .btn-primary").trigger("click");
-    // Another finish opens the next moment while this "Done" is still saving.
+    // Another finish opens the next moment while this "Save" is still saving.
     const next = finish.celebrate({ item: finished({ id: 10, book: { id: 5, title: "Dune" } }) });
     saved(finished({ rating: 4 }));
     await flushPromises();

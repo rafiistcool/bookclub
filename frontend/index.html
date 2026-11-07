@@ -15,9 +15,37 @@
     <!-- Paints the stored palette before the first frame. A file, not an
          inline script: the shell's CSP allows scripts from 'self' only. -->
     <script src="/theme-init.js"></script>
+    <style>
+      .boot-bar {
+        position: fixed;
+        inset: 0 0 auto;
+        height: 3px;
+        overflow: hidden;
+        opacity: 0;
+        animation: boot-show 1ms linear 600ms forwards;
+      }
+      .boot-bar::after {
+        content: "";
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 40%;
+        background: var(--accent, #b44a2a);
+        animation: boot-sweep 1.2s ease-in-out infinite;
+      }
+      @keyframes boot-show { to { opacity: 1; } }
+      @keyframes boot-sweep {
+        from { transform: translateX(-100%); }
+        to { transform: translateX(250%); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-bar::after { width: 100%; opacity: 0.5; animation: none; }
+      }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <!-- Until the first page is ready (main.ts mounts over it): nothing for a
+         quick start, then a thin bar so a slow one is not a blank page. -->
+    <div id="app"><div class="boot-bar" aria-hidden="true"></div></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

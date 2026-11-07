@@ -69,6 +69,16 @@ function dueLabel(row: MilestoneOut): string {
   return formatClubDate(row.due_at, props.timezone, locale.locale) || row.due_label || "";
 }
 
+/** The meta line's facts. Each wraps as a unit: a time keeps its zone, a count its noun. */
+function metaParts(row: MilestoneOut): string[] {
+  const when = dueLabel(row);
+  return [
+    range(row),
+    when ? t(row.passed ? "milestones.wasDue" : "milestones.due", { when }) : "",
+    row.note_count ? tp("milestones.notes", row.note_count) : "",
+  ].filter(Boolean);
+}
+
 function reset() {
   title.value = "";
   unit.value = "";
@@ -139,17 +149,14 @@ onMounted(load);
       <li v-for="row in items" :key="row.id" class="milestone" :class="{ passed: row.passed }">
         <span class="milestone-meta">
           <strong>{{ row.title }}</strong>
-          <span class="finer subtle">
-            <template v-if="range(row)">{{ range(row) }}</template>
-            <template v-if="range(row) && dueLabel(row)"> · </template>
-            <template v-if="dueLabel(row)">{{ t(row.passed ? "milestones.wasDue" : "milestones.due", { when: dueLabel(row) }) }}</template>
-            <template v-if="row.note_count"> · {{ tp("milestones.notes", row.note_count) }}</template>
+          <span v-if="metaParts(row).length" class="milestone-facts finer subtle nums">
+            <span v-for="part in metaParts(row)" :key="part">{{ part }}</span>
           </span>
         </span>
         <button
           v-if="canManage"
           class="text-btn"
-          :class="{ danger: confirmingId === row.id }"
+          :class="confirmingId === row.id ? 'danger' : 'quiet'"
           type="button"
           :disabled="busy"
           @click="remove(row)"
@@ -204,12 +211,11 @@ onMounted(load);
   height: 70px;
 }
 
+/* Light rows split by hairlines, like the rest of the club home. */
 .milestone-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  gap: var(--space-2);
 }
 
 .milestone {
@@ -217,10 +223,22 @@ onMounted(load);
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  padding: var(--space-2) 0;
+}
+
+.milestone + .milestone {
+  border-top: 1px solid var(--border);
+}
+
+/* Remove stays quiet next to the titles until it asks to be confirmed; the
+   padding only widens its target, the text lines up with the row's edge. */
+.milestone .text-btn {
+  flex: none;
+  margin-inline-end: calc(-1 * var(--space-2));
+}
+
+.milestone .text-btn.quiet {
+  color: var(--text-muted);
 }
 
 .milestone.passed {
@@ -235,6 +253,19 @@ onMounted(load);
 
 .milestone-meta strong {
   overflow-wrap: anywhere;
+}
+
+/* Facts joined by dots. As flex items they wrap as units (a time keeps its
+   zone, a count its noun), and a dot stays at the end of its line instead of
+   starting the next one. */
+.milestone-facts {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 0.3em;
+}
+
+.milestone-facts > span:not(:last-child)::after {
+  content: " ·";
 }
 
 .milestone-form {

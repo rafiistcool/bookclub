@@ -37,14 +37,14 @@ const PICK = clubPick({
 const BookDiary = { name: "BookDiary", template: "<div class=\"diary-stub\" />", methods: { reload: () => Promise.resolve() } };
 const STUBS = { BookCover: true, BookDiary, MilestoneList: true, ProgressEditor: true };
 
-async function mountAs(role: "owner" | "admin" | "member", pick: ClubPick = PICK) {
+async function mountAs(role: "owner" | "admin" | "member", pick: ClubPick = PICK, history: ClubPick[] = []) {
   const pinia = createPinia();
   setActivePinia(pinia);
   const club = clubOut({ role, member_count: 4 });
   useSession().user = user({ clubs: [{ ...club }] });
   useClubs().current = club;
   api.clubPick.mockResolvedValue({ pick, timezone: "Europe/Berlin" });
-  api.clubPickHistory.mockResolvedValue({ items: [], timezone: "Europe/Berlin" });
+  api.clubPickHistory.mockResolvedValue({ items: history, timezone: "Europe/Berlin" });
   api.vote.mockResolvedValue(vote({ nominations: [nomination({ id: 2, votes: 2 })] }));
   const wrapper = mount(ClubHomePage, {
     global: {
@@ -82,6 +82,12 @@ describe("ClubHomePage", () => {
     expect(wrapper.find(".hero .kicker").exists()).toBe(false);
     expect(wrapper.find(".hero-actions").exists()).toBe(false);
     expect(wrapper.get(".hero-title").attributes("href")).toBe("/book/9");
+  });
+
+  it("dates a past pick by its meeting day, without the weekday and time", async () => {
+    const past = { ...PICK, id: 4, book: bookOut({ id: 8, title: "Kairos" }), meeting_at: "2026-10-15T17:30:00Z" };
+    const wrapper = await mountAs("member", PICK, [past]);
+    expect(wrapper.get(".past-tile .book-tile-sub").text()).toBe("15 Oct 2026");
   });
 
   it("puts the one next step under the pick, by the viewer's shelf", async () => {

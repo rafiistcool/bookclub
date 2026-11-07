@@ -36,21 +36,25 @@ const { t } = useI18n();
 </template>
 
 <style scoped>
+/* A light row: the list around it draws the hairlines (ClubsPage). */
 .club-card {
   display: flex;
   gap: var(--space-3);
-  padding: var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  padding: var(--space-3) 0;
   color: inherit;
   text-decoration: none;
   min-width: 0;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.club-card:active {
+  transform: scale(var(--press-scale));
+  transition-duration: var(--dur-press);
 }
 
 @media (hover: hover) {
-  .club-card:hover {
-    border-color: var(--border-strong);
+  .club-card:hover .club-card-name {
+    color: var(--accent);
   }
 }
 

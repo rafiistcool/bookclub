@@ -174,14 +174,15 @@ watch(slug, () => void load(), { immediate: true });
 
 <style scoped>
 /* One bar under the app's top bar, full bleed on the phone: the name, then
-   the tabs, translucent like the top bar and closed by one hairline. */
+   the tabs, closed by one hairline. Nearly opaque (like the sticky composer),
+   so text scrolling under the tab labels doesn't show through. */
 .club-head {
   position: sticky;
   top: calc(var(--header-h) + env(safe-area-inset-top));
   z-index: 15;
   margin: calc(-1 * var(--space-4)) calc(-1 * var(--space-4)) var(--space-5);
   padding: 0 var(--space-4);
-  background: var(--bg-translucent);
+  background: var(--bg-translucent-strong);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
 }

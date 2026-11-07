@@ -70,17 +70,31 @@
   font-size: var(--text-lg);
 }
 
-.section-head a {
+/* A head's action, link or button, is one line of small accent text, so a
+   head with an action is as tall as one without. Its hit area reaches 44px
+   past the text instead of growing the head. */
+.section-head a,
+.section-head .text-btn {
   position: relative;
+  min-height: 0;
+  padding: 0;
   font-size: var(--text-sm);
   font-weight: 600;
+  text-decoration: none;
 }
 
-/* The link stays one line of small text; its hit area reaches 44px. */
-.section-head a::after {
+.section-head a::after,
+.section-head .text-btn::after {
   content: "";
   position: absolute;
   inset: -11px -8px;
+}
+
+@media (hover: hover) {
+  .section-head a:hover,
+  .section-head .text-btn:hover {
+    text-decoration: underline;
+  }
 }
 
 .panel {
@@ -131,9 +145,12 @@
 .auth-page {
   min-height: 100dvh;
   padding: var(--space-7) var(--space-5) calc(var(--space-7) + env(safe-area-inset-bottom));
+  /* Anchored to the top, so the wordmark stays put from page to page
+     instead of moving with each form's height. */
+  padding-top: clamp(var(--space-7), 14vh, 9rem);
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start;
   max-width: 420px;
   margin: 0 auto;
 }
@@ -176,6 +193,11 @@
 .field-hint {
   font-size: var(--text-sm);
   color: var(--text-subtle);
+}
+
+/* In a grid form the gap spaces the fields; their own margin would double it. */
+:is(.sheet-form, .stack) > .field {
+  margin-bottom: 0;
 }
 
 .password-wrap {
@@ -261,7 +283,7 @@
 }
 
 .btn-sm {
-  min-height: 40px;
+  min-height: var(--tap);
   padding: 0 var(--space-3);
   font-size: var(--text-sm);
 }
@@ -306,6 +328,82 @@
   gap: var(--space-2);
 }
 
+/* ----------------------------------------------------------- sheet rows */
+
+/* A sheet's actions: icon rows split by hairlines (the pattern of
+   ClubMoreSheet), not stacked bordered buttons. A row is a <button>, an
+   <a> or a <label> around a hidden file input. */
+.sheet-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sheet-rows li + li {
+  border-top: 1px solid var(--border);
+}
+
+.sheet-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 52px;
+  padding: 0 var(--space-1);
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.sheet-row:active:not(:disabled) {
+  transform: scale(var(--press-scale));
+  transition-duration: var(--dur-press);
+}
+
+.sheet-row:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.sheet-row:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.sheet-row.danger,
+.sheet-row.danger .sheet-icon {
+  color: var(--danger);
+}
+
+@media (hover: hover) {
+  .sheet-row:hover:not(:disabled) .sheet-label {
+    color: var(--accent);
+  }
+
+  .sheet-row.danger:hover .sheet-label {
+    color: var(--danger);
+  }
+}
+
+.sheet-icon {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  color: var(--text-muted);
+}
+
+.sheet-label {
+  flex: 1;
+  min-width: 0;
+}
+
 /* ------------------------------------------------------------ pressing */
 
 /* Every control answers the finger at once: a quick press-in, and the
@@ -348,7 +446,8 @@
 
 .segmented button {
   flex: 1 0 auto;
-  min-height: 42px;
+  min-width: var(--tap);
+  min-height: var(--tap);
   /* Tight enough that five labelled segments fit a 390px screen. */
   padding: 0 var(--space-2);
   border: 0;
@@ -365,8 +464,10 @@
     transform var(--dur-fast) var(--ease-out);
 }
 
+/* The thumb sits a step above the track in both modes: --surface is the
+   lighter one in light mode, but darker than the track in dark mode. */
 .segmented button[aria-pressed="true"] {
-  background: var(--surface);
+  background: var(--seg-thumb);
   color: var(--text);
   box-shadow: var(--elev-panel);
 }
@@ -437,6 +538,10 @@
   scrollbar-width: none;
   margin: 0 calc(-1 * var(--space-4));
   padding: var(--space-1) var(--space-4);
+  /* The row fades out at the screen edges, so it reads as one that scrolls.
+     A mask only reads alpha: any opaque colour stands for "shown". */
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, currentColor var(--space-4), currentColor calc(100% - var(--space-5)), transparent);
+  mask-image: linear-gradient(90deg, transparent 0, currentColor var(--space-4), currentColor calc(100% - var(--space-5)), transparent);
 }
 
 .chip-row.scroll::-webkit-scrollbar {
@@ -464,12 +569,12 @@
     transform var(--dur-fast) var(--ease-out);
 }
 
-/* The chip's hit area reaches 44px into the row gap; the drawn pill stays
-   the size the row's rhythm wants. */
+/* The chip's hit area reaches 44px into the row gap, whatever the pill's
+   own height; the drawn pill stays the size the row's rhythm wants. */
 .chip::before {
   content: "";
   position: absolute;
-  inset: -2px -2px;
+  inset: min(-2px, calc((100% - var(--tap)) / 2)) -2px;
 }
 
 @media (hover: hover) {
@@ -562,11 +667,25 @@
      locale), broken anywhere only as the last resort. */
   -webkit-hyphens: auto;
   hyphens: auto;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 4;
   overflow: hidden;
+}
+
+/* Sized to the title's longest word (BookCover.vue), so a word is set whole
+   rather than broken mid-letter; only a word longer than these still breaks. */
+.cover .binding-title.long-word {
+  font-size: clamp(8px, 10cqw, 20px);
+}
+
+.cover .binding-title.very-long-word {
+  font-size: clamp(8px, 8.5cqw, 17px);
+}
+
+.cover .binding-title.longest-word {
+  font-size: clamp(8px, 7cqw, 14px);
 }
 
 .cover .binding-rule {
@@ -836,14 +955,18 @@
   border-radius: var(--radius-lg);
 }
 
-.empty h3 {
+.empty :is(h1, h2, h3) {
   color: var(--text);
   margin-bottom: var(--space-2);
 }
 
+/* Stacked at one width, so two or three actions don't sit centred at
+   three different widths. */
 .empty .btn-row {
-  justify-content: center;
-  margin-top: var(--space-4);
+  flex-direction: column;
+  align-items: stretch;
+  max-width: 280px;
+  margin: var(--space-4) auto 0;
 }
 
 /* ------------------------------------------------------------ skeletons */
@@ -881,6 +1004,37 @@
 
 .skeleton-line.short {
   width: 55%;
+}
+
+/* Loading rows shaped like the light rows they stand in for: a small cover
+   and two lines, split by hairlines. */
+.skeleton-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.skeleton-row {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+}
+
+.skeleton-row + .skeleton-row {
+  border-top: 1px solid var(--border);
+}
+
+.skeleton-cover-xs {
+  flex: none;
+  width: 36px;
+  height: 54px;
+}
+
+.skeleton-row-lines {
+  flex: 1;
+  display: grid;
+  align-content: start;
+  padding-top: var(--space-1);
 }
 
 @keyframes skeleton-sweep {

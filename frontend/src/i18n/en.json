@@ -268,7 +268,7 @@
     "noBookYet": "No book yet",
     "seeAll": "See all",
     "soloLine": "Read together?",
-    "meetingWhen": "Meeting {when} · {date}",
+    "meetingWhen": "Meeting {when} · {date}",
     "friendsWaiting": "{n} waiting for you | {n} waiting for you",
     "welcomeTitle": "Welcome to {club}!",
     "welcomePick": "This is what you're all reading. Put it on your shelf and note how far you are.",
@@ -313,9 +313,9 @@
     "datePrecision": "Date detail",
     "monthAndYear": "Month and year",
     "exactDate": "Exact date",
-    "currentBooks": "Currently on my shelf",
+    "currentBooks": "Not finished yet",
     "finishedBooks": "Finished reading",
-    "currentMemberBooks": "Currently on this shelf"
+    "currentMemberBooks": "Not finished yet"
   },
   "favorites": {
     "heading": "Favourites",
@@ -360,7 +360,7 @@
     "spoilerFlagged": "spoiler-flagged",
     "safeUptoTitle": "Safe up to {n}%",
     "overlap": "Shared wants",
-    "includeReading": "Include Reading",
+    "includeReading": "Include books being read",
     "overlapBlurb": "Books two or more of you want to read.",
     "overlapBlurbReading": "Books two or more of you want to read or are reading.",
     "overlapFailed": "Could not load the overlap",
@@ -376,7 +376,7 @@
   },
   "discover": {
     "title": "Discover",
-    "placeholder": "Title, author, or ISBN",
+    "placeholder": "Title, author, ISBN",
     "searchAria": "Search books",
     "search": "Search",
     "subjectFilter": "Subject filter",
@@ -408,7 +408,6 @@
     "showAnyway": "Show them anyway",
     "nothingMatched": "Nothing matched",
     "nothingMatchedBody": "Try the title plus the author, or paste an ISBN.",
-    "filterHiding": "The {label} filter may be hiding it.",
     "reachFailed": "Could not reach the library",
     "couldntLoadMore": "Couldn't load more.",
     "loadMoreFailed": "Couldn't load more",
@@ -1001,7 +1000,6 @@
       "since": "Friends since {day}",
       "notReading": "Not reading anything right now",
       "more": "+{n} more",
-      "options": "Options",
       "optionsFor": "Options for {name}",
       "invite": "Invite to a club…",
       "remove": "Remove from friends"
@@ -1118,8 +1116,8 @@
     "vote_closed_auto": "The vote closed at its deadline and chose {book}",
     "votes": "{n} vote | {n} votes",
     "milestone_added": "{actor} added the milestone “{title}” for {book}",
-    "shelf_added": "{actor} put {book} on {status}",
-    "shelf_moved": "{actor} moved {book} to {status}",
+    "shelf_added": "{actor} put {book} on “{status}”",
+    "shelf_moved": "{actor} moved {book} to “{status}”",
     "shelf_finished": "{actor} finished {book}",
     "shelf_dnf": "{actor} stopped reading {book}",
     "shelf_removed": "{actor} took {book} off their shelf",
@@ -1165,7 +1163,7 @@
     "loadFailed": "Could not load the numbers",
     "finished": "Finished",
     "pages": "Pages",
-    "average": "Average rating",
+    "average": "Avg. rating",
     "averageShort": "Avg. ★",
     "fiveStars": "Five stars",
     "dnf": "Not finished",
@@ -1357,7 +1355,6 @@
   },
   "admin": {
     "title": "Admin",
-    "lede": "What readers asked to change or reported, covers the search could not settle, invites for the closed beta, and suspended accounts.",
     "sections": "Admin sections",
     "tabs": {
       "requests": "Requests",
@@ -1371,7 +1368,7 @@
     "someone": "someone",
     "byOn": "{name} · {when}",
     "requests": "Requests",
-    "requestsBlurb": "Corrections of books and editions, cover photos that would replace a cover, and books entered twice. Approving applies it, and no catalog source overwrites it later.",
+    "requestsBlurb": "Corrections of books and editions, cover photos and books entered twice; no catalog source overwrites what you approve.",
     "noRequests": "Nothing waiting.",
     "kind": {
       "work_edit": "Book details",
@@ -1408,7 +1405,7 @@
     "rejected": "Rejected",
     "rejectNote": "Why not? (the reader does not see this yet)",
     "reports": "Reports",
-    "reportsBlurb": "Covers, profile pictures and books readers added, as readers reported them. Removing takes a picture down everywhere, or withdraws what a reader typed, for good; keeping closes the report. The reporters hear the decision by mail, and whoever's content was removed hears why.",
+    "reportsBlurb": "Covers, profile pictures and books readers added, as readers reported them.",
     "noReports": "No open reports.",
     "alreadyRemoved": "This picture was already taken down.",
     "target": {
@@ -1448,8 +1445,7 @@
     "pastInvites": "{n} used or ended invite | {n} used or ended invites",
     "users": {
       "title": "Suspended accounts",
-      "blurb": "A suspended account cannot sign in, and every session and app token it had ends at once. The invites it knows stop working, and an admin loses the admin rights. What it wrote stays. Lifting the suspension lets it sign in again, without admin rights.",
-      "manual": "It can no longer export or delete its data itself: its owner writes to the contact address, and the operator does it by hand, as the notice-and-takedown runbook describes (“Accounts that cannot sign in”).",
+      "blurb": "A suspended account cannot sign in; what it wrote stays.",
       "name": "Username",
       "suspend": "Suspend",
       "suspendConfirm": "Suspend {name}",
@@ -1460,7 +1456,8 @@
       "unsuspend": "Lift suspension",
       "unsuspended": "{name} can sign in again",
       "none": "No account is suspended.",
-      "failed": "Could not save that"
+      "failed": "Could not save that",
+      "howTo": "Every session and app token of the account ends at once, the invites it knows stop working, and an admin loses the admin rights. Lifting the suspension lets it sign in again, without admin rights. It can no longer export or delete its data itself: its owner writes to the contact address, and the operator does it by hand, as the notice-and-takedown runbook describes (“Accounts that cannot sign in”)."
     },
     "edit": {
       "title": "Edit this book as admin",
@@ -1529,11 +1526,11 @@
     "closedBy": "Closed by {name} · {when}",
     "covers": {
       "title": "Covers",
-      "blurb": "Every catalog and imported book should have a real cover. The search attaches clear matches from Open Library on its own; the uncertain ones wait here for you. Books a reader added keep their cloth until someone uploads a photo.",
+      "blurb": "Every catalog and imported book should have a real cover.",
       "views": "Suggestions or books without a cover",
       "suggestions": "Suggestions",
       "missing": "Without a cover",
-      "suggestionsBlurb": "Covers the search found but did not attach on its own. “Use this cover” makes the picture the book's cover for everyone; “Not this book” keeps that Open Library book out for good, and the search looks for the next one.",
+      "suggestionsBlurb": "Covers the search found but did not attach on its own.",
       "noSuggestions": "No suggestion waits for you.",
       "found": "found {when}",
       "ourBook": "Our book",
@@ -1571,7 +1568,7 @@
       "scope": "Books readers use, or all of them",
       "scopeInUse": "Readers use them",
       "scopeAll": "All",
-      "missingBlurb": "Catalog and imported books without a usable cover. The search tries them on its own; “Search now” asks Open Library at once, and an upload sets the cover directly.",
+      "missingBlurb": "Catalog and imported books without a usable cover; the search keeps trying them on its own.",
       "noMissing": "Every book here has a cover.",
       "inUse": "Readers use it",
       "imported": "Imported",
@@ -1602,8 +1599,12 @@
         "searched": "Last searched on {date}.",
         "nextTry": "Next try on {date}.",
         "afterTakedown": "After a takedown, the search only suggests."
-      }
-    }
+      },
+      "howTo": "The search attaches clear matches from Open Library on its own; the uncertain ones wait for you under “Suggestions”. “Search now” asks Open Library at once, and an upload sets the cover directly. Books a reader added keep their cloth until someone uploads a photo."
+    },
+    "howTo": "How this works",
+    "reportsHowTo": "Removing takes a picture down everywhere, or withdraws what a reader typed, for good; keeping closes the report. The reporters hear the decision by mail, and whoever's content was removed hears why.",
+    "noticeShort": "Emailed notice"
   },
   "notFound": {
     "title": "Page not found",
@@ -1678,10 +1679,10 @@
     "title": "Finished!",
     "rate": "How was it?",
     "addTake": "+ One line",
-    "onlyMe": "Only me",
+    "onlyMe": "Rating only for me",
     "clubLine": "{n} of {total} in the club is done | {n} of {total} in the club are done",
     "clubAll": "All {total} in the club are done",
-    "done": "Done",
+    "done": "Save",
     "skip": "Skip"
   },
   "rings": {

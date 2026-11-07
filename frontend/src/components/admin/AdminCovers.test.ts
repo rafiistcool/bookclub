@@ -285,7 +285,7 @@ describe("AdminCovers", () => {
     await flushPromises();
     expect(api.adminSearchCover).toHaveBeenLastCalledWith(41);
     expect(useToast().items.at(-1)?.message).toBe("Found it: Open Library's cover is the book's cover now.");
-    expect(rows().map((row) => row.get("strong").text())).toEqual(["Circe", "Momo"]);
+    expect(rows().map((row) => row.get(".admin-book-title").text())).toEqual(["Circe", "Momo"]);
     expect(wrapper.emitted("changed")).toHaveLength(1);
 
     api.adminSearchCover.mockResolvedValueOnce({

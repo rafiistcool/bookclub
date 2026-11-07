@@ -20,11 +20,11 @@ import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
 import TimeZoneSetting from "./TimeZoneSetting.vue";
 
-function mountWith(timezone: string) {
+function mountWith(timezone: string, props: { hideLabel?: boolean } = {}) {
   const pinia = createPinia();
   setActivePinia(pinia);
   useSession().user = user({ timezone });
-  return mount(TimeZoneSetting, { global: { plugins: [pinia, i18n] } });
+  return mount(TimeZoneSetting, { props, global: { plugins: [pinia, i18n] } });
 }
 
 describe("the personal time zone", () => {
@@ -73,5 +73,16 @@ describe("the personal time zone", () => {
     expect(wrapper.get<HTMLSelectElement>("select").element.value).toBe("UTC");
     expect(useSession().user?.timezone).toBe("UTC");
     expect(useToast().items.at(-1)?.message).toBe("Could not save the time zone");
+  });
+
+  it("keeps the label for screen readers only under a sheet that is titled the same", () => {
+    const shown = mountWith("Europe/Berlin");
+    expect(shown.get(".timezone-field > span").classes()).not.toContain("visually-hidden");
+    const hidden = mountWith("Europe/Berlin", { hideLabel: true });
+    const label = hidden.get(".timezone-field > span");
+    expect(label.classes()).toContain("visually-hidden");
+    // Still the select's label: it wraps it.
+    expect(hidden.get(".timezone-field").element.tagName).toBe("LABEL");
+    expect(label.text()).toBe("Time zone");
   });
 });

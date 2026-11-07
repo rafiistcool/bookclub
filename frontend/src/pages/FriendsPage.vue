@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { UserPlusIcon } from "@heroicons/vue/24/outline";
+import { EllipsisHorizontalIcon, NoSymbolIcon, UserGroupIcon, UserMinusIcon, UserPlusIcon } from "@heroicons/vue/24/outline";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
@@ -291,12 +291,13 @@ onMounted(() => {
                 </span>
               </RouterLink>
               <button
-                class="btn btn-ghost btn-sm options-btn"
+                class="icon-btn options-btn"
                 type="button"
+                aria-haspopup="dialog"
                 :aria-label="t('friends.list.optionsFor', { name: friend.user.username })"
                 @click="openMenu(friend)"
               >
-                {{ t("friends.list.options") }}
+                <EllipsisHorizontalIcon class="options-icon" aria-hidden="true" />
               </button>
             </div>
             <ul v-if="friend.currently_reading.length" class="friend-books">
@@ -304,7 +305,7 @@ onMounted(() => {
                 <RouterLink class="friend-book" :to="bookPath(row.book)">
                   <BookCover :book="row.book" size="xs" />
                   <span class="friend-book-title">{{ row.book.title }}</span>
-                  <span v-if="row.progress != null" class="finer subtle nums">{{ row.progress }}%</span>
+                  <span v-if="row.progress != null" class="finer subtle nums">{{ t("progress.percent", { n: row.progress }) }}</span>
                 </RouterLink>
               </li>
             </ul>
@@ -364,18 +365,27 @@ onMounted(() => {
     </template>
 
     <BottomSheet v-if="sheet" :key="sheet.mode" :title="sheetTitle" @close="sheet = null">
-      <div v-if="sheet.mode === 'menu'" class="stack">
-        <button v-if="canInvite" class="btn btn-ghost btn-block" type="button" @click="openInvite(sheet.username)">
-          {{ t("friends.list.invite") }}
-        </button>
-        <button class="btn btn-ghost btn-block" type="button" @click="ask('remove', sheet.username)">
-          {{ t("friends.list.remove") }}
-        </button>
-        <button class="btn btn-danger btn-block" type="button" @click="ask('block', sheet.username)">
-          {{ t("friends.block.action") }}
-        </button>
-        <button class="btn btn-ghost btn-block" type="button" @click="sheet = null">{{ t("common.cancel") }}</button>
-      </div>
+      <!-- The sheet's own close button cancels; no extra Cancel row. -->
+      <ul v-if="sheet.mode === 'menu'" class="sheet-rows">
+        <li v-if="canInvite">
+          <button class="sheet-row" type="button" @click="openInvite(sheet.username)">
+            <UserGroupIcon class="sheet-icon" aria-hidden="true" />
+            <span class="sheet-label">{{ t("friends.list.invite") }}</span>
+          </button>
+        </li>
+        <li>
+          <button class="sheet-row" type="button" @click="ask('remove', sheet.username)">
+            <UserMinusIcon class="sheet-icon" aria-hidden="true" />
+            <span class="sheet-label">{{ t("friends.list.remove") }}</span>
+          </button>
+        </li>
+        <li>
+          <button class="sheet-row danger" type="button" @click="ask('block', sheet.username)">
+            <NoSymbolIcon class="sheet-icon" aria-hidden="true" />
+            <span class="sheet-label">{{ t("friends.block.action") }}</span>
+          </button>
+        </li>
+      </ul>
       <div v-else class="stack">
         <p class="fine confirm-blurb">
           {{
@@ -537,6 +547,12 @@ onMounted(() => {
 
 .options-btn {
   flex: 0 0 auto;
+  margin-right: calc(-1 * var(--space-2));
+}
+
+.options-icon {
+  width: 24px;
+  height: 24px;
 }
 
 .friend-book {

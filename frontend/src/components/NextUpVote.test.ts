@@ -128,5 +128,13 @@ describe("NextUpVote", () => {
     await flushPromises();
     expect(api.setVoteDeadline).toHaveBeenCalledWith("readers-ab12", "2026-11-20T20:00");
     expect(wrapper.get(".vote-status").text()).toContain("closes");
+    // Each fact is its own unit; the dots between them come from CSS, so a
+    // wrapped line never starts with one.
+    expect(wrapper.findAll(".vote-status .vote-fact").map((fact) => fact.text())).toEqual([
+      "2 of 3 voted",
+      "waiting for max",
+      expect.stringMatching(/^closes /),
+    ]);
+    expect(wrapper.get(".vote-status").text()).not.toContain("·");
   });
 });

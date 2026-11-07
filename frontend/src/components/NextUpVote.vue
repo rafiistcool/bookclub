@@ -165,11 +165,11 @@ defineExpose({ load });
     </p>
 
     <div v-if="vote && vote.vote_id" class="vote-status fine">
-      <span class="nums">{{ t("vote.votedOf", { voted: vote.voted_count, total: vote.member_count }) }}</span>
-      <span v-if="vote.not_voted.length" class="subtle">
-        · {{ t("vote.waitingFor", { names: vote.not_voted.join(", ") }) }}
+      <span class="vote-fact nums">{{ t("vote.votedOf", { voted: vote.voted_count, total: vote.member_count }) }}</span>
+      <span v-if="vote.not_voted.length" class="vote-fact subtle">
+        {{ t("vote.waitingFor", { names: vote.not_voted.join(", ") }) }}
       </span>
-      <span v-if="closes"> · {{ t("vote.closesAt", { when: closes }) }}</span>
+      <span v-if="closes" class="vote-fact">{{ t("vote.closesAt", { when: closes }) }}</span>
       <button v-if="canManage" class="text-btn" type="button" @click="openDeadline">
         {{ vote.closes_at ? t("vote.changeDeadline") : t("vote.setDeadline") }}
       </button>
@@ -314,12 +314,22 @@ defineExpose({ load });
   margin-bottom: var(--space-3);
 }
 
+/* As flex items the facts wrap as units, and the dot between two facts stays
+   at the end of a line instead of starting the next one. */
 .vote-status {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: var(--space-1);
+  gap: 0 0.3em;
   margin-bottom: var(--space-4);
+}
+
+.vote-fact:has(+ .vote-fact)::after {
+  content: " ·";
+}
+
+.vote-status .text-btn {
+  margin-inline-start: var(--space-1);
 }
 
 .deadline-blurb {
@@ -330,34 +340,32 @@ defineExpose({ load });
   height: 120px;
 }
 
+/* Light rows split by hairlines. The action column has one width, so every
+   tally bar starts and ends at the same place whatever its button says. */
 .vote-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  gap: var(--space-2);
 }
 
 .vote-row {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) 9.5rem;
   grid-template-areas:
     "book book"
     "tally action";
   gap: var(--space-3);
   align-items: center;
-  padding: var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  transition:
-    border-color var(--dur-base) var(--ease),
-    box-shadow var(--dur-base) var(--ease);
+  padding: var(--space-3) 0;
 }
 
-.vote-row.leading {
-  border-color: var(--accent-line);
-  box-shadow: var(--elev-panel);
+.vote-row + .vote-row {
+  border-top: 1px solid var(--border);
+}
+
+/* The leader is marked by its accent tally and title, not a box. */
+.vote-row.leading .vote-meta strong {
+  color: var(--accent);
 }
 
 /* A new leader climbs past the others instead of the list jumping. */
@@ -479,7 +487,8 @@ defineExpose({ load });
 }
 
 .vote-btn {
-  min-width: 7.5rem;
+  width: 100%;
+  min-width: 0;
 }
 
 .confirm-winner {
@@ -525,7 +534,7 @@ defineExpose({ load });
 
 @media (min-width: 720px) {
   .vote-row {
-    grid-template-columns: minmax(0, 1fr) 200px auto;
+    grid-template-columns: minmax(0, 1fr) 200px 9.5rem;
     grid-template-areas: "book tally action";
   }
 }

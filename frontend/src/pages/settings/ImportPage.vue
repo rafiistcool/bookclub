@@ -16,8 +16,8 @@ const { t } = useI18n();
     <BackLink :label="t('settings.back')" fallback="/settings" exact />
     <div class="page-head">
       <h1>{{ t("settings.importTitle") }}</h1>
+      <p class="lede fine import-hint">{{ t("settings.importBlurb") }}</p>
     </div>
-    <p class="fine muted import-hint">{{ t("settings.importBlurb") }}</p>
     <GoodreadsImport />
   </section>
 </template>
@@ -28,6 +28,6 @@ const { t } = useI18n();
 }
 
 .import-hint {
-  margin: calc(-1 * var(--space-3)) 0 var(--space-4);
+  margin: 0;
 }
 </style>

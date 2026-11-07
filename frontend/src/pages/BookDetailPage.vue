@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { EllipsisHorizontalIcon } from "@heroicons/vue/24/outline";
+import { EllipsisHorizontalIcon, FlagIcon, HandRaisedIcon, HeartIcon } from "@heroicons/vue/24/outline";
+import { HeartIcon as HeartSolidIcon } from "@heroicons/vue/24/solid";
 import { vAutosize } from "../autosize";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -88,6 +89,10 @@ const clubActions = ref<InstanceType<typeof ClubBookActions> | null>(null);
 
 const param = computed(() => String(route.params.id || ""));
 const longDescription = computed(() => (book.value?.description.length ?? 0) > 420);
+/** A title this long would run ten lines beside the cover at the display size. */
+const longTitle = computed(() => shownTitle.value.length > 48);
+/** Each author on its own, so a name never breaks inside itself. */
+const authorNames = computed(() => (book.value?.authors ?? "").split(", ").filter(Boolean));
 const canPick = computed(() => clubsFor("pick", session.user?.clubs).length > 0);
 const canNominate = computed(() => clubsFor("nominate", session.user?.clubs).length > 0);
 /** With one club to pick in, and the book already its pick, there is nothing to set. */
@@ -573,11 +578,20 @@ watch(param, load);
     </p>
 
     <template v-if="!loaded">
-      <div class="detail-hero" aria-hidden="true">
+      <!-- The page's shape while it loads: the title, the status control and two
+           lines of the panel, so nothing below jumps when the book arrives. -->
+      <div class="detail-hero detail-skeleton" aria-hidden="true">
         <span class="skeleton hero-cover-skeleton" />
-        <div class="detail-intro">
-          <span class="skeleton skeleton-line" />
-          <span class="skeleton skeleton-line short" />
+        <div class="detail-side">
+          <div class="detail-intro">
+            <span class="skeleton skeleton-line skeleton-title" />
+            <span class="skeleton skeleton-line short" />
+          </div>
+          <div class="shelf-panel skeleton-panel">
+            <span class="skeleton skeleton-status" />
+            <span class="skeleton skeleton-line" />
+            <span class="skeleton skeleton-line short" />
+          </div>
         </div>
       </div>
       <p v-if="loadWaitSec >= 2" class="fine subtle" aria-live="polite">
@@ -629,12 +643,12 @@ watch(param, load);
               <p v-if="book.club_picks.length" class="hero-pick">
                 <span class="badge club-pick">{{ t("book.pickBadge", { club: pickNames }) }}</span>
               </p>
-              <h1 class="display">{{ shownTitle }}</h1>
+              <h1 class="display" :class="{ 'long-title': longTitle }">{{ shownTitle }}</h1>
             </div>
             <p v-if="withdrawn" class="fine subtle">{{ t("report.removedNote") }}</p>
             <p v-if="book.subtitle" class="detail-subtitle">{{ book.subtitle }}</p>
             <p v-if="book.authors || book.year" class="detail-authors">
-              {{ book.authors }}<span v-if="book.year" class="detail-year"><span v-if="book.authors" aria-hidden="true"> · </span><span
+              <template v-for="(name, index) in authorNames" :key="index"><template v-if="index">, </template><span class="author-name">{{ name }}</span></template><span v-if="book.year" class="detail-year"><span v-if="book.authors" aria-hidden="true"> · </span><span
                 class="nums"
                 :title="t('book.firstPublished', { year: book.year })"
               >{{ book.year }}</span></span>
@@ -649,7 +663,7 @@ watch(param, load);
 
           <CoverPrompt :book="book" class="detail-cover-prompt" @covered="adoptCover" />
 
-          <div class="panel shelf-panel">
+          <div class="shelf-panel">
             <div class="segmented status-control" role="group" :aria-label="t('book.shelfStatus')">
               <button
                 v-for="status in STATUSES"
@@ -775,113 +789,120 @@ watch(param, load);
               @choose="(editionId) => patch({ edition_id: editionId }, t('editions.saved'))"
             />
 
-            <div class="btn-row panel-actions">
-              <button
-                class="btn btn-ghost btn-sm"
-                type="button"
-                :aria-pressed="Boolean(book.favorite_position)"
-                :disabled="busy"
-                @click="toggleFavorite"
-              >
-                {{
-                  book.favorite_position
-                    ? t("favorites.markedAt", { n: book.favorite_position })
-                    : t("favorites.mark")
-                }}
-              </button>
-              <button
-                v-if="canPick"
-                class="btn btn-ghost btn-sm"
-                type="button"
-                :disabled="pickDone"
-                @click="startClubAction('pick')"
-              >
-                {{ pickDone ? t("book.alreadyPick") : t("book.setAsPick") }}
-              </button>
-              <button
-                v-if="canNominate"
-                class="btn btn-ghost btn-sm"
-                type="button"
-                @click="startClubAction('nominate')"
-              >
-                {{ t("book.nominate") }}
-              </button>
-              <button
-                v-if="book.on_shelf"
-                class="btn btn-danger btn-sm"
-                type="button"
-                :disabled="busy"
-                @click="remove"
-              >
-                {{ t("common.remove") }}
-              </button>
-            </div>
+            <!-- The book's other doings with this reader: light rows, and Remove last and quiet. -->
+            <ul class="sheet-rows panel-actions">
+              <li>
+                <button
+                  class="sheet-row favorite-row"
+                  type="button"
+                  :aria-pressed="Boolean(book.favorite_position)"
+                  :disabled="busy"
+                  @click="toggleFavorite"
+                >
+                  <component
+                    :is="book.favorite_position ? HeartSolidIcon : HeartIcon"
+                    class="sheet-icon"
+                    aria-hidden="true"
+                  />
+                  <span class="sheet-label">{{
+                    book.favorite_position
+                      ? t("favorites.markedAt", { n: book.favorite_position })
+                      : t("favorites.mark")
+                  }}</span>
+                </button>
+              </li>
+              <li v-if="canPick">
+                <button class="sheet-row" type="button" :disabled="pickDone" @click="startClubAction('pick')">
+                  <FlagIcon class="sheet-icon" aria-hidden="true" />
+                  <span class="sheet-label">{{ pickDone ? t("book.alreadyPick") : t("book.setAsPick") }}</span>
+                </button>
+              </li>
+              <li v-if="canNominate">
+                <button class="sheet-row" type="button" @click="startClubAction('nominate')">
+                  <HandRaisedIcon class="sheet-icon" aria-hidden="true" />
+                  <span class="sheet-label">{{ t("book.nominate") }}</span>
+                </button>
+              </li>
+            </ul>
+            <button
+              v-if="book.on_shelf"
+              class="text-btn danger remove-btn"
+              type="button"
+              :disabled="busy"
+              @click="remove"
+            >
+              {{ t("common.remove") }}
+            </button>
           </div>
         </div>
       </div>
 
-      <section v-if="book.description" class="section">
-        <div class="section-head">
-          <h2>{{ t("book.about") }}</h2>
-        </div>
-        <p class="description" :class="{ clamped: longDescription && !expanded }">
-          {{ book.description }}
-        </p>
-        <button
-          v-if="longDescription"
-          class="text-btn"
-          type="button"
-          @click="expanded = !expanded"
-        >
-          {{ expanded ? t("book.showLess") : t("book.readMore") }}
-        </button>
-      </section>
-
-      <section class="section">
-        <BookDiary ref="diary" :work-id="book.id" />
-      </section>
-
-      <section class="section">
-        <QuoteList :work-id="book.id" :empty-text="t('quotes.emptyBook')" />
-      </section>
-
-      <section v-if="book.subjects.length" class="section">
-        <div class="section-head">
-          <h2>{{ t("book.subjects") }}</h2>
-        </div>
-        <div class="chip-row">
-          <RouterLink
-            v-for="subject in book.subjects"
-            :key="subject"
-            class="chip"
-            :to="{ path: '/discover', query: { q: subject } }"
+      <div class="book-body">
+        <section v-if="book.description" class="section">
+          <div class="section-head">
+            <h2>{{ t("book.about") }}</h2>
+          </div>
+          <p class="description" :class="{ clamped: longDescription && !expanded }">
+            {{ book.description }}
+          </p>
+          <button
+            v-if="longDescription"
+            class="text-btn"
+            type="button"
+            @click="expanded = !expanded"
           >
-            {{ subject }}
-          </RouterLink>
-        </div>
-      </section>
+            {{ expanded ? t("book.showLess") : t("book.readMore") }}
+          </button>
+        </section>
 
-      <section class="section">
-        <div class="section-head">
-          <h2>{{ t("book.otherReaders") }}</h2>
-        </div>
-        <ul v-if="book.readers.length" class="reader-list">
-          <li v-for="reader in book.readers" :key="reader.username">
-            <Avatar :username="reader.username" :src="reader.avatar_url" size="sm" />
-            <RouterLink :to="`/u/${reader.username}`">{{ reader.username }}</RouterLink>
-            <span class="badge" :class="reader.status">
-              {{ statusShort(reader.status) }}
-            </span>
-            <span v-if="reader.progress != null" class="fine subtle nums">
-              {{ reader.progress }}%
-            </span>
-            <span v-if="reader.rating" class="fine stars">
-              {{ starLabel(reader.rating) }}
-            </span>
-          </li>
-        </ul>
-        <p v-else class="fine subtle">{{ t("book.nobodyElse") }}</p>
-      </section>
+        <section class="section">
+          <BookDiary ref="diary" :work-id="book.id" />
+        </section>
+
+        <section class="section">
+          <QuoteList :work-id="book.id" :empty-text="t('quotes.emptyBook')" />
+        </section>
+
+        <section v-if="book.subjects.length" class="section">
+          <div class="section-head">
+            <h2>{{ t("book.subjects") }}</h2>
+          </div>
+          <div class="chip-row">
+            <RouterLink
+              v-for="subject in book.subjects"
+              :key="subject"
+              class="chip"
+              :to="{ path: '/discover', query: { q: subject } }"
+            >
+              {{ subject }}
+            </RouterLink>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-head">
+            <h2>{{ t("book.otherReaders") }}</h2>
+          </div>
+          <ul v-if="book.readers.length" class="reader-list">
+            <li v-for="reader in book.readers" :key="reader.username">
+              <RouterLink class="reader-row" :to="`/u/${reader.username}`">
+                <Avatar :username="reader.username" :src="reader.avatar_url" size="sm" />
+                <span class="reader-name">{{ reader.username }}</span>
+                <span class="badge" :class="reader.status">
+                  {{ statusShort(reader.status) }}
+                </span>
+                <span v-if="reader.progress != null" class="fine subtle nums">
+                  {{ t("progress.percent", { n: reader.progress }) }}
+                </span>
+                <span v-if="reader.rating" class="fine stars">
+                  {{ starLabel(reader.rating) }}
+                </span>
+              </RouterLink>
+            </li>
+          </ul>
+          <p v-else class="fine subtle">{{ t("book.nobodyElse") }}</p>
+        </section>
+      </div>
     </template>
 
     <ClubBookActions ref="clubActions" @picked="onPicked" />
@@ -957,6 +978,26 @@ watch(param, load);
 .hero-cover-skeleton {
   aspect-ratio: 2 / 3;
   border-radius: var(--radius-md);
+}
+
+/* Tall enough that the footer does not jump when the book arrives. */
+.detail-skeleton {
+  min-height: 60vh;
+  align-content: start;
+}
+
+.detail-skeleton .detail-intro {
+  gap: var(--space-2);
+}
+
+.skeleton-title {
+  height: 1.6em;
+  width: 70%;
+}
+
+.skeleton-status {
+  height: 46px;
+  border-radius: var(--radius-pill);
 }
 
 .hero-cover :deep(.cover-photo),
@@ -1053,6 +1094,12 @@ watch(param, load);
 
 .detail-intro .display {
   font-size: var(--text-2xl);
+  text-wrap: balance;
+}
+
+/* A very long title steps down a size, so the status control stays in view. */
+.detail-intro .display.long-title {
+  font-size: var(--text-xl);
 }
 
 /* "…" floats beside the title's first lines; the rest of the title takes the full width.
@@ -1090,8 +1137,9 @@ watch(param, load);
   font-size: var(--text-lg);
 }
 
-/* "· 2019" never starts a line of its own. */
-.detail-year {
+/* "· 2019" never starts a line of its own, and a name never breaks inside itself. */
+.detail-year,
+.author-name {
   white-space: nowrap;
 }
 
@@ -1142,9 +1190,27 @@ watch(param, load);
   justify-self: start;
 }
 
+/* The panel's own rows: hairlines, no boxes; the text lines up with the column. */
 .panel-actions {
-  padding-top: var(--space-3);
   border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-actions .sheet-row {
+  min-height: 48px;
+  padding: 0;
+  font-weight: 500;
+}
+
+.favorite-row[aria-pressed="true"] .sheet-icon {
+  color: var(--accent);
+}
+
+.remove-btn {
+  justify-self: start;
+  margin: calc(-1 * var(--space-2)) 0 0 calc(-1 * var(--space-2));
+  font-size: var(--text-sm);
+  font-weight: 500;
 }
 
 .description {
@@ -1161,29 +1227,46 @@ watch(param, load);
   overflow: hidden;
 }
 
+/* Light rows; the whole row opens the reader's profile. */
 .reader-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  gap: var(--space-2);
 }
 
-.reader-list li {
+.reader-list li + li {
+  border-top: 1px solid var(--border);
+}
+
+.reader-row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-
-.reader-list a {
-  font-weight: 600;
+  min-height: 56px;
+  padding: var(--space-2) 0;
   color: inherit;
   text-decoration: none;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.reader-row:active {
+  transform: scale(var(--press-scale));
+  transition-duration: var(--dur-press);
+}
+
+.reader-name {
+  min-width: 0;
   margin-right: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+@media (hover: hover) {
+  .reader-row:hover .reader-name {
+    color: var(--accent);
+  }
 }
 
 @media (min-width: 720px) {
@@ -1194,6 +1277,10 @@ watch(param, load);
 
   .detail-intro .display {
     font-size: var(--text-3xl);
+  }
+
+  .detail-intro .display.long-title {
+    font-size: var(--text-2xl);
   }
 }
 
@@ -1215,8 +1302,11 @@ watch(param, load);
     grid-column: auto;
   }
 
-  .description {
+  /* The sections below keep to the column beside the cover, so every right
+     edge on the page (panel, diary, readers) is the same one. */
+  .book-body {
     max-width: 720px;
+    margin-inline-start: calc(240px + var(--space-6));
   }
 }
 </style>

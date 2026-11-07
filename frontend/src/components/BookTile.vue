@@ -16,7 +16,7 @@ const props = defineProps<{
   showAuthors?: boolean;
   /** A short line under the title, such as a release date. */
   note?: string;
-  /** The owner's stars, shown under the title for finished books. */
+  /** The owner's stars for finished books: title, author, then the stars. */
   rating?: number | null;
   size?: CoverSize;
   eager?: boolean;
@@ -40,6 +40,7 @@ const props = defineProps<{
       </span>
     </span>
     <span class="book-tile-title">{{ book.title }}</span>
+    <span v-if="showAuthors && book.authors" class="book-tile-sub">{{ book.authors }}</span>
     <span
       v-if="rating && status === 'finished'"
       class="book-tile-sub stars"
@@ -47,7 +48,6 @@ const props = defineProps<{
     >
       {{ starLabel(rating) }}
     </span>
-    <span v-if="showAuthors && book.authors" class="book-tile-sub">{{ book.authors }}</span>
     <span v-if="note" class="book-tile-sub book-tile-note">{{ note }}</span>
   </RouterLink>
 </template>

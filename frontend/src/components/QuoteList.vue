@@ -21,9 +21,12 @@ const props = defineProps<{
   /** Show each quote's book (the /quotes page). */
   showBook?: boolean;
   heading?: string;
+  /** Keep the heading for screen readers only, and drop the count (a page head above already says it). */
+  headingHidden?: boolean;
   emptyText?: string;
 }>();
 
+/** The number of quotes the list shows: after loading, adding and deleting. */
 const emit = defineEmits<{ changed: [count: number] }>();
 
 /**
@@ -72,6 +75,7 @@ async function load() {
     items.value = page.items;
     capped.value = limit !== undefined && page.items.length >= limit;
     error.value = "";
+    emit("changed", items.value.length);
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : t("quotes.loadFailed");
   } finally {
@@ -162,7 +166,8 @@ watch(
 
 <template>
   <section class="quotes">
-    <div class="section-head">
+    <h2 v-if="headingHidden" class="visually-hidden">{{ heading ?? t("quotes.heading") }}</h2>
+    <div v-else class="section-head">
       <h2>{{ heading ?? t("quotes.heading") }}</h2>
       <span v-if="items.length" class="fine subtle nums">{{ items.length }}</span>
     </div>
@@ -192,7 +197,7 @@ watch(
       <li v-for="quote in items" :key="quote.id" class="quote" :class="{ mine: quote.mine }">
         <RouterLink v-if="showBook" class="quote-book" :to="bookPath(quote.book)">
           <BookCover :book="quote.book" size="xs" />
-          <span class="fine">{{ quote.book.title }}</span>
+          <span class="quote-book-title">{{ quote.book.title }}</span>
         </RouterLink>
 
         <form v-if="editingId === quote.id" class="quote-edit" @submit.prevent="saveEdit(quote)">
@@ -228,10 +233,10 @@ watch(
             </span>
           </p>
           <p v-if="quote.mine" class="quote-actions">
-            <button class="text-btn" type="button" @click="startEdit(quote)">{{ t("common.edit") }}</button>
+            <button class="text-btn quiet" type="button" @click="startEdit(quote)">{{ t("common.edit") }}</button>
             <button
               class="text-btn"
-              :class="{ danger: confirmingId === quote.id }"
+              :class="confirmingId === quote.id ? 'danger' : 'quiet'"
               type="button"
               :disabled="busy"
               @click="remove(quote)"
@@ -299,30 +304,49 @@ watch(
   margin-right: auto;
 }
 
+/* Light rows split by hairlines, like the diary: no card around a quote
+   that already has its own rule. */
 .quote-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  gap: var(--space-2);
 }
 
 .quote {
   display: grid;
   gap: var(--space-1);
-  padding: var(--space-3) var(--space-4);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  padding: var(--space-4) 0;
+}
+
+.quote:first-child {
+  padding-top: var(--space-1);
+}
+
+.quote + .quote {
+  border-top: 1px solid var(--border);
 }
 
 .quote-book {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  min-width: 0;
   color: inherit;
   text-decoration: none;
+}
+
+.quote-book-title {
+  min-width: 0;
+  font-family: var(--serif);
+  font-size: var(--text-sm);
   font-weight: 600;
+  line-height: var(--leading-snug);
+}
+
+@media (hover: hover) {
+  .quote-book:hover .quote-book-title {
+    text-decoration: underline;
+  }
 }
 
 .quote-body {
@@ -345,10 +369,21 @@ watch(
   font-size: var(--text-2xs);
 }
 
+/* The padding only widens the targets: the text lines up with the row.
+   Edit and delete stay quiet until delete asks to be confirmed. */
 .quote-actions {
   display: flex;
   gap: var(--space-1);
   margin: 0 calc(-1 * var(--space-2));
+  font-size: var(--text-sm);
+}
+
+.quote-actions .text-btn.quiet {
+  color: var(--text-muted);
+}
+
+.quote-actions .text-btn.danger {
+  color: var(--danger);
 }
 
 @media (min-width: 1024px) {

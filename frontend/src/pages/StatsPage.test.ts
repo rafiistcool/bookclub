@@ -76,7 +76,11 @@ describe("year in books", () => {
       wrapper.findAll(".stat-tile").map((tile) => [tile.attributes("data-stat"), tile.get("dd").text()]),
     );
     expect(tiles).toMatchObject({ finished: "12", pages: "3,480", average: "4.3", five: "3", dnf: "1", quotes: "7" });
-    // Twelve bars; only the busiest month carries its number.
+    // The picker names the year (its label for screen readers); no heading repeats it.
+    expect(wrapper.find(".year-heading").exists()).toBe(false);
+    expect(wrapper.get(".year-field span").classes()).toContain("visually-hidden");
+    expect(wrapper.get(".highlight-title").text()).toBe("Circe");
+    // Twelve bars; every month with a book shows its number, the busiest is marked.
     expect(wrapper.findAll(".bar-col")).toHaveLength(12);
     expect(wrapper.findAll(".bar-col.peak")).toHaveLength(1);
     expect(wrapper.get(".bar-col.peak").attributes("title")).toBe("March: 5 finished");
@@ -89,6 +93,19 @@ describe("year in books", () => {
     expect(personalStats).toHaveBeenLastCalledWith({ username: undefined, year: 2025 });
     expect(wrapper.text()).toContain("Nothing finished or set aside in 2025 yet.");
     expect(wrapper.find(".bar-col").exists()).toBe(false);
+  });
+
+  it("names a single year in a heading, with no picker", async () => {
+    personalStats.mockResolvedValue(personal({ years: [2026] }));
+    const { wrapper } = await mountAt("/stats", StatsPage, "/stats");
+    expect(wrapper.find(".year-field").exists()).toBe(false);
+    expect(wrapper.get(".year-heading").text()).toBe("2026");
+  });
+
+  it("holds the tiles' shape while it loads", async () => {
+    personalStats.mockReturnValue(new Promise(() => {}));
+    const { wrapper } = await mountAt("/stats", StatsPage, "/stats");
+    expect(wrapper.findAll(".stats-skeleton .skeleton-tile")).toHaveLength(6);
   });
 
   it("shows another reader's year, or the same not-found as for a stranger", async () => {

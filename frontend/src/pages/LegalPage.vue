@@ -358,8 +358,10 @@ function onTextClick(event: MouseEvent) {
 </template>
 
 <style scoped>
+/* One measure for the header, the text and the footer: 70 characters plus
+   the side padding (border-box), so the language switch ends where the text does. */
 .legal-page {
-  max-width: 760px;
+  max-width: calc(70ch + 2 * var(--space-5));
   min-height: 100dvh;
   margin: 0 auto;
   padding: calc(var(--space-6) + env(safe-area-inset-top)) var(--space-5)
@@ -424,7 +426,6 @@ function onTextClick(event: MouseEvent) {
 
 /* The operator's HTML: headings, paragraphs, lists and tables, in the app's type. */
 .legal-text {
-  max-width: 70ch;
   margin-top: var(--space-4);
   overflow-wrap: anywhere;
 }

@@ -91,8 +91,7 @@ watch(
 <template>
   <div class="edition-picker">
     <p class="fine edition-current">
-      <span class="subtle">{{ t("editions.yours") }}</span>
-      <span>{{ editionId == null ? t("editions.any") : current ? editionLine(current) : "…" }}</span>
+      <span class="edition-what"><span class="subtle">{{ t("editions.yours") }}</span> <span>{{ editionId == null ? t("editions.any") : current ? editionLine(current) : "…" }}</span></span>
       <button class="text-btn" type="button" :disabled="disabled" @click="show">
         {{ t("editions.choose") }}
       </button>
@@ -148,12 +147,18 @@ watch(
 </template>
 
 <style scoped>
+/* The links' text, not their padding, lines up with the column: on a line of
+   their own "Choose" starts where "Your edition" does. */
 .edition-current {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: var(--space-1) var(--space-2);
+  gap: 0 var(--space-4);
   margin: var(--space-2) 0 0;
+}
+
+.edition-current .text-btn {
+  margin-inline: calc(-1 * var(--space-2));
 }
 
 .edition-missing {

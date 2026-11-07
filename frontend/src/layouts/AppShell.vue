@@ -199,7 +199,7 @@ watch(
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: var(--bg-translucent);
+  background: var(--bg-translucent-strong);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
 }
@@ -264,11 +264,13 @@ watch(
   transition-duration: var(--dur-press);
 }
 
-/* 24px, in the 22px icons' slot; the ring sits outside it on the page colour. */
+/* 24px, in the 22px icons' slot (a pixel out at the top and at the bottom,
+   so the label sits on the other tabs' line); the ring sits outside it on
+   the page colour. */
 .tab-avatar {
   position: relative;
   display: grid;
-  margin-top: -1px;
+  margin-block: -1px;
   border-radius: var(--radius-pill);
   box-shadow: 0 0 0 1.5px transparent;
 }
@@ -348,7 +350,8 @@ watch(
     display: flex;
     flex-direction: column;
     gap: var(--space-5);
-    padding: var(--space-6) var(--space-4) var(--space-4);
+    /* The same top as .main, so the wordmark and the page title share a line. */
+    padding: var(--space-7) var(--space-4) var(--space-4);
     background: var(--surface);
     border-right: 1px solid var(--border);
   }
@@ -403,21 +406,20 @@ watch(
     text-align: center;
   }
 
+  /* Set off from the nav by a hairline, not a card; on /me the link is
+     highlighted like an active nav link. */
   .side-account {
     margin-top: auto;
     display: flex;
     align-items: center;
     gap: var(--space-1);
-    padding: var(--space-1);
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border);
+    padding: var(--space-3) var(--space-1) 0;
+    border-top: 1px solid var(--border);
     min-width: 0;
-    transition: background var(--dur-fast) var(--ease);
   }
 
-  .side-account.active {
+  .side-account.active .side-account-link {
     background: var(--accent-soft);
-    border-color: var(--accent-line);
   }
 
   .side-account-link {
@@ -426,10 +428,11 @@ watch(
     align-items: center;
     gap: var(--space-3);
     padding: var(--space-2);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-md);
     color: inherit;
     text-decoration: none;
     min-width: 0;
+    transition: background var(--dur-fast) var(--ease);
   }
 
   @media (hover: hover) {

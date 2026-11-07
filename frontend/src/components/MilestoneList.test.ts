@@ -67,4 +67,28 @@ describe("MilestoneList", () => {
     expect(wrapper.get(".milestones > .fine").text()).toBe(i18n.global.t("milestones.emptyAdmin"));
     expect(wrapper.get(".section-head .text-btn").text()).toBe(i18n.global.t("milestones.add"));
   });
+
+  it("splits the meta line into facts that each wrap as a unit", async () => {
+    milestones.mockResolvedValue({
+      items: [milestone({ unit: "chapter", range_from: 1, range_to: 5, note_count: 2 })],
+    });
+    const wrapper = await mountList(false);
+    const facts = wrapper.findAll(".milestone-facts > span").map((part) => part.text());
+    expect(facts).toEqual([
+      i18n.global.t("milestones.chapterRange", { from: 1, to: 5 }),
+      i18n.global.t("milestones.notes", 2),
+    ]);
+    expect(facts.join("")).not.toContain("·");
+  });
+
+  it("keeps remove quiet until it asks to be confirmed", async () => {
+    milestones.mockResolvedValue({ items: [milestone()] });
+    const wrapper = await mountList(true);
+    const remove = wrapper.get(".milestone .text-btn");
+    expect(remove.classes()).toContain("quiet");
+    await remove.trigger("click");
+    expect(remove.classes()).toEqual(expect.arrayContaining(["danger"]));
+    expect(remove.classes()).not.toContain("quiet");
+    expect(remove.text()).toBe(i18n.global.t("common.deleteConfirm"));
+  });
 });

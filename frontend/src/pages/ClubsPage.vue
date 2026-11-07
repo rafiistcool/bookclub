@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { PlusIcon } from "@heroicons/vue/24/outline";
 import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
@@ -50,13 +51,22 @@ onMounted(load);
       </li>
     </ul>
 
-    <div class="club-ways">
-      <section class="panel create-way">
-        <RouterLink class="btn btn-primary" to="/clubs/new">{{ t("clubs.create") }}</RouterLink>
-        <p class="fine muted">{{ t("clubs.createBlurb") }}</p>
-      </section>
-      <form class="panel" @submit.prevent="join">
-        <h2>{{ t("clubs.joinHeading") }}</h2>
+    <!-- Creating is one more row under the clubs, like the club sheet's "Create a club". -->
+    <div class="create-way">
+      <RouterLink class="create-row" to="/clubs/new">
+        <PlusIcon class="create-icon" aria-hidden="true" />
+        <span class="create-text">
+          <span class="create-label">{{ t("clubs.create") }}</span>
+          <span class="fine subtle">{{ t("clubs.createBlurb") }}</span>
+        </span>
+      </RouterLink>
+    </div>
+
+    <section class="section join-way" aria-labelledby="join-heading">
+      <div class="section-head">
+        <h2 id="join-heading">{{ t("clubs.joinHeading") }}</h2>
+      </div>
+      <form class="stack join-form" @submit.prevent="join">
         <label class="field">
           <span>{{ t("clubs.joinLabel") }}</span>
           <input
@@ -70,52 +80,80 @@ onMounted(load);
         </label>
         <button class="btn btn-ghost" type="submit" :disabled="!code.trim()">{{ t("clubs.join") }}</button>
       </form>
-    </div>
+    </section>
   </section>
 </template>
 
 <style scoped>
+.clubs-page {
+  max-width: 720px;
+}
+
 .clubs-skeleton {
   height: 120px;
 }
 
+/* The clubs and the create row are light rows split by hairlines. */
 .club-grid {
   list-style: none;
-  margin: 0 0 var(--space-6);
+  margin: 0;
   padding: 0;
-  display: grid;
-  gap: var(--space-2);
 }
 
-.club-ways {
-  display: grid;
+.club-grid > li + li,
+.club-grid + .create-way {
+  border-top: 1px solid var(--border);
+}
+
+.create-row {
+  display: flex;
+  align-items: center;
   gap: var(--space-3);
+  min-height: 56px;
+  padding: var(--space-3) 0;
+  color: inherit;
+  text-decoration: none;
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 
-.club-ways .panel {
+.create-row:active {
+  transform: scale(var(--press-scale));
+  transition-duration: var(--dur-press);
+}
+
+/* Centred in a box as wide as a club row's cover (52px), so the label lines
+   up with the club names above it. */
+.create-icon {
+  flex: none;
+  box-sizing: content-box;
+  width: 22px;
+  height: 22px;
+  padding-inline: 15px;
+  color: var(--accent);
+}
+
+.create-text {
   display: grid;
-  gap: var(--space-2);
-  justify-items: start;
+  gap: 2px;
+  min-width: 0;
 }
 
-/* No heading: the button names the action, the line under it the member limit. */
-.create-way {
-  align-content: start;
+.create-label {
+  color: var(--accent);
+  font-weight: 600;
 }
 
-.club-ways h2 {
-  font-size: var(--text-lg);
-}
-
-.club-ways .field {
-  width: 100%;
-  margin-bottom: var(--space-1);
-}
-
-@media (min-width: 720px) {
-  .club-grid,
-  .club-ways {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+@media (hover: hover) {
+  .create-row:hover .create-label {
+    text-decoration: underline;
   }
+}
+
+.join-form {
+  max-width: 480px;
+}
+
+.join-form > .btn {
+  justify-self: start;
 }
 </style>
