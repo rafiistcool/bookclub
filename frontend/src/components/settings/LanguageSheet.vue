@@ -54,7 +54,7 @@ function pick(id: Locale) {
   gap: var(--space-3);
   width: 100%;
   min-height: 52px;
-  padding: 0 var(--space-1);
+  padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
   background: none;

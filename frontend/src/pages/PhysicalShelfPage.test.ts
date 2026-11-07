@@ -97,6 +97,15 @@ describe("physical bookshelf", () => {
     wrapper.unmount();
   });
 
+  it("carries the Books view's title, with the switch under it", async () => {
+    const wrapper = await render();
+    const head = wrapper.get(".physical-shelf-heading");
+    expect(head.get("h1").text()).toBe("Your shelf");
+    // Title block first, then the switch: the same order as on /shelf.
+    expect(head.element.lastElementChild?.classList.contains("shelf-view-switch")).toBe(true);
+    wrapper.unmount();
+  });
+
   it("explains dragging only once there are books to drag", async () => {
     const wrapper = await render();
     expect(wrapper.get(".shelf-instruction").text()).toBe("Hold and drag to rearrange. Tap a book to restyle it.");

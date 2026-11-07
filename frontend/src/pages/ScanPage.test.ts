@@ -97,6 +97,13 @@ describe("ScanPage", () => {
     expect(w.text()).toContain("The Catcher in the Rye");
     expect(w.text()).toContain("J. D. Salinger");
     expect(w.text()).toContain("1951 · 277 pages · ISBN 9780316769488");
+    // "ISBN" never parts from its number; the add-to label is no caps kicker.
+    expect(w.findAll(".hit-details .detail-part").map((node) => node.text())).toEqual([
+      "1951",
+      "277 pages",
+      "ISBN 9780316769488",
+    ]);
+    expect(w.find(".hit-card .caps").exists()).toBe(false);
     expect(addToShelf).not.toHaveBeenCalled();
 
     await button(w, "To read").trigger("click");
@@ -203,6 +210,8 @@ describe("ScanPage", () => {
     await scan(w);
     expect(w.text()).toContain("This ISBN is not in the catalog yet");
     expect(w.text()).toContain(`ISBN ${ISBN}`);
+    // Full-height buttons, stacked at one width on a phone.
+    expect(w.find(".miss-actions .btn-sm").exists()).toBe(false);
     const order = w.findAll("button").map((candidate) => candidate.text());
     expect(order.indexOf("Find the book by title")).toBeLessThan(order.indexOf("Add it as a new book"));
 

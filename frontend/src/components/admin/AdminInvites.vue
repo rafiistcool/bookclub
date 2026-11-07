@@ -9,6 +9,7 @@ import { inviteState } from "../../invites";
 import { useLocale } from "../../stores/locale";
 import { useSession } from "../../stores/session";
 import { useToast } from "../../stores/toast";
+import AdminDisclosure from "./AdminDisclosure.vue";
 
 /**
  * Sign-up invites for the closed beta: they let someone create an account
@@ -112,12 +113,10 @@ onMounted(load);
 
 <template>
   <section class="admin-queue" aria-labelledby="admin-invites">
-    <div class="section-head">
-      <h2 id="admin-invites">{{ t("admin.invites") }}</h2>
-    </div>
+    <h2 id="admin-invites" class="visually-hidden">{{ t("admin.invites") }}</h2>
     <p class="fine muted">{{ t("admin.invitesBlurb") }}</p>
 
-    <form class="panel invite-form" @submit.prevent="create">
+    <form class="admin-form invite-form" @submit.prevent="create">
       <div class="field-pair">
         <label class="field">
           <span>{{ t("admin.maxUses") }}</span>
@@ -129,10 +128,12 @@ onMounted(load);
         </label>
       </div>
       <p class="field-hint">{{ t("admin.inviteDefaults") }}</p>
-      <button class="btn btn-primary btn-sm" type="submit" :disabled="busy">{{ t("admin.newInvite") }}</button>
+      <div class="btn-row">
+        <button class="btn btn-primary btn-sm" type="submit" :disabled="busy">{{ t("admin.newInvite") }}</button>
+      </div>
     </form>
 
-    <div v-if="fresh" class="panel fresh-invite">
+    <div v-if="fresh" class="fresh-invite">
       <p class="fine">{{ t("admin.freshInvite") }}</p>
       <code class="invite-url">{{ fresh.url }}</code>
       <div class="btn-row">
@@ -141,7 +142,14 @@ onMounted(load);
     </div>
 
     <p v-if="error" class="error">{{ error }}</p>
-    <div v-else-if="!loaded" class="skeleton admin-skeleton" aria-hidden="true" />
+    <ol v-else-if="!loaded" class="skeleton-rows admin-skeleton" aria-hidden="true">
+      <li v-for="n in 2" :key="n" class="skeleton-row">
+        <span class="skeleton-row-lines">
+          <span class="skeleton skeleton-line short" />
+          <span class="skeleton skeleton-line" />
+        </span>
+      </li>
+    </ol>
     <template v-else>
       <h3 class="invite-subhead">{{ t("invites.active") }}</h3>
       <p v-if="active.length === 0" class="fine subtle">{{ t("invites.noneActive") }}</p>
@@ -158,8 +166,7 @@ onMounted(load);
           </span>
         </li>
       </ul>
-      <details v-if="past.length" class="past-invites">
-        <summary class="fine">{{ tp("admin.pastInvites", past.length) }}</summary>
+      <AdminDisclosure v-if="past.length" class="past-invites" ruled :summary="tp('admin.pastInvites', past.length)">
         <ul class="invite-list">
           <li v-for="invite in past" :key="invite.id" class="invite-row past">
             <span class="invite-meta">
@@ -172,21 +179,24 @@ onMounted(load);
             </span>
           </li>
         </ul>
-      </details>
+      </AdminDisclosure>
     </template>
   </section>
 </template>
 
 <style scoped>
-.admin-skeleton {
-  height: 120px;
+.invite-form {
+  margin-top: var(--space-3);
 }
 
-.invite-form,
 .fresh-invite {
   display: grid;
-  gap: var(--space-3);
-  margin-top: var(--space-3);
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.fresh-invite p {
+  margin: 0;
 }
 
 .field-pair {
@@ -195,8 +205,7 @@ onMounted(load);
   gap: var(--space-3);
 }
 
-.field-pair .field,
-.invite-form .field-hint {
+.field-pair .field {
   margin: 0;
 }
 
@@ -211,15 +220,14 @@ onMounted(load);
 
 .invite-subhead {
   font-size: var(--text-md);
-  margin: var(--space-5) 0 var(--space-2);
+  margin: var(--space-5) 0 var(--space-1);
 }
 
+/* Light rows split by hairlines, as in the queues and Settings. */
 .invite-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  gap: var(--space-2);
 }
 
 .invite-row {
@@ -227,10 +235,12 @@ onMounted(load);
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  min-height: 60px;
+  padding: var(--space-2) 0;
+}
+
+.invite-row + .invite-row {
+  border-top: 1px solid var(--border);
 }
 
 .invite-row.past {
@@ -240,7 +250,8 @@ onMounted(load);
 .invite-actions {
   display: flex;
   flex-shrink: 0;
-  gap: var(--space-3);
+  gap: var(--space-1);
+  margin-right: calc(-1 * var(--space-2));
 }
 
 .invite-meta {
@@ -249,11 +260,11 @@ onMounted(load);
   min-width: 0;
 }
 
-.past-invites {
-  margin-top: var(--space-3);
+.invite-meta code {
+  overflow-wrap: anywhere;
 }
 
-.past-invites .invite-list {
-  margin-top: var(--space-2);
+.past-invites {
+  margin-top: var(--space-4);
 }
 </style>

@@ -162,14 +162,16 @@ function pickTheme(id: ThemeId) {
   gap: 5px;
 }
 
+/* Short of the corner, where the chosen palette's check sits. */
 .sp-title {
+  width: 70%;
   height: 6px;
   border-radius: 2px;
   background: var(--text);
 }
 
 .sp-line {
-  width: 70%;
+  width: 50%;
   height: 4px;
   border-radius: 2px;
   background: var(--text-muted);
@@ -193,12 +195,14 @@ function pickTheme(id: ThemeId) {
   border-radius: var(--radius-pill);
   background: var(--accent);
   color: var(--accent-ink);
+  /* A ring in the preview's own background keeps it off whatever is beneath. */
+  box-shadow: 0 0 0 2px var(--bg);
   animation: check-in var(--dur-base) var(--ease-out);
 }
 
 .swatch-name {
   font-family: var(--serif);
-  font-size: var(--text-lg);
+  font-size: var(--text-md);
   font-weight: 600;
   line-height: var(--leading-snug);
 }

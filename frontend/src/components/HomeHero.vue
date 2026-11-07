@@ -148,7 +148,8 @@ const meeting = computed(() => {
   const zone = shown.value.zone || shown.value.club.timezone;
   return {
     at,
-    text: t("home.meetingWhen", { when: relativeDay(at, zone), date: shortDay(at, zone) }),
+    when: relativeDay(at, zone),
+    date: shortDay(at, zone),
     full: formatClubDate(at, zone, locale.locale),
   };
 });
@@ -300,7 +301,13 @@ const swapKey = computed(() => (solo.value ? `solo-${props.entry?.id ?? 0}` : `c
               </h2>
               <p v-if="book.authors" class="hero-authors">{{ book.authors }}</p>
               <p v-if="meeting" class="hero-meeting fine">
-                <time :datetime="meeting.at" :title="meeting.full">{{ meeting.text }}</time>
+                <!-- The date stays on one line: "Nov." never wraps alone. -->
+                <time :datetime="meeting.at" :title="meeting.full">
+                  <i18n-t keypath="home.meetingWhen" scope="global">
+                    <template #when><span class="meeting-when">{{ meeting.when }}</span></template>
+                    <template #date><span class="meeting-date">{{ meeting.date }}</span></template>
+                  </i18n-t>
+                </time>
               </p>
             </div>
           </div>
@@ -499,6 +506,14 @@ const swapKey = computed(() => (solo.value ? `solo-${props.entry?.id ?? 0}` : `c
   margin-top: var(--space-1);
   color: var(--accent-hover);
   font-weight: 600;
+  text-wrap: balance;
+}
+
+/* Each half stays whole ("in 12 Tagen", "Do., 19. Nov."), so the line only
+   breaks after the "·", which a no-break space keeps on the first line. */
+.meeting-when,
+.meeting-date {
+  white-space: nowrap;
 }
 
 .hero-action {

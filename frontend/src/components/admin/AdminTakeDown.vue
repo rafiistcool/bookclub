@@ -7,6 +7,7 @@ import { fromLocalInput, pictureRef, TAKEDOWN_DETAILS, toLocalInput } from "../.
 import { useToast } from "../../stores/toast";
 import Avatar from "../Avatar.vue";
 import BookCover from "../BookCover.vue";
+import AdminDisclosure from "./AdminDisclosure.vue";
 
 /**
  * "Take down a picture by URL": how a notice that arrived by email (from
@@ -138,8 +139,7 @@ function submit() {
 </script>
 
 <template>
-  <details class="takedown panel">
-    <summary>{{ t("admin.takeDownForm.toggle") }}</summary>
+  <AdminDisclosure class="takedown" ruled :summary="t('admin.takeDownForm.toggle')">
     <form class="stack takedown-form" @submit.prevent="submit">
       <p class="fine muted">{{ t("admin.takeDownForm.blurb") }}</p>
       <label class="field">
@@ -194,7 +194,7 @@ function submit() {
         </button>
       </div>
     </form>
-  </details>
+  </AdminDisclosure>
 </template>
 
 <style scoped>
@@ -202,13 +202,8 @@ function submit() {
   margin: 0 0 var(--space-3);
 }
 
-.takedown summary {
-  cursor: pointer;
-  font-weight: 600;
-}
-
 .takedown-form {
-  margin-top: var(--space-3);
+  padding-bottom: var(--space-2);
 }
 
 .takedown-form p {

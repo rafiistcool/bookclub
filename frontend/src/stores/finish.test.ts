@@ -85,7 +85,7 @@ describe("useFinish", () => {
     const finish = useFinish();
     finish.celebrate({ item: shelfItem({ id: 1, status: "finished" }) });
     const first = finish.serial;
-    // Its "Done" is still saving when another finish opens the next moment.
+    // Its "Save" is still saving when another finish opens the next moment.
     const second = finish.celebrate({ item: shelfItem({ id: 2, status: "finished" }) });
     const savedFirst = shelfItem({ id: 1, status: "finished", rating: 4 });
     finish.close(savedFirst, first);

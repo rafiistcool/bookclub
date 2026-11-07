@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { api } from "../api/client";
 import type { AdminSummary } from "../api/generated";
+import "../components/admin/admin.css";
 import AdminCovers from "../components/admin/AdminCovers.vue";
 import AdminInvites from "../components/admin/AdminInvites.vue";
 import AdminReports from "../components/admin/AdminReports.vue";
 import AdminRequests from "../components/admin/AdminRequests.vue";
 import AdminUsers from "../components/admin/AdminUsers.vue";
+import BackLink from "../components/BackLink.vue";
 
 /**
  * The instance admin's page (`UserOut.is_admin`; the router keeps everyone
@@ -57,17 +59,29 @@ function show(next: Tab) {
   void router.replace({ query: next === "requests" ? {} : { tab: next } });
 }
 
-onMounted(loadSummary);
+/** The tab row scrolls on a phone: keep the shown tab in view, also when a link opens a later one. */
+const tabRow = ref<HTMLElement | null>(null);
+async function revealTab() {
+  await nextTick();
+  const pressed = tabRow.value?.querySelector<HTMLElement>('[aria-pressed="true"]');
+  pressed?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+}
+watch(tab, revealTab);
+
+onMounted(() => {
+  void loadSummary();
+  void revealTab();
+});
 </script>
 
 <template>
   <section class="admin-page">
+    <BackLink :label="t('settings.back')" fallback="/settings" exact />
     <div class="page-head">
       <h1>{{ t("admin.title") }}</h1>
-      <p class="lede">{{ t("admin.lede") }}</p>
     </div>
 
-    <div class="segmented admin-tabs" role="group" :aria-label="t('admin.sections')">
+    <div ref="tabRow" class="admin-tabs" role="group" :aria-label="t('admin.sections')">
       <button v-for="name in TABS" :key="name" type="button" :aria-pressed="tab === name" @click="show(name)">
         {{ t(`admin.tabs.${name}`) }}
         <span
@@ -95,25 +109,88 @@ onMounted(loadSummary);
 </template>
 
 <style scoped>
-.admin-tabs {
-  margin-bottom: var(--space-5);
+.admin-page {
+  max-width: 760px;
+}
+
+/* Running text keeps a reading measure even where the page is wide. */
+.admin-page :deep(p.fine) {
+  max-width: 65ch;
 }
 
 /*
- * Five tabs with a count do not fit one line of a phone (at 360 px the
- * fourth one was cut off inside the scrolling bar): rows of two there, the
- * last one across both columns.
+ * Text tabs on one line with the shown one underlined, like a page's own
+ * sections rather than a control: five tabs with counts do not fit a phone,
+ * so the row scrolls (and fades at its end) instead of wrapping.
  */
-@media (max-width: 479px) {
-  .admin-tabs {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    border-radius: var(--radius-xl);
-  }
+.admin-tabs {
+  display: flex;
+  gap: var(--space-4);
+  margin: 0 calc(-1 * var(--space-4)) var(--space-5);
+  padding: 0 var(--space-4);
+  overflow-x: auto;
+  scrollbar-width: none;
+  box-shadow: inset 0 -1px 0 var(--border);
+}
 
-  .admin-tabs button:last-child:nth-child(odd) {
-    grid-column: 1 / -1;
+.admin-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 559px) {
+  .admin-tabs {
+    padding-right: var(--space-6);
+    -webkit-mask-image: linear-gradient(90deg, currentColor calc(100% - var(--space-5)), transparent);
+    mask-image: linear-gradient(90deg, currentColor calc(100% - var(--space-5)), transparent);
   }
+}
+
+@media (min-width: 560px) {
+  .admin-tabs {
+    margin-inline: 0;
+    padding: 0;
+  }
+}
+
+.admin-tabs button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  scroll-margin-inline: var(--space-5);
+  transition:
+    color var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.admin-tabs button:active {
+  transform: scale(var(--press-scale));
+  transition-duration: var(--dur-press);
+}
+
+@media (hover: hover) {
+  .admin-tabs button:hover {
+    color: var(--text);
+  }
+}
+
+.admin-tabs button[aria-pressed="true"] {
+  color: var(--text);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.seg-count {
+  margin-left: var(--space-1);
+  color: var(--text-subtle);
+  font-variant-numeric: tabular-nums;
 }
 
 .seg-count.overdue {

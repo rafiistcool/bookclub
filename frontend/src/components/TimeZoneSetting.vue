@@ -11,8 +11,10 @@ import { browserTimeZone, timeZoneOptions } from "../timezone";
  * shelf, diary and quote times. Sign-up stores the browser's; imported
  * accounts may carry another one, so the device's zone comes first when it
  * differs. Settings shows it in a sheet; the row behind it shows the saved
- * zone, so a save needs no toast.
+ * zone, so a save needs no toast. `hideLabel` keeps the select's label for
+ * screen readers only, under a sheet whose title already says "Time zone".
  */
+const props = defineProps<{ hideLabel?: boolean }>();
 const { t } = useI18n();
 const session = useSession();
 const toast = useToast();
@@ -51,7 +53,7 @@ async function save(next: string) {
       </button>
     </p>
     <label class="field timezone-field">
-      <span>{{ t("settings.timezone") }}</span>
+      <span :class="{ 'visually-hidden': props.hideLabel }">{{ t("settings.timezone") }}</span>
       <select :value="zone" name="timezone" :disabled="busy" @change="save(($event.target as HTMLSelectElement).value)">
         <option v-for="option in zones" :key="option" :value="option">{{ option }}</option>
       </select>

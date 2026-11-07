@@ -53,7 +53,7 @@ const docs = computed(() => LEGAL_DOCS.filter((doc) => service.hasLegal(doc)));
   align-items: center;
   gap: var(--space-3);
   min-height: 52px;
-  padding: 0 var(--space-1);
+  padding: 0;
   border-radius: var(--radius-sm);
   color: var(--text);
   font-weight: 600;

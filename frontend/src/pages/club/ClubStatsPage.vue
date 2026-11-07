@@ -81,7 +81,7 @@ watch(() => [slug.value, route.query.year], load, { immediate: true });
   <section class="club-stats" aria-labelledby="club-stats">
     <div class="section-head stats-head">
       <h2 id="club-stats">{{ stats ? t("stats.clubTitle", { year: stats.year }) : t("stats.title") }}</h2>
-      <label v-if="stats && stats.years.length > 1" class="year-field">
+      <label v-if="stats && stats.years.length > 1" class="field year-field">
         <span class="visually-hidden">{{ t("stats.year") }}</span>
         <select :value="stats.year" :disabled="loading" @change="chooseYear">
           <option v-for="year in stats.years" :key="year" :value="year">{{ year }}</option>
@@ -151,6 +151,14 @@ watch(() => [slug.value, route.query.year], load, { immediate: true });
   align-items: center;
 }
 
+/* The same field as the personal stats page's year picker: 44px, the
+   theme's surface and border in light and dark. */
+.year-field {
+  min-width: 7rem;
+  margin-bottom: 0;
+  font-variant-numeric: tabular-nums;
+}
+
 .stats-skeleton {
   height: 260px;
 }
@@ -184,24 +192,30 @@ watch(() => [slug.value, route.query.year], load, { immediate: true });
   font-variant-numeric: tabular-nums;
 }
 
+/* Light rows split by hairlines. */
 .pick-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  gap: var(--space-2);
+}
+
+.pick-list > li + li {
+  border-top: 1px solid var(--border);
 }
 
 .pick-row {
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
-  padding: var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  padding: var(--space-3) 0;
   color: inherit;
   text-decoration: none;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.pick-row:active {
+  transform: scale(var(--press-scale));
+  transition-duration: var(--dur-press);
 }
 
 .pick-text {
@@ -209,5 +223,26 @@ watch(() => [slug.value, route.query.year], load, { immediate: true });
   gap: 2px;
   min-width: 0;
   justify-items: start;
+}
+
+/* Book titles are serif here as everywhere else in the club. */
+.pick-text strong {
+  font-family: var(--serif);
+  font-size: var(--text-md);
+  font-weight: 650;
+  line-height: var(--leading-snug);
+  overflow-wrap: anywhere;
+}
+
+@media (hover: hover) {
+  .pick-row:hover strong {
+    color: var(--accent);
+  }
+}
+
+/* The best pick is marked, quietly: a soft badge, not the page's loudest fill. */
+.pick-text .badge.club-pick {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 </style>

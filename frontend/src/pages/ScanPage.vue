@@ -83,16 +83,15 @@ const coverBook = computed(() =>
     : null,
 );
 const hasCover = computed(() => Boolean(hit.value?.cover_url || hit.value?.cover_thumb_url));
+/** Year, pages and ISBN; the template keeps each part on one line ("ISBN" never parts from its number). */
 const details = computed(() => {
   const current = hit.value;
-  if (!current) return "";
+  if (!current) return [];
   return [
     current.year ? String(current.year) : "",
     current.pages ? t("editions.pages", { n: current.pages }) : "",
     t("scan.isbn", { isbn: current.isbn }),
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  ].filter(Boolean);
 });
 
 function byline(work: SearchHit): string {
@@ -362,12 +361,14 @@ onBeforeUnmount(() => {
         <div class="hit-meta">
           <h2 id="scan-hit-title" class="hit-title">{{ hit.title }}</h2>
           <p v-if="hit.authors" class="muted">{{ hit.authors }}</p>
-          <p class="fine subtle">{{ details }}</p>
+          <p class="fine subtle hit-details">
+            <template v-for="(part, index) in details" :key="index"><template v-if="index"> · </template><span class="detail-part">{{ part }}</span></template>
+          </p>
         </div>
       </div>
 
       <div v-if="!hit.on_shelf" class="hit-section">
-        <p class="caps subtle">{{ t("scan.addTo") }}</p>
+        <p class="fine add-to-label">{{ t("scan.addTo") }}</p>
         <div class="segmented" role="group" :aria-label="t('scan.addTo')">
           <button
             v-for="status in STATUSES"
@@ -465,19 +466,19 @@ onBeforeUnmount(() => {
         <p v-else-if="works" class="fine muted">{{ t("scan.noWorks") }}</p>
       </div>
 
-      <div class="btn-row">
+      <div class="btn-row miss-actions">
         <button
           v-if="!finding && !chosenWork"
-          class="btn btn-primary btn-sm"
+          class="btn btn-primary"
           type="button"
           @click="startFinding"
         >
           {{ t("scan.findByTitle") }}
         </button>
-        <button class="btn btn-ghost btn-sm" type="button" @click="addingBook = true">
+        <button class="btn btn-ghost" type="button" @click="addingBook = true">
           {{ t("scan.addNew") }}
         </button>
-        <button class="btn btn-ghost btn-sm" type="button" @click="scanAnother">
+        <button class="btn btn-ghost" type="button" @click="scanAnother">
           {{ t("scan.again") }}
         </button>
       </div>
@@ -530,6 +531,25 @@ onBeforeUnmount(() => {
   font-family: var(--serif);
   font-size: var(--text-lg);
   overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+.detail-part {
+  white-space: nowrap;
+}
+
+/* A plain sentence-case label over the status control, not a caps kicker. */
+.add-to-label {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* On a phone the miss's three ways on share one width, stacked. */
+@media (max-width: 599px) {
+  .miss-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 
 .hit-section {

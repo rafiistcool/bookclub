@@ -217,7 +217,15 @@ onMounted(() => {
         <RouterLink to="/shelf">{{ t("home.toShelf") }}</RouterLink>
       </div>
       <p v-if="shelfError" class="error">{{ shelfError }}</p>
-      <div v-else-if="!shelfLoaded" class="skeleton reading-skeleton" aria-hidden="true" />
+      <ol v-else-if="!shelfLoaded" class="skeleton-rows reading-skeleton" aria-hidden="true">
+        <li v-for="n in 2" :key="n" class="skeleton-row">
+          <span class="skeleton reading-skeleton-cover" />
+          <span class="skeleton-row-lines">
+            <span class="skeleton skeleton-line" />
+            <span class="skeleton skeleton-line short" />
+          </span>
+        </li>
+      </ol>
       <div v-else-if="reading.length === 0" class="reading-empty">
         <p class="fine subtle">{{ t("home.nothingReading") }}</p>
         <RouterLink class="btn btn-ghost btn-sm" to="/discover">{{ t("home.findBook") }}</RouterLink>
@@ -282,8 +290,11 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.reading-skeleton {
-  height: 110px;
+/* Loading: rows shaped like the reading rows, with their small covers. */
+.reading-skeleton-cover {
+  flex: none;
+  width: 52px;
+  height: 78px;
 }
 
 /* Quiet: one line under the hero, two links a finger can hit. */

@@ -120,7 +120,7 @@ describe("DiscoverPage", () => {
     expect(subject).not.toHaveBeenCalled();
     expect(search).toHaveBeenCalled();
     expect(wrapper.text()).toContain("Circe");
-    expect(wrapper.find("input").attributes("placeholder")).toBe("Title, author, or ISBN");
+    expect(wrapper.find("input").attributes("placeholder")).toBe("Title, author, ISBN");
   });
 
   it("shows a short-query state for It and does not call search", async () => {
@@ -172,9 +172,9 @@ describe("DiscoverPage", () => {
     expect(wrapper.text()).toContain("Add your own book");
     expect(wrapper.text()).toContain("ISBN");
     // The "Add your own book" button says what the catalog lacks; no sentence repeats it.
-    expect(wrapper.get(".empty p").text()).toBe(
-      "Try the title plus the author, or paste an ISBN. The Fantasy filter may be hiding it.",
-    );
+    // The filter is said once, on its "Clear Fantasy" button: no banner, no sentence.
+    expect(wrapper.get(".empty p").text()).toBe("Try the title plus the author, or paste an ISBN.");
+    expect(wrapper.find(".filter-banner").exists()).toBe(false);
     expect(wrapper.find(".page-head .lede").exists()).toBe(false);
   });
 

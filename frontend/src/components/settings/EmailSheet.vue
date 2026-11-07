@@ -56,12 +56,13 @@ function close() {
       <label class="field">
         <span>{{ t("account.newEmail") }}</span>
         <input v-model="address" type="email" autocomplete="email" spellcheck="false" required />
+        <!-- Under the address it is about, as the password sheet puts its hint. -->
+        <span v-if="session.user?.email && service.mail" class="field-hint">{{ t("account.emailHint") }}</span>
       </label>
       <label class="field">
         <span>{{ t("settings.currentPassword") }}</span>
         <input v-model="password" type="password" autocomplete="current-password" required />
       </label>
-      <p v-if="session.user?.email && service.mail" class="field-hint">{{ t("account.emailHint") }}</p>
       <button class="btn btn-primary btn-block" type="submit" :disabled="busy">{{ t("account.saveEmail") }}</button>
     </form>
   </BottomSheet>

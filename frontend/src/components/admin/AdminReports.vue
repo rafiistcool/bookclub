@@ -11,6 +11,7 @@ import { useSession } from "../../stores/session";
 import { useToast } from "../../stores/toast";
 import Avatar from "../Avatar.vue";
 import BookCover from "../BookCover.vue";
+import AdminDisclosure from "./AdminDisclosure.vue";
 import AdminTakeDown from "./AdminTakeDown.vue";
 import { useQueue } from "./useQueue";
 
@@ -133,6 +134,12 @@ function kind(report: ReportOut): string {
   return KINDS.includes(report.target_kind) ? t(`admin.target.${report.target_kind}`) : report.target_kind;
 }
 
+/** Who reported it, without the date: an open report shows its age instead, with the date as its title. */
+function reporter(report: ReportOut): string {
+  if (report.via === "notice") return t("admin.noticeShort");
+  return report.created_by?.username ?? t("admin.someone");
+}
+
 /** Who reported it, and when; an emailed notice names no account. */
 function source(report: ReportOut): string {
   if (report.via === "notice") return t("admin.notice", { when: when(report.created_at) });
@@ -196,10 +203,11 @@ onMounted(load);
 
 <template>
   <section class="admin-queue" aria-labelledby="admin-reports">
-    <div class="section-head">
-      <h2 id="admin-reports">{{ t("admin.reports") }}</h2>
-    </div>
+    <h2 id="admin-reports" class="visually-hidden">{{ t("admin.reports") }}</h2>
     <p class="fine muted">{{ t("admin.reportsBlurb") }}</p>
+    <AdminDisclosure class="admin-howto" :summary="t('admin.howTo')">
+      <p class="fine muted">{{ t("admin.reportsHowTo") }}</p>
+    </AdminDisclosure>
 
     <div class="segmented queue-views" role="group" :aria-label="t('admin.views')">
       <button type="button" :aria-pressed="view === 'open'" @click="showView('open')">{{ t("admin.openView") }}</button>
@@ -231,7 +239,15 @@ onMounted(load);
       {{ error }}
       <button class="text-btn" type="button" @click="load">{{ t("common.tryAgain") }}</button>
     </p>
-    <div v-else-if="!loaded" class="skeleton admin-skeleton" aria-hidden="true" />
+    <ol v-else-if="!loaded" class="skeleton-rows admin-skeleton" aria-hidden="true">
+      <li v-for="n in 3" :key="n" class="skeleton-row">
+        <span class="skeleton skeleton-cover-xs" />
+        <span class="skeleton-row-lines">
+          <span class="skeleton skeleton-line short" />
+          <span class="skeleton skeleton-line" />
+        </span>
+      </li>
+    </ol>
     <p v-else-if="items.length === 0" class="fine subtle">
       {{ view === "open" ? t("admin.noReports") : t("admin.noHistory") }}
     </p>
@@ -239,18 +255,18 @@ onMounted(load);
       <li
         v-for="report in items"
         :key="report.id"
-        class="panel admin-item report-item"
+        class="admin-item report-item"
         :class="{ overdue: view === 'open' && overdue(report) }"
       >
         <p class="admin-item-head fine">
           <span class="badge kind-badge">{{ kind(report) }}</span>
           <span class="badge">{{ reason(report.reason) }}</span>
           <span v-if="view === 'resolved'" class="badge" :class="`status-${report.status}`">{{ statusLabel(report) }}</span>
-          <span class="subtle">{{ source(report) }}</span>
           <template v-if="view === 'open'">
-            <span class="age subtle">{{ t("admin.waiting", { age: waited(report) }) }}</span>
+            <span class="subtle">{{ reporter(report) }} · <span class="age" :title="when(report.created_at)">{{ t("admin.waiting", { age: waited(report) }) }}</span></span>
             <span v-if="overdue(report)" class="badge overdue-badge">{{ t("admin.overdue") }}</span>
           </template>
+          <span v-else class="subtle">{{ source(report) }}</span>
         </p>
         <div class="report-body">
           <Avatar
@@ -268,7 +284,9 @@ onMounted(load);
             <p v-if="report.target_kind === 'avatar'" class="report-subject">
               {{ t("admin.avatarOf", { name: report.target_user?.username ?? t("admin.someone") }) }}
             </p>
-            <RouterLink v-else-if="report.book" :to="bookPath(report.book)">{{ report.book.title }}</RouterLink>
+            <RouterLink v-else-if="report.book" :to="bookPath(report.book)" class="admin-book-title report-book">
+              {{ report.book.title }}
+            </RouterLink>
             <p v-if="report.removed && view === 'open'" class="fine subtle">{{ t("admin.alreadyRemoved") }}</p>
             <p v-if="report.gone && view === 'open'" class="fine subtle gone-note">{{ goneNote(report) }}</p>
             <p v-if="report.details" class="fine report-details">{{ report.details }}</p>
@@ -310,46 +328,6 @@ onMounted(load);
 </template>
 
 <style scoped>
-.queue-views {
-  max-width: 22rem;
-  margin: var(--space-3) 0;
-}
-
-.admin-skeleton {
-  height: 160px;
-}
-
-.admin-list {
-  list-style: none;
-  margin: var(--space-3) 0 0;
-  padding: 0;
-  display: grid;
-  gap: var(--space-3);
-}
-
-.admin-item {
-  display: grid;
-  gap: var(--space-3);
-}
-
-.admin-item.overdue {
-  border-color: var(--danger-border);
-}
-
-.admin-item-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  margin: 0;
-}
-
-.overdue-badge {
-  color: var(--danger);
-  background: transparent;
-  box-shadow: inset 0 0 0 1px var(--danger-border);
-}
-
 .badge.status-removed {
   color: var(--danger);
 }
@@ -361,6 +339,18 @@ onMounted(load);
 
 .report-subject {
   font-weight: 600;
+}
+
+/* The reported book's title links to it, in the queue's serif, without the link underline. */
+.report-book {
+  color: var(--text);
+  text-decoration: none;
+}
+
+@media (hover: hover) {
+  .report-book:hover {
+    color: var(--accent);
+  }
 }
 
 .report-body {
@@ -406,9 +396,5 @@ onMounted(load);
 
 .report-stats dd.late {
   color: var(--danger);
-}
-
-.load-more {
-  margin-top: var(--space-3);
 }
 </style>

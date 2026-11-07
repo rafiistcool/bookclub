@@ -12,7 +12,17 @@ export type BookAction =
 </script>
 
 <script setup lang="ts">
-import { ArrowTopRightOnSquareIcon } from "@heroicons/vue/24/outline";
+import {
+  ArrowPathIcon,
+  ArrowTopRightOnSquareIcon,
+  BookOpenIcon,
+  CameraIcon,
+  DocumentDuplicateIcon,
+  FlagIcon,
+  PencilSquareIcon,
+  PhotoIcon,
+  WrenchScrewdriverIcon,
+} from "@heroicons/vue/24/outline";
 import { computed, useId } from "vue";
 import { useI18n } from "vue-i18n";
 import { openLibraryUrl } from "../constants";
@@ -23,7 +33,7 @@ import CoverPhotoButton from "./CoverPhotoButton.vue";
 /**
  * The book page's "…" sheet: everything about the book that is not reading
  * it, in three groups (the book's data, its cover, and an instance admin's
- * direct edits). It only says what was asked (`act`, `picked`); the page
+ * direct edits), as light rows like the club's "More" sheet. It only says what was asked (`act`, `picked`); the page
  * closes it, waits a tick and then opens the next sheet or uploads the file,
  * so there is never a sheet on a sheet and a chosen file is not lost with
  * the closed sheet.
@@ -61,127 +71,138 @@ const canRefresh = computed(() => !props.book.custom && props.book.can_refresh);
 <template>
   <BottomSheet class="book-actions" :title="title" @close="emit('close')">
     <section class="actions-group" :aria-labelledby="`${id}-book`">
-      <h3 :id="`${id}-book`" class="caps subtle">{{ t("book.groupBook") }}</h3>
+      <h3 :id="`${id}-book`" class="group-head">{{ t("book.groupBook") }}</h3>
       <p v-if="book.custom" class="fine subtle">{{ t("book.addedByReader") }}</p>
-      <div class="stack actions-rows">
-        <a
-          v-if="catalogUrl"
-          class="btn btn-ghost btn-block"
-          :href="catalogUrl"
-          target="_blank"
-          rel="noreferrer"
-          @click="emit('close')"
-        >
-          {{ t("book.viewOpenLibrary") }}
-          <ArrowTopRightOnSquareIcon class="row-icon" aria-hidden="true" />
-        </a>
-        <button
-          v-if="canRefresh"
-          class="btn btn-ghost btn-block refresh-details"
-          type="button"
-          :disabled="refreshing"
-          @click="emit('act', 'refresh')"
-        >
-          {{ refreshing ? t("book.refreshing") : t("book.refreshDetails") }}
-        </button>
-        <button class="btn btn-ghost btn-block" type="button" @click="emit('act', 'edit')">
-          {{ t("editRequest.openBook") }}
-        </button>
-        <button class="btn btn-ghost btn-block" type="button" @click="emit('act', 'merge')">
-          {{ t("merge.open") }}
-        </button>
-        <button
-          v-if="book.custom && !withdrawn"
-          class="btn btn-ghost btn-block report-book"
-          type="button"
-          @click="emit('act', 'report-book')"
-        >
-          {{ t("report.action.work") }}
-        </button>
-      </div>
+      <ul class="sheet-rows">
+        <li v-if="catalogUrl">
+          <a class="sheet-row" :href="catalogUrl" target="_blank" rel="noreferrer" @click="emit('close')">
+            <BookOpenIcon class="sheet-icon" aria-hidden="true" />
+            <span class="sheet-label">{{ t("book.viewOpenLibrary") }}</span>
+            <ArrowTopRightOnSquareIcon class="row-end" aria-hidden="true" />
+          </a>
+        </li>
+        <li v-if="canRefresh">
+          <button
+            class="sheet-row refresh-details"
+            type="button"
+            :disabled="refreshing"
+            @click="emit('act', 'refresh')"
+          >
+            <ArrowPathIcon class="sheet-icon" aria-hidden="true" />
+            <span class="sheet-label">{{ refreshing ? t("book.refreshing") : t("book.refreshDetails") }}</span>
+          </button>
+        </li>
+        <li>
+          <button class="sheet-row" type="button" @click="emit('act', 'edit')">
+            <PencilSquareIcon class="sheet-icon" aria-hidden="true" />
+            <span class="sheet-label">{{ t("editRequest.openBook") }}</span>
+          </button>
+        </li>
+        <li>
+          <button class="sheet-row" type="button" @click="emit('act', 'merge')">
+            <DocumentDuplicateIcon class="sheet-icon" aria-hidden="true" />
+            <span class="sheet-label">{{ t("merge.open") }}</span>
+          </button>
+        </li>
+        <li v-if="book.custom && !withdrawn">
+          <button class="sheet-row report-book" type="button" @click="emit('act', 'report-book')">
+            <FlagIcon class="sheet-icon" aria-hidden="true" />
+            <span class="sheet-label">{{ t("report.action.work") }}</span>
+          </button>
+        </li>
+      </ul>
     </section>
 
     <section v-if="offersPhoto || offersCoverReport" class="actions-group" :aria-labelledby="`${id}-cover`">
-      <h3 :id="`${id}-cover`" class="caps subtle">{{ t("book.groupCover") }}</h3>
-      <div class="stack actions-rows">
-        <CoverPhotoButton
-          v-if="offersPhoto"
-          pick-only
-          look="row"
-          class="suggest-photo"
-          :work-id="book.id"
-          :edition-id="book.edition_id"
-          :has-cover="hasCover"
-          @picked="(file) => emit('picked', 'photo', file)"
-        />
-        <button
-          v-if="offersCoverReport"
-          class="btn btn-ghost btn-block report-cover"
-          type="button"
-          @click="emit('act', 'report-cover')"
-        >
-          {{ t("cover.report") }}
-        </button>
-      </div>
+      <h3 :id="`${id}-cover`" class="group-head">{{ t("book.groupCover") }}</h3>
+      <ul class="sheet-rows">
+        <li v-if="offersPhoto">
+          <CoverPhotoButton
+            pick-only
+            look="row"
+            class="suggest-photo"
+            :work-id="book.id"
+            :edition-id="book.edition_id"
+            :has-cover="hasCover"
+            @picked="(file) => emit('picked', 'photo', file)"
+          >
+            <template #icon><CameraIcon class="sheet-icon" aria-hidden="true" /></template>
+          </CoverPhotoButton>
+        </li>
+        <li v-if="offersCoverReport">
+          <button class="sheet-row report-cover" type="button" @click="emit('act', 'report-cover')">
+            <FlagIcon class="sheet-icon" aria-hidden="true" />
+            <span class="sheet-label">{{ t("cover.report") }}</span>
+          </button>
+        </li>
+      </ul>
     </section>
 
     <section v-if="admin" class="actions-group" :aria-labelledby="`${id}-admin`">
-      <h3 :id="`${id}-admin`" class="caps subtle">{{ t("book.groupAdmin") }}</h3>
-      <div class="stack actions-rows">
-        <button class="btn btn-ghost btn-block" type="button" @click="emit('act', 'admin-edit')">
-          {{ t("admin.editAsAdmin") }}
-        </button>
-        <button
-          v-if="book.edition_id != null"
-          class="btn btn-ghost btn-block"
-          type="button"
-          @click="emit('act', 'admin-edition')"
-        >
-          {{ t("admin.editEditionAsAdmin") }}
-        </button>
-        <CoverPhotoButton
-          admin
-          pick-only
-          look="row"
-          class="admin-set-cover"
-          :label="t('admin.setCover')"
-          :work-id="book.id"
-          :edition-id="null"
-          :has-cover="hasCover"
-          @picked="(file) => emit('picked', 'admin', file)"
-        />
-        <button
-          class="btn btn-ghost btn-block admin-set-edition-cover"
-          type="button"
-          @click="emit('act', 'admin-edition-cover')"
-        >
-          {{ t("admin.setEditionCover") }}
-        </button>
-      </div>
+      <h3 :id="`${id}-admin`" class="group-head">{{ t("book.groupAdmin") }}</h3>
+      <ul class="sheet-rows">
+        <li>
+          <button class="sheet-row" type="button" @click="emit('act', 'admin-edit')">
+            <WrenchScrewdriverIcon class="sheet-icon" aria-hidden="true" />
+            <span class="sheet-label">{{ t("admin.editAsAdmin") }}</span>
+          </button>
+        </li>
+        <li v-if="book.edition_id != null">
+          <button class="sheet-row" type="button" @click="emit('act', 'admin-edition')">
+            <WrenchScrewdriverIcon class="sheet-icon" aria-hidden="true" />
+            <span class="sheet-label">{{ t("admin.editEditionAsAdmin") }}</span>
+          </button>
+        </li>
+        <li>
+          <CoverPhotoButton
+            admin
+            pick-only
+            look="row"
+            class="admin-set-cover"
+            :label="t('admin.setCover')"
+            :work-id="book.id"
+            :edition-id="null"
+            :has-cover="hasCover"
+            @picked="(file) => emit('picked', 'admin', file)"
+          >
+            <template #icon><PhotoIcon class="sheet-icon" aria-hidden="true" /></template>
+          </CoverPhotoButton>
+        </li>
+        <li>
+          <button class="sheet-row admin-set-edition-cover" type="button" @click="emit('act', 'admin-edition-cover')">
+            <PhotoIcon class="sheet-icon" aria-hidden="true" />
+            <span class="sheet-label">{{ t("admin.setEditionCover") }}</span>
+          </button>
+        </li>
+      </ul>
     </section>
   </BottomSheet>
 </template>
 
 <style scoped>
 .actions-group + .actions-group {
-  margin-top: var(--space-5);
+  margin-top: var(--space-4);
 }
 
-.actions-group h3 {
-  margin: 0 0 var(--space-2);
+/* A plain sentence-case head over each group, not a caps kicker. */
+.group-head {
+  margin: 0 0 var(--space-1);
+  padding: 0 var(--space-1);
+  font-family: var(--sans);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-subtle);
 }
 
 .actions-group > .fine {
-  margin: 0 0 var(--space-2);
+  margin: 0 0 var(--space-1);
+  padding: 0 var(--space-1);
 }
 
-.actions-rows {
-  gap: var(--space-2);
-}
-
-.row-icon {
+.row-end {
+  flex: none;
   width: 18px;
   height: 18px;
-  flex: none;
+  color: var(--text-subtle);
 }
 </style>

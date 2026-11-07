@@ -256,7 +256,7 @@ onMounted(load);
   <section class="physical-shelf-page">
     <header class="physical-shelf-heading">
       <div>
-        <h1>{{ t('physicalShelf.title') }}</h1>
+        <h1>{{ t('shelf.title') }}</h1>
         <p v-if="loaded && !error" class="shelf-meta">
           <span class="shelf-book-count">{{ tp('shelf.books', items.length) }}</span>
           <span class="save-notice" role="status" aria-live="polite"><CheckIcon v-if="notice === t('physicalShelf.saved')" aria-hidden="true" />{{ notice || t('physicalShelf.autoSave') }}</span>
@@ -347,8 +347,8 @@ onMounted(load);
 
 <style scoped>
 .physical-shelf-page { max-width: 940px; margin: 0 auto; }
-.physical-shelf-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
-.physical-shelf-heading h1 { font-size: clamp(1.6rem, 3.4vw, 2.1rem); font-weight: 550; }
+/* The same head as the Books view: the title, its meta line, the switch under it. */
+.physical-shelf-heading { display: grid; justify-items: start; gap: var(--space-3); margin-bottom: var(--space-5); }
 .shelf-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 6px; font-size: var(--text-sm); color: var(--text-muted); }
 .save-notice { display: inline-flex; align-items: center; gap: 4px; color: var(--text-subtle); }
 .save-notice::before { content: '·'; margin-right: 6px; }
@@ -357,7 +357,7 @@ onMounted(load);
 .shelf-studio-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 12px; margin-bottom: 8px; }
 .material-picker { display: flex; gap: 4px; padding: 3px; margin: 0; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface-2); min-width: 0; }
 .material-picker legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.material-choice { display: flex; align-items: center; gap: 7px; border: 0; border-radius: var(--radius-pill); padding: 6px 12px 6px 7px; background: transparent; color: var(--text-muted); font-size: var(--text-sm); font-weight: 600; min-height: 36px; }
+.material-choice { display: flex; align-items: center; gap: 7px; border: 0; border-radius: var(--radius-pill); padding: 6px 12px 6px 7px; background: transparent; color: var(--text-muted); font-size: var(--text-sm); font-weight: 600; min-height: var(--tap); min-width: var(--tap); justify-content: center; }
 @media (hover: hover) {
   .material-choice:hover { color: var(--text); }
 }
@@ -367,7 +367,7 @@ onMounted(load);
 [data-material="white"] .wood-swatch { background: linear-gradient(140deg, #fbf9f3, #ddd8cc); }
 [data-material="black"] .wood-swatch { background: linear-gradient(140deg, #4a4849, #19181a); box-shadow: inset 0 0 0 1px #ffffff30; }
 .shelf-tools { display: flex; gap: 6px; margin-left: auto; }
-.shelf-tool { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; min-width: 40px; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); color: var(--text); font-size: var(--text-sm); font-weight: 600; transition: border-color var(--dur-fast), background var(--dur-fast); }
+.shelf-tool { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: var(--tap); min-width: var(--tap); padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); color: var(--text); font-size: var(--text-sm); font-weight: 600; transition: border-color var(--dur-fast), background var(--dur-fast); }
 @media (hover: hover) {
   .shelf-tool:hover:not(:disabled) { border-color: var(--accent-line); background: var(--accent-soft); }
 }
@@ -418,7 +418,6 @@ onMounted(load);
 .decoration-choice strong { font-family: var(--serif); font-size: var(--text-md); }
 .decoration-editor-preview { height: 145px; width: 95px; margin: 0 auto 20px; }
 @media (max-width: 600px) {
-  .physical-shelf-heading { flex-direction: column; align-items: flex-start; gap: 14px; margin-bottom: 16px; }
   .material-choice { padding: 6px; }
   .material-name { display: none; }
   .material-choice[aria-pressed="true"] .wood-swatch { outline: 2px solid var(--accent); outline-offset: 2px; }

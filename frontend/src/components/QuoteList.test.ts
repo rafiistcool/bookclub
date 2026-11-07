@@ -87,6 +87,24 @@ describe("QuoteList", () => {
     expect(wrapper.findAll(".quote")).toHaveLength(1);
   });
 
+  it("keeps the heading for screen readers only when the page head says it, and reports the count", async () => {
+    api.quotes.mockResolvedValue({ items: [quote(), quote({ id: 2 })] });
+    const wrapper = await mountList({ username: "ada", showBook: true, heading: "Your quotes", headingHidden: true });
+    expect(wrapper.find(".section-head").exists()).toBe(false);
+    expect(wrapper.get("h2").text()).toBe("Your quotes");
+    expect(wrapper.get("h2").classes()).toContain("visually-hidden");
+    expect(wrapper.emitted("changed")).toEqual([[2]]);
+
+    // Light rows: the book title is the serif title, the actions stay quiet until delete asks.
+    expect(wrapper.get(".quote-book-title").text()).toBe("Circe");
+    const [edit, del] = wrapper.findAll(".quote")[0]!.findAll(".quote-actions .text-btn");
+    expect(edit!.classes()).toContain("quiet");
+    expect(del!.classes()).toContain("quiet");
+    await del!.trigger("click");
+    expect(del!.classes()).toContain("danger");
+    expect(del!.classes()).not.toContain("quiet");
+  });
+
   describe("dates", () => {
     afterEach(() => {
       vi.useRealTimers();

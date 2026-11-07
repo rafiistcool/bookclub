@@ -72,3 +72,33 @@ describe("DiaryEntry time", () => {
     wrapper.unmount();
   });
 });
+
+describe("DiaryEntry actions", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    useSession().user = user();
+  });
+
+  it("keeps reply the one accent action; edit and delete stay quiet until delete asks to confirm", async () => {
+    const wrapper = mountEntry(post({ mine: true, body: "Mine" }));
+    const links = () => wrapper.findAll(".entry-links .text-btn");
+    expect(links().map((b) => b.text())).toEqual(["Reply", "Edit", "Delete"]);
+    expect(links()[0].classes()).not.toContain("quiet");
+    expect(links()[1].classes()).toContain("quiet");
+    expect(links()[2].classes()).toContain("quiet");
+    await links()[2].trigger("click");
+    expect(links()[2].classes()).toContain("danger");
+    expect(links()[2].classes()).not.toContain("quiet");
+    wrapper.unmount();
+  });
+
+  it("labels a spoiler shield in sentence case, not as a caps kicker", () => {
+    const wrapper = mount(DiaryEntry, {
+      props: { entry: post({ body: "Secret", spoiler_upto: 70 }), myProgress: 10, myStatus: "currently_reading" },
+      global: { stubs: { Avatar: true, SpoilerControl: true } },
+    });
+    expect(wrapper.find(".shield-btn .kicker").exists()).toBe(false);
+    expect(wrapper.get(".shield-btn .shield-label").text()).toContain("70");
+    wrapper.unmount();
+  });
+});

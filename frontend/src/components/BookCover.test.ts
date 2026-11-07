@@ -54,6 +54,19 @@ describe("BookCover", () => {
     expect(anonymous.find(".binding-author").exists()).toBe(false);
   });
 
+  it("sets the stamped title small enough for its longest word", () => {
+    const fit = (title: string) =>
+      mount(BookCover, { props: { book: { ...circe, title, cover_url: null, cover_thumb_url: null } } })
+        .get(".binding-title")
+        .classes();
+    expect(fit("Circe")).toEqual(["binding-title"]);
+    expect(fit("Persuasion")).toContain("long-word");
+    expect(fit("Northanger Abbey")).toContain("long-word");
+    expect(fit("Confessions of a Jane Austen Addict")).toContain("long-word");
+    expect(fit("Romantitelübersetzung")).toContain("longest-word");
+    expect(fit("Die Schmetterlinge")).toContain("very-long-word");
+  });
+
   it("never renders a cover from another host", () => {
     const wrapper = mount(BookCover, {
       props: {

@@ -1,22 +1,25 @@
 <script setup lang="ts">
 import { ComputerDesktopIcon, DevicePhoneMobileIcon } from "@heroicons/vue/24/outline";
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../../api/client";
 import { describeUserAgent } from "../../devices";
-import { formatClubDate } from "../../i18n/dates";
-import { useLocale } from "../../stores/locale";
 import { useSession } from "../../stores/session";
 import { useToast } from "../../stores/toast";
 import type { SessionOut } from "../../api/generated";
+import RelativeTime from "../RelativeTime.vue";
 
-/** The signed-in devices, each with "Sign out"; ending this one leaves the app. */
+/**
+ * The signed-in devices, this one first, each with "Sign out"; ending this
+ * one leaves the app. "Last used" is relative, with the exact time as its
+ * title, so each row's second line stays one line.
+ */
 const emit = defineEmits<{ loggedOut: [] }>();
 
 const { t } = useI18n();
-const locale = useLocale();
 const session = useSession();
 const toast = useToast();
+const zone = computed(() => session.user?.timezone || "UTC");
 
 const sessions = ref<SessionOut[]>([]);
 const loaded = ref(false);
@@ -29,7 +32,8 @@ function message(err: unknown, fallback: string): string {
 
 async function load() {
   try {
-    sessions.value = (await api.sessions()).items;
+    // This device first; the others keep the server's order (stable sort).
+    sessions.value = [...(await api.sessions()).items].sort((a, b) => Number(b.current) - Number(a.current));
     error.value = "";
   } catch (err) {
     error.value = message(err, t("account.sessionsFailed"));
@@ -72,16 +76,20 @@ function deviceIcon(row: { kind: string; label: string }) {
   return /Android|iPhone|iPad|Mobile/i.test(row.label) ? DevicePhoneMobileIcon : ComputerDesktopIcon;
 }
 
-function lastUsed(row: SessionOut): string {
-  return formatClubDate(row.last_used_at, session.user?.timezone || "UTC", locale.locale);
-}
-
 onMounted(load);
 </script>
 
 <template>
   <p v-if="error" class="error">{{ error }}</p>
-  <div v-else-if="!loaded" class="skeleton sessions-skeleton" aria-hidden="true" />
+  <ul v-else-if="!loaded" class="session-list sessions-skeleton" aria-hidden="true">
+    <li v-for="n in 3" :key="n" class="session-row">
+      <span class="skeleton skeleton-icon" />
+      <span class="session-meta">
+        <span class="skeleton skeleton-line wide" />
+        <span class="skeleton skeleton-line narrow" />
+      </span>
+    </li>
+  </ul>
   <ul v-else class="session-list">
     <li v-for="row in sessions" :key="row.id" class="session-row">
       <component :is="deviceIcon(row)" class="session-icon" aria-hidden="true" />
@@ -89,7 +97,9 @@ onMounted(load);
         <span class="session-label" :title="row.label || undefined">{{ deviceName(row) }}</span>
         <span class="finer subtle">
           <template v-if="row.current"><span class="session-here">{{ t("account.thisDevice") }}</span> · </template>
-          {{ t("account.lastUsed", { when: lastUsed(row) }) }}
+          <i18n-t keypath="account.lastUsed" scope="global">
+            <template #when><RelativeTime :iso="row.last_used_at" :zone="zone" /></template>
+          </i18n-t>
         </span>
       </span>
       <button class="text-btn session-end" type="button" :disabled="ending !== null" @click="end(row)">
@@ -100,8 +110,27 @@ onMounted(load);
 </template>
 
 <style scoped>
-.sessions-skeleton {
-  height: 120px;
+.skeleton-icon {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+}
+
+.sessions-skeleton .session-meta {
+  gap: var(--space-2);
+}
+
+.sessions-skeleton .skeleton-line {
+  margin-top: 0;
+}
+
+.skeleton-line.wide {
+  width: 60%;
+}
+
+.skeleton-line.narrow {
+  width: 40%;
 }
 
 .session-list {

@@ -141,7 +141,7 @@ const hasLegal = computed(() => LEGAL_DOCS.some((doc) => service.hasLegal(doc)) 
     <AppearanceSheet v-if="sheet === 'appearance'" @close="close" />
     <LanguageSheet v-if="sheet === 'language'" @close="close" />
     <BottomSheet v-if="sheet === 'timezone'" class="timezone-sheet" :title="t('settings.timezone')" @close="close">
-      <TimeZoneSetting />
+      <TimeZoneSetting hide-label />
     </BottomSheet>
     <LegalSheet v-if="sheet === 'legal' && hasLegal" @close="close" />
     <LogoutSheet v-if="sheet === 'logout'" @close="close" />

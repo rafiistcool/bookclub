@@ -86,7 +86,15 @@ watch(
       <h2>{{ heading ?? t("activity.heading") }}</h2>
     </div>
     <p v-if="error" class="error">{{ error }}</p>
-    <div v-else-if="!loaded" class="skeleton activity-skeleton" aria-hidden="true" />
+    <ol v-else-if="!loaded" class="skeleton-rows" aria-hidden="true">
+      <li v-for="n in 3" :key="n" class="skeleton-row">
+        <span class="skeleton skeleton-cover-xs" />
+        <span class="skeleton-row-lines">
+          <span class="skeleton skeleton-line short" />
+          <span class="skeleton skeleton-line" />
+        </span>
+      </li>
+    </ol>
     <p v-else-if="items.length === 0" class="fine subtle">{{ emptyText ?? t("activity.empty") }}</p>
     <template v-else>
       <ol class="activity-list">
@@ -136,10 +144,6 @@ watch(
   gap: var(--space-2);
 }
 
-.activity-skeleton {
-  height: 130px;
-}
-
 .activity-list {
   list-style: none;
   margin: 0;
@@ -170,18 +174,35 @@ watch(
   gap: 2px;
 }
 
+/* The same scale as the diary feed beside it: small text, names and
+   titles set off by weight rather than underlines. */
 .activity-text {
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
   overflow-wrap: anywhere;
 }
 
 .activity-actor,
 .activity-book {
   color: inherit;
-  font-weight: 650;
+  font-weight: 600;
+  text-decoration: none;
 }
 
 .activity-book {
   font-family: var(--serif);
+}
+
+@media (hover: hover) {
+  .activity-actor:hover,
+  .activity-book:hover {
+    text-decoration: underline;
+  }
+}
+
+.activity-actor:active,
+.activity-book:active {
+  opacity: 0.6;
 }
 
 .activity-detail {
@@ -194,8 +215,10 @@ watch(
   color: inherit;
 }
 
+/* Its text lines up with the rows; the padding only widens the target. */
 .activity-more {
   justify-self: start;
+  margin-inline-start: calc(-1 * var(--space-2));
   font-size: var(--text-sm);
 }
 

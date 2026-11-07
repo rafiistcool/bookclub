@@ -75,7 +75,7 @@ const props = withDefaults(
     hasCover: boolean;
     /** The text instead of "Add/Suggest a photo of your copy". */
     label?: string;
-    /** `fine`: the small link under a cover; `inline`: a link in running text; `primary`/`ghost`: a small button; `row`: a full-width row of a sheet. */
+    /** `fine`: the small link under a cover; `inline`: a link in running text; `primary`/`ghost`: a small button; `row`: a light row of a sheet (`.sheet-row`, with the `icon` slot). */
     look?: "fine" | "inline" | "primary" | "ghost" | "row";
     admin?: boolean;
     pickOnly?: boolean;
@@ -89,7 +89,7 @@ const LOOKS = {
   inline: "text-btn",
   primary: "btn btn-primary btn-sm",
   ghost: "btn btn-ghost btn-sm",
-  row: "btn btn-ghost btn-block",
+  row: "sheet-row",
 } as const;
 
 const { t } = useI18n();
@@ -128,7 +128,11 @@ async function onFile(event: Event) {
       :disabled="busy"
       @change="onFile"
     />
-    {{ text }}
+    <template v-if="look === 'row'">
+      <slot name="icon" />
+      <span class="sheet-label">{{ text }}</span>
+    </template>
+    <template v-else>{{ text }}</template>
   </label>
 </template>
 

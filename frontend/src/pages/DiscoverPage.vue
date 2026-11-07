@@ -929,7 +929,8 @@ defineExpose({ loadPage });
         </div>
       </div>
 
-      <p v-if="activeSubject" class="filter-banner">
+      <!-- Only over results: an empty result says the filter once, on its own button. -->
+      <p v-if="activeSubject && (visibleItems.length || pending)" class="filter-banner">
         {{ t("discover.filteredTo") }} <strong>{{ subjectLabel(activeSubject.value) }}</strong>
         <button class="text-btn" type="button" @click="clearSubject">{{ t("discover.clearFilter") }}</button>
       </p>
@@ -998,12 +999,7 @@ defineExpose({ loadPage });
 
         <div v-else class="empty">
           <h3>{{ t("discover.nothingMatched") }}</h3>
-          <p>
-            {{ t("discover.nothingMatchedBody") }}
-            <template v-if="activeSubject">
-              {{ t("discover.filterHiding", { label: subjectLabel(activeSubject.value) }) }}
-            </template>
-          </p>
+          <p>{{ t("discover.nothingMatchedBody") }}</p>
           <div class="btn-row">
             <button
               v-if="activeSubject"
@@ -1115,6 +1111,11 @@ defineExpose({ loadPage });
   flex: none;
   min-width: 36px;
   border-radius: var(--radius-pill);
+}
+
+/* A placeholder too long for a phone ends in an ellipsis, not under the scan button. */
+.search-field input::placeholder {
+  text-overflow: ellipsis;
 }
 
 .search-field input:focus-visible {

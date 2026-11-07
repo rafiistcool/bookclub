@@ -87,11 +87,11 @@ function actionsFor(member: Member): { role: boolean; transfer: boolean; remove:
   return { role: false, transfer: false, remove: false };
 }
 
-/** The card's one line after the badges: "Since {day}", then "· reading {n}" when they read anything. */
-function memberLine(member: Member): string {
+/** The row's facts after the badges: "Since {day}", then "reading {n}" when they read anything. */
+function memberFacts(member: Member): string[] {
   const parts = [t("members.joined", { day: formatDay(member.joined_at, club.value.timezone, locale.locale) })];
   if (member.currently_reading_count > 0) parts.push(t("club.currentlyReading", { n: member.currently_reading_count }));
-  return parts.join(" · ");
+  return parts;
 }
 
 function openManage(member: Member) {
@@ -205,7 +205,7 @@ function inviteKind(invite: Invite): string {
   return invite.max_uses === 1 ? t("invites.singleUse") : t("invites.link");
 }
 
-function inviteLine(invite: Invite): string {
+function inviteFacts(invite: Invite): string[] {
   const parts: string[] = [];
   parts.push(inviteKind(invite));
   if (invite.max_uses == null || invite.max_uses > 1) parts.push(tp("invites.uses", invite.use_count));
@@ -214,7 +214,7 @@ function inviteLine(invite: Invite): string {
     parts.push(invite.active ? t("invites.expires", { day }) : t("invites.expired", { day }));
   }
   if (invite.created_by) parts.push(t("invites.by", { name: invite.created_by }));
-  return parts.join(" · ");
+  return parts;
 }
 
 async function saveSettings() {
@@ -291,7 +291,7 @@ onMounted(() => {
 
       <template v-else>
         <ul class="member-list">
-          <li v-for="member in members" :key="member.username" class="member-card" :class="{ 'is-you': member.you }">
+          <li v-for="member in members" :key="member.username" class="member-row" :class="{ 'is-you': member.you }">
             <RouterLink class="member-link" :to="member.you ? '/me' : `/u/${member.username}`">
               <Avatar :username="member.username" :src="member.avatar_url" />
               <span class="member-meta">
@@ -299,10 +299,12 @@ onMounted(() => {
                 <span class="finer subtle member-line">
                   <span v-if="member.role !== 'member'" class="badge role-badge">{{ t(`roles.${member.role}`) }}</span>
                   <span v-if="member.you" class="badge you-badge">{{ t("club.thatsYou") }}</span>
-                  <span class="member-facts nums">{{ memberLine(member) }}</span>
+                  <span class="member-facts facts nums">
+                    <span v-for="fact in memberFacts(member)" :key="fact" class="fact">{{ fact }}</span>
+                  </span>
                 </span>
               </span>
-              <span class="preview-row">
+              <span v-if="member.currently_reading_preview.length" class="preview-row">
                 <BookCover
                   v-for="book in member.currently_reading_preview"
                   :key="book.id"
@@ -334,7 +336,7 @@ onMounted(() => {
         <h2 id="invites">{{ t("invites.heading") }}</h2>
       </div>
       <p class="fine muted invites-blurb">{{ t("invites.blurb") }}</p>
-      <div class="btn-row">
+      <div class="btn-row invite-buttons">
         <button class="btn btn-primary btn-sm" type="button" :disabled="creatingInvite" @click="createInvite('single_use')">
           {{ t("invites.newSingle") }}
         </button>
@@ -361,7 +363,9 @@ onMounted(() => {
           <li v-for="invite in activeInvites" :key="invite.id" class="invite-row">
             <span class="invite-meta">
               <code>{{ invite.code }}</code>
-              <span class="finer subtle">{{ inviteLine(invite) }}</span>
+              <span class="finer subtle facts">
+                <span v-for="fact in inviteFacts(invite)" :key="fact" class="fact">{{ fact }}</span>
+              </span>
               <span v-if="invite.used_by.length" class="finer subtle">
                 {{ t("invites.usedBy", { names: invite.used_by.join(", ") }) }}
               </span>
@@ -378,9 +382,9 @@ onMounted(() => {
             <li v-for="invite in pastInvites" :key="invite.id" class="invite-row past">
               <span class="invite-meta">
                 <code>{{ invite.code }}</code>
-                <span class="finer subtle">
+                <span class="finer subtle facts">
                   <span class="badge">{{ t(`invites.state.${inviteState(invite)}`) }}</span>
-                  {{ inviteLine(invite) }}
+                  <span v-for="fact in inviteFacts(invite)" :key="fact" class="fact">{{ fact }}</span>
                 </span>
                 <span v-if="invite.used_by.length" class="finer subtle">
                   {{ t("invites.usedBy", { names: invite.used_by.join(", ") }) }}
@@ -396,7 +400,7 @@ onMounted(() => {
       <div class="section-head">
         <h2 id="club-settings">{{ t("clubSettings.heading") }}</h2>
       </div>
-      <form class="panel settings-form" @submit.prevent="saveSettings">
+      <form class="stack settings-form" @submit.prevent="saveSettings">
         <label class="field">
           <span>{{ t("clubSettings.name") }}</span>
           <input v-model="settingsName" maxlength="80" required />
@@ -507,45 +511,43 @@ onMounted(() => {
   height: 130px;
 }
 
+/* Light rows split by hairlines. The viewer's own row is marked by its
+   "You" badge only. */
 .member-list,
 .invite-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  gap: var(--space-2);
 }
 
-.member-card {
+.member-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  padding: var(--space-3) 0;
 }
 
-@media (hover: hover) {
-  .member-card:hover {
-    border-color: var(--border-strong);
-  }
-}
-
-.is-you {
-  border-style: dashed;
+.member-row + .member-row,
+.invite-row + .invite-row {
+  border-top: 1px solid var(--border);
 }
 
 .member-link {
   flex: 1;
   min-width: 0;
   display: flex;
-  /* On a phone, three covers and the Manage button leave no room for the name: the covers go below. */
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2) var(--space-3);
+  min-height: var(--tap);
   color: inherit;
   text-decoration: none;
+}
+
+@media (hover: hover) {
+  .member-link:hover strong {
+    color: var(--accent);
+  }
 }
 
 .member-meta {
@@ -561,7 +563,7 @@ onMounted(() => {
   overflow-wrap: anywhere;
 }
 
-/* One line: the badges, then "Since {day} · reading {n}". It wraps on a narrow card. */
+/* One line: the badges, then "Since {day} · reading {n}". It wraps on a narrow row. */
 .member-line {
   display: flex;
   flex-wrap: wrap;
@@ -569,10 +571,26 @@ onMounted(() => {
   gap: 2px var(--space-1);
 }
 
+/* Facts joined by dots. Each fact wraps as a unit, and a dot stays at the
+   end of its line instead of starting the next one. */
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 0.3em;
+}
+
+.fact:has(+ .fact)::after {
+  content: " ·";
+}
+
+/* The covers a member reads always sit on their own line under the name,
+   lined up with it past the avatar, so every row has the same shape. */
 .preview-row {
   display: flex;
   gap: var(--space-1);
-  flex: 0 0 auto;
+  flex: 0 0 100%;
+  padding-inline-start: calc(34px + var(--space-3));
 }
 
 .manage-btn {
@@ -604,15 +622,19 @@ onMounted(() => {
   margin: var(--space-5) 0 var(--space-2);
 }
 
+/* One width for both buttons: stacked on a phone, side by side with room. */
+.invite-buttons {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  max-width: 480px;
+}
+
 .invite-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  padding: var(--space-2) 0;
 }
 
 .invite-row.past {
@@ -639,29 +661,68 @@ onMounted(() => {
 /*
  * The actions wrap onto two lines when they do not fit beside the code: at
  * 360 px, German "Kopieren" and "Zurückziehen" are wider than what is left.
+ * The padding only widens the targets; the last text lines up with the edge.
  */
 .invite-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   flex: 0 1 auto;
+  margin-inline-end: calc(-1 * var(--space-2));
 }
 
 .past-invites {
   margin-top: var(--space-3);
 }
 
+/* display: flex drops the marker, so a chevron says the line opens. */
 .past-invites summary {
   cursor: pointer;
   min-height: var(--tap);
   display: flex;
   align-items: center;
+  gap: var(--space-2);
+  list-style: none;
+  color: var(--text-muted);
   font-weight: 600;
+}
+
+.past-invites summary::-webkit-details-marker {
+  display: none;
+}
+
+.past-invites summary::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+}
+
+.past-invites[open] summary::after {
+  transform: translateY(2px) rotate(-135deg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .past-invites summary::after {
+    transition: transform var(--dur-fast) var(--ease-out);
+  }
+}
+
+@media (hover: hover) {
+  .past-invites summary:hover {
+    color: var(--text);
+  }
 }
 
 .settings-form,
 .delete-form {
   max-width: 480px;
+}
+
+.settings-form > .btn {
+  justify-self: start;
 }
 
 .danger-zone .btn-row {
@@ -672,9 +733,16 @@ onMounted(() => {
   margin-bottom: var(--space-3);
 }
 
+/* Two columns of rows: the first row of each column has no hairline above it. */
 @media (min-width: 1024px) {
   .member-list {
+    display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: var(--space-6);
+  }
+
+  .member-row:nth-child(2) {
+    border-top: 0;
   }
 }
 </style>

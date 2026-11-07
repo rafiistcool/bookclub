@@ -89,6 +89,14 @@ describe("ShelfPage favourites portrait", () => {
     expect(wrapper.find(".portrait").exists()).toBe(false);
   });
 
+  it("shows Diary, Quotes and Year as pills beside the view switch", async () => {
+    const wrapper = await mountShelf([]);
+    const links = wrapper.findAll(".shelf-extra-links a");
+    expect(links.map((link) => link.attributes("href"))).toEqual(["/diary", "/quotes", "/stats"]);
+    expect(links.every((link) => link.classes().includes("chip") && !link.classes().includes("btn"))).toBe(true);
+    wrapper.unmount();
+  });
+
   it("renders favourite covers under the profile header", async () => {
     const wrapper = await mountShelf(
       [favorite(1, "Circe"), favorite(2, "Galatea")],
@@ -145,7 +153,10 @@ describe("ShelfPage favourites portrait", () => {
     await wrapper.findAll("button.shelf-status")[0].trigger("click");
     // The current status is marked as pressed and stays enabled; a tap on it
     // only closes the sheet.
-    const current = wrapper.findAll(".sheet .status-choice").find(button => button.text() === "Want to read")!;
+    // The sheet speaks the tile button's words: "To read", not "Want to read".
+    expect(wrapper.findAll(".sheet .status-choice").map(button => button.text())).toEqual(["To read", "Reading", "Read", "DNF"]);
+    expect(wrapper.find(".sheet .status-choice.btn").exists()).toBe(false);
+    const current = wrapper.findAll(".sheet .status-choice").find(button => button.text() === "To read")!;
     expect(current.attributes("aria-pressed")).toBe("true");
     expect(current.attributes("disabled")).toBeUndefined();
     const calls = patchShelf.mock.calls.length;
@@ -294,6 +305,8 @@ describe("ShelfPage favourites portrait", () => {
     });
     const wrapper = await mountShelf([], [finished]);
     await wrapper.findAll("button.shelf-status")[0]!.trigger("click");
+    // Remove is a danger row like the book page's, not a neutral button.
+    expect(wrapper.get(".sheet .remove-row").classes()).toContain("danger");
     await wrapper.findAll(".sheet button").find((button) => button.text() === "Remove")!.trigger("click");
     removeFromShelf.mockResolvedValue(undefined);
     await wrapper.findAll(".sheet .btn-danger").find((button) => button.text() === "Remove")!.trigger("click");
@@ -325,7 +338,7 @@ describe("ShelfPage favourites portrait", () => {
 
     async function finishFirst(wrapper: Awaited<ReturnType<typeof mountShelf>>) {
       await wrapper.findAll("button.shelf-status")[0].trigger("click");
-      await wrapper.findAll(".sheet .status-choice").find((button) => button.text() === "Finished")!.trigger("click");
+      await wrapper.findAll(".sheet .status-choice").find((button) => button.text() === "Read")!.trigger("click");
       await flushPromises();
     }
 

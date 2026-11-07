@@ -77,6 +77,18 @@ describe("GoodreadsImport", () => {
     wrapper.unmount();
   });
 
+  it("offers only the picker until a file is chosen, then the button that starts it", async () => {
+    const wrapper = mount(GoodreadsImport, { global: { plugins: [i18n] } });
+    expect(wrapper.find("button").exists()).toBe(false);
+    expect(wrapper.get(".import-file").text()).toBe("Choose CSV");
+    const input = wrapper.get('input[type="file"]');
+    Object.defineProperty(input.element, "files", { value: [new File(["Title"], "export.csv")] });
+    await input.trigger("change");
+    expect(wrapper.get(".import-file").text()).toBe("export.csv");
+    expect(wrapper.get("button").attributes("disabled")).toBeUndefined();
+    wrapper.unmount();
+  });
+
   it("picks up the import that is already running instead of starting another", async () => {
     const running = importJob({ id: 3, status: "running", total: 10, processed: 4 });
     importGoodreads.mockRejectedValue(

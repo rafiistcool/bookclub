@@ -11,10 +11,19 @@ const { t } = useI18n();
     <div class="page-head">
       <h1>{{ t("diaryPage.title") }}</h1>
     </div>
-    <DiaryFeed mine :page-size="12" :heading="t('diaryPage.yours')" :empty-text="t('diaryPage.empty')">
+    <DiaryFeed mine heading-hidden :page-size="12" :heading="t('diaryPage.yours')" :empty-text="t('diaryPage.empty')">
       <template #empty>
         <RouterLink class="btn btn-ghost btn-sm" to="/shelf">{{ t("diaryPage.toShelf") }}</RouterLink>
       </template>
     </DiaryFeed>
   </section>
 </template>
+
+<style scoped>
+/* The same reading column as Profile, Friends and Quotes. */
+@media (min-width: 1024px) {
+  .diary-page {
+    max-width: 720px;
+  }
+}
+</style>

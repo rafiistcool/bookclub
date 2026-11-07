@@ -13,7 +13,7 @@ import BottomSheet from "./BottomSheet.vue";
 /**
  * The moment a book is finished (`stores/finish.ts` opens it; App.vue mounts
  * it). The status is already saved when it opens, so closing it loses
- * nothing but the stars. "Done" saves the stars, the line and "only me" in
+ * nothing but the stars. "Save" saves the stars, the line and "only me" in
  * one PATCH, and only what was set; "Skip", Escape and a drag close it.
  *
  * The one authored motion is the check drawn at the cover's corner. Under

@@ -12,7 +12,7 @@ import ProgressEditor from "../../components/ProgressEditor.vue";
 import ReaderRings from "../../components/ReaderRings.vue";
 import { whenIdle } from "../../whenIdle";
 import { bookPath, relativeDay, starLabel, statusLabel, statusShort } from "../../constants";
-import { formatClubDate } from "../../i18n/dates";
+import { formatClubDate, formatDay } from "../../i18n/dates";
 import { tp } from "../../i18n";
 import { isClubAdmin, isClubGone, useClubs, useCurrentClub } from "../../stores/clubs";
 import { useFinish } from "../../stores/finish";
@@ -468,7 +468,7 @@ onMounted(load);
         >
           <BookCover :book="row.book" />
           <span class="book-tile-title">{{ row.book.title }}</span>
-          <span class="book-tile-sub">{{ formatClubDate(row.meeting_at, timezone, locale.locale) || row.meeting_label || row.set_by }}</span>
+          <span class="book-tile-sub nums">{{ formatDay(row.meeting_at, timezone, locale.locale) || row.meeting_label || row.set_by }}</span>
         </RouterLink>
       </div>
     </section>
@@ -591,6 +591,7 @@ onMounted(load);
 .hero .display {
   font-size: var(--text-2xl);
   overflow-wrap: anywhere;
+  text-wrap: balance;
 }
 
 .hero-authors {
@@ -641,21 +642,34 @@ onMounted(load);
   gap: 0 var(--space-4);
 }
 
+/* The calendar link and the edit button read as the same kind of action:
+   plain small accent text, 44px tall, underlined only on hover. */
 .meeting-links a {
   display: inline-flex;
   align-items: center;
   min-height: var(--tap);
   font-weight: 600;
+  text-decoration: none;
 }
 
 .meeting-edit {
+  padding: 0;
   font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+@media (hover: hover) {
+  .meeting-links a:hover,
+  .meeting-edit:hover {
+    text-decoration: underline;
+  }
 }
 
 .hero-note {
   max-width: 40ch;
   margin-top: var(--space-3);
   overflow-wrap: anywhere;
+  text-wrap: balance;
 }
 
 .hero-action {
@@ -751,12 +765,14 @@ onMounted(load);
   display: inline-flex;
   align-items: center;
   min-height: var(--tap);
-  margin-top: var(--space-2);
   font-weight: 600;
+  text-decoration: none;
 }
 
-.past-tile {
-  width: 92px;
+@media (hover: hover) {
+  .thread-link:hover {
+    text-decoration: underline;
+  }
 }
 
 @media (min-width: 720px) {

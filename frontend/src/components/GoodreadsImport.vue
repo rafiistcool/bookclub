@@ -104,7 +104,9 @@ onBeforeUnmount(() => polling?.abort());
       <input type="file" accept=".csv,text/csv" :disabled="running" @change="onFile" />
       <span>{{ file ? file.name : t("settings.chooseCsv") }}</span>
     </label>
+    <!-- The picker is the one action until a file is chosen; then this one starts it. -->
     <button
+      v-if="file || starting || running"
       class="btn btn-primary btn-block"
       type="button"
       :disabled="!file || starting || running"

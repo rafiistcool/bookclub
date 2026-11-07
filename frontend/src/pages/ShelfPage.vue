@@ -1,5 +1,14 @@
 <script setup lang="ts">
-import { HeartIcon } from "@heroicons/vue/24/outline";
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  CalendarIcon,
+  CheckIcon,
+  FlagIcon,
+  HandRaisedIcon,
+  HeartIcon,
+  TrashIcon,
+} from "@heroicons/vue/24/outline";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
@@ -258,9 +267,9 @@ onMounted(load);
     <div v-if="loaded && !error" class="shelf-view-toolbar">
       <ShelfViewSwitch active="books" />
       <span class="shelf-extra-links">
-        <RouterLink class="btn btn-ghost btn-sm" to="/diary">{{ t("diaryPage.title") }}</RouterLink>
-        <RouterLink class="btn btn-ghost btn-sm" to="/quotes">{{ t("quotes.title") }}</RouterLink>
-        <RouterLink class="btn btn-ghost btn-sm" to="/stats">{{ t("stats.short") }}</RouterLink>
+        <RouterLink class="chip" to="/diary">{{ t("diaryPage.title") }}</RouterLink>
+        <RouterLink class="chip" to="/quotes">{{ t("quotes.title") }}</RouterLink>
+        <RouterLink class="chip" to="/stats">{{ t("stats.short") }}</RouterLink>
       </span>
     </div>
 
@@ -309,30 +318,56 @@ onMounted(load);
     <BottomSheet v-if="editing" :title="t(editing.action === 'date' ? 'shelf.editDate' : 'shelf.changeStatus')"
       @close="!saving && (editing = null)">
       <p class="sheet-book">{{ editing.item.book.title }}</p>
-      <div v-if="editing.action === 'status'" class="stack">
-        <!-- The current status is marked, not disabled: it stays readable and
+      <div v-if="editing.action === 'status'">
+        <!-- The same short words as the button that opened the sheet. The
+             current status is marked, not disabled: it stays readable and
              focusable, and tapping it just closes the sheet. -->
-        <button v-for="status in STATUSES" :key="status" type="button" class="btn btn-ghost btn-block status-choice"
-          :class="{ current: status === editing.item.status }" :aria-pressed="status === editing.item.status"
-          :disabled="saving" @click="status === editing.item.status ? (editing = null) : changeStatus(status)"><svg
-            v-if="status === editing.item.status" class="status-check" width="18" height="18" viewBox="0 0 24 24"
-            fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"
-            aria-hidden="true"><path d="M5 12.5 10 17l9-10" /></svg>{{ statusLabel(status) }}</button>
+        <ul class="sheet-rows status-choices">
+          <li v-for="status in STATUSES" :key="status">
+            <button type="button" class="sheet-row status-choice"
+              :class="{ current: status === editing.item.status }" :aria-pressed="status === editing.item.status"
+              :disabled="saving" @click="status === editing.item.status ? (editing = null) : changeStatus(status)">
+              <span class="sheet-label">{{ statusShort(status) }}</span>
+              <CheckIcon v-if="status === editing.item.status" class="status-check" aria-hidden="true" />
+            </button>
+          </li>
+        </ul>
         <details class="shelf-more-actions">
           <summary><span>{{ t('shelf.moreActions') }}</span><svg class="more-chevron" width="18" height="18"
             viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
             stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></summary>
-          <div class="stack">
-            <button v-if="editing.item.status === 'finished'" type="button" class="btn btn-ghost btn-block"
-              @click="onAction(editing.item, 'date')">{{ t('shelf.editDate') }}</button>
-            <button type="button" class="btn btn-ghost btn-block"
-              @click="onAction(editing.item, 'previous')">{{ t('shelf.movePrevious') }}</button>
-            <button type="button" class="btn btn-ghost btn-block"
-              @click="onAction(editing.item, 'next')">{{ t('shelf.moveNext') }}</button>
-            <button v-if="canPick" type="button" class="btn btn-ghost btn-block" @click="bookAction('pick')">{{ t('card.setPick') }}</button>
-            <button v-if="canNominate" type="button" class="btn btn-ghost btn-block" @click="bookAction('nominate')">{{ t('card.nominate') }}</button>
-            <button type="button" class="btn btn-ghost btn-block" @click="bookAction('remove')">{{ t('common.remove') }}</button>
-          </div>
+          <ul class="sheet-rows">
+            <li v-if="editing.item.status === 'finished'">
+              <button type="button" class="sheet-row" @click="onAction(editing.item, 'date')">
+                <CalendarIcon class="sheet-icon" aria-hidden="true" /><span class="sheet-label">{{ t('shelf.editDate') }}</span>
+              </button>
+            </li>
+            <li>
+              <button type="button" class="sheet-row" @click="onAction(editing.item, 'previous')">
+                <ArrowUpIcon class="sheet-icon" aria-hidden="true" /><span class="sheet-label">{{ t('shelf.movePrevious') }}</span>
+              </button>
+            </li>
+            <li>
+              <button type="button" class="sheet-row" @click="onAction(editing.item, 'next')">
+                <ArrowDownIcon class="sheet-icon" aria-hidden="true" /><span class="sheet-label">{{ t('shelf.moveNext') }}</span>
+              </button>
+            </li>
+            <li v-if="canPick">
+              <button type="button" class="sheet-row" @click="bookAction('pick')">
+                <FlagIcon class="sheet-icon" aria-hidden="true" /><span class="sheet-label">{{ t('card.setPick') }}</span>
+              </button>
+            </li>
+            <li v-if="canNominate">
+              <button type="button" class="sheet-row" @click="bookAction('nominate')">
+                <HandRaisedIcon class="sheet-icon" aria-hidden="true" /><span class="sheet-label">{{ t('card.nominate') }}</span>
+              </button>
+            </li>
+            <li>
+              <button type="button" class="sheet-row danger remove-row" @click="bookAction('remove')">
+                <TrashIcon class="sheet-icon" aria-hidden="true" /><span class="sheet-label">{{ t('common.remove') }}</span>
+              </button>
+            </li>
+          </ul>
         </details>
       </div>
       <form v-else class="stack" @submit.prevent="saveDate()">
@@ -374,26 +409,28 @@ onMounted(load);
 </template>
 
 <style scoped>
-.shelf-view-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-5); }
+.shelf-view-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-5); }
+/* Pills, like the Books/Shelf switch beside them. */
+.shelf-extra-links { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .shelf-head { position: relative; padding-right: 42px; margin-bottom: var(--space-6); }
 .shelf-head > div { min-width: 0; }
-.shelf-head h1 { font-size: clamp(1.5rem, 6.7vw, 2rem); }
 .shelf-head :deep(.avatar) { width: 64px; height: 64px; }
-.favorites-toggle { position: absolute; top: 0; right: -6px; color: var(--border-strong); }
+.favorites-toggle { position: absolute; top: 0; right: -6px; color: var(--text-subtle); }
 .favorites-toggle svg { width: 26px; height: 26px; }
 .favorites-toggle[aria-expanded="true"] { color: var(--accent); }
 .shelf-favorites { margin-bottom: var(--space-5); }
-.shelf-filter { font-family: var(--serif); }
+@media (min-width: 1024px) {
+  .shelf-filter { max-width: 560px; }
+}
 @media (max-width: 359px) {
   .shelf-head :deep(.avatar) { width: 48px; height: 48px; }
   .shelf-head { gap: var(--space-3); }
   .shelf-filter button { padding-inline: var(--space-1); font-size: var(--text-xs); }
 }
 .sheet-book { margin-bottom: var(--space-3); color: var(--text-muted); font-family: var(--serif); }
-.status-choice { position: relative; }
-.status-choice.current { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-hover); }
-.status-check { position: absolute; left: var(--space-4); }
-.shelf-more-actions { border-top: 1px solid var(--border); margin-top: var(--space-2); }
+.status-choice.current { color: var(--accent-hover); }
+.status-check { flex: none; width: 20px; height: 20px; }
+.shelf-more-actions { border-top: 1px solid var(--border); }
 .shelf-more-actions summary {
   display: flex; align-items: center; justify-content: space-between; min-height: var(--tap);
   cursor: pointer; list-style: none; font-size: var(--text-sm); font-weight: 600; color: var(--text-muted);
@@ -401,9 +438,14 @@ onMounted(load);
 .shelf-more-actions summary::-webkit-details-marker { display: none; }
 .more-chevron { transition: transform var(--dur-base) var(--ease-out); }
 .shelf-more-actions[open] .more-chevron { transform: rotate(180deg); }
-.shelf-more-actions[open] .stack { animation: more-in var(--dur-base) var(--ease-out); }
-.shelf-more-actions .stack { padding-bottom: var(--space-2); }
+.shelf-more-actions summary { padding: 0 var(--space-1); }
+.shelf-more-actions[open] .sheet-rows { animation: more-in var(--dur-base) var(--ease-out); }
+.shelf-more-actions .sheet-rows { border-top: 1px solid var(--border); }
 @keyframes more-in { from { opacity: 0; transform: translateY(-6px); } }
+@media (prefers-reduced-motion: reduce) {
+  .shelf-more-actions[open] .sheet-rows { animation: none; }
+  .more-chevron { transition: none; }
+}
 .shelf-head {
   display: flex;
   align-items: center;

@@ -17,6 +17,20 @@ const pickId = computed(() => {
   const raw = Number(route.query.pick);
   return Number.isSafeInteger(raw) && raw > 0 ? raw : null;
 });
+/**
+ * The tab already says "Discussion", so the current pick's thread is headed by
+ * its book. An earlier pick's thread keeps the plain heading: this page only
+ * knows the current pick's title.
+ */
+const onCurrent = computed(() => {
+  const current = club.value.current_pick;
+  return current != null && (pickId.value === null || pickId.value === current.id);
+});
+const heading = computed(() =>
+  onCurrent.value ? club.value.current_pick!.book.title : t("discussions.heading"),
+);
+/** The current pick's posts are in the thread above, so the feed below leaves them out. */
+const threadWork = computed(() => (onCurrent.value ? club.value.current_pick!.book.id : null));
 </script>
 
 <template>
@@ -27,7 +41,7 @@ const pickId = computed(() => {
       </RouterLink>
       <BookDiary
         :club="{ slug, pickId, currentPickId: club.current_pick?.id ?? null }"
-        :heading="t('discussions.heading')"
+        :heading="heading"
         @posted="feed?.reload()"
       />
     </section>
@@ -36,6 +50,7 @@ const pickId = computed(() => {
       <DiaryFeed
         ref="feed"
         :club="slug"
+        :thread-work="threadWork"
         :heading="t('discussions.written')"
         :empty-text="t('discussions.nothingWritten')"
       />

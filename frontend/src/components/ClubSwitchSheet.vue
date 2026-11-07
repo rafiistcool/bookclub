@@ -69,8 +69,8 @@ const route = useRoute();
   border-top: 1px solid var(--border);
 }
 
+/* The 56px rows already space the lists; the strong rule alone parts them. */
 .switch-more {
-  margin-top: var(--space-3);
   border-top: 1px solid var(--border-strong);
 }
 
@@ -79,7 +79,7 @@ const route = useRoute();
   align-items: center;
   gap: var(--space-3);
   min-height: 56px;
-  padding: var(--space-2) var(--space-1);
+  padding: var(--space-2) 0;
   color: var(--text);
   text-decoration: none;
   border-radius: var(--radius-sm);

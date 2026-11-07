@@ -22,6 +22,9 @@ const props = defineProps<{
   club?: string;
   mine?: boolean;
   heading?: string;
+  /** Keep the heading for screen readers only, under a page title that
+      already says it (`/diary`). */
+  headingHidden?: boolean;
   /** Shown when nothing is written yet. */
   emptyText?: string;
   pageSize?: number;
@@ -29,6 +32,9 @@ const props = defineProps<{
   limit?: number;
   /** Where the whole feed is: a "See all" link there replaces "Show more". */
   moreTo?: string;
+  /** With `club`: the work of the pick thread the page already shows above
+      (`/c/:slug/discussions`). That club's posts on it are left out here. */
+  threadWork?: number | null;
 }>();
 
 const { t } = useI18n();
@@ -48,13 +54,22 @@ async function load(more = false) {
   if (busy.value) return;
   busy.value = true;
   try {
-    const before = more ? cursor.value : undefined;
-    const page = props.mine
-      ? await api.diaryFeed(before, props.limit ?? props.pageSize ?? 10, undefined, true)
-      : await api.diaryFeed(before, props.limit ?? props.pageSize ?? 8, props.club);
-    feed.value = more ? [...feed.value, ...page.items] : page.items;
+    let before = more ? cursor.value : undefined;
+    const shown: DiaryFeedItem[] = [];
+    let page: Awaited<ReturnType<typeof api.diaryFeed>>;
+    // A page made only of left-out thread posts would show nothing new, so
+    // read on (a few pages at most) until something is left to show.
+    for (let tries = 0; ; tries++) {
+      page = props.mine
+        ? await api.diaryFeed(before, props.limit ?? props.pageSize ?? 10, undefined, true)
+        : await api.diaryFeed(before, props.limit ?? props.pageSize ?? 8, props.club);
+      shown.push(...page.items.filter((item) => !inThread(item)));
+      before = page.items[page.items.length - 1]?.entry.id ?? before;
+      if (shown.length > 0 || !page.has_more || tries >= 4) break;
+    }
+    feed.value = more ? [...feed.value, ...shown] : shown;
     hasMore.value = page.has_more;
-    cursor.value = page.items[page.items.length - 1]?.entry.id ?? before;
+    cursor.value = before;
     error.value = "";
   } catch (err) {
     if (props.club && isClubGone(err)) clubs.markGone(props.club);
@@ -63,6 +78,11 @@ async function load(more = false) {
     loaded.value = true;
     busy.value = false;
   }
+}
+
+/** A post of the thread the page already shows (`threadWork`). */
+function inThread(item: DiaryFeedItem): boolean {
+  return props.threadWork != null && item.club?.slug === props.club && item.book.id === props.threadWork;
 }
 
 const expanded = ref<Set<number>>(new Set());
@@ -136,11 +156,19 @@ defineExpose({ reload: () => load() });
 <template>
   <section class="diary-feed">
     <div class="section-head">
-      <h2>{{ heading ?? t("club.recentlyWritten") }}</h2>
+      <h2 :class="{ 'visually-hidden': headingHidden }">{{ heading ?? t("club.recentlyWritten") }}</h2>
       <slot name="head" />
     </div>
     <p v-if="error" class="error">{{ error }}</p>
-    <div v-else-if="!loaded" class="skeleton feed-skeleton" aria-hidden="true" />
+    <ol v-else-if="!loaded" class="skeleton-rows" aria-hidden="true">
+      <li v-for="n in 3" :key="n" class="skeleton-row">
+        <span class="skeleton skeleton-cover-xs" />
+        <span class="skeleton-row-lines">
+          <span class="skeleton skeleton-line short" />
+          <span class="skeleton skeleton-line" />
+        </span>
+      </li>
+    </ol>
     <div v-else-if="feed.length === 0" class="feed-empty">
       <p class="fine subtle">{{ emptyText ?? t("club.nothingWritten") }}</p>
       <slot name="empty" />
@@ -155,7 +183,7 @@ defineExpose({ reload: () => load() });
             </RouterLink>
             <span class="feed-meta">
               <RouterLink v-if="mine" class="feed-head" :to="entryPath(item)">
-                <strong>{{ item.book.title }}</strong>
+                <strong class="feed-title">{{ item.book.title }}</strong>
                 <span v-if="item.entry.parent_id != null" class="finer subtle">
                   {{ item.parent_author ? t("diaryPage.replyTo", { name: item.parent_author }) : t("diaryPage.reply") }}
                 </span>
@@ -204,31 +232,35 @@ defineExpose({ reload: () => load() });
               >
                 {{ expanded.has(item.entry.id) ? t("common.showLess") : t("common.showMore") }}
               </button>
-              <span class="finer subtle feed-foot">
-                <template v-if="!club && item.club">
-                  <RouterLink class="feed-club" :to="`/c/${item.club.slug}`">{{ item.club.name }}</RouterLink> ·
-                </template>
-                <template v-if="positionMarker(item.entry)">
-                  {{ positionMarker(item.entry) }} ·
-                </template>
-                <RelativeTime
-                  :iso="item.entry.created_at"
-                  :zone="postTimeZone(item.entry, session.user)"
-                  :fallback="item.entry.created_label"
-                />
-                <template v-if="item.entry.reactions.length">
-                  · {{ item.entry.reactions.map((r) => `${r.emoji} ${r.count}`).join(" ") }}
-                </template>
+              <span class="feed-foot-row">
+                <span class="finer subtle feed-foot">
+                  <template v-if="!club && item.club">
+                    <RouterLink class="feed-club" :to="`/c/${item.club.slug}`">{{ item.club.name }}</RouterLink> ·
+                  </template>
+                  <template v-if="positionMarker(item.entry)">
+                    {{ positionMarker(item.entry) }} ·
+                  </template>
+                  <RelativeTime
+                    :iso="item.entry.created_at"
+                    :zone="postTimeZone(item.entry, session.user)"
+                    :fallback="item.entry.created_label"
+                  />
+                  <template v-if="item.entry.reactions.length">
+                    ·
+                    <span v-for="r in item.entry.reactions" :key="r.emoji" class="feed-reaction">{{ r.emoji }}&nbsp;{{ r.count }}</span>
+                  </template>
+                </span>
+                <!-- A quiet switch at the end of the foot line, not a line of its own. -->
+                <label v-if="mine && item.entry.parent_id == null" class="feed-only-me finer">
+                  <input
+                    type="checkbox"
+                    :checked="item.entry.visibility === 'only_me'"
+                    :disabled="switching.has(item.entry.id)"
+                    @change="setOnlyMe(item, ($event.target as HTMLInputElement).checked)"
+                  />
+                  {{ t("diary.onlyMe") }}
+                </label>
               </span>
-              <label v-if="mine && item.entry.parent_id == null" class="feed-only-me fine">
-                <input
-                  type="checkbox"
-                  :checked="item.entry.visibility === 'only_me'"
-                  :disabled="switching.has(item.entry.id)"
-                  @change="setOnlyMe(item, ($event.target as HTMLInputElement).checked)"
-                />
-                {{ t("diary.onlyMe") }}
-              </label>
             </span>
           </article>
         </li>
@@ -251,10 +283,6 @@ defineExpose({ reload: () => load() });
 .diary-feed {
   display: grid;
   gap: var(--space-2);
-}
-
-.feed-skeleton {
-  height: 130px;
 }
 
 .feed-list {
@@ -310,6 +338,7 @@ defineExpose({ reload: () => load() });
 .feed-body .badge {
   margin-right: var(--space-1);
   vertical-align: middle;
+  font-style: normal;
 }
 
 .feed-body.shielded {
@@ -321,10 +350,18 @@ defineExpose({ reload: () => load() });
   overflow-wrap: anywhere;
 }
 
+/* Their text lines up with the rows; the padding only widens the target. */
 .feed-more,
 .feed-load-more {
   justify-self: start;
+  margin-inline-start: calc(-1 * var(--space-2));
   font-size: var(--text-sm);
+}
+
+/* Book titles are serif everywhere. */
+.feed-title {
+  font-family: var(--serif);
+  font-weight: 600;
 }
 
 .feed-all {
@@ -336,19 +373,44 @@ defineExpose({ reload: () => load() });
   font-weight: 600;
 }
 
-.feed-foot {
+.feed-foot-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0 var(--space-3);
   margin-top: 2px;
+}
+
+/* An emoji never leaves its count alone on the next line. */
+.feed-reaction {
+  white-space: nowrap;
+}
+
+.feed-reaction + .feed-reaction {
+  margin-left: var(--space-1);
 }
 
 .feed-club {
   color: inherit;
 }
 
+/* 44px tall for the finger, but pulled into the foot line so it adds none. */
 .feed-only-me {
-  justify-self: start;
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
   min-height: var(--tap);
+  margin-block: calc(-1 * var(--space-3));
+  color: var(--text-muted);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.feed-only-me input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
 }
 </style>

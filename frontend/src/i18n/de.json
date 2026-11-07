@@ -268,7 +268,7 @@
     "noBookYet": "Noch kein Buch",
     "seeAll": "Alle ansehen",
     "soloLine": "Gemeinsam lesen?",
-    "meetingWhen": "Treffen {when} · {date}",
+    "meetingWhen": "Treffen {when} · {date}",
     "friendsWaiting": "{n} wartet auf dich | {n} warten auf dich",
     "welcomeTitle": "Willkommen bei {club}!",
     "welcomePick": "Das lest ihr gerade. Leg es auf dein Regal und trag ein, wie weit du bist.",
@@ -313,9 +313,9 @@
     "datePrecision": "Datumsangabe",
     "monthAndYear": "Monat und Jahr",
     "exactDate": "Genaues Datum",
-    "currentBooks": "Aktuell in meinem Regal",
+    "currentBooks": "Noch nicht fertig",
     "finishedBooks": "Fertig gelesen",
-    "currentMemberBooks": "Aktuell im Regal"
+    "currentMemberBooks": "Noch nicht fertig"
   },
   "favorites": {
     "heading": "Lieblingsbücher",
@@ -360,7 +360,7 @@
     "spoilerFlagged": "Spoiler markiert",
     "safeUptoTitle": "Sicher bis {n} %",
     "overlap": "Gemeinsame Wünsche",
-    "includeReading": "Lese ich einbeziehen",
+    "includeReading": "Auch was gerade gelesen wird",
     "overlapBlurb": "Bücher, die mindestens zwei von euch lesen wollen.",
     "overlapBlurbReading": "Bücher, die mindestens zwei von euch lesen wollen oder gerade lesen.",
     "overlapFailed": "Die Überschneidung konnte nicht geladen werden",
@@ -376,7 +376,7 @@
   },
   "discover": {
     "title": "Entdecken",
-    "placeholder": "Titel, Autor oder ISBN",
+    "placeholder": "Titel, Autor, ISBN",
     "searchAria": "Bücher suchen",
     "search": "Suchen",
     "subjectFilter": "Themenfilter",
@@ -408,7 +408,6 @@
     "showAnyway": "Trotzdem zeigen",
     "nothingMatched": "Nichts gefunden",
     "nothingMatchedBody": "Versuch Titel plus Autor, oder füge eine ISBN ein.",
-    "filterHiding": "Der Filter {label} könnte es verbergen.",
     "reachFailed": "Die Bibliothek ist nicht erreichbar",
     "couldntLoadMore": "Mehr konnte nicht geladen werden.",
     "loadMoreFailed": "Mehr konnte nicht geladen werden",
@@ -1001,7 +1000,6 @@
       "since": "Befreundet seit {day}",
       "notReading": "Liest gerade nichts",
       "more": "+{n} weitere",
-      "options": "Optionen",
       "optionsFor": "Optionen für {name}",
       "invite": "In einen Club einladen…",
       "remove": "Aus den Freunden entfernen"
@@ -1118,8 +1116,8 @@
     "vote_closed_auto": "Die Abstimmung ist zur Frist geendet und hat {book} gewählt",
     "votes": "{n} Stimme | {n} Stimmen",
     "milestone_added": "{actor} hat die Etappe „{title}“ zu {book} hinzugefügt",
-    "shelf_added": "{actor} hat {book} auf {status} gesetzt",
-    "shelf_moved": "{actor} hat {book} auf {status} verschoben",
+    "shelf_added": "{actor} hat {book} auf „{status}“ gesetzt",
+    "shelf_moved": "{actor} hat {book} nach „{status}“ verschoben",
     "shelf_finished": "{actor} hat {book} ausgelesen",
     "shelf_dnf": "{actor} hat {book} abgebrochen",
     "shelf_removed": "{actor} hat {book} aus dem Regal genommen",
@@ -1165,7 +1163,7 @@
     "loadFailed": "Die Zahlen konnten nicht geladen werden",
     "finished": "Beendet",
     "pages": "Seiten",
-    "average": "Durchschnittliche Bewertung",
+    "average": "Ø Bewertung",
     "averageShort": "Ø ★",
     "fiveStars": "Fünf Sterne",
     "dnf": "Abgebrochen",
@@ -1357,7 +1355,6 @@
   },
   "admin": {
     "title": "Verwaltung",
-    "lede": "Was Leser:innen ändern lassen oder gemeldet haben, Cover, die die Suche nicht klären konnte, Einladungen für die geschlossene Beta und gesperrte Konten.",
     "sections": "Bereiche der Verwaltung",
     "tabs": {
       "requests": "Anfragen",
@@ -1371,7 +1368,7 @@
     "someone": "jemand",
     "byOn": "{name} · {when}",
     "requests": "Anfragen",
-    "requestsBlurb": "Korrekturen an Büchern und Ausgaben, Cover-Fotos, die ein Cover ersetzen würden, und doppelt erfasste Bücher. Eine Freigabe übernimmt die Änderung, und keine Katalogquelle überschreibt sie später.",
+    "requestsBlurb": "Korrekturen an Büchern und Ausgaben, Cover-Fotos und doppelt erfasste Bücher; was du freigibst, überschreibt keine Katalogquelle mehr.",
     "noRequests": "Nichts offen.",
     "kind": {
       "work_edit": "Angaben zum Buch",
@@ -1408,7 +1405,7 @@
     "rejected": "Abgelehnt",
     "rejectNote": "Warum nicht? (Die Person sieht das noch nicht)",
     "reports": "Meldungen",
-    "reportsBlurb": "Gemeldete Cover, Profilbilder und Bücher, die Leser:innen angelegt haben. Entfernen nimmt ein Bild überall heraus oder löscht, was jemand eingetippt hat, endgültig; Behalten schließt die Meldung. Die Meldenden erfahren die Entscheidung per E-Mail, und wessen Inhalt entfernt wurde, erfährt den Grund.",
+    "reportsBlurb": "Gemeldete Cover, Profilbilder und Bücher, die Leser:innen angelegt haben.",
     "noReports": "Keine offenen Meldungen.",
     "alreadyRemoved": "Dieses Bild wurde schon entfernt.",
     "target": {
@@ -1448,8 +1445,7 @@
     "pastInvites": "{n} benutzte oder abgelaufene Einladung | {n} benutzte oder abgelaufene Einladungen",
     "users": {
       "title": "Gesperrte Konten",
-      "blurb": "Ein gesperrtes Konto kann sich nicht anmelden, und jede Sitzung und jedes App-Token, das es hatte, endet sofort. Die Einladungen, die es kennt, gelten nicht mehr, und ein Admin verliert die Admin-Rechte. Was es geschrieben hat, bleibt. Hebst du die Sperre auf, kann es sich wieder anmelden, ohne Admin-Rechte.",
-      "manual": "Seine Daten kann es nicht mehr selbst exportieren oder löschen: Die Person schreibt an die Kontaktadresse, und der Betrieb erledigt das von Hand, wie es die Anleitung zu Meldungen und Entfernungen beschreibt („Konten, die sich nicht anmelden können“).",
+      "blurb": "Ein gesperrtes Konto kann sich nicht anmelden; was es geschrieben hat, bleibt.",
       "name": "Benutzername",
       "suspend": "Sperren",
       "suspendConfirm": "{name} sperren",
@@ -1460,7 +1456,8 @@
       "unsuspend": "Sperre aufheben",
       "unsuspended": "{name} kann sich wieder anmelden",
       "none": "Kein Konto ist gesperrt.",
-      "failed": "Das konnte nicht gespeichert werden"
+      "failed": "Das konnte nicht gespeichert werden",
+      "howTo": "Jede Sitzung und jedes App-Token des Kontos endet sofort, die Einladungen, die es kennt, gelten nicht mehr, und ein Admin verliert die Admin-Rechte. Hebst du die Sperre auf, kann es sich wieder anmelden, ohne Admin-Rechte. Seine Daten kann es nicht mehr selbst exportieren oder löschen: Die Person schreibt an die Kontaktadresse, und der Betrieb erledigt das von Hand, wie es die Anleitung zu Meldungen und Entfernungen beschreibt („Konten, die sich nicht anmelden können“)."
     },
     "edit": {
       "title": "Buch als Admin bearbeiten",
@@ -1529,11 +1526,11 @@
     "closedBy": "Geschlossen von {name} · {when}",
     "covers": {
       "title": "Cover",
-      "blurb": "Jedes Buch aus dem Katalog oder dem Import soll ein echtes Cover haben. Eindeutige Treffer von Open Library hängt die Suche selbst an; die unsicheren warten hier auf dich. Bücher, die Leser:innen angelegt haben, behalten ihren Einband, bis jemand ein Foto hochlädt.",
+      "blurb": "Jedes Buch aus dem Katalog oder dem Import soll ein echtes Cover haben.",
       "views": "Vorschläge oder Bücher ohne Cover",
       "suggestions": "Vorschläge",
       "missing": "Ohne Cover",
-      "suggestionsBlurb": "Cover, die die Suche gefunden, aber nicht selbst angehängt hat. „Dieses Cover nehmen“ macht das Bild für alle zum Cover des Buchs; „Nicht dieses Buch“ schließt dieses Open-Library-Buch für immer aus, und die Suche sucht das nächste.",
+      "suggestionsBlurb": "Cover, die die Suche gefunden, aber nicht selbst angehängt hat.",
       "noSuggestions": "Kein Vorschlag wartet auf dich.",
       "found": "gefunden {when}",
       "ourBook": "Unser Buch",
@@ -1571,7 +1568,7 @@
       "scope": "Genutzte Bücher oder alle",
       "scopeInUse": "Genutzte",
       "scopeAll": "Alle",
-      "missingBlurb": "Bücher aus dem Katalog oder dem Import ohne brauchbares Cover. Die Suche versucht sie von selbst; „Jetzt suchen“ fragt Open Library sofort, und ein Upload setzt das Cover direkt.",
+      "missingBlurb": "Bücher aus dem Katalog oder dem Import ohne brauchbares Cover; die Suche versucht sie weiter von selbst.",
       "noMissing": "Jedes Buch hier hat ein Cover.",
       "inUse": "Wird genutzt",
       "imported": "Importiert",
@@ -1602,8 +1599,12 @@
         "searched": "Zuletzt gesucht am {date}.",
         "nextTry": "Nächster Versuch am {date}.",
         "afterTakedown": "Nach einer Entfernung macht die Suche nur noch Vorschläge."
-      }
-    }
+      },
+      "howTo": "Eindeutige Treffer von Open Library hängt die Suche selbst an; die unsicheren warten unter „Vorschläge“ auf dich. „Jetzt suchen“ fragt Open Library sofort, und ein Upload setzt das Cover direkt. Bücher, die Leser:innen angelegt haben, behalten ihren Einband, bis jemand ein Foto hochlädt."
+    },
+    "howTo": "So funktioniert das",
+    "reportsHowTo": "Entfernen nimmt ein Bild überall heraus oder löscht, was jemand eingetippt hat, endgültig; Behalten schließt die Meldung. Die Meldenden erfahren die Entscheidung per E-Mail, und wessen Inhalt entfernt wurde, erfährt den Grund.",
+    "noticeShort": "Meldung per E-Mail"
   },
   "notFound": {
     "title": "Seite nicht gefunden",
@@ -1678,10 +1679,10 @@
     "title": "Fertig!",
     "rate": "Wie war’s?",
     "addTake": "+ Ein Satz",
-    "onlyMe": "Nur für mich",
+    "onlyMe": "Bewertung nur für mich",
     "clubLine": "{n} von {total} im Club ist durch | {n} von {total} im Club sind durch",
     "clubAll": "Alle {total} im Club sind durch",
-    "done": "Fertig",
+    "done": "Speichern",
     "skip": "Überspringen"
   },
   "rings": {

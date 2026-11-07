@@ -348,7 +348,7 @@ watch(
 </script>
 
 <template>
-  <section class="diary">
+  <section class="diary" :class="{ preview: !!preview }">
     <div class="section-head">
       <h2>{{ heading ?? t("diary.heading") }}</h2>
       <span v-if="total" class="fine subtle nums">
@@ -357,7 +357,16 @@ watch(
     </div>
 
     <p v-if="error" class="error">{{ error }}</p>
-    <div v-else-if="!loaded" class="skeleton skeleton-block" aria-hidden="true" />
+    <ol v-else-if="!loaded" class="skeleton-rows" aria-hidden="true">
+      <li v-for="n in 2" :key="n" class="skeleton-row">
+        <span class="skeleton skeleton-avatar" />
+        <span class="skeleton-row-lines">
+          <span class="skeleton skeleton-line short" />
+          <span class="skeleton skeleton-line" />
+          <span class="skeleton skeleton-line" />
+        </span>
+      </li>
+    </ol>
     <p v-else-if="noPick" class="fine subtle">{{ t("diary.noPick") }}</p>
 
     <template v-else>
@@ -505,25 +514,40 @@ watch(
   justify-items: start;
 }
 
-.skeleton-block {
-  height: 90px;
+/* The flex gap spaces the head; its own margin would double it. */
+.diary > .section-head {
+  margin-bottom: 0;
 }
 
+.skeleton-avatar {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+}
+
+/* Text buttons alone in the column: the text lines up with the rows, the
+   padding only widens the target. */
 .show-all {
   align-self: flex-start;
+  margin-inline-start: calc(-1 * var(--space-2));
 }
 
+/* Light rows split by hairlines, like every other list. */
 .diary-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  gap: var(--space-2);
 }
 
+.diary-list > li + li {
+  border-top: 1px solid var(--border);
+}
+
+/* Replies: indented behind a rule, not boxed. */
 .replies {
   display: grid;
-  gap: var(--space-2);
   margin-top: var(--space-1);
   padding-left: var(--space-3);
   border-left: 2px solid var(--border);
@@ -531,7 +555,12 @@ watch(
 
 .replies .text-btn {
   justify-self: start;
+  margin-inline-start: calc(-1 * var(--space-2));
   font-size: var(--text-sm);
+}
+
+.reply-form {
+  padding-block: var(--space-2);
 }
 
 .compose,
@@ -595,6 +624,17 @@ watch(
     backdrop-filter: blur(12px);
     border-top: 1px solid var(--border);
   }
+}
+
+/* A preview (club home) is not the whole conversation: its composer stays
+   in the flow instead of riding above the tab bar over the rest of the page. */
+.diary.preview .compose {
+  position: static;
+  margin: 0;
+  padding: 0;
+  border-top: 0;
+  background: none;
+  backdrop-filter: none;
 }
 
 @media (min-width: 1024px) {

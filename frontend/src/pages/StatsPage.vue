@@ -82,11 +82,9 @@ watch(() => [route.params.username, route.query.year], load, { immediate: true }
   <section class="stats-page">
     <BackLink v-if="!own" :label="t('memberShelf.back')" :fallback="`/u/${username}`" />
     <div class="page-head stats-head">
-      <div>
-        <h1>{{ own ? t("stats.title") : t("stats.titleOf", { name: stats?.username ?? username }) }}</h1>
-      </div>
+      <h1>{{ own ? t("stats.title") : t("stats.titleOf", { name: stats?.username ?? username }) }}</h1>
       <label v-if="stats && stats.years.length > 1" class="field year-field">
-        <span>{{ t("stats.year") }}</span>
+        <span class="visually-hidden">{{ t("stats.year") }}</span>
         <select :value="stats.year" :disabled="loading" @change="chooseYear">
           <option v-for="year in stats.years" :key="year" :value="year">{{ year }}</option>
         </select>
@@ -94,9 +92,18 @@ watch(() => [route.params.username, route.query.year], load, { immediate: true }
     </div>
 
     <p v-if="error" class="error">{{ error }}</p>
-    <div v-else-if="!stats" class="skeleton stats-skeleton" aria-hidden="true" />
+    <div v-else-if="!stats" class="stats-skeleton" aria-hidden="true">
+      <div class="skeleton-tiles">
+        <span v-for="n in 6" :key="n" class="skeleton-tile">
+          <span class="skeleton skeleton-figure" />
+          <span class="skeleton skeleton-line short" />
+        </span>
+      </div>
+      <span class="skeleton skeleton-bars" />
+    </div>
     <template v-else>
-      <h2 class="year-heading">{{ stats.year }}</h2>
+      <!-- The year picker already names the year; a single year gets a heading. -->
+      <h2 v-if="stats.years.length <= 1" class="year-heading">{{ stats.year }}</h2>
       <StatTiles :items="tiles" />
       <p v-if="quiet" class="fine subtle quiet">{{ t("stats.nothingYet", { year: stats.year }) }}</p>
       <MonthBars v-else class="section" :year="stats.year" :months="stats.by_month" />
@@ -107,7 +114,7 @@ watch(() => [route.params.username, route.query.year], load, { immediate: true }
           <BookCover :book="row.book" size="sm" />
           <span class="highlight-text">
             <span class="finer subtle">{{ row.label }}</span>
-            <strong>{{ row.book.title }}</strong>
+            <strong class="highlight-title">{{ row.book.title }}</strong>
             <span v-if="row.book.authors" class="fine subtle">{{ row.book.authors }}</span>
           </span>
         </RouterLink>
@@ -117,51 +124,103 @@ watch(() => [route.params.username, route.query.year], load, { immediate: true }
 </template>
 
 <style scoped>
+/* The picker sits beside the title, on its line. */
 .stats-head {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
-  gap: var(--space-3);
+  gap: var(--space-2) var(--space-3);
 }
 
 .year-field {
   min-width: 7rem;
+  margin-bottom: 0;
 }
 
 .year-heading {
   margin-bottom: var(--space-3);
 }
 
-.stats-skeleton {
-  height: 260px;
+/* Loading: the tiles' hairline grid with placeholder figures, then the bars. */
+.skeleton-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-block: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.skeleton-tile {
+  display: grid;
+  justify-items: center;
+  padding: var(--space-3) var(--space-2);
+  box-shadow:
+    -1px 0 0 var(--border),
+    0 -1px 0 var(--border);
+}
+
+.skeleton-figure {
+  width: 2.5rem;
+  height: 1.75rem;
+}
+
+.skeleton-tile .skeleton-line {
+  width: 60%;
+}
+
+.skeleton-bars {
+  display: block;
+  height: 140px;
+  margin-top: var(--space-7);
 }
 
 .quiet {
   margin-top: var(--space-4);
 }
 
+/* Light rows split by hairlines, not cards. */
 .highlights {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
-  gap: var(--space-2);
+  border-top: 1px solid var(--border);
 }
 
 .highlight {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
   color: inherit;
   text-decoration: none;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.highlight:active {
+  transform: scale(var(--press-scale));
+  transition-duration: var(--dur-press);
 }
 
 .highlight-text {
   display: grid;
   gap: 2px;
   min-width: 0;
+}
+
+.highlight-title {
+  font-family: var(--serif);
+  font-weight: 600;
+  line-height: var(--leading-snug);
+}
+
+@media (hover: hover) {
+  .highlight:hover .highlight-title {
+    color: var(--accent);
+  }
+}
+
+/* The same reading column as Profile, Friends and Quotes. */
+@media (min-width: 1024px) {
+  .stats-page {
+    max-width: 720px;
+  }
 }
 </style>

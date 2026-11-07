@@ -189,7 +189,7 @@ watch(
         :aria-label="t('diary.revealAria', { label: spoilerLabel(entry.spoiler_upto) })"
         @click="revealed = true"
       >
-        <span class="kicker">{{ spoilerLabel(entry.spoiler_upto) }}</span>
+        <span class="fine shield-label">{{ spoilerLabel(entry.spoiler_upto) }}</span>
         <span class="fine">{{ t("diary.youreAt", { n: myProgress ?? 0 }) }}</span>
       </button>
     </div>
@@ -237,11 +237,11 @@ watch(
         <button v-if="!compact && !noReply" class="text-btn" type="button" @click="emit('reply')">
           {{ t("common.reply") }}
         </button>
-        <button v-if="entry.mine" class="text-btn" type="button" @click="startEdit">{{ t("common.edit") }}</button>
+        <button v-if="entry.mine" class="text-btn quiet" type="button" @click="startEdit">{{ t("common.edit") }}</button>
         <template v-if="canDelete">
           <button
             class="text-btn"
-            :class="{ danger: confirming }"
+            :class="confirming ? 'danger' : 'quiet'"
             type="button"
             :disabled="busy"
             @click="askDelete"
@@ -257,25 +257,18 @@ watch(
 </template>
 
 <style scoped>
+/* A light row, not a card: the list around it draws the hairlines
+   (BookDiary), and a reply sits indented behind the thread's rule. */
 .entry {
   display: grid;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  padding: var(--space-3) 0;
   scroll-margin-top: calc(var(--header-h) + var(--space-4));
 }
 
 .entry.compact {
-  padding: var(--space-2) var(--space-3);
-  background: var(--surface-2);
-  border-color: transparent;
-}
-
-.entry.deleted {
-  background: transparent;
-  border-style: dashed;
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
 }
 
 .entry-meta {
@@ -354,8 +347,9 @@ watch(
   cursor: pointer;
 }
 
-.shield-btn .kicker {
-  margin: 0;
+.shield-label {
+  font-weight: 600;
+  color: var(--accent);
 }
 
 .entry-deleted {
@@ -414,14 +408,14 @@ watch(
   gap: var(--space-1);
 }
 
+/* 40px pills; the chip's ::before reaches 44px (components.css). */
 .chip.reaction {
-  min-height: 36px;
+  min-height: 40px;
   padding: 0 var(--space-3);
   gap: var(--space-1);
   font-size: var(--text-sm);
 }
 
-/* With the chip's own 2px reach this is a 40px target in a dense row. */
 .chip.reaction.add {
   min-width: 40px;
   justify-content: center;
@@ -468,9 +462,11 @@ watch(
   transition-duration: var(--dur-press);
 }
 
-.reaction-picker {
-  animation: picker-in var(--dur-base) var(--ease-out);
-  transform-origin: left center;
+@media (prefers-reduced-motion: no-preference) {
+  .reaction-picker {
+    animation: picker-in var(--dur-base) var(--ease-out);
+    transform-origin: left center;
+  }
 }
 
 @keyframes picker-in {
@@ -486,10 +482,19 @@ watch(
   }
 }
 
+/* The padding only widens the targets: the outer texts line up with the
+   row's edges, wherever the links wrap to. */
 .entry-links {
   display: flex;
-  gap: var(--space-3);
+  gap: var(--space-1);
+  margin-inline: calc(-1 * var(--space-2));
   font-size: var(--text-sm);
+}
+
+/* Reply is the row's one accent action; edit and delete stay quiet until
+   delete asks to be confirmed. */
+.text-btn.quiet {
+  color: var(--text-muted);
 }
 
 .text-btn.danger {

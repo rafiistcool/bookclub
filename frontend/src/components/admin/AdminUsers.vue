@@ -8,6 +8,7 @@ import { useLocale } from "../../stores/locale";
 import { useSession } from "../../stores/session";
 import { useToast } from "../../stores/toast";
 import Avatar from "../Avatar.vue";
+import AdminDisclosure from "./AdminDisclosure.vue";
 
 /**
  * Suspended accounts (#55, Q15): suspend one by its username, and lift a
@@ -101,12 +102,13 @@ onMounted(load);
 
 <template>
   <section class="admin-queue" aria-labelledby="admin-users">
-    <div class="section-head">
-      <h2 id="admin-users">{{ t("admin.users.title") }}</h2>
-    </div>
-    <p class="fine muted">{{ t("admin.users.blurb") }} {{ t("admin.users.manual") }}</p>
+    <h2 id="admin-users" class="visually-hidden">{{ t("admin.users.title") }}</h2>
+    <p class="fine muted">{{ t("admin.users.blurb") }}</p>
+    <AdminDisclosure class="admin-howto" :summary="t('admin.howTo')">
+      <p class="fine muted">{{ t("admin.users.howTo") }}</p>
+    </AdminDisclosure>
 
-    <form class="panel suspend-form" @submit.prevent="suspend">
+    <form class="admin-form suspend-form" @submit.prevent="suspend">
       <label class="field">
         <span>{{ t("admin.users.name") }}</span>
         <input
@@ -136,7 +138,15 @@ onMounted(load);
       {{ error }}
       <button class="text-btn" type="button" @click="load">{{ t("common.tryAgain") }}</button>
     </p>
-    <div v-else-if="!loaded" class="skeleton admin-skeleton" aria-hidden="true" />
+    <ol v-else-if="!loaded" class="skeleton-rows admin-skeleton" aria-hidden="true">
+      <li v-for="n in 2" :key="n" class="skeleton-row">
+        <span class="skeleton skeleton-avatar" />
+        <span class="skeleton-row-lines">
+          <span class="skeleton skeleton-line short" />
+          <span class="skeleton skeleton-line" />
+        </span>
+      </li>
+    </ol>
     <p v-else-if="items.length === 0" class="fine subtle">{{ t("admin.users.none") }}</p>
     <ul v-else class="user-list">
       <li v-for="user in items" :key="user.id" class="user-row">
@@ -157,41 +167,34 @@ onMounted(load);
 </template>
 
 <style scoped>
-.admin-skeleton {
-  height: 120px;
-}
-
-.suspend-form {
-  display: grid;
-  gap: var(--space-3);
-  margin: var(--space-3) 0 var(--space-4);
-}
-
-.suspend-form .field,
-.suspend-form p {
-  margin: 0;
+.skeleton-avatar {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
 }
 
 .suspend-form input {
   max-width: 22rem;
 }
 
+/* Light rows split by hairlines, as in the queues and Settings. */
 .user-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  gap: var(--space-2);
 }
 
 .user-row {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  min-height: 60px;
+  padding: var(--space-2) 0;
+}
+
+.user-row + .user-row {
+  border-top: 1px solid var(--border);
 }
 
 .user-meta {

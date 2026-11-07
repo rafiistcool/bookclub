@@ -35,6 +35,12 @@ const docs = computed(() => LEGAL_DOCS.filter((doc) => service.hasLegal(doc)));
   text-decoration: none;
 }
 
+/* The document open now. */
+.legal-links a[aria-current="page"] {
+  color: var(--text);
+  font-weight: 600;
+}
+
 @media (hover: hover) {
   .legal-links a:hover {
     color: var(--text);

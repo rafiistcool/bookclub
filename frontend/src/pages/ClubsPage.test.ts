@@ -55,8 +55,11 @@ describe("ClubsPage", () => {
     expect(clubs).not.toHaveBeenCalled();
     expect(wrapper.get(".page-head .lede").text()).toBe("You're not in a club yet.");
     expect(wrapper.find(".club-grid").exists()).toBe(false);
-    expect(wrapper.get('.create-way a[href="/clubs/new"]').text()).toBe("Create a club");
-    expect(wrapper.get(".create-way").text()).toContain("Up to 20 members.");
+    // Creating is a row: the label, and the member limit under it.
+    expect(wrapper.get('.create-way a[href="/clubs/new"] .create-label').text()).toBe("Create a club");
+    expect(wrapper.get('.create-way a[href="/clubs/new"]').text()).toContain("Up to 20 members.");
+    expect(wrapper.get(".join-way h2").text()).toBe(i18n.global.t("clubs.joinHeading"));
+    expect(wrapper.find(".panel").exists()).toBe(false);
     expect(wrapper.find("form input[name=invite]").exists()).toBe(true);
   });
 

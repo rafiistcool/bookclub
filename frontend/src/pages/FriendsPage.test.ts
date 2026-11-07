@@ -148,6 +148,9 @@ describe("FriendsPage", () => {
     expect(grace.findAll(".friend-book-title").map((title) => title.text())).toEqual(["Circe", "Middlemarch", "Ulysses"]);
     expect(grace.findAll(".friend-book").map((row) => row.attributes("href"))).toEqual(["/book/11", "/book/12", "/book/13"]);
     expect(grace.text()).toContain("40%");
+    // The options are an icon button, named for the friend.
+    expect(grace.get(".options-btn").classes()).toContain("icon-btn");
+    expect(grace.get(".options-btn").text()).toBe("");
     expect(grace.get(".more-link").text()).toBe("+2 more");
     expect(grace.get(".more-link").attributes("href")).toBe("/u/grace");
     expect(cards[1]!.text()).toContain("Not reading anything right now");
@@ -311,8 +314,11 @@ describe("FriendsPage", () => {
   it("does not offer an invitation to a reader who runs no club", async () => {
     const page = await mountPage(FULL, [{ ...READERS, role: "member" }]);
     await section(page, "your-friends").get(".options-btn").trigger("click");
+    // Icon rows like the profile's photo sheet; the sheet's close button is the cancel.
     const labels = page.get(".sheet").findAll("button:not(.sheet-close)").map((element) => element.text());
-    expect(labels).toEqual(["Remove from friends", "Block", "Cancel"]);
+    expect(labels).toEqual(["Remove from friends", "Block"]);
+    expect(page.findAll(".sheet .sheet-row")).toHaveLength(2);
+    expect(page.get(".sheet .sheet-row.danger").text()).toBe("Block");
   });
 
   it("withdraws sent requests, unblocks, and declines club invitations", async () => {

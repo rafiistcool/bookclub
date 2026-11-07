@@ -16,6 +16,14 @@ const { t } = useI18n();
 </template>
 
 <style scoped>
+/* The page's whole content, not an empty list inside one: no dashed box, and
+   a reading width in the middle of a wide column. */
+.page-missing {
+  max-width: 560px;
+  margin-inline: auto;
+  border: 0;
+}
+
 .page-missing h1 {
   font-size: var(--text-xl);
 }

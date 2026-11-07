@@ -175,6 +175,14 @@ describe("BookDiary", () => {
     expect(api.addDiaryEntry).toHaveBeenLastCalledWith(9, { body: "A reply", spoiler_upto: null, parent_id: 1 });
   });
 
+  it("keeps a preview's composer in the flow, and the full diary's sticky", async () => {
+    api.pickThread.mockResolvedValue(thread());
+    const preview = await mountDiary({ club: { slug: CLUB.slug, pickId: null }, preview: 3 });
+    expect(preview.get(".diary").classes()).toContain("preview");
+    const full = await mountDiary({ club: { slug: CLUB.slug, pickId: null } });
+    expect(full.get(".diary").classes()).not.toContain("preview");
+  });
+
   it("lets a club admin delete another member's club post", async () => {
     const items = [post({ id: 4, author: "max", body: "Off topic", club: CLUB, pick_id: 5 })];
     api.pickThread.mockResolvedValue(thread({ items }));
