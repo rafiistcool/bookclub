@@ -443,7 +443,9 @@ pub async fn report(
 }
 
 /// The book that shows the picture, for a report's `work_id` and `edition_id`: an edition (and
-/// its work) first, else a work, else the book a `cover_replace` request proposed it for.
+/// its work) first, else a work, else the book a `cover_replace` request proposed it for, else
+/// the book of a shelf entry that chose it as its personal cover (the cover choice; a reader's
+/// own photo shows nowhere else). No entry or reader is recorded.
 async fn shown_on(
     conn: &mut PgConnection,
     media_id: i64,
@@ -458,7 +460,9 @@ async fn shown_on(
                   (SELECT r.work_id FROM catalog_edit_requests r WHERE r.media_id = $1
                    ORDER BY r.id LIMIT 1) AS requested_work,
                   (SELECT r.edition_id FROM catalog_edit_requests r WHERE r.media_id = $1
-                   ORDER BY r.id LIMIT 1) AS requested_edition"#,
+                   ORDER BY r.id LIMIT 1) AS requested_edition,
+                  (SELECT s.work_id FROM shelf_entries s WHERE s.cover_media_id = $1
+                   ORDER BY s.id LIMIT 1) AS chosen_work"#,
         media_id
     )
     .fetch_one(conn)
@@ -466,7 +470,8 @@ async fn shown_on(
     Ok(match (row.edition_work, row.edition, row.work) {
         (Some(work), Some(edition), _) => (Some(work), Some(edition)),
         (_, _, Some(work)) => (Some(work), None),
-        _ => (row.requested_work, row.requested_edition),
+        _ if row.requested_work.is_some() => (row.requested_work, row.requested_edition),
+        _ => (row.chosen_work, None),
     })
 }
 

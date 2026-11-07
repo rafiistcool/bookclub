@@ -286,6 +286,7 @@ pub async fn delete_rejected_cover_photos(
             r#"SELECT EXISTS (SELECT 1 FROM works WHERE cover_media_id = $1)
                    OR EXISTS (SELECT 1 FROM editions WHERE cover_media_id = $1)
                    OR EXISTS (SELECT 1 FROM users WHERE avatar_media_id = $1)
+                   OR EXISTS (SELECT 1 FROM shelf_entries WHERE cover_media_id = $1)
                    OR EXISTS (SELECT 1 FROM reports WHERE media_id = $1)
                    OR EXISTS (SELECT 1 FROM media_removed_hashes WHERE media_id = $1)
                    OR EXISTS (SELECT 1 FROM catalog_edit_requests
@@ -302,6 +303,105 @@ pub async fn delete_rejected_cover_photos(
             continue;
         }
         // The request goes with it (ON DELETE CASCADE).
+        sqlx::query!("DELETE FROM media WHERE id = $1", media_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        let mut prefixes = vec![storage_prefix(&photo.kind, &photo.public_id)];
+        prefixes.extend(photo.storage_key);
+        delete_prefixes(store, &prefixes).await;
+        deleted += 1;
+    }
+    Ok(deleted)
+}
+
+/// How long a personal cover photo outlives its last choice (docs/phase3/notes/cover-choice.md):
+/// "Undo" after removing a book from the shelf, or choosing the photo again, finds it within
+/// this time.
+pub const PERSONAL_COVER_GRACE_DAYS: i32 = 7;
+
+/// The hourly sweep of personal cover photos (`media.personal`, the cover choice): a photo no
+/// shelf entry chooses gets `unused_since` (one chosen again loses it), and one unused for
+/// [`PERSONAL_COVER_GRACE_DAYS`] is deleted with its files. Returns how many it deleted, at most
+/// [`PURGE_BATCH`] a run. It belongs in the hourly cleanup job next to
+/// [`delete_rejected_cover_photos`].
+///
+/// A photo stays while an open report names it (an admin decides it first; the deletion clears
+/// a decided report's `media_id`), and a taken-down photo is never deleted here: its row and
+/// hash stay like every taken-down picture's, without files. Each photo is locked first and
+/// looked at again in a new statement, as in [`delete_rejected_cover_photos`]: a choice holds
+/// the row `FOR SHARE` (`shelf::cover`), so it has either committed and is seen, or it waits and
+/// finds the photo gone (`This cover cannot be chosen`).
+pub async fn sweep_personal_covers(
+    conn: &mut PgConnection,
+    store: &dyn MediaStore,
+) -> sqlx::Result<u64> {
+    sqlx::query!(
+        "UPDATE media m SET unused_since = now()
+         WHERE m.personal AND m.removed_at IS NULL AND m.unused_since IS NULL
+           AND NOT EXISTS (SELECT 1 FROM shelf_entries s WHERE s.cover_media_id = m.id)"
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query!(
+        "UPDATE media m SET unused_since = NULL
+         WHERE m.personal AND m.unused_since IS NOT NULL
+           AND EXISTS (SELECT 1 FROM shelf_entries s WHERE s.cover_media_id = m.id)"
+    )
+    .execute(&mut *conn)
+    .await?;
+    let due = sqlx::query_scalar!(
+        "SELECT id FROM media
+         WHERE personal AND removed_at IS NULL
+           AND unused_since < now() - make_interval(days => $1)
+         ORDER BY id
+         LIMIT $2",
+        PERSONAL_COVER_GRACE_DAYS,
+        PURGE_BATCH
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut deleted = 0;
+    for media_id in due {
+        let mut tx = conn.begin().await?;
+        let photo = sqlx::query!(
+            "SELECT kind, public_id, storage_key FROM media
+             WHERE id = $1 AND personal AND removed_at IS NULL
+             FOR UPDATE",
+            media_id
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(photo) = photo else {
+            tx.rollback().await?;
+            continue;
+        };
+        let in_use = sqlx::query!(
+            r#"SELECT EXISTS (SELECT 1 FROM shelf_entries WHERE cover_media_id = $1) AS "chosen!",
+                      EXISTS (SELECT 1 FROM reports WHERE media_id = $1 AND status = 'open')
+                          OR EXISTS (SELECT 1 FROM works WHERE cover_media_id = $1)
+                          OR EXISTS (SELECT 1 FROM editions WHERE cover_media_id = $1)
+                          OR EXISTS (SELECT 1 FROM users WHERE avatar_media_id = $1)
+                          OR EXISTS (SELECT 1 FROM catalog_edit_requests WHERE media_id = $1)
+                          AS "held!""#,
+            media_id
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        if in_use.chosen {
+            sqlx::query!(
+                "UPDATE media SET unused_since = NULL WHERE id = $1",
+                media_id
+            )
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+            continue;
+        }
+        if in_use.held {
+            tx.rollback().await?;
+            continue;
+        }
         sqlx::query!("DELETE FROM media WHERE id = $1", media_id)
             .execute(&mut *tx)
             .await?;

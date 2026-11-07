@@ -4,7 +4,8 @@
 //! Colours are sampled when a cover is stored (an upload or an Open Library fetch); this route
 //! catches the rest: covers whose bytes were never fetched, and stored pictures without a
 //! colour (imported ones). The cover of a shelf entry is the one its `BookOut` shows: the
-//! entry's edition's, else the work's. A taken-down picture is never pending and never fetched.
+//! reader's personal choice (`shelf_entries.cover_media_id`), else the entry's edition's, else
+//! the work's. A taken-down picture is never pending and never fetched.
 //!
 //! Each picture settles as a colour, as `''` (no usable cover: Open Library has none, a refused
 //! redirect, too large, undecodable), or stays NULL when the fetch should be tried again later
@@ -68,9 +69,11 @@ pub async fn spine_colors(
                FROM shelf_entries s
                JOIN works w ON w.id = s.work_id
                LEFT JOIN editions e ON e.id = s.edition_id AND e.work_id = s.work_id
+               LEFT JOIN media pm ON pm.id = s.cover_media_id AND pm.removed_at IS NULL
+                                  AND pm.ol_gone_at IS NULL
                LEFT JOIN media em ON em.id = e.cover_media_id AND em.removed_at IS NULL
                LEFT JOIN media wm ON wm.id = w.cover_media_id AND wm.removed_at IS NULL
-               JOIN media m ON m.id = COALESCE(em.id, wm.id)
+               JOIN media m ON m.id = COALESCE(pm.id, em.id, wm.id)
                WHERE s.user_id = $1 AND m.dominant_color IS NULL
                ORDER BY s.work_id"#,
             user.id

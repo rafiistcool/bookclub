@@ -30,7 +30,8 @@ impl Validate for AccountDeleteIn {}
 ///
 /// - Clubs the user owns alone are deleted; owning a club with other members is 409.
 /// - Posts that others replied to become anonymous tombstones; every other post is deleted.
-/// - Every avatar the user uploaded is deleted with its bytes; cover photos stay as catalog
+/// - Every avatar the user uploaded is deleted with its bytes, and so is every personal cover
+///   photo (the cover choice) that no open report names; cover photos stay as catalog
 ///   contributions, without the uploader.
 /// - Personal data, sessions, memberships, friendships and requests, blocks, the friend invites
 ///   bound to the user and the user's activity events go with the account; picks, nominations,
@@ -73,7 +74,7 @@ pub async fn delete_account(
     })?;
     for prefix in prefixes {
         if let Err(error) = state.media.delete_prefix(&prefix).await {
-            tracing::warn!(error = %format!("{error:#}"), prefix, "deleting avatar bytes failed");
+            tracing::warn!(error = %format!("{error:#}"), prefix, "deleting picture bytes failed");
         }
     }
     let cookie = session::clear_cookie(&state.config);
@@ -81,7 +82,7 @@ pub async fn delete_account(
 }
 
 /// Deletes the account in the caller's transaction (§5.6) and returns the storage prefixes of
-/// the deleted avatar rows, whose bytes the caller deletes after commit.
+/// the deleted avatar and personal cover rows, whose bytes the caller deletes after commit.
 ///
 /// `verified_hash` is the hash the password was checked against: a password change or reset
 /// that committed since then wins (400 `Current password is wrong`).
@@ -116,7 +117,7 @@ pub async fn delete_user(
     }
     delete_owned_clubs(conn, user_id, &owned).await?;
     delete_posts(conn, user_id).await?;
-    let prefixes = sqlx::query_scalar!(
+    let mut prefixes: Vec<String> = sqlx::query_scalar!(
         "DELETE FROM media
          WHERE kind = 'avatar'
            AND (uploaded_by = $1 OR id = (SELECT avatar_media_id FROM users WHERE id = $1))
@@ -128,6 +129,23 @@ pub async fn delete_user(
     .into_iter()
     .flatten()
     .collect();
+    // The personal cover photos (the cover choice) go too. One an open report names stays for the
+    // admin's decision (`auth::sweep_personal_covers` deletes it afterwards); a taken-down one
+    // keeps its row and hash, without files, like every taken-down picture.
+    prefixes.extend(
+        sqlx::query_scalar!(
+            "DELETE FROM media m
+             WHERE m.personal AND m.uploaded_by = $1 AND m.removed_at IS NULL
+               AND NOT EXISTS (SELECT 1 FROM reports r
+                               WHERE r.media_id = m.id AND r.status = 'open')
+             RETURNING storage_key",
+            user_id
+        )
+        .fetch_all(&mut *conn)
+        .await?
+        .into_iter()
+        .flatten(),
+    );
     sqlx::query!("DELETE FROM users WHERE id = $1", user_id)
         .execute(&mut *conn)
         .await?;

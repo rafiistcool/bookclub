@@ -1000,8 +1000,9 @@ pub async fn ol_cover_media(
 /// stored with the bytes of a cover picture a takedown judged, #74) media id per cover id.
 /// The rows are locked `FOR SHARE` until the transaction ends, so a takedown's
 /// `UPDATE media SET removed_at` waits for this ingest to commit and its `clear_media` then sees
-/// the reference.
-async fn ol_cover_medias(
+/// the reference. Public since the cover choice (docs/phase3/notes/cover-choice.md), whose
+/// candidate list creates the lazy rows of Open Library edition covers through it.
+pub async fn ol_cover_medias(
     conn: &mut PgConnection,
     ol_cover_ids: &[i64],
 ) -> sqlx::Result<HashMap<i64, i64>> {
@@ -2089,8 +2090,9 @@ pub async fn record_original_title(
 
 /// Sets the cover under the provenance rules (`by` = the writer). With `only_if_empty` the
 /// UPDATE carries `AND cover_media_id IS NULL` (a first user upload; false = someone else was
-/// first). Refuses a removed (or non-cover) media row. Returns whether the cover changed. Also
-/// fills a NULL work cover from an edition cover.
+/// first). Refuses a removed (or non-cover) media row, and a reader's personal photo
+/// (`media.personal`, the cover choice): it never becomes a catalog cover. Returns whether the
+/// cover changed. Also fills a NULL work cover from an edition cover.
 pub async fn set_cover(
     conn: &mut PgConnection,
     target: CoverTarget,
@@ -2101,7 +2103,9 @@ pub async fn set_cover(
     // Locked first and until the transaction ends, like the media rows ingest attaches: a
     // takedown's UPDATE of the row then waits, and its clear_media sees this reference.
     let usable = sqlx::query_scalar!(
-        "SELECT id FROM media WHERE id = $1 AND kind = 'cover' AND removed_at IS NULL FOR SHARE",
+        "SELECT id FROM media
+         WHERE id = $1 AND kind = 'cover' AND removed_at IS NULL AND NOT personal
+         FOR SHARE",
         media_id
     )
     .fetch_optional(&mut *conn)
@@ -2217,7 +2221,9 @@ pub async fn clear_gone_media(conn: &mut PgConnection, media_id: i64) -> sqlx::R
     Ok(works)
 }
 
-/// The works and the number of editions whose cover was `media_id`, cleared (works first).
+/// The works and the number of editions whose cover was `media_id`, cleared (works first). The
+/// shelf entries that chose it as their personal cover (docs/phase3/notes/cover-choice.md) are
+/// cleared last and not counted: they show their standard cover again.
 async fn clear_references(conn: &mut PgConnection, media_id: i64) -> sqlx::Result<(Vec<i64>, u64)> {
     let works = sqlx::query_scalar!(
         "UPDATE works SET cover_media_id = NULL, field_sources = field_sources - 'cover_media_id',
@@ -2234,9 +2240,15 @@ async fn clear_references(conn: &mut PgConnection, media_id: i64) -> sqlx::Resul
          WHERE cover_media_id = $1",
         media_id
     )
-    .execute(conn)
+    .execute(&mut *conn)
     .await?
     .rows_affected();
+    sqlx::query!(
+        "UPDATE shelf_entries SET cover_media_id = NULL WHERE cover_media_id = $1",
+        media_id
+    )
+    .execute(conn)
+    .await?;
     Ok((works, editions))
 }
 

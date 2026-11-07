@@ -27,7 +27,7 @@ pub const UPLOAD_BODY_LIMIT: usize = 50 * 1024 * 1024 + 64 * 1024;
 /// Longest text field of an upload form (`edition_id`).
 const MAX_TEXT_FIELD: usize = 1024;
 
-/// The multipart form of an avatar upload (OpenAPI only).
+/// The multipart form of an avatar upload and of a personal cover photo (OpenAPI only).
 #[derive(utoipa::ToSchema)]
 #[allow(dead_code)]
 pub struct PictureUpload {

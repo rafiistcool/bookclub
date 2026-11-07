@@ -7,7 +7,8 @@
 //!   cover fetch, the prefetch queue) and the prefetch worker `run_prefetch`.
 //! - [`serve`]: `GET /media/{public_id}/{variant}`.
 //! - [`avatar`]: `PUT`/`DELETE /api/auth/me/avatar`.
-//! - [`cover`]: `POST /api/books/works/{work_id}/cover`.
+//! - [`cover`]: `POST /api/books/works/{work_id}/cover`, and `PUT /api/shelf/{entry_id}/cover/photo`
+//!   (a photo as the reader's personal cover).
 //! - [`spine`]: `POST /api/shelf/spine-colors`.
 //! - [`reports`]: `POST /api/media/{public_id}/reports` and the admin queue and takedown.
 //! - [`shared`]: the frozen store, keys and media rows every package uses (W1).
@@ -45,6 +46,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
     let uploads = OpenApiRouter::new()
         .routes(routes!(avatar::put_avatar, avatar::delete_avatar))
         .routes(routes!(cover::upload_cover))
+        .routes(routes!(cover::upload_personal_cover))
         .layer(DefaultBodyLimit::max(upload::UPLOAD_BODY_LIMIT));
     OpenApiRouter::new()
         .merge(uploads)

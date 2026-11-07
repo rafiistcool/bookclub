@@ -102,6 +102,7 @@ const API_ERROR_KEYS: Record<string, string> = {
   "A book cannot be merged into itself": "errors.mergeIntoItself",
   "This request was already decided": "errors.requestDecided",
   "This book has a cover now": "errors.coverExists",
+  "This cover cannot be chosen": "errors.coverNotChoosable",
   "That is not a valid ISBN-10 or ISBN-13": "errors.invalidIsbn",
   "Could not look that ISBN up right now. Try again.": "errors.isbnLookupFailed",
   "No book found for that ISBN": "errors.isbnNotFound",

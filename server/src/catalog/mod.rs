@@ -86,6 +86,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(custom::create_custom_book))
         .routes(routes!(detail::get_work))
         .routes(routes!(detail::refresh_work))
+        .routes(routes!(covers::choice::cover_candidates))
         .routes(routes!(editions::list_editions, editions::add_edition))
         .routes(routes!(editions::get_edition))
         .routes(routes!(requests::request_work_edit))

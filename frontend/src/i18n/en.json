@@ -769,7 +769,8 @@
     "invalidValueFor": "That value of “{field}” cannot be used",
     "reportedBookMerged": "This book was merged into another one since it was reported. Close the report, and correct the other book with “Edit as admin” if it took over the reported text.",
     "pictureGone": "The reported picture is no longer online: its owner replaced or deleted it. Close the report.",
-    "coverExists": "This book has a cover now."
+    "coverExists": "This book has a cover now.",
+    "coverNotChoosable": "This cover is no longer available."
   },
   "physicalShelf": {
     "title": "Your real bookshelf",
@@ -1706,5 +1707,27 @@
     "photoSaved": "Profile picture saved",
     "photoRemoved": "Profile picture removed",
     "photoFailed": "Could not save that picture"
+  },
+  "coverChoice": {
+    "title": "Choose cover",
+    "ownPhoto": "Own photo",
+    "standard": "Standard cover",
+    "standardHint": "The cover from the catalog",
+    "blurb": "Only for you, and for anyone who looks at your shelf.",
+    "changed": "Cover changed",
+    "loadFailed": "The covers could not be loaded.",
+    "none": "No other covers found. Your own photo always works.",
+    "partial": "Not every source answered; there may be more later.",
+    "failed": "The cover could not be saved.",
+    "undoFailed": "Your previous cover could not be restored.",
+    "source": {
+      "catalog": "Catalog",
+      "openlibrary": "Open Library",
+      "dnb_portal": "Publisher",
+      "photo": "Your photo"
+    },
+    "chosen": "Chosen",
+    "waitForSave": "Wait until the cover is saved.",
+    "uploading": "Uploading your photo for “{title}” …"
   }
 }

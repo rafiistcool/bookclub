@@ -122,6 +122,7 @@ async fn add_move_remove_and_unique(db: PgPool) {
                 "source": "openlibrary",
                 "custom": false
             },
+            "personal_cover": false,
             "edition": null,
             "rating": null,
             "rating_visibility": "audience",

@@ -4,12 +4,18 @@
 //! admin merge.
 //!
 //! One transaction (a savepoint inside the caller's):
-//! 1. The covers of both works are locked `FOR SHARE` before any catalog row (conventions §7.2),
-//!    so a takedown of one of them waits for the merge or runs first, never deadlocks with it.
-//!    Then both works are locked (`FOR NO KEY UPDATE`, which does not block the foreign-key
-//!    checks of concurrent shelf writes), then every user with a shelf entry or a favourite on
-//!    the loser (`FOR UPDATE`, in id order, like SHELF's writes). When the loser got another
-//!    cover between the two locks, the merge starts over (twice at most).
+//! 1. The covers of both works and the pictures their shelf entries chose (the cover choice) are
+//!    locked `FOR SHARE` before any catalog row (conventions §7.2), in one statement in id
+//!    order, so a takedown of one of them waits for the merge or runs first. A takedown locks
+//!    the reported picture before its copies, not in id order, so the merge waits for these
+//!    rows only [`MEDIA_LOCK_TIMEOUT`] (less than Postgres' `deadlock_timeout`) and starts over
+//!    after a pause: it gives way, and neither fails with a deadlock. Then both works are locked
+//!    (`FOR NO KEY UPDATE`, which does not block the foreign-key checks of concurrent shelf
+//!    writes), then every user with a shelf entry or a favourite on the loser (`FOR UPDATE`, in
+//!    id order, like SHELF's writes). When the loser got another cover between the two locks, or
+//!    a reader chose a picture for an entry of the two works meanwhile (the choice takes no users
+//!    lock), the merge starts over too ([`RETRIES`] times at most; the last try waits for every
+//!    lock).
 //! 2. Shelf entries: a user with both works keeps the entry `shelf_winner` picks, with the
 //!    other's fields merged in (`merge_shelf_fields`); the other entry goes and their physical
 //!    layout is remapped. Positions are renumbered per (user, status).
@@ -36,6 +42,7 @@ use super::shared::ingest::{Source, author_surname, match_key, search_extra};
 use super::shared::merge_rules::{ShelfFacts, merge_shelf_fields, remap_layout, shelf_winner};
 use crate::activity::seal_finished_ratings;
 use crate::dto::{ShelfStatus, Visibility};
+use crate::error::is_deadlock;
 
 /// What a merge changed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -73,35 +80,59 @@ pub async fn merge_works(
             "a work cannot be merged into itself".into(),
         ));
     }
-    let mut attempt = 0;
+    let mut attempt: u32 = 0;
     loop {
         let mut tx = conn.begin().await?;
-        let last_try = attempt == COVER_RETRIES;
-        match merge_in(&mut tx, loser, winner, last_try).await? {
-            Some(report) => {
+        let last_try = attempt == RETRIES;
+        match merge_in(&mut tx, loser, winner, last_try).await {
+            Ok(Some(report)) => {
                 tx.commit().await?;
                 return Ok(report);
             }
-            None => {
+            Ok(None) => {
                 tracing::info!(
                     loser,
                     winner,
-                    "the loser's cover changed while locking; retrying"
+                    "a cover or a cover choice changed while locking; retrying"
                 );
                 tx.rollback().await?;
-                attempt += 1;
             }
+            // A picture was locked by someone else (a takedown, mostly): give way, then again.
+            Err(error) if !last_try && (is_lock_timeout(&error) || is_deadlock(&error)) => {
+                tracing::info!(loser, winner, %error, "a picture is locked; retrying");
+                tx.rollback().await?;
+                tokio::time::sleep(LOCK_PAUSE * (attempt + 1)).await;
+            }
+            Err(error) => return Err(error),
         }
+        attempt += 1;
     }
 }
 
-/// How often [`merge_works`] starts over when the loser got another cover between the cover
-/// lock and the works lock.
-const COVER_RETRIES: u32 = 2;
+/// How often [`merge_works`] starts over: when the loser got another cover between the cover
+/// lock and the works lock, when a reader chose a cover for an entry of the two works after the
+/// pictures were locked, or when a picture stayed locked longer than [`MEDIA_LOCK_TIMEOUT`].
+const RETRIES: u32 = 4;
 
-/// One attempt. `None`: the loser's cover changed after the covers were locked, and this is not
-/// the last try (the caller rolls back, which releases every lock, and starts over). On the last
-/// try such a cover stays with the loser.
+/// How long a try waits for the pictures' locks (`lock_timeout`, below Postgres' default
+/// `deadlock_timeout` of 1 s): a takedown that holds one of them and waits for another the
+/// merge holds then gets it once the merge gives way. The last try waits as long as it takes.
+const MEDIA_LOCK_TIMEOUT: &str = "200ms";
+
+/// The pause after a try that gave way, times the number of the try.
+const LOCK_PAUSE: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// `lock_timeout` ran out (55P03).
+fn is_lock_timeout(error: &sqlx::Error) -> bool {
+    error
+        .as_database_error()
+        .is_some_and(|db| db.code().as_deref() == Some("55P03"))
+}
+
+/// One attempt. `None`: the loser's cover, or the choice of a shelf entry of the two works,
+/// changed after the pictures were locked, and this is not the last try (the caller rolls back,
+/// which releases every lock, and starts over). On the last try such a cover stays with the
+/// loser, and such a choice on the dropped entry is not kept.
 async fn merge_in(
     conn: &mut PgConnection,
     loser: i64,
@@ -116,16 +147,11 @@ async fn merge_in(
     let pair = [loser.min(winner), loser.max(winner)];
     // Conventions §7.2: the media rows a write attaches are locked FOR SHARE before any catalog
     // row. MED's takedown updates the media row and then, in clear_media, the works that point
-    // at it; locking the works first would deadlock with it.
-    let covers = sqlx::query_scalar!(
-        "SELECT id FROM media
-         WHERE id IN (SELECT cover_media_id FROM works WHERE id = ANY($1))
-           AND removed_at IS NULL
-         ORDER BY id FOR SHARE",
-        &pair[..]
-    )
-    .fetch_all(&mut *conn)
-    .await?;
+    // at it; locking the works first would deadlock with it. The works' covers and the pictures
+    // their shelf entries chose (a reader's choice may move to the kept entry, and a takedown
+    // that clears it waits for the merge), in one statement and with a short lock timeout (see
+    // the module docs).
+    let covers = lock_pictures(conn, &pair, last_try).await?;
     let locked = sqlx::query!(
         "SELECT id, cover_media_id FROM works WHERE id = ANY($1) AND merged_into_id IS NULL
          ORDER BY id FOR NO KEY UPDATE",
@@ -157,7 +183,9 @@ async fn merge_in(
     // that shows them when the entry it was written for hid them (only-me, or gone): sealed
     // before the entries merge, and again once the kept entry's visibility is final.
     seal_finished_ratings(conn, None, Some(&pair[..])).await?;
-    merge_shelves(conn, loser, winner, &mut report).await?;
+    if !merge_shelves(conn, loser, winner, &covers, last_try, &mut report).await? {
+        return Ok(None);
+    }
     merge_favourites(conn, loser, winner, &mut report).await?;
     merge_nominations(conn, loser, winner, &mut report).await?;
     merge_fields(conn, loser, winner, &covers, &mut report).await?;
@@ -176,6 +204,49 @@ async fn merge_in(
     Ok(Some(report))
 }
 
+/// Locks the live covers of the two works and the live pictures their shelf entries chose
+/// `FOR SHARE`, in id order, and returns their ids. Before the last try it waits at most
+/// [`MEDIA_LOCK_TIMEOUT`] (55P03 then; the setting is restored afterwards).
+async fn lock_pictures(
+    conn: &mut PgConnection,
+    pair: &[i64; 2],
+    last_try: bool,
+) -> sqlx::Result<Vec<i64>> {
+    let before = if last_try {
+        None
+    } else {
+        let before = sqlx::query_scalar!(r#"SELECT current_setting('lock_timeout') AS "v!""#)
+            .fetch_one(&mut *conn)
+            .await?;
+        sqlx::query_scalar!(
+            r#"SELECT set_config('lock_timeout', $1, true) AS "v!""#,
+            MEDIA_LOCK_TIMEOUT
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        Some(before)
+    };
+    let locked = sqlx::query_scalar!(
+        "SELECT id FROM media
+         WHERE id IN (SELECT cover_media_id FROM works WHERE id = ANY($1)
+                      UNION SELECT cover_media_id FROM shelf_entries WHERE work_id = ANY($1))
+           AND removed_at IS NULL
+         ORDER BY id FOR SHARE",
+        &pair[..]
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    if let Some(before) = before {
+        sqlx::query_scalar!(
+            r#"SELECT set_config('lock_timeout', $1, true) AS "v!""#,
+            before
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+    }
+    Ok(locked)
+}
+
 fn visibility_str(visibility: Visibility) -> &'static str {
     match visibility {
         Visibility::Audience => "audience",
@@ -183,16 +254,23 @@ fn visibility_str(visibility: Visibility) -> &'static str {
     }
 }
 
+/// One reader's entries of the two works become one: the winner of `shelf_winner` keeps its row,
+/// the fields merge by `merge_shelf_fields`, and a personal cover choice is the kept entry's, else
+/// the dropped one's (when it is one of the `locked` pictures, so not taken down). False, before
+/// the last try, when an entry chose a picture that is not among them: a choice made after the
+/// pictures were locked (the merge starts over and locks it then).
 async fn merge_shelves(
     conn: &mut PgConnection,
     loser: i64,
     winner: i64,
+    locked: &[i64],
+    last_try: bool,
     report: &mut MergeReport,
-) -> sqlx::Result<()> {
+) -> sqlx::Result<bool> {
     let rows = sqlx::query!(
         r#"SELECT id, user_id, work_id, status AS "status: ShelfStatus", updated_at, rating,
                   rating_visibility AS "rating_visibility: Visibility", take, dnf_reason,
-                  progress, started_at, finished_at, edition_id
+                  progress, started_at, finished_at, edition_id, cover_media_id
            FROM shelf_entries
            WHERE work_id = ANY($1)
              AND user_id IN (SELECT user_id FROM shelf_entries WHERE work_id = $2)
@@ -203,6 +281,13 @@ async fn merge_shelves(
     .fetch_all(&mut *conn)
     .await?;
     let mut by_user: BTreeMap<i64, Vec<ShelfFacts>> = BTreeMap::new();
+    let covers: BTreeMap<i64, i64> = rows
+        .iter()
+        .filter_map(|row| row.cover_media_id.map(|cover| (row.id, cover)))
+        .collect();
+    if !last_try && covers.values().any(|cover| !locked.contains(cover)) {
+        return Ok(false);
+    }
     for row in rows {
         by_user.entry(row.user_id).or_default().push(ShelfFacts {
             id: row.id,
@@ -225,6 +310,12 @@ async fn merge_shelves(
             sorted.sort_by(|a, b| shelf_winner(b, a));
             let (mut keep, drop) = (sorted[0].clone(), sorted[1].clone());
             merge_shelf_fields(&mut keep, &drop);
+            let cover = covers.get(&keep.id).copied().or_else(|| {
+                covers
+                    .get(&drop.id)
+                    .copied()
+                    .filter(|cover| locked.contains(cover))
+            });
             sqlx::query!("DELETE FROM shelf_entries WHERE id = $1", drop.id)
                 .execute(&mut *conn)
                 .await?;
@@ -232,7 +323,7 @@ async fn merge_shelves(
                 "UPDATE shelf_entries
                  SET work_id = $2, rating = $3, rating_visibility = $4, take = $5,
                      dnf_reason = $6, progress = $7, started_at = $8, finished_at = $9,
-                     edition_id = $10
+                     edition_id = $10, cover_media_id = $11
                  WHERE id = $1",
                 keep.id,
                 winner,
@@ -243,7 +334,8 @@ async fn merge_shelves(
                 keep.progress,
                 keep.started_at,
                 keep.finished_at,
-                keep.edition_id
+                keep.edition_id,
+                cover
             )
             .execute(&mut *conn)
             .await?;
@@ -272,7 +364,7 @@ async fn merge_shelves(
         .execute(&mut *conn)
         .await?;
     }
-    Ok(())
+    Ok(true)
 }
 
 async fn remap_user_layout(

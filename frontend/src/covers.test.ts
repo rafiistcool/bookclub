@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { asksForCoverPhoto, bookColorKey, coverSources, sameOriginPath } from "./covers";
+import { asksForCoverPhoto, bookColorKey, coverSources, personalCoverKey, sameOriginPath } from "./covers";
 
 const book = (cover_url: string | null, cover_thumb_url: string | null) => ({
   id: 4,
@@ -56,5 +56,20 @@ describe("the book page's request for a photo", () => {
     expect(asksForCoverPhoto({ ...book, custom: true })).toBe(false);
     expect(asksForCoverPhoto({ ...book, cover_url: "/media/abc/l" })).toBe(false);
     expect(asksForCoverPhoto({ ...book, cover_thumb_url: "/media/abc/s" })).toBe(false);
+  });
+
+  it("does not ask a reader who chose their own cover", () => {
+    const chosen = { custom: false, on_shelf: "finished", cover_url: "/media/own/l", cover_thumb_url: "/media/own/s" };
+    expect(asksForCoverPhoto({ ...chosen, personal_cover: true })).toBe(false);
+    expect(asksForCoverPhoto({ ...chosen, cover_url: null, cover_thumb_url: null, personal_cover: false })).toBe(true);
+  });
+});
+
+describe("personal cover key", () => {
+  it("names the picture of a personal cover, and nothing for the standard one", () => {
+    expect(personalCoverKey({ personal_cover: true, cover_public_id: "abc" })).toBe("media:abc");
+    expect(personalCoverKey({ personal_cover: false, cover_public_id: "abc" })).toBeNull();
+    expect(personalCoverKey({ personal_cover: true, cover_public_id: null })).toBeNull();
+    expect(personalCoverKey({ cover_public_id: "abc" })).toBeNull();
   });
 });

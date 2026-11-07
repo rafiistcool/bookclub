@@ -180,13 +180,15 @@ async fn account_sections(
     data.insert("sessions".into(), sessions);
 
     let shelf = sqlx::query_scalar!(
-        r#"SELECT coalesce(jsonb_agg((to_jsonb(s) - 'user_id')
+        r#"SELECT coalesce(jsonb_agg((to_jsonb(s) - 'user_id' - 'cover_media_id')
                       || jsonb_build_object('work_title', w.title, 'work_authors', w.author_names,
-                                            'edition_isbn13', e.isbn13)
+                                            'edition_isbn13', e.isbn13,
+                                            'cover_public_id', m.public_id)
                   ORDER BY s.id), '[]') AS "rows!"
            FROM shelf_entries s
            JOIN works w ON w.id = s.work_id
            LEFT JOIN editions e ON e.id = s.edition_id
+           LEFT JOIN media m ON m.id = s.cover_media_id
            WHERE s.user_id = $1"#,
         user_id
     )
@@ -650,6 +652,8 @@ struct MediaRow {
     storage_key: Option<String>,
     created_at: OffsetDateTime,
     removed_at: Option<OffsetDateTime>,
+    /// A personal cover photo (the cover choice), not a catalog contribution.
+    personal: bool,
 }
 
 impl MediaRow {
@@ -665,6 +669,7 @@ impl MediaRow {
             "byte_size": self.byte_size,
             "created_at": rfc3339_utc(self.created_at),
             "removed_at": self.removed_at.and_then(rfc3339_utc),
+            "personal": self.personal,
             "files": files,
         })
     }
@@ -678,7 +683,7 @@ async fn uploaded_media(conn: &mut PgConnection, user_id: i64) -> sqlx::Result<V
     sqlx::query_as!(
         MediaRow,
         "SELECT public_id, kind, source, content_type, variants, width, height, byte_size,
-                storage_key, created_at, removed_at
+                storage_key, created_at, removed_at, personal
          FROM media
          WHERE (uploaded_by = $1 OR id = (SELECT avatar_media_id FROM users WHERE id = $1))
            AND NOT (kind = 'avatar' AND removed_at IS NULL

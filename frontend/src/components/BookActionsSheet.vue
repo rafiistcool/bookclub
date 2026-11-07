@@ -6,6 +6,7 @@ export type BookAction =
   | "merge"
   | "report-book"
   | "report-cover"
+  | "choose-cover"
   | "admin-edit"
   | "admin-edition"
   | "admin-edition-cover";
@@ -21,6 +22,7 @@ import {
   FlagIcon,
   PencilSquareIcon,
   PhotoIcon,
+  Squares2X2Icon,
   WrenchScrewdriverIcon,
 } from "@heroicons/vue/24/outline";
 import { computed, useId } from "vue";
@@ -37,6 +39,9 @@ import CoverPhotoButton from "./CoverPhotoButton.vue";
  * closes it, waits a tick and then opens the next sheet or uploads the file,
  * so there is never a sheet on a sheet and a chosen file is not lost with
  * the closed sheet.
+ *
+ * "Choose cover" (the reader's own cover, `CoverChooserSheet`) is there only
+ * while the book is on the reader's shelf: the choice belongs to the entry.
  *
  * The photo rows are real file inputs (`CoverPhotoButton` with `pickOnly`):
  * the tap itself opens the picker, as iOS requires.
@@ -62,10 +67,18 @@ const id = useId();
 
 const catalogUrl = computed(() => (props.book.custom ? null : openLibraryUrl(props.book.ol_work_key)));
 const hasCover = computed(() => Boolean(props.book.cover_url || props.book.cover_thumb_url));
+/**
+ * The reader's own cover hides the catalog's: whether the book has one is not
+ * known here, so a photo for everyone and a report of the cover wait until
+ * the reader shows the standard cover again ("Choose cover" offers "Own photo"
+ * meanwhile). A report would be of their own choice.
+ */
+const ownCover = computed(() => Boolean(props.book.personal_cover));
 /** Without a cover, the page keeps the "Add a photo" link under the cloth instead. */
-const offersPhoto = computed(() => !props.coverPrompted && hasCover.value);
-const offersCoverReport = computed(() => Boolean(props.book.cover_public_id));
+const offersPhoto = computed(() => !props.coverPrompted && hasCover.value && !ownCover.value);
+const offersCoverReport = computed(() => Boolean(props.book.cover_public_id) && !ownCover.value);
 const canRefresh = computed(() => !props.book.custom && props.book.can_refresh);
+const offersChoice = computed(() => props.book.shelf_id != null && !props.withdrawn);
 </script>
 
 <template>
@@ -113,9 +126,15 @@ const canRefresh = computed(() => !props.book.custom && props.book.can_refresh);
       </ul>
     </section>
 
-    <section v-if="offersPhoto || offersCoverReport" class="actions-group" :aria-labelledby="`${id}-cover`">
+    <section v-if="offersChoice || offersPhoto || offersCoverReport" class="actions-group" :aria-labelledby="`${id}-cover`">
       <h3 :id="`${id}-cover`" class="group-head">{{ t("book.groupCover") }}</h3>
       <ul class="sheet-rows">
+        <li v-if="offersChoice">
+          <button class="sheet-row choose-cover" type="button" aria-haspopup="dialog" @click="emit('act', 'choose-cover')">
+            <Squares2X2Icon class="sheet-icon" aria-hidden="true" />
+            <span class="sheet-label">{{ t("coverChoice.title") }}</span>
+          </button>
+        </li>
         <li v-if="offersPhoto">
           <CoverPhotoButton
             pick-only

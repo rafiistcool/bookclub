@@ -80,6 +80,8 @@ struct FakeState {
     /// The DNB portal's publisher covers by ISBN-13: the bytes, none, or no answer.
     publisher_covers: HashMap<String, Result<Option<Vec<u8>>, FakeError>>,
     publisher_calls: Vec<String>,
+    /// SQL run on this pool during every portal request, before it answers.
+    publisher_hook: Option<(sqlx::PgPool, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -160,6 +162,12 @@ impl FakeCatalog {
         self.lock()
             .publisher_covers
             .insert(isbn13.to_owned(), answer);
+    }
+
+    /// `sql` runs on `db` during every later portal request, before it answers: a write that
+    /// lands while the request is in flight.
+    pub fn during_publisher_cover(&self, db: sqlx::PgPool, sql: &str) {
+        self.lock().publisher_hook = Some((db, sql.to_owned()));
     }
 
     /// Every DNB portal request so far, as ISBN-13s.
@@ -379,6 +387,13 @@ impl CatalogLookup for FakeCatalog {
     }
 
     async fn publisher_cover(&self, isbn: &Isbn13) -> Result<Option<bytes::Bytes>, LookupError> {
+        let hook = self.lock().publisher_hook.clone();
+        if let Some((db, sql)) = hook {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+                .execute(&db)
+                .await
+                .unwrap();
+        }
         let mut state = self.lock();
         state.publisher_calls.push(isbn.as_str().to_owned());
         match state.publisher_covers.get(isbn.as_str()).cloned() {

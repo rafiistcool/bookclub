@@ -16,6 +16,10 @@
 //! one of the WebP variants it was served as, is refused (400 `This picture was removed`) before
 //! anything is stored. 30 uploads per user and day.
 //!
+//! `PUT /api/shelf/{entry_id}/cover/photo` (the personal cover choice,
+//! docs/phase3/notes/cover-choice.md): the photo becomes the cover of the reader's shelf entry
+//! only, a `personal` media row that never becomes a catalog cover.
+//!
 //! `PUT /api/admin/works/{work_id}/cover` (#74): an instance admin's picture becomes the cover
 //! of the work or edition at once, replacing any cover (`set_cover(…, Source::Admin, false)`),
 //! through the same steps.
@@ -32,7 +36,7 @@ use super::pipeline::PictureKind;
 use super::service::store_variants;
 use super::shared::urls::{new_public_id, storage_prefix};
 use super::shared::{NewMedia, register};
-use super::upload::{CoverUpload, picture_error, read_picture, upload_turn};
+use super::upload::{CoverUpload, PictureUpload, picture_error, read_picture, upload_turn};
 use super::{avatar::refuse_removed, delete_prefixes};
 use crate::AppState;
 use crate::auth::extract::{CurrentUser, InstanceAdmin};
@@ -43,6 +47,8 @@ use crate::dto::BookOut;
 use crate::error::{ApiResult, AppError, ErrorBody, msg};
 use crate::extract::{ApiMultipart, ApiPath, INTEGER_PARSE};
 use crate::ratelimit::GatePass;
+use crate::shelf::cover::set_entry_cover;
+use crate::shelf::entries::{NOT_ON_SHELF, ShelfItemOut, item_out};
 
 /// Attempts at locking a work that a concurrent merge moves away.
 const MERGE_ATTEMPTS: usize = 3;
@@ -263,6 +269,24 @@ async fn receive(
         }
         work_id
     };
+    let (public_id, media) = process_and_store(state, user_id, data).await?;
+    Ok(Received {
+        _turn: turn,
+        work_id,
+        edition_id,
+        public_id,
+        media,
+    })
+}
+
+/// The tail every cover photo shares, after its target was checked: the upload counts against
+/// the daily limit, then the pipeline, the takedown hashes and the store. Returns the new public
+/// id and the media row to register.
+async fn process_and_store(
+    state: &AppState,
+    user_id: i64,
+    data: bytes::Bytes,
+) -> ApiResult<(String, NewMedia<'static>)> {
     state
         .limits
         .upload_user
@@ -296,13 +320,80 @@ async fn receive(
         uploaded_by: Some(user_id),
         created_at: None,
     };
-    Ok(Received {
-        _turn: turn,
-        work_id,
-        edition_id,
-        public_id,
-        media,
-    })
+    Ok((public_id, media))
+}
+
+/// A photo of the reader's own copy as the cover of a book on their shelf (the personal cover
+/// choice, docs/phase3/notes/cover-choice.md): it shows at once, for the reader and everyone who
+/// sees their shelf, and never becomes the book's cover for others (no cover request; the media
+/// row is `personal`, which `ingest::set_cover` refuses). The same pipeline, takedown check and
+/// limits as every cover photo. A photo the entry no longer shows is deleted 7 days later.
+#[utoipa::path(
+    put,
+    path = "/api/shelf/{entry_id}/cover/photo",
+    operation_id = "media_upload_personal_cover",
+    tag = "media",
+    security(("bookclub_session" = []), ("bearer" = [])),
+    params(("entry_id" = i64, Path, description = "The shelf entry")),
+    request_body(content = PictureUpload, content_type = "multipart/form-data"),
+    responses(
+        (status = 200, body = ShelfItemOut, description = "The entry with the photo as its cover (`personal_cover` true)"),
+        (status = 400, body = ErrorBody, description = "`Use a JPEG, PNG, WebP, or GIF`, `That file is not a picture`, `That picture has too many pixels`, `That picture is too large (50 MB max)`, `This picture was removed`, or a non-numeric id"),
+        (status = 401, body = ErrorBody, description = "`Not signed in`"),
+        (status = 404, body = ErrorBody, description = "`Book not on your shelf` (also another user's entry)"),
+        (status = 413, body = ErrorBody, description = "`That picture is too large (50 MB max)` (by `Content-Length`, before the body is read)"),
+        (status = 429, body = ErrorBody, description = "`Slow down a little. Try again later.` (30 uploads per day, or another upload of the account still running)")
+    )
+)]
+pub async fn upload_personal_cover(
+    user: CurrentUser,
+    State(state): State<AppState>,
+    ApiPath(entry_id): ApiPath<i64>,
+    headers: HeaderMap,
+    multipart: Result<ApiMultipart, AppError>,
+) -> ApiResult<Json<ShelfItemOut>> {
+    let _turn = upload_turn(&state.limits, user.id)?;
+    state
+        .limits
+        .upload_user
+        .check(&format!("u:{}", user.id))
+        .map_err(|wait| wait.into_error(msg::SLOW_DOWN))?;
+    let (data, _) = read_picture(&headers, multipart).await?;
+    {
+        let mut conn = state.db.acquire().await?;
+        let owned = sqlx::query_scalar!(
+            r#"SELECT EXISTS (SELECT 1 FROM shelf_entries WHERE id = $1 AND user_id = $2)
+                   AS "owned!""#,
+            entry_id,
+            user.id
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        if !owned {
+            return Err(AppError::not_found(NOT_ON_SHELF));
+        }
+    }
+    let (public_id, media) = process_and_store(&state, user.id, data).await?;
+    let applied = async {
+        let mut tx = state.db.begin().await?;
+        let media_id = register(&mut tx, &public_id, &media).await?;
+        sqlx::query!("UPDATE media SET personal = true WHERE id = $1", media_id)
+            .execute(&mut *tx)
+            .await?;
+        set_entry_cover(&mut tx, user.id, entry_id, Some(media_id)).await?;
+        let item = item_out(&mut tx, user.id, entry_id).await?;
+        tx.commit().await?;
+        ApiResult::Ok(item)
+    }
+    .await;
+    match applied {
+        Ok(item) => Ok(Json(item)),
+        Err(error) => {
+            let prefix = storage_prefix(PictureKind::Cover.as_str(), &public_id);
+            delete_prefixes(state.media.as_ref(), &[prefix]).await;
+            Err(error)
+        }
+    }
 }
 
 enum Applied {

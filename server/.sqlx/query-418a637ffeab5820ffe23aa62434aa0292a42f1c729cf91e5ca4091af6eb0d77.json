@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE shelf_entries SET cover_media_id = NULL WHERE cover_media_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "418a637ffeab5820ffe23aa62434aa0292a42f1c729cf91e5ca4091af6eb0d77"
+}

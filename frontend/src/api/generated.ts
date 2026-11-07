@@ -527,7 +527,8 @@ export interface paths {
          * Deletes the signed-in account and clears the cookie.
          * @description - Clubs the user owns alone are deleted; owning a club with other members is 409.
          *     - Posts that others replied to become anonymous tombstones; every other post is deleted.
-         *     - Every avatar the user uploaded is deleted with its bytes; cover photos stay as catalog
+         *     - Every avatar the user uploaded is deleted with its bytes, and so is every personal cover
+         *       photo (the cover choice) that no open report names; cover photos stay as catalog
          *       contributions, without the uploader.
          *     - Personal data, sessions, memberships, friendships and requests, blocks, the friend invites
          *       bound to the user and the user's activity events go with the account; picks, nominations,
@@ -1179,6 +1180,26 @@ export interface paths {
          *     of a work, without `edition_id`) is set at once; otherwise an admin decides.
          */
         post: operations["media_upload_cover"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/books/works/{work_id}/cover-candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The covers the reader can choose for this book (docs/phase3/notes/cover-choice.md). A local
+         *     book only: an unknown Open Library id is not imported here.
+         */
+        get: operations["catalog_cover_candidates"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2368,6 +2389,53 @@ export interface paths {
         patch: operations["shelf_update"];
         trace?: never;
     };
+    "/api/shelf/{entry_id}/cover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Chooses a cover for one of the caller's books: a candidate of the cover list. It shows
+         *     wherever the entry's book shows, also to the friends and club mates who see the shelf.
+         */
+        put: operations["shelf_choose_cover"];
+        post?: never;
+        /**
+         * Goes back to the standard cover (the edition's, else the work's). A personal photo the
+         *     entry showed is deleted 7 days later unless it is chosen again (the hourly sweeper).
+         */
+        delete: operations["shelf_reset_cover"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/shelf/{entry_id}/cover/photo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * A photo of the reader's own copy as the cover of a book on their shelf (the personal cover
+         *     choice, docs/phase3/notes/cover-choice.md): it shows at once, for the reader and everyone who
+         *     sees their shelf, and never becomes the book's cover for others (no cover request; the media
+         *     row is `personal`, which `ingest::set_cover` refuses). The same pipeline, takedown check and
+         *     limits as every cover photo. A photo the entry no longer shows is deleted 7 days later.
+         */
+        put: operations["media_upload_personal_cover"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/stats": {
         parameters: {
             query?: never;
@@ -2599,9 +2667,18 @@ export interface components {
             authors: string;
             /** Format: int32 */
             year: number | null;
+            /**
+             * @description The viewer's cover of this book: their personal choice (`personal_cover`), else the cover
+             *     of the edition on their shelf entry, else the work's.
+             */
             cover_url: string | null;
             cover_thumb_url: string | null;
             cover_public_id: string | null;
+            /**
+             * @description The viewer chose this book's cover (`PUT /api/shelf/{entry_id}/cover`); the cover fields
+             *     show it.
+             */
+            personal_cover: boolean;
             /** @description `""` when unknown. */
             description: string;
             subjects: string[];
@@ -2890,6 +2967,58 @@ export interface components {
             name: string;
             /** @description `"translator"`, `"illustrator"` or `"editor"`. */
             role: string;
+        };
+        /** @description One cover a reader can choose. */
+        CoverCandidateOut: {
+            /** @description What `PUT /api/shelf/{entry_id}/cover` takes: `ol:<cover id>` or `media:<public id>`. */
+            key: string;
+            source: components["schemas"]["CoverCandidateSource"];
+            /**
+             * @description Same-origin `/media/{public_id}/l`. An Open Library picture is fetched on the first
+             *     request; one that turns out to have no picture answers 404 (hide the candidate then).
+             */
+            cover_url: string | null;
+            /** @description `/media/{public_id}/s`. */
+            cover_thumb_url: string | null;
+            /** @description The media public id (the key for "Report cover"). */
+            cover_public_id: string | null;
+            edition_label: components["schemas"]["CoverEditionLabel"] | null;
+            /** @description The reader's shelf entry for this book shows this cover now. */
+            chosen: boolean;
+        };
+        /**
+         * @description Where a candidate comes from.
+         * @enum {string}
+         */
+        CoverCandidateSource: "catalog" | "openlibrary" | "dnb_portal" | "photo";
+        /** @description The covers of one book a reader can choose. */
+        CoverCandidatesOut: {
+            /** @description The current choice first, then the catalog's covers, then Open Library's. */
+            items: components["schemas"]["CoverCandidateOut"][];
+            /**
+             * @description A source did not answer (Open Library, the DNB portal) or the account's catalog turn was
+             *     used up: the list may be incomplete, ask again later.
+             */
+            partial: boolean;
+        };
+        /** @description The candidate a reader chooses as their cover. */
+        CoverChoiceIn: {
+            /**
+             * @description A candidate's `key` from `GET /api/books/works/{work_id}/cover-candidates`: `ol:<cover
+             *     id>` or `media:<public id>`.
+             */
+            key: string;
+        };
+        /** @description The edition a candidate shows, as far as it is known. */
+        CoverEditionLabel: {
+            /** @description The edition's own title (with its subtitle). */
+            title: string | null;
+            publisher: string | null;
+            /** Format: int32 */
+            year: number | null;
+            /** @description A MARC language code, e.g. `ger`. */
+            language: string | null;
+            isbn13: string | null;
         };
         /** @description A cover existed, so the photo waits in the admin queue as a `cover_replace` request. */
         CoverRequested: {
@@ -3929,7 +4058,7 @@ export interface components {
             /** @description The club's time zone. */
             timezone: string;
         };
-        /** @description The multipart form of an avatar upload (OpenAPI only). */
+        /** @description The multipart form of an avatar upload and of a personal cover photo (OpenAPI only). */
         PictureUpload: {
             /**
              * Format: binary
@@ -4408,8 +4537,16 @@ export interface components {
             started_at: string | null;
             /** Format: date-time */
             finished_at: string | null;
-            /** @description The work, with the entry's edition as context (its title, pages and cover win). */
+            /**
+             * @description The work, with the entry's edition as context (its title, pages and cover win). With a
+             *     personal cover (`personal_cover`), the cover and spine colour are the owner's choice.
+             */
             book: components["schemas"]["BookOut"];
+            /**
+             * @description The owner chose this book's cover (`PUT /api/shelf/{entry_id}/cover`): `book` shows it,
+             *     for everyone who sees the shelf.
+             */
+            personal_cover: boolean;
             edition: components["schemas"]["EditionOut"] | null;
             /**
              * Format: int32
@@ -4807,6 +4944,11 @@ export type ClubRole = components['schemas']['ClubRole'];
 export type ClubStatsOut = components['schemas']['ClubStatsOut'];
 export type ClubSummary = components['schemas']['ClubSummary'];
 export type ContributorOut = components['schemas']['ContributorOut'];
+export type CoverCandidateOut = components['schemas']['CoverCandidateOut'];
+export type CoverCandidateSource = components['schemas']['CoverCandidateSource'];
+export type CoverCandidatesOut = components['schemas']['CoverCandidatesOut'];
+export type CoverChoiceIn = components['schemas']['CoverChoiceIn'];
+export type CoverEditionLabel = components['schemas']['CoverEditionLabel'];
 export type CoverRequested = components['schemas']['CoverRequested'];
 export type CoverSearchOut = components['schemas']['CoverSearchOut'];
 export type CoverSet = components['schemas']['CoverSet'];
@@ -8023,6 +8165,47 @@ export interface operations {
             };
             /** @description `Slow down a little. Try again later.` (30 uploads per day, or another upload of the account still running) */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    catalog_cover_candidates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A work id, `OL…W`, or a legacy key */
+                work_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The candidates; `partial` when a source did not answer */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverCandidatesOut"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such book.` */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12116,6 +12299,182 @@ export interface operations {
             };
             /** @description `Book not on your shelf` (also another user's entry) */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    shelf_choose_cover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The shelf entry */
+                entry_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CoverChoiceIn"];
+            };
+        };
+        responses: {
+            /** @description The entry with its chosen cover (`personal_cover` true) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShelfItemOut"];
+                };
+            };
+            /** @description `This cover cannot be chosen` (an unknown, taken-down or gone picture, or another book's or reader's), or a non-numeric id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Book not on your shelf` (also another user's entry) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    shelf_reset_cover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The shelf entry */
+                entry_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The entry with its standard cover (`personal_cover` false) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShelfItemOut"];
+                };
+            };
+            /** @description A non-numeric id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Book not on your shelf` (also another user's entry) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    media_upload_personal_cover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The shelf entry */
+                entry_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["PictureUpload"];
+            };
+        };
+        responses: {
+            /** @description The entry with the photo as its cover (`personal_cover` true) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShelfItemOut"];
+                };
+            };
+            /** @description `Use a JPEG, PNG, WebP, or GIF`, `That file is not a picture`, `That picture has too many pixels`, `That picture is too large (50 MB max)`, `This picture was removed`, or a non-numeric id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Book not on your shelf` (also another user's entry) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `That picture is too large (50 MB max)` (by `Content-Length`, before the body is read) */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Slow down a little. Try again later.` (30 uploads per day, or another upload of the account still running) */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

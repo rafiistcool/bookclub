@@ -53,12 +53,30 @@ export function bookColorKey(book: { id?: number; ol_work_key?: string | null; t
  * The book page asks for a photo of the reader's copy (#74): a catalog or
  * imported book (not one a reader added, which may keep its cloth) that has no
  * cover and is on the viewer's shelf, in any status.
+ *
+ * A reader who chose their own cover (`personal_cover`) is not asked: the
+ * cover fields then carry their choice, not the book's, and they already see
+ * the cover they want. "Cover wählen" stays the way to change it.
  */
 export function asksForCoverPhoto(book: {
   custom: boolean;
   on_shelf: string | null;
   cover_url: string | null;
   cover_thumb_url: string | null;
+  personal_cover?: boolean;
 }): boolean {
+  if (book.personal_cover) return false;
   return !book.custom && book.on_shelf != null && !book.cover_url && !book.cover_thumb_url;
+}
+
+/**
+ * The key that chooses the entry's current personal cover again, for an Undo
+ * after the entry was removed and added back: `media:<public_id>` of the
+ * picture it shows. Null when the entry shows the standard cover.
+ */
+export function personalCoverKey(entry: {
+  personal_cover?: boolean;
+  cover_public_id: string | null;
+}): string | null {
+  return entry.personal_cover && entry.cover_public_id ? `media:${entry.cover_public_id}` : null;
 }

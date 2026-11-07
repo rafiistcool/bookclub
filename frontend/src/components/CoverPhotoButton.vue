@@ -75,12 +75,14 @@ const props = withDefaults(
     hasCover: boolean;
     /** The text instead of "Add/Suggest a photo of your copy". */
     label?: string;
-    /** `fine`: the small link under a cover; `inline`: a link in running text; `primary`/`ghost`: a small button; `row`: a light row of a sheet (`.sheet-row`, with the `icon` slot). */
-    look?: "fine" | "inline" | "primary" | "ghost" | "row";
+    /** `fine`: the small link under a cover; `inline`: a link in running text; `primary`/`ghost`: a small button; `row`: a light row of a sheet (`.sheet-row`, with the `icon` slot); `tile`: a cover-sized tile of a grid (with the `icon` slot, styled by the grid). */
+    look?: "fine" | "inline" | "primary" | "ghost" | "row" | "tile";
     admin?: boolean;
     pickOnly?: boolean;
+    /** The parent is busy (a sheet saving a choice): the picker does not open. */
+    disabled?: boolean;
   }>(),
-  { label: undefined, look: "fine", admin: false, pickOnly: false },
+  { label: undefined, look: "fine", admin: false, pickOnly: false, disabled: false },
 );
 const emit = defineEmits<{ covered: [book: BookOut]; picked: [file: File] }>();
 
@@ -90,6 +92,7 @@ const LOOKS = {
   primary: "btn btn-primary btn-sm",
   ghost: "btn btn-ghost btn-sm",
   row: "sheet-row",
+  tile: "photo-tile",
 } as const;
 
 const { t } = useI18n();
@@ -106,10 +109,12 @@ async function onFile(event: Event) {
   const file = input.files?.[0];
   input.value = "";
   if (!file || busy.value) return;
+  // A picker opened before the parent got busy still hands its file on: the parent says why it waits.
   if (props.pickOnly) {
     emit("picked", file);
     return;
   }
+  if (props.disabled) return;
   busy.value = true;
   try {
     const book = await sendCoverPhoto({ workId: props.workId, editionId: props.editionId, admin: props.admin }, file);
@@ -121,16 +126,20 @@ async function onFile(event: Event) {
 </script>
 
 <template>
-  <label class="cover-photo" :class="[LOOKS[look], { busy }]">
+  <label class="cover-photo" :class="[LOOKS[look], { busy, disabled: disabled && !busy }]">
     <input
       type="file"
       accept="image/jpeg,image/png,image/webp,image/gif"
-      :disabled="busy"
+      :disabled="busy || disabled"
       @change="onFile"
     />
     <template v-if="look === 'row'">
       <slot name="icon" />
       <span class="sheet-label">{{ text }}</span>
+    </template>
+    <template v-else-if="look === 'tile'">
+      <slot name="icon" />
+      <span class="photo-tile-label">{{ text }}</span>
     </template>
     <template v-else>{{ text }}</template>
   </label>
@@ -158,5 +167,14 @@ async function onFile(event: Event) {
 
 .cover-photo.busy {
   opacity: 0.6;
+}
+
+.cover-photo.disabled,
+.cover-photo.disabled input {
+  cursor: default;
+}
+
+.cover-photo.disabled {
+  opacity: 0.55;
 }
 </style>

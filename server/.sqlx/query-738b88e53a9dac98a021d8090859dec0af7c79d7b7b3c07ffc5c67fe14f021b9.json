@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, user_id, work_id, status AS \"status: ShelfStatus\", updated_at, rating,\n                  rating_visibility AS \"rating_visibility: Visibility\", take, dnf_reason,\n                  progress, started_at, finished_at, edition_id\n           FROM shelf_entries\n           WHERE work_id = ANY($1)\n             AND user_id IN (SELECT user_id FROM shelf_entries WHERE work_id = $2)\n           ORDER BY user_id, id FOR UPDATE",
+  "query": "SELECT id, user_id, work_id, status AS \"status: ShelfStatus\", updated_at, rating,\n                  rating_visibility AS \"rating_visibility: Visibility\", take, dnf_reason,\n                  progress, started_at, finished_at, edition_id, cover_media_id\n           FROM shelf_entries\n           WHERE work_id = ANY($1)\n             AND user_id IN (SELECT user_id FROM shelf_entries WHERE work_id = $2)\n           ORDER BY user_id, id FOR UPDATE",
   "describe": {
     "columns": [
       {
@@ -145,6 +145,17 @@
             "name": "edition_id"
           }
         }
+      },
+      {
+        "ordinal": 13,
+        "name": "cover_media_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "shelf_entries",
+            "name": "cover_media_id"
+          }
+        }
       }
     ],
     "parameters": {
@@ -166,8 +177,9 @@
       true,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "da3e50a8dd790ad9b7b26d7a481502afc78a1e29dd2b6446ae7c2b7f4ad41f68"
+  "hash": "738b88e53a9dac98a021d8090859dec0af7c79d7b7b3c07ffc5c67fe14f021b9"
 }

@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (SELECT 1 FROM shelf_entries WHERE cover_media_id = $1) AS \"chosen!\",\n                      EXISTS (SELECT 1 FROM reports WHERE media_id = $1 AND status = 'open')\n                          OR EXISTS (SELECT 1 FROM works WHERE cover_media_id = $1)\n                          OR EXISTS (SELECT 1 FROM editions WHERE cover_media_id = $1)\n                          OR EXISTS (SELECT 1 FROM users WHERE avatar_media_id = $1)\n                          OR EXISTS (SELECT 1 FROM catalog_edit_requests WHERE media_id = $1)\n                          AS \"held!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "chosen!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "held!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "0aa7bff5a4af7a10fb0d9685dc515466488e8f0fe3a92389fa0b82b7a762f1f2"
+}

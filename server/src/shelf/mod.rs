@@ -4,6 +4,8 @@
 //!
 //! - `entries`: the shelf list, add, change and remove, with the ordering and date rules of
 //!   `ordering` and the shelf events.
+//! - `cover`: the reader's personal cover choice for a book on their shelf, and the loader that
+//!   puts it into the entry's book wherever it shows (docs/phase3/notes/cover-choice.md).
 //! - `favorites`: the three favourite works under `/api/auth/me/favorites`.
 //! - `layout`: the physical shelf layout and its validation.
 //! - `search_history`: the caller's last 20 searches.
@@ -16,6 +18,7 @@
 //! order never gets duplicate positions (conventions §13). Reads of another user's shelf go
 //! through `visibility::visible_user` and `bc_visible_shelf`.
 
+pub mod cover;
 pub mod entries;
 pub mod favorites;
 pub mod goodreads;
@@ -45,6 +48,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .merge(goodreads::routes())
         .routes(routes!(entries::list_shelf, entries::add_to_shelf))
         .routes(routes!(entries::update_entry, entries::remove_entry))
+        .routes(routes!(cover::choose_cover, cover::reset_cover))
         .routes(routes!(layout::get_layout, layout::save_layout))
         .routes(routes!(
             favorites::list_favorites,
