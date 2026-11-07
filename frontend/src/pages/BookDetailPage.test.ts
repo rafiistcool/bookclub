@@ -219,7 +219,7 @@ describe("BookDetailPage", () => {
   it("shelves a book by its work id and shows what the server stored", async () => {
     addToShelf.mockResolvedValue(shelfItem({ id: 30, status: "finished", rating: null, book: { id: 4 } }));
     const { wrapper } = await mountBook();
-    await wrapper.findAll(".status-control button").find((node) => node.text() === "Read")!.trigger("click");
+    await wrapper.findAll(".status-control button").find((node) => node.text() === "Finished")!.trigger("click");
     await flushPromises();
     expect(addToShelf).toHaveBeenCalledWith({ work_id: 4, status: "finished" });
     expect(wrapper.find(".star-row").exists()).toBe(true);
@@ -277,14 +277,37 @@ describe("BookDetailPage", () => {
     const panel = wrapper.get(".shelf-panel");
     expect(panel.classes()).not.toContain("panel");
     expect(panel.find(".btn-sm").exists()).toBe(false);
+    // With one club to set the pick in, the row names it.
     expect(panel.findAll(".panel-actions button.sheet-row").map((node) => node.text())).toEqual([
       "Favourite",
-      "Set as club pick",
+      "Make it the pick for Readers",
       "Nominate for next up",
     ]);
     const remove = panel.get("button.remove-btn");
     expect(remove.text()).toBe("Remove");
     expect(remove.classes()).toEqual(expect.arrayContaining(["text-btn", "danger"]));
+  });
+
+  it("drops the pick row once the book is the pick everywhere, and the badge says so", async () => {
+    const club: ClubSummary = { slug: "readers-ab12", name: "Readers", role: "admin", timezone: "UTC", member_count: 3 };
+    book.mockResolvedValue(detail({ shelf_id: 30, on_shelf: "want_to_read", club_picks: [{ slug: club.slug, name: club.name }] }));
+    const { wrapper } = await mountBook("/book/4", [club]);
+    expect(wrapper.find(".pick-row").exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("Already the club pick");
+    const badge = wrapper.get(".hero-pick .badge");
+    expect(badge.text()).toBe("Club pick · Readers");
+    expect(badge.find("svg.pick-flag").attributes("aria-hidden")).toBe("true");
+  });
+
+  it("keeps the row generic with several clubs left, so the next sheet asks which", async () => {
+    const clubs: ClubSummary[] = [
+      { slug: "readers-ab12", name: "Readers", role: "admin", timezone: "UTC", member_count: 3 },
+      { slug: "night-cd34", name: "Night owls", role: "owner", timezone: "UTC", member_count: 2 },
+      { slug: "third-ef56", name: "Third", role: "admin", timezone: "UTC", member_count: 2 },
+    ];
+    book.mockResolvedValue(detail({ shelf_id: 30, on_shelf: "want_to_read", club_picks: [{ slug: "night-cd34", name: "Night owls" }] }));
+    const { wrapper } = await mountBook("/book/4", clubs);
+    expect(wrapper.get(".pick-row").text()).toBe("Set as club pick");
   });
 
   it("lists other readers as whole-row links with the locale's percent", async () => {
@@ -702,7 +725,7 @@ describe("BookDetailPage", () => {
     const finishedItem = (overrides: Parameters<typeof shelfItem>[0] = {}) =>
       shelfItem({ id: 30, status: "finished", rating: null, book: { id: 4 }, ...overrides });
     const readButton = (wrapper: Page) =>
-      wrapper.findAll(".status-control button").find((node) => node.text() === "Read")!;
+      wrapper.findAll(".status-control button").find((node) => node.text() === "Finished")!;
 
     it("opens the moment with the pick's club instead of the toast, and shows the stars it saved", async () => {
       book.mockResolvedValue(detail({ club_picks: [readers], shelf_id: 30, on_shelf: "currently_reading", progress: 70 }));
@@ -758,7 +781,7 @@ describe("BookDetailPage", () => {
       await wrapper.findAll(".status-control button").find((node) => node.text() === "Reading")!.trigger("click");
       await flushPromises();
       expect(useFinish().item).toBeNull();
-      expect(useToast().items.at(-1)?.message).toBe("Moved to Reading");
+      expect(useToast().items.at(-1)?.message).toBe("Moved to “Reading”");
     });
 
     it("hands the progress sheet its entry and adopts the finish it reports, without a progress Undo", async () => {

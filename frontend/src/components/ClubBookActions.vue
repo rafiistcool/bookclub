@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
-import { clubsFor, type ClubAction } from "../clubActions";
+import { clubsFor, pickTargets, type ClubAction } from "../clubActions";
 import { useClubs } from "../stores/clubs";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
@@ -31,13 +31,17 @@ function isCurrentPick(club: ClubSummary): boolean {
   return Boolean(book.value?.currentIn?.some((row) => row.slug === club.slug));
 }
 
-/** Set the pick or nominate in one of the viewer's clubs; asks which club when there are several. */
+/**
+ * Set the pick or nominate in one of the viewer's clubs; asks which club when
+ * there are several. A pick goes straight to the one club whose pick the book
+ * is not yet, the club the row named.
+ */
 function start(next: ClubAction, target: ClubActionBook) {
   action.value = next;
   book.value = target;
-  const clubs = clubsFor(next, session.user?.clubs);
-  if (clubs.length === 1) choose(clubs[0]!);
-  else if (clubs.length > 1) choosing.value = true;
+  const open = next === "pick" ? pickTargets(session.user?.clubs, target.currentIn) : clubsFor(next, session.user?.clubs);
+  if (open.length === 1) choose(open[0]!);
+  else if (open.length > 1) choosing.value = true;
 }
 
 function choose(club: ClubSummary) {

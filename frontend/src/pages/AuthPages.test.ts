@@ -248,6 +248,59 @@ describe("auth pages", () => {
     expect(router.currentRoute.value.path).toBe("/");
   });
 
+  it("shows a failed sign-in under the button, with the next step, and keeps the fields in place", async () => {
+    const { wrapper } = await mountAt(LoginPage, "/login");
+    const login = vi.spyOn(useSession(), "login");
+    const form = wrapper.get("form");
+    // The alert region is there before any error, under the button: nothing above the fields moves.
+    const order = [...form.element.children].map((node) => node.className || node.tagName);
+    expect(order.at(-1)).toBe("login-error");
+    expect(order.indexOf("login-error")).toBeGreaterThan(order.findIndex((name) => name.includes("btn-primary")));
+    expect(wrapper.get(".login-error").attributes("role")).toBe("alert");
+    expect(wrapper.get(".login-error").text()).toBe("");
+
+    await wrapper.get("input[name=username]").setValue("ada");
+    await wrapper.get("input[name=password]").setValue("wrong");
+    login.mockRejectedValueOnce(new ApiError("Wrong username or password", 401, "Wrong username or password"));
+    await form.trigger("submit");
+    await flushPromises();
+    const alert = wrapper.get(".login-error");
+    expect(alert.get(".error").text()).toBe("Wrong username or password");
+    expect(alert.text()).toContain("Check the spelling, or set a new one under “Forgot your password?”.");
+    // The link it names is right under the alert, not a second one inside it.
+    expect(alert.find("a").exists()).toBe(false);
+    expect(wrapper.get(".auth-forgot a").attributes("href")).toBe("/forgot-password");
+
+    // With mail off there is no reset link: an admin sets the new password.
+    useService().mail = false;
+    await flushPromises();
+    expect(wrapper.get(".login-error").text()).toContain("An admin can set you a new one.");
+
+    // No answer at all: the connection.
+    login.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    await form.trigger("submit");
+    await flushPromises();
+    expect(wrapper.get(".login-error .error").text()).toBe("Could not sign in");
+    expect(wrapper.get(".login-error .muted").text()).toBe("Check your connection and try again.");
+    // A pause names its own next step; nothing is added.
+    login.mockRejectedValueOnce(new ApiError("Too many attempts. Wait a few minutes.", 429, "Too many attempts. Wait a few minutes."));
+    await form.trigger("submit");
+    await flushPromises();
+    expect(wrapper.get(".login-error").text()).toBe("Too many attempts. Wait a few minutes.");
+  });
+
+  it("keeps the language switch of the pages before sign-in quiet: two words, no control", async () => {
+    const { wrapper } = await mountAt(LoginPage, "/login");
+    const quiet = wrapper.get(".auth-locale .locale-quiet");
+    expect(wrapper.find(".auth-locale .segmented").exists()).toBe(false);
+    const options = quiet.findAll("button");
+    expect(options.map((button) => [button.text(), button.attributes("lang"), button.attributes("aria-pressed")])).toEqual([
+      ["English", "en", "true"],
+      ["Deutsch", "de", "false"],
+    ]);
+    expect(quiet.attributes("aria-label")).toBe("Language");
+  });
+
   it("opens sign-in with the form, and sign-up with a line only when it needs an invite", async () => {
     const login = await mountAt(LoginPage, "/login");
     expect(login.wrapper.find(".lede").exists()).toBe(false);

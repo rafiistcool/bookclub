@@ -37,6 +37,14 @@ select {
   color: inherit;
 }
 
+/* One placeholder colour for every field: the browser's own (a faded text
+   colour) fell to 3.8:1 on the dark textareas; --placeholder holds 4.5:1 on
+   every surface a field sits on, in every palette and mode. */
+::placeholder {
+  color: var(--placeholder);
+  opacity: 1;
+}
+
 a {
   color: var(--accent);
   text-underline-offset: 0.18em;

@@ -108,7 +108,7 @@ describe("HomeHero", () => {
     // My ring and grace's, plus the two members who have not started.
     expect(wrapper.findAll(".reader-rings li .visually-hidden").map((row) => row.text())).toEqual([
       "ada: 20%",
-      "grace: finished",
+      "grace: Finished",
       "2 not started yet",
     ]);
     expect(actionOf(wrapper)).toEqual(["progress"]);
@@ -132,7 +132,7 @@ describe("HomeHero", () => {
       "ada: 0%",
       "3 not started yet",
     ]);
-    expect(useToast().items.map((row) => row.message)).toContain("Added to Reading");
+    expect(useToast().items.map((row) => row.message)).toContain("On your shelf under “Reading”");
   });
 
   it("moves a wanted book to reading", async () => {

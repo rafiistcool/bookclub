@@ -3,17 +3,22 @@ import {
   ArrowDownIcon,
   ArrowUpIcon,
   CalendarIcon,
+  ChartBarIcon,
+  ChatBubbleBottomCenterTextIcon,
   CheckIcon,
+  ChevronRightIcon,
+  EllipsisHorizontalIcon,
   FlagIcon,
   HandRaisedIcon,
   HeartIcon,
+  PencilSquareIcon,
   Squares2X2Icon,
   TrashIcon,
 } from "@heroicons/vue/24/outline";
+import { HeartIcon as HeartSolidIcon } from "@heroicons/vue/24/solid";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
-import Avatar from "../components/Avatar.vue";
 import BottomSheet from "../components/BottomSheet.vue";
 import ClubBookActions from "../components/ClubBookActions.vue";
 import CoverChooserSheet, {
@@ -26,18 +31,18 @@ import { isWithdrawn } from "../components/ReportSheet.vue";
 import ShelfBoard from "../components/ShelfBoard.vue";
 import ShelfViewSwitch from "../components/ShelfViewSwitch.vue";
 import TileSkeleton from "../components/TileSkeleton.vue";
-import { clubsFor } from "../clubActions";
+import { clubsFor, pickTargets } from "../clubActions";
 import { STATUSES, statusLabel, statusShort, type Status } from "../constants";
 import { personalCoverKey } from "../covers";
 import { isFinishTransition, useFinish } from "../stores/finish";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
-import { clubDate, orderedShelf, readingMonth, shelfDropPosition, visibleShelf } from "../shelf";
+import { clubDate, orderedShelf, readingMonth, readingMonthLabel, shelfDropPosition, visibleShelf } from "../shelf";
 import type { ClubRef, Favorite, ShelfItem } from "../types";
 
 type Filter = "all" | Status;
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const session = useSession();
 const toast = useToast();
 const finish = useFinish();
@@ -45,6 +50,8 @@ const finish = useFinish();
 const items = ref<ShelfItem[]>([]);
 const favorites = ref<Favorite[]>([]);
 const showFavorites = ref(false);
+/** The "…" sheet: the shelf's side views (diary, quotes, the year). */
+const moreOpen = ref(false);
 const error = ref("");
 const loaded = ref(false);
 const filter = ref<Filter>("all");
@@ -66,14 +73,28 @@ const uploadingCoverFor = ref<ShelfItem | null>(null);
 const clubPicks = ref<{ workId: number; club: ClubRef }[]>([]);
 const clubPickIds = computed(() => clubPicks.value.map((row) => row.workId));
 const clubActions = ref<InstanceType<typeof ClubBookActions> | null>(null);
-const canPick = computed(() => clubsFor("pick", session.user?.clubs).length > 0);
 const canNominate = computed(() => clubsFor("nominate", session.user?.clubs).length > 0);
 /** Reading dates are days in the owner's zone. */
 const shelfTimezone = ref("UTC");
 const saving = ref(false);
 const editing = ref<{ item: ShelfItem; action: "status" | "date" } | null>(null);
+/** The clubs the book in the status sheet can still become the pick of. */
+const pickOpen = computed(() => {
+  const item = editing.value?.item;
+  if (!item) return [];
+  return pickTargets(session.user?.clubs, clubPicks.value.filter((row) => row.workId === item.book.id).map((row) => row.club));
+});
+/** "Als Club-Buch für Lesekreis setzen" with one club; with several, the next sheet asks which. */
+const pickRowLabel = computed(() =>
+  pickOpen.value.length === 1 ? t("card.setPickIn", { club: pickOpen.value[0]!.name }) : t("card.setPick"),
+);
 const dateValue = ref("");
 const datePrecision = ref<"month" | "day">("month");
+const sideViews = computed(() => [
+  { to: "/diary", label: t("diaryPage.title"), icon: PencilSquareIcon },
+  { to: "/quotes", label: t("quotes.title"), icon: ChatBubbleBottomCenterTextIcon },
+  { to: "/stats", label: t("stats.title"), icon: ChartBarIcon },
+]);
 const today = computed(() => clubDate(new Date().toISOString(), shelfTimezone.value));
 
 const counts = computed(() => {
@@ -119,24 +140,59 @@ async function loadClubPicks() {
   }
 }
 
+/**
+ * A drag's drop: the new place, and with a new month the reading date
+ * (day 1 of it). A month change says the month and can be undone: it
+ * comes from where the card landed, not from a field the reader set.
+ */
 async function onReordered(item: ShelfItem, position: number, month?: string) {
   if (saving.value) return;
   const changedMonth = month !== undefined && month !== readingMonth(item, shelfTimezone.value);
   if (changedMonth && item.status !== "finished") return;
   const finishedOn = month ? `${month}-01` : null;
+  const before = {
+    position: orderedShelf(items.value).findIndex((row) => row.id === item.id),
+    finishedAt: item.finished_at,
+  };
+  const saved = await place(item, position, changedMonth
+    ? { finishedOn, finishedAt: finishedOn ? `${finishedOn}T12:00:00Z` : null } : null);
+  if (!saved) return;
+  if (!changedMonth) {
+    toast.show(t("shelf.orderSaved"));
+    return;
+  }
+  toast.show(month ? t("shelf.monthSaved", { month: readingMonthLabel(month, locale.value) }) : t("shelf.noReadingDate"), {
+    label: t("common.undo"),
+    run: async () => {
+      // Back to the old place and the old date, to the day.
+      const finishedOn = before.finishedAt ? clubDate(before.finishedAt, shelfTimezone.value) : null;
+      if (await place(saved, before.position, { finishedOn, finishedAt: before.finishedAt })) {
+        toast.show(t("shelf.monthUndone"));
+      }
+    },
+  });
+}
+
+/** Moves a book to `position` (and sets its reading date) at once, then saves; a failure puts both back. */
+async function place(
+  item: ShelfItem,
+  position: number,
+  date: { finishedOn: string | null; finishedAt: string | null } | null,
+): Promise<ShelfItem | null> {
+  if (saving.value) return null;
   const snapshot = items.value;
   const rows = orderedShelf(items.value).filter((row) => row.id !== item.id);
-  rows.splice(Math.min(position, rows.length), 0, changedMonth
-    ? { ...item, finished_at: finishedOn ? `${finishedOn}T12:00:00Z` : null } : item);
+  rows.splice(Math.min(position, rows.length), 0, date ? { ...item, finished_at: date.finishedAt } : item);
   items.value = rows.map((row, index) => ({ ...row, shelf_position: index }));
   saving.value = true;
   try {
-    const saved = await api.patchShelf(item.id, { shelf_position: position, ...(changedMonth ? { finished_on: finishedOn } : {}) });
+    const saved = await api.patchShelf(item.id, { shelf_position: position, ...(date ? { finished_on: date.finishedOn } : {}) });
     items.value = items.value.map((row) => row.id === saved.id ? saved : row);
-    toast.show(t(changedMonth ? "shelf.dateSaved" : "shelf.orderSaved"));
+    return saved;
   } catch (err) {
     items.value = snapshot;
     toast.show(err instanceof ApiError ? err.message : t("shelf.moveFailed"));
+    return null;
   } finally {
     saving.value = false;
   }
@@ -322,17 +378,21 @@ onMounted(load);
 
 <template>
   <section class="shelf-page">
-    <div class="page-head shelf-head">
-      <Avatar :username="session.user?.username ?? ''" :src="session.user?.avatar_url" size="lg" />
-      <div>
-        <h1>{{ t("shelf.title") }}</h1>
-      </div>
-      <button v-if="loaded && !error" type="button" class="icon-btn favorites-toggle"
-        :aria-label="t('favorites.portraitLabel')" :aria-expanded="showFavorites" aria-controls="shelf-favorites"
-        @click="showFavorites = !showFavorites">
-        <HeartIcon aria-hidden="true" />
-      </button>
-    </div>
+    <!-- The title, the favourites and the side views on one line: the first covers come high. -->
+    <header class="shelf-head">
+      <h1>{{ t("shelf.title") }}</h1>
+      <span v-if="loaded && !error" class="shelf-head-actions">
+        <button type="button" class="chip favorites-toggle" :class="{ active: showFavorites }"
+          :aria-expanded="showFavorites" aria-controls="shelf-favorites" @click="showFavorites = !showFavorites">
+          <component :is="showFavorites ? HeartSolidIcon : HeartIcon" aria-hidden="true" />
+          {{ t("shelf.favouritesToggle") }}
+        </button>
+        <button type="button" class="icon-btn shelf-more" aria-haspopup="dialog" :aria-expanded="moreOpen"
+          :aria-label="t('shelf.moreLabel')" @click="moreOpen = true">
+          <EllipsisHorizontalIcon aria-hidden="true" />
+        </button>
+      </span>
+    </header>
     <div v-if="loaded && !error && showFavorites" id="shelf-favorites" class="shelf-favorites">
       <FavoritePortrait :items="favorites" :empty-hint="t('favorites.emptyOwn')" />
     </div>
@@ -346,12 +406,19 @@ onMounted(load);
 
     <div v-if="loaded && !error" class="shelf-view-toolbar">
       <ShelfViewSwitch active="books" />
-      <span class="shelf-extra-links">
-        <RouterLink class="chip" to="/diary">{{ t("diaryPage.title") }}</RouterLink>
-        <RouterLink class="chip" to="/quotes">{{ t("quotes.title") }}</RouterLink>
-        <RouterLink class="chip" to="/stats">{{ t("stats.short") }}</RouterLink>
-      </span>
     </div>
+
+    <BottomSheet v-if="moreOpen" :title="t('shelf.moreTitle')" @close="moreOpen = false">
+      <ul class="sheet-rows shelf-more-rows">
+        <li v-for="row in sideViews" :key="row.to">
+          <RouterLink class="sheet-row" :to="row.to" @click="moreOpen = false">
+            <component :is="row.icon" class="sheet-icon" aria-hidden="true" />
+            <span class="sheet-label">{{ row.label }}</span>
+            <ChevronRightIcon class="row-chevron" aria-hidden="true" />
+          </RouterLink>
+        </li>
+      </ul>
+    </BottomSheet>
 
     <div v-if="!loaded" class="book-grid" aria-hidden="true">
       <TileSkeleton :count="9" />
@@ -437,9 +504,9 @@ onMounted(load);
                 <Squares2X2Icon class="sheet-icon" aria-hidden="true" /><span class="sheet-label">{{ t('coverChoice.title') }}</span>
               </button>
             </li>
-            <li v-if="canPick">
-              <button type="button" class="sheet-row" @click="bookAction('pick')">
-                <FlagIcon class="sheet-icon" aria-hidden="true" /><span class="sheet-label">{{ t('card.setPick') }}</span>
+            <li v-if="pickOpen.length">
+              <button type="button" class="sheet-row pick-row" @click="bookAction('pick')">
+                <FlagIcon class="sheet-icon" aria-hidden="true" /><span class="sheet-label">{{ pickRowLabel }}</span>
               </button>
             </li>
             <li v-if="canNominate">
@@ -506,19 +573,20 @@ onMounted(load);
 </template>
 
 <style scoped>
-.shelf-view-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-5); }
-/* Pills, like the Books/Shelf switch beside them. */
-.shelf-extra-links { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.shelf-head { position: relative; padding-right: 42px; margin-bottom: var(--space-6); }
-.shelf-head > div { min-width: 0; }
-.shelf-head :deep(.avatar) { width: 64px; height: 64px; }
-.favorites-toggle { position: absolute; top: 0; right: -6px; color: var(--text-subtle); }
-.favorites-toggle svg { width: 26px; height: 26px; }
-.favorites-toggle[aria-expanded="true"] { color: var(--accent); }
+.shelf-view-toolbar { margin-bottom: var(--space-4); }
+.shelf-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-4); }
+.shelf-head h1 { min-width: 0; }
+.shelf-head-actions { display: flex; align-items: center; gap: var(--space-1); flex: none; margin-right: calc(-1 * var(--space-2)); }
+.favorites-toggle { gap: 6px; }
+.favorites-toggle svg { width: 18px; height: 18px; flex: none; }
+.favorites-toggle.active svg { color: var(--accent); }
+.shelf-more svg { width: 24px; height: 24px; }
 .shelf-favorites { margin-bottom: var(--space-5); }
+.row-chevron { flex: none; width: 18px; height: 18px; margin-left: auto; color: var(--text-muted); }
 .cover-upload-status {
   position: sticky;
-  top: calc(var(--header-h) + env(safe-area-inset-top) + var(--space-2));
+  top: calc(var(--bar-bottom) + var(--space-2));
+  transition: top var(--dur-base) var(--ease-out);
   z-index: 5;
   width: fit-content;
   max-width: 100%;
@@ -536,8 +604,8 @@ onMounted(load);
   .shelf-filter { max-width: 560px; }
 }
 @media (max-width: 359px) {
-  .shelf-head :deep(.avatar) { width: 48px; height: 48px; }
-  .shelf-head { gap: var(--space-3); }
+  /* "Mein Regal" stays on one line beside the favourites and the "…". */
+  .shelf-head h1 { font-size: var(--text-xl); }
   .shelf-filter button { padding-inline: var(--space-1); font-size: var(--text-xs); }
 }
 .sheet-book { margin-bottom: var(--space-3); color: var(--text-muted); font-family: var(--serif); }
@@ -559,12 +627,6 @@ onMounted(load);
   .shelf-more-actions[open] .sheet-rows { animation: none; }
   .more-chevron { transition: none; }
 }
-.shelf-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-}
-
 .shelf-filter {
   margin-bottom: var(--space-5);
 }

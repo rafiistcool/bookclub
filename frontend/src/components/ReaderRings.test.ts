@@ -23,7 +23,7 @@ describe("ReaderRings", () => {
       readers: [reader("mara", "currently_reading", 35), reader("jonas", "finished"), reader("lena", "want_to_read")],
     });
     expect(wrapper.get("ul").attributes("aria-label")).toBe("Where everyone is");
-    expect(labels(wrapper)).toEqual(["mara: 35%", "jonas: finished", "lena: To read"]);
+    expect(labels(wrapper)).toEqual(["mara: 35%", "jonas: Finished", "lena: Planned"]);
     const fills = wrapper.findAll(".ring-fill");
     // Lena has not started: only the track.
     expect(fills).toHaveLength(2);

@@ -91,7 +91,7 @@ describe("year in books", () => {
     await flushPromises();
     expect(router.currentRoute.value.query.year).toBe("2025");
     expect(personalStats).toHaveBeenLastCalledWith({ username: undefined, year: 2025 });
-    expect(wrapper.text()).toContain("Nothing finished or set aside in 2025 yet.");
+    expect(wrapper.text()).toContain("Nothing finished or stopped in 2025 yet.");
     expect(wrapper.find(".bar-col").exists()).toBe(false);
   });
 

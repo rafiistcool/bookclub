@@ -8,7 +8,11 @@ import {
   parseBookParam,
   relativeDay,
   starLabel,
+  STATUSES,
+  statusLabel,
+  statusShort,
 } from "./constants";
+import { i18n } from "./i18n";
 
 describe("book identity and links", () => {
   it("links every book by its numeric work id", () => {
@@ -92,3 +96,17 @@ describe("bookIdFromInput", () => {
     expect(bookIdFromInput("0")).toBeNull();
   });
 });
+
+describe("one name per status", () => {
+  it("uses the same word everywhere a status is named, in both languages", () => {
+    const previous = i18n.global.locale.value;
+    const names = { de: ["Geplant", "Aktuell", "Gelesen", "Abgebrochen"], en: ["Planned", "Reading", "Finished", "Stopped"] };
+    for (const locale of ["de", "en"] as const) {
+      i18n.global.locale.value = locale;
+      expect(STATUSES.map(statusLabel)).toEqual(names[locale]);
+      expect(STATUSES.map(statusShort)).toEqual(names[locale]);
+    }
+    i18n.global.locale.value = previous;
+  });
+});
+

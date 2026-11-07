@@ -464,6 +464,15 @@
     transform var(--dur-fast) var(--ease-out);
 }
 
+/* On a narrow phone the padding gives way first, so four statuses
+   ("Geplant | Aktuell | Gelesen | Abgebrochen") stay whole at 320 px and keep
+   room for a wider fallback font. Spare room still goes to the segments. */
+@media (max-width: 389px) {
+  .segmented button {
+    padding: 0 var(--space-1);
+  }
+}
+
 /* The thumb sits a step above the track in both modes: --surface is the
    lighter one in light mode, but darker than the track in dark mode. */
 .segmented button[aria-pressed="true"] {
@@ -485,7 +494,7 @@
 }
 
 /* Stacked: each segment's count sits under its label, so five counted
-   segments ("Alle | Geplant | Aktuell | Gelesen | Abbruch") fit a 360px
+   segments ("Alle | Geplant | Aktuell | Gelesen | Abgebrochen") fit a 320px
    screen. Two lines in a pill would turn the narrow segments into upright
    capsules, so the corners round off instead. */
 .segmented.stacked {
@@ -538,10 +547,13 @@
   scrollbar-width: none;
   margin: 0 calc(-1 * var(--space-4));
   padding: var(--space-1) var(--space-4);
-  /* The row fades out at the screen edges, so it reads as one that scrolls.
-     A mask only reads alpha: any opaque colour stands for "shown". */
-  -webkit-mask-image: linear-gradient(90deg, transparent 0, currentColor var(--space-4), currentColor calc(100% - var(--space-5)), transparent);
-  mask-image: linear-gradient(90deg, transparent 0, currentColor var(--space-4), currentColor calc(100% - var(--space-5)), transparent);
+  /* The row fades out at the screen edges, so it reads as one that scrolls:
+     over the gutter on the left (where chips scrolled past go), and over a
+     wider stretch on the right, where the next chip is cut. A mask only
+     reads alpha: any opaque colour stands for "shown". */
+  --fade-end: var(--space-8);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, currentColor var(--space-4), currentColor calc(100% - var(--fade-end)), transparent);
+  mask-image: linear-gradient(90deg, transparent 0, currentColor var(--space-4), currentColor calc(100% - var(--fade-end)), transparent);
 }
 
 .chip-row.scroll::-webkit-scrollbar {

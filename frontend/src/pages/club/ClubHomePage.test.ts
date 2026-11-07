@@ -119,7 +119,7 @@ describe("ClubHomePage", () => {
     expect(rings.props("size")).toBe("md");
     expect(rings.props("memberCount")).toBe(4);
     expect(rings.props("readers").map((row: { username: string }) => row.username)).toEqual(["ada", "grace"]);
-    expect(rings.findAll("li .visually-hidden").map((row) => row.text())).toContain("grace: finished");
+    expect(rings.findAll("li .visually-hidden").map((row) => row.text())).toContain("grace: Finished");
     expect(wrapper.get(".reader-takes").text()).toContain("Loved it");
 
     api.clubPick.mockResolvedValue({

@@ -102,11 +102,29 @@ describe("ShelfPage favourites portrait", () => {
     expect(wrapper.find(".portrait").exists()).toBe(false);
   });
 
-  it("shows Diary, Quotes and Year as pills beside the view switch", async () => {
+  it("keeps the head to one line: the title, a labelled favourites toggle and a \"…\" for the side views", async () => {
     const wrapper = await mountShelf([]);
-    const links = wrapper.findAll(".shelf-extra-links a");
-    expect(links.map((link) => link.attributes("href"))).toEqual(["/diary", "/quotes", "/stats"]);
-    expect(links.every((link) => link.classes().includes("chip") && !link.classes().includes("btn"))).toBe(true);
+    const head = wrapper.get(".shelf-head");
+    expect(head.get("h1").text()).toBe("Your shelf");
+    // No avatar and no pills before the first cover.
+    expect(head.find(".avatar").exists()).toBe(false);
+    expect(wrapper.find(".shelf-extra-links").exists()).toBe(false);
+    const toggle = head.get(".favorites-toggle");
+    expect(toggle.text()).toBe("Favourites");
+    expect(toggle.attributes("aria-label")).toBeUndefined();
+    const more = head.get(".shelf-more");
+    expect(more.attributes("aria-label")).toBe("More: diary, quotes, year");
+    expect(more.attributes("aria-haspopup")).toBe("dialog");
+    await more.trigger("click");
+    const links = wrapper.findAll(".sheet .shelf-more-rows a");
+    expect(links.map((link) => [link.attributes("href"), link.text()])).toEqual([
+      ["/diary", "Diary"],
+      ["/quotes", "Quotes"],
+      ["/stats", "Your year in books"],
+    ]);
+    expect(more.attributes("aria-expanded")).toBe("true");
+    await links[0]!.trigger("click");
+    expect(wrapper.find(".sheet").exists()).toBe(false);
     wrapper.unmount();
   });
 
@@ -166,10 +184,10 @@ describe("ShelfPage favourites portrait", () => {
     await wrapper.findAll("button.shelf-status")[0].trigger("click");
     // The current status is marked as pressed and stays enabled; a tap on it
     // only closes the sheet.
-    // The sheet speaks the tile button's words: "To read", not "Want to read".
-    expect(wrapper.findAll(".sheet .status-choice").map(button => button.text())).toEqual(["To read", "Reading", "Read", "DNF"]);
+    // The sheet speaks the tile button's words: the one name of each status.
+    expect(wrapper.findAll(".sheet .status-choice").map(button => button.text())).toEqual(["Planned", "Reading", "Finished", "Stopped"]);
     expect(wrapper.find(".sheet .status-choice.btn").exists()).toBe(false);
-    const current = wrapper.findAll(".sheet .status-choice").find(button => button.text() === "To read")!;
+    const current = wrapper.findAll(".sheet .status-choice").find(button => button.text() === "Planned")!;
     expect(current.attributes("aria-pressed")).toBe("true");
     expect(current.attributes("disabled")).toBeUndefined();
     const calls = patchShelf.mock.calls.length;
@@ -240,6 +258,37 @@ describe("ShelfPage favourites portrait", () => {
     wrapper.unmount();
   });
 
+  it("names the month a drop gave a book, and undoes it to the old place and the old day", async () => {
+    const book = { ...item(1, "Circe"), status: "finished" as const, shelf_position: 1, finished_at: "2026-09-10T12:00:00Z" };
+    const other = { ...item(2, "Dune"), status: "finished" as const, shelf_position: 0, finished_at: "2026-08-03T12:00:00Z" };
+    const wrapper = await mountShelf([], [other, book]);
+    const board = wrapper.getComponent(ShelfBoard);
+    const moved = { ...book, shelf_position: 0, finished_at: "2026-08-01T12:00:00Z" };
+    patchShelf.mockResolvedValueOnce(moved);
+    board.vm.$emit("reordered", book, 0, "2026-08");
+    await flushPromises();
+    const toast = useToast().items.at(-1)!;
+    expect(toast.message).toBe("Reading date: August 2026");
+    expect(toast.action?.label).toBe("Undo");
+
+    patchShelf.mockResolvedValueOnce(book);
+    await useToast().run(toast.id);
+    await flushPromises();
+    // Back to its old place (second) and its old date, to the day.
+    expect(patchShelf).toHaveBeenLastCalledWith(1, { shelf_position: 1, finished_on: "2026-09-10" });
+    expect(board.props("items").map((row: ShelfItem) => row.id)).toEqual([2, 1]);
+    expect(board.props("items")[1].finished_at).toBe("2026-09-10T12:00:00Z");
+    expect(useToast().items.at(-1)?.message).toBe("Reading date restored");
+
+    // A drop that keeps the month says only that the order was saved, with nothing to undo.
+    patchShelf.mockResolvedValueOnce({ ...book, shelf_position: 0 });
+    board.vm.$emit("reordered", book, 0, "2026-09");
+    await flushPromises();
+    expect(patchShelf).toHaveBeenLastCalledWith(1, { shelf_position: 0 });
+    expect(useToast().items.at(-1)).toMatchObject({ message: "Shelf order saved", action: null });
+    wrapper.unmount();
+  });
+
   it("stacks each status filter's count under its label, and shows the counts only there", async () => {
     const reading = { ...item(2, "Circe"), status: "currently_reading" as const };
     const done = { ...item(3, "Dune"), status: "finished" as const };
@@ -249,7 +298,7 @@ describe("ShelfPage favourites portrait", () => {
     const filter = wrapper.get(".shelf-filter");
     expect(filter.classes()).toContain("stacked");
     const segments = filter.findAll("button").map((button) => [button.get(".seg-label").text(), button.get(".seg-count").text()]);
-    expect(segments).toEqual([["All", "3"], ["To read", "1"], ["Reading", "1"], ["Read", "1"], ["DNF", "0"]]);
+    expect(segments).toEqual([["All", "3"], ["Planned", "1"], ["Reading", "1"], ["Finished", "1"], ["Stopped", "0"]]);
     wrapper.unmount();
   });
 
@@ -302,6 +351,37 @@ describe("ShelfPage favourites portrait", () => {
     const labels = wrapper.findAll(".sheet button").map((button) => button.text());
     expect(labels).not.toContain("Set as club pick");
     expect(labels).toContain("Nominate for next up");
+    wrapper.unmount();
+  });
+
+  it("names the club on the pick row, and drops the row where the book is the pick already", async () => {
+    const club: ClubSummary = { slug: "readers-ab12", name: "Readers", role: "admin", timezone: "UTC", member_count: 3 };
+    clubs.mockResolvedValue({
+      items: [{
+        slug: club.slug, name: club.name, timezone: "UTC", role: "admin", member_count: 3,
+        created_at: "2026-01-01T00:00:00Z",
+        current_pick: { id: 5, book: shelfItem({ id: 2 }).book, meeting_at: null },
+      }],
+    });
+    const wrapper = await mountShelf([], [item(1, "Circe"), item(2, "Galatea")], [club]);
+    const statusButtons = wrapper.findAll("button.shelf-status");
+    await statusButtons[0]!.trigger("click");
+    expect(wrapper.get(".sheet .pick-row").text()).toBe("Make it the pick for Readers");
+    await wrapper.findAll(".sheet .status-choice").find((button) => button.attributes("aria-pressed") === "true")!.trigger("click");
+    await wrapper.findAll("button.shelf-status")[1]!.trigger("click");
+    expect(wrapper.find(".sheet .pick-row").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("keeps the pick row generic with two clubs left, for the sheet that asks which", async () => {
+    const memberOf: ClubSummary[] = [
+      { slug: "readers-ab12", name: "Readers", role: "admin", timezone: "UTC", member_count: 3 },
+      { slug: "night-cd34", name: "Night owls", role: "owner", timezone: "UTC", member_count: 2 },
+    ];
+    clubs.mockResolvedValue({ items: [] });
+    const wrapper = await mountShelf([], [item(1, "Circe")], memberOf);
+    await wrapper.get("button.shelf-status").trigger("click");
+    expect(wrapper.get(".sheet .pick-row").text()).toBe("Set as club pick");
     wrapper.unmount();
   });
 
@@ -476,7 +556,7 @@ describe("ShelfPage favourites portrait", () => {
 
     async function finishFirst(wrapper: Awaited<ReturnType<typeof mountShelf>>) {
       await wrapper.findAll("button.shelf-status")[0].trigger("click");
-      await wrapper.findAll(".sheet .status-choice").find((button) => button.text() === "Read")!.trigger("click");
+      await wrapper.findAll(".sheet .status-choice").find((button) => button.text() === "Finished")!.trigger("click");
       await flushPromises();
     }
 
@@ -514,7 +594,7 @@ describe("ShelfPage favourites portrait", () => {
       await wrapper.findAll(".sheet .status-choice").find((button) => button.text() === "Reading")!.trigger("click");
       await flushPromises();
       expect(useFinish().item).toBeNull();
-      expect(useToast().items.at(-1)?.message).toBe("Moved to Reading");
+      expect(useToast().items.at(-1)?.message).toBe("Moved to “Reading”");
       wrapper.unmount();
     });
 

@@ -46,6 +46,9 @@
   /* Layout. */
   --nav-h: 62px;
   --header-h: 56px;
+  /* Where the phone's top bar ends, for the sticky bars under it. AppShell
+     moves it up to the safe area while the bar is scrolled away. */
+  --bar-bottom: calc(var(--header-h) + env(safe-area-inset-top));
   --sidebar-w: 244px;
   --content-max: 1180px;
   --tap: 44px;
@@ -73,6 +76,9 @@
   --bg-translucent-strong: color-mix(in srgb, var(--bg) 94%, transparent);
   --skeleton: color-mix(in srgb, var(--text) 8%, var(--surface-2));
   --skeleton-sheen: color-mix(in srgb, var(--text) 3%, var(--surface));
+  /* Placeholders: --text-subtle reaches 4.5:1 on --bg, --surface and
+     --surface-2 in every palette (styles/styles.test.ts checks it). */
+  --placeholder: var(--text-subtle);
 
   /* Elevation. Covers get a tighter shadow than panels so artwork reads as
      a physical object rather than a floating card. */

@@ -32,7 +32,7 @@ import { ApiError } from "../api/client";
 import { COVER_RETRY_MS } from "../covers";
 import { i18n } from "../i18n";
 import { useToast } from "../stores/toast";
-import CoverChooserSheet, { announceCoverChange, sendPersonalCover } from "./CoverChooserSheet.vue";
+import CoverChooserSheet, { announceCoverChange, sendPersonalCover, shortPublisher } from "./CoverChooserSheet.vue";
 
 function candidate(overrides: Partial<CoverCandidateOut> = {}): CoverCandidateOut {
   const key = overrides.key ?? "ol:1";
@@ -84,6 +84,7 @@ describe("CoverChooserSheet", () => {
         candidate({ key: "media:cat", source: "catalog", chosen: true, edition_label: { title: null, publisher: "Diogenes", year: 2019, language: "ger", isbn13: null } }),
         candidate({ key: "ol:2", edition_label: { title: "Circe", publisher: null, year: 2018, language: "eng", isbn13: null } }),
         candidate({ key: "ol:3", edition_label: null }),
+        candidate({ key: "ol:5", edition_label: { title: null, publisher: "Kiepenheuer & Witsch GmbH & Co. KG", year: 2021, language: null, isbn13: null } }),
         // Nothing of ours to show: never a tile.
         candidate({ key: "ol:4", cover_url: "https://covers.openlibrary.org/b/id/4-L.jpg", cover_thumb_url: null }),
       ],
@@ -91,20 +92,24 @@ describe("CoverChooserSheet", () => {
     await flushPromises();
     expect(wrapper.find(".tile-skeleton").exists()).toBe(false);
     const shown = tiles(wrapper);
-    expect(shown).toHaveLength(3);
-    expect(shown.map((tile) => tile.get("img").attributes("src"))).toEqual(["/media/cat/s", "/media/ol2/s", "/media/ol3/s"]);
+    expect(shown).toHaveLength(4);
+    expect(shown.map((tile) => tile.get("img").attributes("src"))).toEqual(["/media/cat/s", "/media/ol2/s", "/media/ol3/s", "/media/ol5/s"]);
     expect(shown.every((tile) => tile.get("img").attributes("loading") === "lazy")).toBe(true);
     // Year and language first, the publisher on its own line: what tells editions apart is never cut off.
-    expect(shown.map((tile) => tile.get(".label-facts").text())).toEqual(["2019 · Deutsch", "2018 · Englisch", "Open Library"]);
+    expect(shown.map((tile) => tile.get(".label-facts").text())).toEqual(["2019 · Deutsch", "2018 · Englisch", "Open Library", "2021"]);
+    // The legal form goes, so the name itself keeps its last word.
     expect(shown.map((tile) => tile.find(".label-publisher").exists() ? tile.get(".label-publisher").text() : null)).toEqual([
       "Diogenes",
       null,
       null,
+      "Kiepenheuer & Witsch",
     ]);
-    // The whole label as the tooltip.
-    expect(shown.map((tile) => tile.attributes("title"))).toEqual(["2019 · Deutsch · Diogenes", "2018 · Englisch", "Open Library"]);
+    // The whole label as the tooltip, with the publisher's full name.
+    expect(shown.map((tile) => tile.attributes("title"))).toEqual([
+      "2019 · Deutsch · Diogenes", "2018 · Englisch", "Open Library", "2021 · Kiepenheuer & Witsch GmbH & Co. KG",
+    ]);
     // The cover the reader sees now is ringed with a check.
-    expect(shown.map((tile) => tile.attributes("aria-pressed"))).toEqual(["true", "false", "false"]);
+    expect(shown.map((tile) => tile.attributes("aria-pressed"))).toEqual(["true", "false", "false", "false"]);
     expect(shown[0]!.find(".tile-check").exists()).toBe(true);
     // No standard row while the standard cover is what the reader sees.
     expect(wrapper.find(".standard-cover").exists()).toBe(false);
@@ -352,5 +357,18 @@ describe("the page's half of a cover change", () => {
     await useToast().run(useToast().items.at(-1)!.id);
     expect(adopt).not.toHaveBeenCalled();
     expect(useToast().items.at(-1)?.message).toBe("Dein voriges Cover konnte nicht zurückgeholt werden.");
+  });
+});
+
+describe("the publisher on a tile", () => {
+  it("drops the legal form at the end and nothing else", () => {
+    expect(shortPublisher("Diogenes Verlag AG")).toBe("Diogenes Verlag");
+    expect(shortPublisher("dtv Verlagsgesellschaft mbH & Co. KG")).toBe("dtv Verlagsgesellschaft");
+    expect(shortPublisher("Penguin Random House LLC")).toBe("Penguin Random House");
+    expect(shortPublisher("Vintage Books, Inc.")).toBe("Vintage Books");
+    expect(shortPublisher("S. Fischer Verlag GmbH")).toBe("S. Fischer Verlag");
+    expect(shortPublisher("Agora")).toBe("Agora");
+    expect(shortPublisher("AG")).toBe("AG");
+    expect(shortPublisher("  Suhrkamp ")).toBe("Suhrkamp");
   });
 });
