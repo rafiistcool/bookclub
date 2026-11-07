@@ -183,14 +183,16 @@ describe("BookDiary", () => {
     expect(full.get(".diary").classes()).not.toContain("preview");
   });
 
-  it("lets a club admin delete another member's club post", async () => {
+  it("lets a club admin delete another member's club post, only from its “…” sheet", async () => {
     const items = [post({ id: 4, author: "max", body: "Off topic", club: CLUB, pick_id: 5 })];
     api.pickThread.mockResolvedValue(thread({ items }));
     const asMember = await mountDiary({ club: { slug: CLUB.slug, pickId: null } }, "member");
-    expect(asMember.findAll(".entry-links .text-btn").map((button) => button.text())).not.toContain("Delete");
+    expect(asMember.find(".entry-more").exists()).toBe(false);
     const asAdmin = await mountDiary({ club: { slug: CLUB.slug, pickId: null } }, "admin");
-    const labels = asAdmin.findAll(".entry-links .text-btn").map((button) => button.text());
-    expect(labels).toContain("Delete");
-    expect(labels).not.toContain("Edit");
+    // Never a link beside "Reply".
+    expect(asAdmin.findAll(".entry-links .text-btn").map((button) => button.text())).toEqual(["Reply"]);
+    await asAdmin.get(".entry-more").trigger("click");
+    const rows = asAdmin.findAll(".sheet .sheet-row").map((row) => row.text());
+    expect(rows).toEqual(["Delete as admin"]);
   });
 });

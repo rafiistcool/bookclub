@@ -23,10 +23,10 @@ const OPEN = vote({
   not_voted: ["max"],
 });
 
-async function mountVote(canManage: boolean) {
+async function mountVote(canManage: boolean, answer = OPEN) {
   const pinia = createPinia();
   setActivePinia(pinia);
-  api.vote.mockResolvedValue(OPEN);
+  api.vote.mockResolvedValue(answer);
   const wrapper = mount(NextUpVote, {
     props: { slug: "readers-ab12", canManage },
     global: { plugins: [pinia, i18n], stubs: { BookCover: true } },
@@ -119,6 +119,18 @@ describe("NextUpVote", () => {
     expect(wrapper.find(".empty").exists()).toBe(false);
   });
 
+  it("names who is missing, singular or plural, in German too", async () => {
+    i18n.global.locale.value = "de";
+    try {
+      const one = await mountVote(false);
+      expect(one.findAll(".vote-status .vote-fact")[1]!.text()).toBe("es fehlt noch: max");
+      const two = await mountVote(false, { ...OPEN, voted_count: 1, not_voted: ["max", "tim"] });
+      expect(two.findAll(".vote-status .vote-fact")[1]!.text()).toBe("es fehlen noch: max, tim");
+    } finally {
+      i18n.global.locale.value = "en";
+    }
+  });
+
   it("sets the deadline in the club's zone", async () => {
     const wrapper = await mountVote(true);
     await wrapper.findAll(".vote-status .text-btn")[0]!.trigger("click");
@@ -132,7 +144,7 @@ describe("NextUpVote", () => {
     // wrapped line never starts with one.
     expect(wrapper.findAll(".vote-status .vote-fact").map((fact) => fact.text())).toEqual([
       "2 of 3 voted",
-      "waiting for max",
+      "still waiting for max",
       expect.stringMatching(/^closes /),
     ]);
     expect(wrapper.get(".vote-status").text()).not.toContain("·");

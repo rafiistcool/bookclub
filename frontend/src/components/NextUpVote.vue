@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
 import { bookPath } from "../constants";
-import { formatClubDate } from "../i18n/dates";
+import { formatEventTime } from "../i18n/dates";
 import { tp } from "../i18n";
 import { isClubGone, useClubs } from "../stores/clubs";
 import { useLocale } from "../stores/locale";
@@ -49,7 +49,7 @@ function share(row: VoteNomination): number {
 
 const closes = computed(() =>
   vote.value?.closes_at
-    ? formatClubDate(vote.value.closes_at, vote.value.timezone, locale.locale) || vote.value.closes_label
+    ? formatEventTime(vote.value.closes_at, vote.value.timezone, locale.locale) || vote.value.closes_label
     : "",
 );
 
@@ -167,7 +167,7 @@ defineExpose({ load });
     <div v-if="vote && vote.vote_id" class="vote-status fine">
       <span class="vote-fact nums">{{ t("vote.votedOf", { voted: vote.voted_count, total: vote.member_count }) }}</span>
       <span v-if="vote.not_voted.length" class="vote-fact subtle">
-        {{ t("vote.waitingFor", { names: vote.not_voted.join(", ") }) }}
+        {{ tp("vote.waitingFor", vote.not_voted.length, { names: vote.not_voted.join(", ") }) }}
       </span>
       <span v-if="closes" class="vote-fact">{{ t("vote.closesAt", { when: closes }) }}</span>
       <button v-if="canManage" class="text-btn" type="button" @click="openDeadline">

@@ -87,8 +87,8 @@ describe("HomeHero", () => {
       pickOf({
         meeting_at: "2026-11-19T18:30:00Z",
         readers: [
-          { username: "ada", status: "currently_reading", rating: null, take: "", dnf_reason: "", progress: 20, avatar_url: null },
-          { username: "grace", status: "finished", rating: 4, take: "", dnf_reason: "", progress: null, avatar_url: null },
+          { username: "ada", status: "currently_reading", rating: null, take: "", dnf_reason: "", progress: 20, current_page: null, progress_pages: null, avatar_url: null },
+          { username: "grace", status: "finished", rating: 4, take: "", dnf_reason: "", progress: null, current_page: null, progress_pages: null, avatar_url: null },
         ],
         on_shelf: "currently_reading",
         shelf_id: 3,
@@ -154,14 +154,21 @@ describe("HomeHero", () => {
     expect(wrapper.get(".progress-trigger").text()).toContain("p. 120 of 400");
     await wrapper.get(".progress-trigger").trigger("click");
     await wrapper.get(".sheet input[type=range]").setValue("220");
-    api.patchShelf.mockResolvedValue({ ...entry, progress: 55 });
+    api.patchShelf.mockResolvedValue({ ...entry, progress: 55, current_page: 220 });
     await wrapper.get(".sheet .btn-primary").trigger("click");
     await flushPromises();
-    expect(api.patchShelf).toHaveBeenCalledWith(5, { progress: 55 });
-    expect(wrapper.emitted("entry")?.[0]?.[0]).toMatchObject({ id: 5, progress: 55 });
+    // The page itself: the server derives the percent.
+    expect(api.patchShelf).toHaveBeenCalledWith(5, { current_page: 220 });
+    expect(wrapper.emitted("entry")?.[0]?.[0]).toMatchObject({ id: 5, progress: 55, current_page: 220 });
     const toast = useToast();
-    const saved = toast.items.find((row) => row.message === "Progress: 55%");
+    const saved = toast.items.find((row) => row.message === "Progress: p. 220 · 55%");
     expect(saved?.action?.label).toBe("Undo");
+    // Back to the place before: it was saved in percent, so the percent comes back.
+    api.patchShelf.mockClear();
+    api.patchShelf.mockResolvedValue({ ...entry });
+    await toast.run(saved!.id);
+    await flushPromises();
+    expect(api.patchShelf).toHaveBeenCalledWith(5, { progress: 30 });
   });
 
   it("undoes a save on the book it was made for, even after a chip swap", async () => {
@@ -202,7 +209,7 @@ describe("HomeHero", () => {
       pickOf({
         on_shelf: "currently_reading",
         shelf_id: 5,
-        readers: [{ username: "ada", status: "currently_reading", rating: null, take: "", dnf_reason: "", progress: 30, avatar_url: null }],
+        readers: [{ username: "ada", status: "currently_reading", rating: null, take: "", dnf_reason: "", progress: 30, current_page: null, progress_pages: null, avatar_url: null }],
       }),
     );
     await wrapper.get(".progress-trigger").trigger("click");

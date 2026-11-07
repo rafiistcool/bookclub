@@ -299,6 +299,7 @@ async function confirmRemove() {
           take: item.take,
           dnf_reason: item.dnf_reason,
           progress: item.progress,
+          current_page: item.current_page,
         });
         if (coverKey) {
           try {

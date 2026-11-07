@@ -341,10 +341,35 @@ describe("ShelfPage favourites portrait", () => {
       take: "A storm of a book.",
       dnf_reason: "",
       progress: null,
+      current_page: null,
     });
     expect(myShelf).toHaveBeenCalledTimes(2);
     // The standard cover needs no choice.
     expect(chooseCover).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("puts back the page a reader was on with Undo, not a page rounded from the percent", async () => {
+    const reading = shelfItem({
+      id: 1,
+      status: "currently_reading",
+      progress: 62,
+      current_page: 208,
+      book: { title: "Circe", pages: 334 },
+    });
+    const wrapper = await mountShelf([], [reading]);
+    await wrapper.findAll("button.shelf-status")[0]!.trigger("click");
+    await wrapper.findAll(".sheet button").find((button) => button.text() === "Remove")!.trigger("click");
+    removeFromShelf.mockResolvedValue(undefined);
+    await wrapper.findAll(".sheet .btn-danger").find((button) => button.text() === "Remove")!.trigger("click");
+    await flushPromises();
+    addToShelf.mockResolvedValue(reading);
+    myShelf.mockResolvedValue({ timezone: "UTC", user: { id: 1, username: "ada", avatar_url: null }, items: [reading], favorites: [] });
+    await useToast().run(useToast().items.at(-1)!.id);
+    await flushPromises();
+    expect(addToShelf).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "currently_reading", progress: 62, current_page: 208 }),
+    );
     wrapper.unmount();
   });
 

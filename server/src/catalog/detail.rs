@@ -84,6 +84,11 @@ pub struct BookDetailOut {
     pub take: String,
     pub dnf_reason: String,
     pub progress: Option<i32>,
+    /// The page the viewer is on, while reading in pages (`ShelfItemOut.current_page`).
+    pub current_page: Option<i32>,
+    /// The page count the viewer's progress counts in: the edition on their entry's, else the
+    /// work's (`pages`). Null when unknown or the work is not on their shelf.
+    pub progress_pages: Option<i32>,
     /// Everyone else in the viewer's audience with this work on their shelf, by username.
     pub readers: Vec<BookReader>,
     /// The mean of the finished ratings the viewer may see (their own included), one decimal,
@@ -121,7 +126,8 @@ pub async fn book_detail(
     // The viewer's own entry: their data, no policy needed.
     let own = sqlx::query!(
         r#"SELECT id, status AS "status: ShelfStatus", edition_id, rating,
-                  rating_visibility AS "rating_visibility: Visibility", take, dnf_reason, progress
+                  rating_visibility AS "rating_visibility: Visibility", take, dnf_reason, progress,
+                  current_page
            FROM shelf_entries WHERE user_id = $1 AND work_id = $2"#,
         viewer,
         work_id
@@ -131,6 +137,7 @@ pub async fn book_detail(
     // The viewer's cover: their choice, else their edition's cover, else the work's (the
     // edition's title and pages stay out: the page is the work's).
     let mut cover = book.clone();
+    let mut progress_pages = own.as_ref().and(book.pages);
     if let Some(edition_id) = own.as_ref().and_then(|entry| entry.edition_id)
         && let Some(edition) = book_out(
             conn,
@@ -141,6 +148,7 @@ pub async fn book_detail(
         )
         .await?
     {
+        progress_pages = edition.pages;
         cover = edition;
     }
     let personal = match &own {
@@ -239,6 +247,8 @@ pub async fn book_detail(
             .map(|e| e.dnf_reason.clone())
             .unwrap_or_default(),
         progress: own.as_ref().and_then(|entry| entry.progress),
+        current_page: own.as_ref().and_then(|entry| entry.current_page),
+        progress_pages,
         readers,
         club_rating,
         rating_count: ratings.count,

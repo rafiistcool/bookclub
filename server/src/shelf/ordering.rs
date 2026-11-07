@@ -3,7 +3,8 @@
 //! writes the result back in one transaction.
 //!
 //! - [`apply_finish_fields`], [`apply_progress`] and [`apply_reading_dates`] port
-//!   `shelf_ops.py` field by field.
+//!   `shelf_ops.py` field by field. [`apply_page`] is new: progress in pages
+//!   (docs/phase3/notes/reading-trust.md).
 //! - [`column_order`] is the `position` half of `place_item`: the order of one (user, status)
 //!   column after the item is inserted.
 //! - [`shelf_order`] is `place_on_shelf`: the free order across every status.
@@ -20,18 +21,21 @@ pub struct StatusFields {
     pub take: String,
     pub dnf_reason: String,
     pub progress: Option<i32>,
+    /// The page the reader is on; only with a known page count, and `progress` is derived from it.
+    pub current_page: Option<i32>,
     pub started_at: Option<OffsetDateTime>,
     pub finished_at: Option<OffsetDateTime>,
 }
 
 impl StatusFields {
-    /// A new entry: no rating, take, reason, progress or dates.
+    /// A new entry: no rating, take, reason, progress, page or dates.
     pub fn empty() -> Self {
         Self {
             rating: None,
             take: String::new(),
             dnf_reason: String::new(),
             progress: None,
+            current_page: None,
             started_at: None,
             finished_at: None,
         }
@@ -78,13 +82,51 @@ pub fn apply_finish_fields(
     }
 }
 
-/// `apply_progress`: progress is kept only while the book is being read.
+/// `apply_progress`: progress is kept only while the book is being read, and so is the page.
 pub fn apply_progress(fields: &mut StatusFields, status: ShelfStatus, progress: Option<i32>) {
-    fields.progress = if status == ShelfStatus::CurrentlyReading {
-        progress
+    if status == ShelfStatus::CurrentlyReading {
+        fields.progress = progress;
     } else {
-        None
-    };
+        fields.progress = None;
+        fields.current_page = None;
+    }
+}
+
+/// The percent read at `page` of `pages` (both at least 0 and 1): the nearest whole percent, but
+/// 100 only on the last page and 1 from the first page on, so a page that was read never shows
+/// as nothing and a page short of the end never as finished.
+pub fn page_percent(page: i32, pages: i32) -> i32 {
+    let pages = pages.max(1);
+    let page = page.clamp(0, pages);
+    if page == pages {
+        return 100;
+    }
+    if page == 0 {
+        return 0;
+    }
+    let rounded = (i64::from(page) * 100 + i64::from(pages) / 2) / i64::from(pages);
+    // 0 < page < pages, so the result lies in 1..=99 and fits.
+    i32::try_from(rounded.clamp(1, 99)).unwrap_or(99)
+}
+
+/// `apply_page`: the reader's page while reading a book of `pages` pages. With a page count the
+/// page is clamped to it and `progress` becomes [`page_percent`]; without one (or without a
+/// page) the page is dropped and `progress` stays as it is: the percent holds the position.
+pub fn apply_page(
+    fields: &mut StatusFields,
+    status: ShelfStatus,
+    page: Option<i32>,
+    pages: Option<i32>,
+) {
+    let pages = pages.filter(|&pages| pages > 0);
+    match (page, pages) {
+        (Some(page), Some(pages)) if status == ShelfStatus::CurrentlyReading => {
+            let page = page.clamp(0, pages);
+            fields.current_page = Some(page);
+            fields.progress = Some(page_percent(page, pages));
+        }
+        _ => fields.current_page = None,
+    }
 }
 
 /// `apply_reading_dates`: stamps `started_at` and `finished_at` for an entry that lands in
@@ -178,6 +220,7 @@ mod tests {
             take: "Fine".into(),
             dnf_reason: "Too grim".into(),
             progress: Some(50),
+            current_page: None,
             started_at: Some(EARLIER),
             finished_at: Some(EARLIER),
         }
@@ -237,12 +280,68 @@ mod tests {
     }
 
     #[test]
+    fn a_page_sets_the_percent_and_is_clamped_to_the_page_count() {
+        let mut fields = StatusFields::empty();
+        apply_page(
+            &mut fields,
+            ShelfStatus::CurrentlyReading,
+            Some(208),
+            Some(334),
+        );
+        assert_eq!(
+            (fields.current_page, fields.progress),
+            (Some(208), Some(62))
+        );
+        apply_page(
+            &mut fields,
+            ShelfStatus::CurrentlyReading,
+            Some(999),
+            Some(334),
+        );
+        assert_eq!(
+            (fields.current_page, fields.progress),
+            (Some(334), Some(100))
+        );
+        apply_page(
+            &mut fields,
+            ShelfStatus::CurrentlyReading,
+            Some(-3),
+            Some(334),
+        );
+        assert_eq!((fields.current_page, fields.progress), (Some(0), Some(0)));
+    }
+
+    #[test]
+    fn without_a_page_count_the_percent_holds_the_position() {
+        let mut fields = StatusFields::empty();
+        fields.progress = Some(40);
+        fields.current_page = Some(12);
+        apply_page(&mut fields, ShelfStatus::CurrentlyReading, Some(120), None);
+        assert_eq!((fields.current_page, fields.progress), (None, Some(40)));
+        apply_page(&mut fields, ShelfStatus::Finished, Some(120), Some(300));
+        assert_eq!(fields.current_page, None);
+    }
+
+    #[test]
+    fn the_page_percent_is_whole_and_honest_at_both_ends() {
+        assert_eq!(page_percent(207, 334), 62);
+        assert_eq!(page_percent(218, 334), 65);
+        assert_eq!(page_percent(1, 334), 1, "a page read is never 0 %");
+        assert_eq!(page_percent(333, 334), 99, "a page short is never 100 %");
+        assert_eq!(page_percent(334, 334), 100);
+        assert_eq!(page_percent(0, 334), 0);
+        assert_eq!(page_percent(1, 1), 100);
+    }
+
+    #[test]
     fn progress_is_kept_only_while_reading() {
         let mut fields = StatusFields::empty();
         apply_progress(&mut fields, ShelfStatus::CurrentlyReading, Some(35));
         assert_eq!(fields.progress, Some(35));
+        fields.current_page = Some(70);
         apply_progress(&mut fields, ShelfStatus::Finished, Some(35));
         assert_eq!(fields.progress, None);
+        assert_eq!(fields.current_page, None);
     }
 
     #[test]

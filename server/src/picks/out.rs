@@ -58,6 +58,10 @@ pub struct ClubPickReader {
     pub take: String,
     pub dnf_reason: String,
     pub progress: Option<i32>,
+    /// The page the reader is on, while reading in pages (`ShelfItemOut.current_page`).
+    pub current_page: Option<i32>,
+    /// The page count the reader's progress counts in: their edition's, else the work's.
+    pub progress_pages: Option<i32>,
     /// `/media/{public_id}/a`.
     pub avatar_url: Option<String>,
 }
@@ -222,8 +226,12 @@ async fn readers(
     let rows = sqlx::query!(
         r#"SELECT s.user_id AS "user_id!", u.username, s.status AS "status!: ShelfStatus",
                   s.rating, s.take AS "take!", s.dnf_reason AS "dnf_reason!", s.progress,
+                  raw.current_page, coalesce(e.pages, w.pages) AS progress_pages,
                   med.public_id AS "avatar_public_id?"
            FROM bc_visible_shelf($1) s
+           JOIN shelf_entries raw ON raw.id = s.id
+           JOIN works w ON w.id = s.work_id
+           LEFT JOIN editions e ON e.id = s.edition_id
            JOIN club_memberships m ON m.club_id = $2 AND m.user_id = s.user_id
            JOIN users u ON u.id = s.user_id
            LEFT JOIN media med ON med.id = u.avatar_media_id AND med.removed_at IS NULL
@@ -248,6 +256,8 @@ async fn readers(
             take: row.take,
             dnf_reason: row.dnf_reason,
             progress: row.progress,
+            current_page: row.current_page,
+            progress_pages: row.progress_pages,
             avatar_url: avatar_url(row.avatar_public_id.as_deref()),
         })
         .collect())

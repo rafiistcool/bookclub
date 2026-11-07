@@ -2,7 +2,15 @@
 import { nextTick, onBeforeUnmount, onMounted, onUnmounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
-defineProps<{ title: string }>();
+const props = defineProps<{
+  title: string;
+  /**
+   * The sheet holds a change made without typing (a stepper, a slider moved
+   * by script): a drag springs back as after an edit. Typing and choosing set
+   * that on their own (`input`, `change`).
+   */
+  dirty?: boolean;
+}>();
 
 const emit = defineEmits<{ close: [] }>();
 const { t } = useI18n();
@@ -68,6 +76,11 @@ function onEdit() {
   edited = true;
 }
 
+/** A drag only gives a little and springs back: something in the sheet would be lost. */
+function holding(): boolean {
+  return edited || Boolean(props.dirty);
+}
+
 function setOffset(y: number) {
   offset = Math.max(0, y);
   if (!panel.value || !backdrop.value) return;
@@ -92,7 +105,7 @@ function move(y: number): boolean {
   if (!dragging) {
     // In the body a drag only starts downward from the top; anything else
     // is the body's own scroll.
-    if (!fromBody || edited || dy < 8 || (panel.value?.scrollTop ?? 0) > 0) return false;
+    if (!fromBody || holding() || dy < 8 || (panel.value?.scrollTop ?? 0) > 0) return false;
     dragging = true;
     dragStartY = y;
   }
@@ -100,7 +113,7 @@ function move(y: number): boolean {
   dragLastY = y;
   dragLastT = now;
   const pulled = y - dragStartY;
-  setOffset(edited ? Math.min(48, pulled * 0.25) : pulled);
+  setOffset(holding() ? Math.min(48, pulled * 0.25) : pulled);
   return true;
 }
 
@@ -110,7 +123,7 @@ async function end() {
   const height = panel.value?.offsetHeight ?? 0;
   // A flick counts only if the finger was still moving when it let go.
   const flick = velocity > 0.6 && offset > 40 && performance.now() - dragLastT < 100;
-  if (!edited && (offset > Math.min(160, height / 3) || flick)) {
+  if (!holding() && (offset > Math.min(160, height / 3) || flick)) {
     emit("close");
     // A parent may refuse to close (it is still saving); then come back up.
     await nextTick();

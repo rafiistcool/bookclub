@@ -19,7 +19,7 @@ use super::cover::{apply_personal_cover, personal_covers};
 use super::favorites::{FavoriteOut, favorite_outs};
 use super::layout::remove_from_layout;
 use super::ordering::{
-    ShelfSlot, StatusFields, apply_finish_fields, apply_progress, apply_reading_dates,
+    ShelfSlot, StatusFields, apply_finish_fields, apply_page, apply_progress, apply_reading_dates,
     column_order, shelf_order,
 };
 use super::{OwnerQuery, lock_user, resolve_owner};
@@ -42,6 +42,8 @@ pub const TAKE_TOO_LONG: &str = "Keep the take to 140 characters";
 pub const REASON_TOO_LONG: &str = "Keep the reason to 200 characters";
 const MAX_TAKE_CHARS: usize = 140;
 const MAX_REASON_CHARS: usize = 200;
+/// The longest book the catalog knows (`works.pages`, `editions.pages`).
+const MAX_PAGE: i64 = 100_000;
 
 /// One entry of a shelf. For anyone but the owner, an `only_me` rating is redacted: `rating`
 /// null, `take` empty and `rating_visibility` null.
@@ -75,8 +77,12 @@ pub struct ShelfItemOut {
     pub take: String,
     /// At most 200 characters, only for books not finished; `""` when there is none.
     pub dnf_reason: String,
-    /// Percent read, only while reading.
+    /// Percent read, only while reading. Derived from `current_page` when the reader counts in
+    /// pages.
     pub progress: Option<i32>,
+    /// The page the reader is on, only while reading a book with a page count (`book.pages`:
+    /// the edition's, else the work's); null when they count in percent.
+    pub current_page: Option<i32>,
 }
 
 /// A user's whole shelf and favourites.
@@ -118,6 +124,11 @@ pub struct ShelfAddIn {
     /// 0 to 100; kept only for `currently_reading`.
     #[serde(default)]
     pub progress: Option<i32>,
+    /// The page the reader is on (0 or more), kept only for `currently_reading`. As in the
+    /// PATCH: with a page count (the edition's, else the work's) it is clamped to it and sets
+    /// `progress`, which it wins over; without one it is dropped.
+    #[serde(default)]
+    pub current_page: Option<i32>,
 }
 
 fn want_to_read() -> ShelfStatus {
@@ -130,6 +141,7 @@ impl Validate for ShelfAddIn {
         self.take = checked_text(&self.take, MAX_TAKE_CHARS, TAKE_TOO_LONG, v);
         self.dnf_reason = checked_text(&self.dnf_reason, MAX_REASON_CHARS, REASON_TOO_LONG, v);
         v.range_i64(self.progress.map(i64::from), 0, 100);
+        v.range_i64(self.current_page.map(i64::from), 0, MAX_PAGE);
     }
 }
 
@@ -161,10 +173,18 @@ pub struct ShelfPatchIn {
     #[serde(default)]
     #[schema(value_type = Option<String>)]
     pub dnf_reason: Patch<String>,
+    /// 0 to 100, kept only while reading. Alone (without `current_page`) it replaces the page.
     #[serde(default)]
     #[schema(value_type = Option<i32>)]
     pub progress: Patch<i32>,
-    /// An edition of the entry's work; null clears it.
+    /// The page the reader is on (0 or more), kept only while reading. With a page count (the
+    /// entry's edition's, else the work's) it is clamped to it and sets `progress`, which wins
+    /// over a `progress` sent with it; without one it is dropped. Null clears the page.
+    #[serde(default)]
+    #[schema(value_type = Option<i32>)]
+    pub current_page: Patch<i32>,
+    /// An edition of the entry's work; null clears it. Another edition drops a stored page (the
+    /// percent stays), unless `current_page` is sent with it.
     #[serde(default)]
     #[schema(value_type = Option<i64>)]
     pub edition_id: Patch<i64>,
@@ -192,6 +212,9 @@ impl Validate for ShelfPatchIn {
         if let Patch::Value(progress) = self.progress {
             v.range_i64(Some(progress.into()), 0, 100);
         }
+        if let Patch::Value(page) = self.current_page {
+            v.range_i64(Some(page.into()), 0, MAX_PAGE);
+        }
     }
 }
 
@@ -206,6 +229,7 @@ impl ShelfPatchIn {
             && self.take.is_missing()
             && self.dnf_reason.is_missing()
             && self.progress.is_missing()
+            && self.current_page.is_missing()
             && self.finished_on.is_missing()
             && self.edition_id.is_missing()
             && self.rating_visibility.is_none()
@@ -225,6 +249,7 @@ impl ShelfPatchIn {
                 && self.take.is_missing()
                 && self.dnf_reason.is_missing()
                 && self.progress.is_missing()
+                && self.current_page.is_missing()
                 && self.finished_on.is_missing()
                 && self.edition_id.is_missing())
     }
@@ -328,6 +353,11 @@ async fn add_entry(
         Some(&body.dnf_reason),
     );
     apply_progress(&mut fields, status, body.progress);
+    if body.current_page.is_some() {
+        // The page wins over a percent sent with it (an Undo brings back both).
+        let pages = page_count(conn, work_id, body.edition_id).await?;
+        apply_page(&mut fields, status, body.current_page, pages);
+    }
     apply_reading_dates(&mut fields, status, false, now);
     let entry = NewEntry {
         user_id,
@@ -377,8 +407,8 @@ pub(super) async fn insert_entry(
     let id = sqlx::query_scalar!(
         "INSERT INTO shelf_entries (user_id, work_id, edition_id, status, position, rating,
                                     rating_visibility, take, dnf_reason, progress, updated_at,
-                                    started_at, finished_at)
-         VALUES ($1, $2, $3, $4, 0, $5, $6, $7, $8, $9, $10, $11, $12)
+                                    started_at, finished_at, current_page)
+         VALUES ($1, $2, $3, $4, 0, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          ON CONFLICT ON CONSTRAINT shelf_entries_user_work_key DO NOTHING
          RETURNING id",
         entry.user_id,
@@ -392,7 +422,8 @@ pub(super) async fn insert_entry(
         fields.progress,
         entry.now,
         fields.started_at,
-        fields.finished_at
+        fields.finished_at,
+        fields.current_page
     )
     .fetch_optional(&mut *conn)
     .await?;
@@ -508,13 +539,32 @@ async fn patch_entry(
             dnf_reason.as_deref(),
         );
     }
+    let edition_changed = match body.edition_id.into_option() {
+        Some(edition_id) => {
+            let changed = edition_id != entry.edition_id;
+            entry.edition_id = edition_id;
+            changed
+        }
+        None => false,
+    };
     let progress_sent = !body.progress.is_missing();
+    let page_sent = !body.current_page.is_missing();
     if body.status.is_some() || progress_sent {
         let progress = keep_or(body.progress, entry.fields.progress);
         apply_progress(&mut entry.fields, status, progress);
+        if progress_sent && !page_sent {
+            // A percent on its own is the reader's position now; an older page would contradict it.
+            entry.fields.current_page = None;
+        }
     }
-    if let Some(edition_id) = body.edition_id.into_option() {
-        entry.edition_id = edition_id;
+    if page_sent {
+        // The page wins over a percent sent with it.
+        let page = keep_or(body.current_page, entry.fields.current_page);
+        let pages = page_count(conn, entry.work_id, entry.edition_id).await?;
+        apply_page(&mut entry.fields, status, page, pages);
+    } else if edition_changed {
+        // A page of one edition is no page of another: the percent holds the position.
+        entry.fields.current_page = None;
     }
     if let Some(visibility) = body.rating_visibility {
         entry.rating_visibility = visibility;
@@ -555,7 +605,7 @@ async fn patch_entry(
     } else if entry.status == ShelfStatus::Finished && finish_notes(&entry) != previous_notes {
         refresh_finished_event(conn, &entry).await?;
     } else if entry.status == ShelfStatus::CurrentlyReading
-        && progress_sent
+        && (progress_sent || page_sent)
         && entry.fields.progress.is_some()
         && entry.fields.progress != previous_progress
     {
@@ -569,6 +619,24 @@ async fn patch_entry(
         .await?;
     }
     Ok(())
+}
+
+/// The page count a reader's page counts against: the edition's, else the work's.
+pub async fn page_count(
+    conn: &mut PgConnection,
+    work_id: i64,
+    edition_id: Option<i64>,
+) -> sqlx::Result<Option<i32>> {
+    sqlx::query_scalar!(
+        "SELECT coalesce(e.pages, w.pages) FROM works w
+         LEFT JOIN editions e ON e.id = $2 AND e.work_id = w.id
+         WHERE w.id = $1",
+        work_id,
+        edition_id
+    )
+    .fetch_optional(conn)
+    .await
+    .map(Option::flatten)
 }
 
 /// The value a PATCH field leaves: the current one when absent, else the sent one (null clears).
@@ -647,7 +715,7 @@ async fn load_entry(
     let row = sqlx::query!(
         r#"SELECT id, user_id, work_id, edition_id, status AS "status: ShelfStatus", position,
                   shelf_position, rating, rating_visibility AS "rating_visibility: Visibility",
-                  take, dnf_reason, progress, updated_at, started_at, finished_at
+                  take, dnf_reason, progress, current_page, updated_at, started_at, finished_at
            FROM shelf_entries
            WHERE id = $1 AND user_id = $2"#,
         entry_id,
@@ -670,6 +738,7 @@ async fn load_entry(
             take: row.take,
             dnf_reason: row.dnf_reason,
             progress: row.progress,
+            current_page: row.current_page,
             started_at: row.started_at,
             finished_at: row.finished_at,
         },
@@ -682,7 +751,7 @@ async fn save_entry(conn: &mut PgConnection, entry: &Entry) -> sqlx::Result<()> 
         "UPDATE shelf_entries
          SET edition_id = $2, status = $3, position = $4, shelf_position = $5, rating = $6,
              rating_visibility = $7, take = $8, dnf_reason = $9, progress = $10, updated_at = $11,
-             started_at = $12, finished_at = $13
+             started_at = $12, finished_at = $13, current_page = $14
          WHERE id = $1",
         entry.id,
         entry.edition_id,
@@ -696,7 +765,8 @@ async fn save_entry(conn: &mut PgConnection, entry: &Entry) -> sqlx::Result<()> 
         entry.fields.progress,
         entry.updated_at,
         entry.fields.started_at,
-        entry.fields.finished_at
+        entry.fields.finished_at,
+        entry.fields.current_page
     )
     .execute(conn)
     .await?;
@@ -971,8 +1041,9 @@ pub async fn item_outs(
                   s.status AS "status!: ShelfStatus", s."position" AS "position!",
                   s.shelf_position, s.rating, s.rating_visibility AS "rating_visibility: Visibility",
                   s.take AS "take!", s.dnf_reason AS "dnf_reason!", s.progress,
-                  s.updated_at AS "updated_at!", s.started_at, s.finished_at
+                  raw.current_page, s.updated_at AS "updated_at!", s.started_at, s.finished_at
            FROM bc_visible_shelf($1) AS s
+           JOIN shelf_entries AS raw ON raw.id = s.id
            WHERE s.user_id = $2 AND ($3::int8[] IS NULL OR s.id = ANY($3))
            ORDER BY s.status COLLATE "C", s."position", s.id"#,
         viewer,
@@ -1020,6 +1091,7 @@ pub async fn item_outs(
                 take: row.take,
                 dnf_reason: row.dnf_reason,
                 progress: row.progress,
+                current_page: row.current_page,
             })
         })
         .collect())

@@ -128,7 +128,8 @@ async fn add_move_remove_and_unique(db: PgPool) {
             "rating_visibility": "audience",
             "take": "",
             "dnf_reason": "",
-            "progress": null
+            "progress": null,
+            "current_page": null
         })
     );
     assert!(item["updated_at"].as_str().unwrap().ends_with('Z'));
@@ -1176,4 +1177,315 @@ async fn the_shelf_needs_a_session(db: PgPool) {
     anon.delete("/api/shelf/1")
         .await
         .assert_detail(401, "Not signed in");
+}
+
+/// Sets the page count of a work (`edition` None) or of an edition.
+async fn set_pages(app: &TestApp, table: &str, id: i64, pages: Option<i32>) {
+    let pages = pages.map_or("NULL".to_owned(), |n| n.to_string());
+    app.exec(&format!(
+        "UPDATE {table} SET pages = {pages} WHERE id = {id}"
+    ))
+    .await;
+}
+
+/// Progress in pages (docs/phase3/notes/reading-trust.md): with a page count the server keeps
+/// the page and derives the percent, so one page more is a change the reader sees; past the
+/// last page is the last page; a percent alone replaces the page.
+#[sqlx::test]
+async fn a_page_is_kept_and_sets_the_percent(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let (ada, grace) = friends(&app).await;
+    let circe = circe(&app).await;
+    set_pages(&app, "works", circe.id, Some(334)).await;
+    let item = add(&ada, &circe, json!({"status": "currently_reading"})).await;
+
+    let at = patch(&ada, &item["id"], json!({"current_page": 207})).await;
+    assert_eq!(
+        (&at["current_page"], &at["progress"]),
+        (&json!(207), &json!(62))
+    );
+    // The critique's case: 208 is still 62 %, but the page is the reader's, not a rounding.
+    let next = patch(&ada, &item["id"], json!({"current_page": 208})).await;
+    assert_eq!(
+        (&next["current_page"], &next["progress"]),
+        (&json!(208), &json!(62))
+    );
+    let typed = patch(&ada, &item["id"], json!({"current_page": 218})).await;
+    assert_eq!(
+        typed["current_page"], 218,
+        "a typed page comes back as typed"
+    );
+    // The others see the page too: it is shelf state, like the percent.
+    let seen = items(&grace, Some("ada")).await;
+    assert_eq!(
+        (&seen[0]["current_page"], &seen[0]["progress"]),
+        (&json!(218), &json!(65))
+    );
+
+    let past = patch(&ada, &item["id"], json!({"current_page": 999})).await;
+    assert_eq!(
+        (&past["current_page"], &past["progress"]),
+        (&json!(334), &json!(100))
+    );
+    let short = patch(&ada, &item["id"], json!({"current_page": 333})).await;
+    assert_eq!(
+        short["progress"], 99,
+        "a page short of the end is not finished"
+    );
+
+    // A page wins over a percent sent with it; a percent alone replaces the page.
+    let both = patch(
+        &ada,
+        &item["id"],
+        json!({"current_page": 100, "progress": 10}),
+    )
+    .await;
+    assert_eq!(
+        (&both["current_page"], &both["progress"]),
+        (&json!(100), &json!(30))
+    );
+    let percent = patch(&ada, &item["id"], json!({"progress": 40})).await;
+    assert_eq!(
+        (&percent["current_page"], &percent["progress"]),
+        (&Value::Null, &json!(40))
+    );
+    let again = patch(&ada, &item["id"], json!({"current_page": 150})).await;
+    let cleared = patch(&ada, &again["id"], json!({"current_page": null})).await;
+    assert_eq!(
+        (&cleared["current_page"], &cleared["progress"]),
+        (&Value::Null, &json!(45))
+    );
+
+    // Leaving the book clears the page with the percent (the CHECK holds it to reading).
+    patch(&ada, &item["id"], json!({"current_page": 150})).await;
+    let finished = patch(&ada, &item["id"], json!({"status": "finished"})).await;
+    assert_eq!(
+        (&finished["current_page"], &finished["progress"]),
+        (&Value::Null, &Value::Null)
+    );
+    // A page sent with another status is dropped, like progress.
+    let wants = patch(
+        &ada,
+        &item["id"],
+        json!({"status": "want_to_read", "current_page": 9}),
+    )
+    .await;
+    assert_eq!(wants["current_page"], Value::Null);
+    // Back to reading with a page in one PATCH.
+    let back = patch(
+        &ada,
+        &item["id"],
+        json!({"status": "currently_reading", "current_page": 167}),
+    )
+    .await;
+    assert_eq!(
+        (&back["current_page"], &back["progress"]),
+        (&json!(167), &json!(50))
+    );
+}
+
+/// Without a page count the percent holds the position: a page is dropped and the percent
+/// stays. The edition's page count wins over the work's; another edition drops the page.
+#[sqlx::test]
+async fn the_page_counts_against_the_edition_else_the_work(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let circe = circe(&app).await;
+    let edition = app.edition(&circe, "9780316556347").await;
+    set_pages(&app, "works", circe.id, None).await;
+    set_pages(&app, "editions", edition.id, None).await;
+    let item = add(
+        &ada,
+        &circe,
+        json!({"status": "currently_reading", "progress": 30}),
+    )
+    .await;
+
+    let unknown = patch(&ada, &item["id"], json!({"current_page": 50})).await;
+    assert_eq!(
+        (&unknown["current_page"], &unknown["progress"]),
+        (&Value::Null, &json!(30))
+    );
+    let sent = patch(
+        &ada,
+        &item["id"],
+        json!({"current_page": 50, "progress": 35}),
+    )
+    .await;
+    assert_eq!(
+        (&sent["current_page"], &sent["progress"]),
+        (&Value::Null, &json!(35))
+    );
+
+    set_pages(&app, "works", circe.id, Some(400)).await;
+    set_pages(&app, "editions", edition.id, Some(200)).await;
+    let work = patch(&ada, &item["id"], json!({"current_page": 100})).await;
+    assert_eq!(
+        work["progress"], 25,
+        "the work's 400 pages without an edition"
+    );
+    let both = patch(
+        &ada,
+        &item["id"],
+        json!({"edition_id": edition.id, "current_page": 100}),
+    )
+    .await;
+    assert_eq!(both["book"]["pages"], 200);
+    assert_eq!(
+        (&both["current_page"], &both["progress"]),
+        (&json!(100), &json!(50))
+    );
+    // Another edition: a page of one is no page of the other, the percent stays.
+    let other = patch(&ada, &item["id"], json!({"edition_id": null})).await;
+    assert_eq!(
+        (&other["current_page"], &other["progress"]),
+        (&Value::Null, &json!(50))
+    );
+
+    // The book page and the club's readers carry the page and the count it is in.
+    patch(
+        &ada,
+        &item["id"],
+        json!({"edition_id": edition.id, "current_page": 40}),
+    )
+    .await;
+    let detail = ada.get(&format!("/api/books/works/{}", circe.id)).await;
+    detail.assert_status(200);
+    let detail = detail.json();
+    assert_eq!(
+        (
+            &detail["pages"],
+            &detail["progress_pages"],
+            &detail["current_page"],
+            &detail["progress"]
+        ),
+        (&json!(400), &json!(200), &json!(40), &json!(20))
+    );
+    let club = app.club(&ada, "Readers").await;
+    ada.put(
+        &format!("/api/clubs/{}/pick", club.slug),
+        json!({"work_id": circe.id}),
+    )
+    .await
+    .assert_status(200);
+    let pick = ada.get(&format!("/api/clubs/{}/pick", club.slug)).await;
+    pick.assert_status(200);
+    let me = &pick.json()["pick"]["readers"][0];
+    assert_eq!(
+        (&me["current_page"], &me["progress_pages"], &me["progress"]),
+        (&json!(40), &json!(200), &json!(20))
+    );
+}
+
+/// An Undo of a removal adds the entry again with the page it had: the page comes back as it
+/// was, not as a page rounded from the percent; without a page count it is dropped.
+#[sqlx::test]
+async fn an_add_keeps_the_page_it_brings(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let circe = circe(&app).await;
+    set_pages(&app, "works", circe.id, Some(334)).await;
+    let back = add(
+        &ada,
+        &circe,
+        json!({"status": "currently_reading", "progress": 62, "current_page": 208}),
+    )
+    .await;
+    assert_eq!(
+        (&back["current_page"], &back["progress"]),
+        (&json!(208), &json!(62))
+    );
+    ada.delete(&format!("/api/shelf/{}", back["id"]))
+        .await
+        .assert_status(204);
+    // The page wins over a percent sent with it, and is clamped to the page count.
+    let past = add(
+        &ada,
+        &circe,
+        json!({"status": "currently_reading", "progress": 10, "current_page": 999}),
+    )
+    .await;
+    assert_eq!(
+        (&past["current_page"], &past["progress"]),
+        (&json!(334), &json!(100))
+    );
+    ada.delete(&format!("/api/shelf/{}", past["id"]))
+        .await
+        .assert_status(204);
+    // Kept only while reading, like progress.
+    let wants = add(
+        &ada,
+        &circe,
+        json!({"status": "want_to_read", "current_page": 9}),
+    )
+    .await;
+    assert_eq!(
+        (&wants["current_page"], &wants["progress"]),
+        (&Value::Null, &Value::Null)
+    );
+    ada.delete(&format!("/api/shelf/{}", wants["id"]))
+        .await
+        .assert_status(204);
+    ada.post(
+        "/api/shelf",
+        json!({"work_id": circe.id, "current_page": -1}),
+    )
+    .await
+    .assert_status(400);
+    set_pages(&app, "works", circe.id, None).await;
+    let unknown = add(
+        &ada,
+        &circe,
+        json!({"status": "currently_reading", "progress": 30, "current_page": 50}),
+    )
+    .await;
+    assert_eq!(
+        (&unknown["current_page"], &unknown["progress"]),
+        (&Value::Null, &json!(30))
+    );
+}
+
+/// A page is validated like progress, and alone it is something to update.
+#[sqlx::test]
+async fn invalid_page(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let item = add(
+        &ada,
+        &circe(&app).await,
+        json!({"status": "currently_reading"}),
+    )
+    .await;
+    let path = format!("/api/shelf/{}", item["id"]);
+    ada.patch(&path, json!({"current_page": -1}))
+        .await
+        .assert_status(400);
+    ada.patch(&path, json!({"current_page": 100_001}))
+        .await
+        .assert_status(400);
+    ada.patch(&path, json!({"current_page": "12"}))
+        .await
+        .assert_status(400);
+    patch(&ada, &item["id"], json!({"current_page": 0})).await;
+}
+
+/// A page records a `progress` event only when it moves the percent: one page more that stays
+/// at 62 % tells the feeds nothing new.
+#[sqlx::test]
+async fn a_page_records_progress_only_when_the_percent_moves(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let circe = circe(&app).await;
+    set_pages(&app, "works", circe.id, Some(334)).await;
+    let item = add(&ada, &circe, json!({"status": "currently_reading"})).await;
+    patch(&ada, &item["id"], json!({"current_page": 207})).await;
+    patch(&ada, &item["id"], json!({"current_page": 208})).await;
+    patch(&ada, &item["id"], json!({"current_page": 218})).await;
+    let progress: Vec<Value> = events(&app, &ada)
+        .await
+        .into_iter()
+        .filter(|(kind, _)| kind == "progress")
+        .map(|(_, payload)| payload)
+        .collect();
+    assert_eq!(progress, [json!({"progress": 62}), json!({"progress": 65})]);
 }

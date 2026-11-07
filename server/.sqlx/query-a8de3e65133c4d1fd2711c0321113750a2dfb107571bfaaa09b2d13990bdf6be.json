@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, user_id, work_id, edition_id, status AS \"status: ShelfStatus\", position,\n                  shelf_position, rating, rating_visibility AS \"rating_visibility: Visibility\",\n                  take, dnf_reason, progress, updated_at, started_at, finished_at\n           FROM shelf_entries\n           WHERE id = $1 AND user_id = $2",
+  "query": "SELECT id, user_id, work_id, edition_id, status AS \"status: ShelfStatus\", position,\n                  shelf_position, rating, rating_visibility AS \"rating_visibility: Visibility\",\n                  take, dnf_reason, progress, current_page, updated_at, started_at, finished_at\n           FROM shelf_entries\n           WHERE id = $1 AND user_id = $2",
   "describe": {
     "columns": [
       {
@@ -137,6 +137,17 @@
       },
       {
         "ordinal": 12,
+        "name": "current_page",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "shelf_entries",
+            "name": "current_page"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -147,7 +158,7 @@
         }
       },
       {
-        "ordinal": 13,
+        "ordinal": 14,
         "name": "started_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -158,7 +169,7 @@
         }
       },
       {
-        "ordinal": 14,
+        "ordinal": 15,
         "name": "finished_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -188,10 +199,11 @@
       false,
       false,
       true,
+      true,
       false,
       true,
       true
     ]
   },
-  "hash": "b6fb07dc7bc54682e47ce339dc9e10a2e4d4aed02a4f6bc9c085181088459e53"
+  "hash": "a8de3e65133c4d1fd2711c0321113750a2dfb107571bfaaa09b2d13990bdf6be"
 }

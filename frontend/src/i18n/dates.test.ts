@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calendarDay, formatClubDate, formatDay, formatRelative } from "./dates";
+import { calendarDay, formatClubDate, formatDay, formatEventTime, formatRelative } from "./dates";
 
 // Friday 6 Nov 2026, 12:00 UTC (13:00 in Berlin).
 const NOW = Date.parse("2026-11-06T12:00:00Z");
@@ -90,5 +90,40 @@ describe("absolute dates stay", () => {
   it("formats the exact time with the zone and a day without it", () => {
     expect(formatClubDate("2026-11-06T17:21:00Z", "Europe/Berlin", "de")).toBe("Fr., 6. Nov. 2026, 18:21 MEZ");
     expect(formatDay("2026-03-12T10:00:00Z", "Europe/Berlin", "en")).toBe("12 Mar 2026");
+  });
+});
+
+describe("formatEventTime", () => {
+  const BERLIN = { viewerZone: "Europe/Berlin", now: NOW };
+
+  it("leaves out this year and the zone the viewer's clock already shows", () => {
+    expect(formatEventTime("2026-11-20T18:00:00Z", "Europe/Berlin", "de", BERLIN)).toBe("Fr., 20. Nov., 19:00");
+    expect(formatEventTime("2026-11-20T18:00:00Z", "Europe/Berlin", "en", BERLIN)).toBe("Fri 20 Nov, 19:00");
+    // Vienna keeps Berlin's clock: no zone either.
+    expect(formatEventTime("2026-11-20T18:00:00Z", "Europe/Vienna", "de", BERLIN)).toBe("Fr., 20. Nov., 19:00");
+  });
+
+  it("keeps the year of another year", () => {
+    expect(formatEventTime("2027-01-08T18:00:00Z", "Europe/Berlin", "de", BERLIN)).toBe("Fr., 8. Jan. 2027, 19:00");
+  });
+
+  it("names the club's zone when the viewer's clock differs", () => {
+    expect(formatEventTime("2026-11-20T18:00:00Z", "Europe/Berlin", "de", { viewerZone: "Europe/London", now: NOW })).toBe(
+      "Fr., 20. Nov., 19:00 MEZ",
+    );
+    expect(formatEventTime("2026-11-20T18:00:00Z", "America/New_York", "en", BERLIN)).toBe("Fri 20 Nov, 13:00 GMT-5");
+  });
+
+  it("gives nothing for no time or an unreadable one", () => {
+    expect(formatEventTime(null, "Europe/Berlin", "de", BERLIN)).toBe("");
+    expect(formatEventTime("soon", "Europe/Berlin", "de", BERLIN)).toBe("");
+  });
+});
+
+describe("formatDay with now", () => {
+  it("leaves out this year only when asked", () => {
+    expect(formatDay("2026-10-15T17:30:00Z", "Europe/Berlin", "en")).toBe("15 Oct 2026");
+    expect(formatDay("2026-10-15T17:30:00Z", "Europe/Berlin", "en", NOW)).toBe("15 Oct");
+    expect(formatDay("2025-10-15T17:30:00Z", "Europe/Berlin", "en", NOW)).toBe("15 Oct 2025");
   });
 });

@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT coalesce(e.pages, w.pages) FROM works w\n         LEFT JOIN editions e ON e.id = $2 AND e.work_id = w.id\n         WHERE w.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "coalesce",
+        "type_info": "Int4",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "5acd8bddd240e37cf9c616330697962bad4f73678d91edae442c21b152bf108d"
+}

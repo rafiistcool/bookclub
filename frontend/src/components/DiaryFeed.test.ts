@@ -80,12 +80,51 @@ describe("DiaryFeed (recently written)", () => {
 
   it("does not leak a spoiler-flagged excerpt when the viewer is behind", async () => {
     const wrapper = await mountClub([feedItem()]);
-    const row = wrapper.get(".feed-body");
-    expect(row.classes()).toContain("shielded");
-    expect(row.text()).toContain("spoiler-flagged");
-    expect(row.text()).toContain("Spoiler-flagged note");
-    expect(row.text()).not.toContain(SECRET);
+    expect(wrapper.find(".feed-body").exists()).toBe(false);
+    const guard = wrapper.get(".feed-guard");
+    expect(guard.get(".feed-guard-line").text()).toBe("Spoiler up to 80% · you're at 20%");
+    expect(guard.get(".feed-guard-hint").text()).toBe("Tap to read");
     expect(wrapper.html()).not.toContain(SECRET);
+    // A flagged post's line names the flag, so the foot keeps where its writer was.
+    expect(wrapper.get(".feed-foot").text()).toContain("at 80%");
+    // A tap shows the excerpt here, for this view.
+    await guard.trigger("click");
+    expect(wrapper.find(".feed-guard").exists()).toBe(false);
+    expect(wrapper.get(".feed-body").text()).toContain(SECRET);
+  });
+
+  it("folds an unflagged note written further on than the viewer is", async () => {
+    const wrapper = await mountClub([feedItem({ entry: { ...feedItem().entry, spoiler_upto: null } })]);
+    expect(wrapper.get(".feed-guard-line").text()).toBe("at 80% · you're at 20%");
+    expect(wrapper.html()).not.toContain(SECRET);
+    // The folded line says where the writer was; the foot does not say it again.
+    expect(wrapper.get(".feed-foot").text()).not.toContain("80%");
+    // Once read, the foot carries the marker again.
+    await wrapper.get(".feed-guard").trigger("click");
+    expect(wrapper.get(".feed-foot").text()).toContain("at 80%");
+    const caughtUp = await mountClub([
+      feedItem({ my_progress: 80, entry: { ...feedItem().entry, spoiler_upto: null } }),
+    ]);
+    expect(caughtUp.find(".feed-guard").exists()).toBe(false);
+    expect(caughtUp.get(".feed-body").text()).toContain(SECRET);
+  });
+
+  it("reads again when a reload comes while a page is loading", async () => {
+    let answer: (value: unknown) => void = () => {};
+    diaryFeed.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+    const wrapper = mount(DiaryFeed, { global: { plugins: [createPinia(), i18n], stubs: { BookCover: true } } });
+    // The viewer moved on while the first page was on its way: that page predates it.
+    diaryFeed.mockResolvedValue({
+      items: [feedItem({ my_progress: 80, entry: { ...feedItem().entry, spoiler_upto: null } })],
+      has_more: false,
+      timezone: "UTC",
+    });
+    await (wrapper.vm as unknown as { reload: () => Promise<void> }).reload();
+    answer({ items: [feedItem({ entry: { ...feedItem().entry, spoiler_upto: null } })], has_more: false, timezone: "UTC" });
+    await flushPromises();
+    expect(diaryFeed).toHaveBeenCalledTimes(2);
+    expect(wrapper.find(".feed-guard").exists()).toBe(false);
+    expect(wrapper.get(".feed-body").text()).toContain(SECRET);
   });
 
   it("still shows the excerpt to the writer", async () => {
@@ -97,14 +136,14 @@ describe("DiaryFeed (recently written)", () => {
       }),
     ]);
     const row = wrapper.get(".feed-body");
-    expect(row.classes()).not.toContain("shielded");
+    expect(wrapper.find(".feed-guard").exists()).toBe(false);
     expect(row.text()).toContain(SECRET);
   });
 
   it("unfolds a long note in place instead of only linking away", async () => {
     const long = `${"A thought that keeps going. ".repeat(8)}\nAnd a second paragraph.`;
     const wrapper = await mountClub([
-      feedItem({ entry: { ...feedItem().entry, body: long, spoiler_upto: null } }),
+      feedItem({ entry: { ...feedItem().entry, body: long, spoiler_upto: null, progress_at: 10 } }),
     ]);
     const body = wrapper.get(".feed-body");
     expect(body.text()).toContain("…");

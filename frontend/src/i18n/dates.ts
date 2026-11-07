@@ -29,21 +29,90 @@ export function formatClubDate(
   }
 }
 
-/** "12 Mar 2026": a day, without the time, in `timeZone`. */
+/** The zone this device keeps its clock in. */
+function deviceZone(): string | undefined {
+  try {
+    return new Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether `date` shows the same wall-clock time in both zones (Berlin and Vienna do). */
+function sameClock(date: Date, a: string, b: string | undefined): boolean {
+  if (!b) return false;
+  if (a === b) return true;
+  try {
+    const at = (timeZone: string) =>
+      new Intl.DateTimeFormat("en-GB", {
+        year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", timeZone,
+      }).format(date);
+    return at(a) === at(b);
+  } catch {
+    return false;
+  }
+}
+
+/** The calendar year of `date` in `timeZone`. */
+function yearIn(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("en", { year: "numeric", timeZone }).format(date);
+}
+
+/**
+ * A meeting, a milestone's date or a vote's end: "Fr., 20. Nov., 19:00" in
+ * `timeZone` (the club's). The year shows only when it is not this year, and
+ * the zone ("MEZ") only when the club's clock differs from the viewer's
+ * (`viewerZone`, else this device's) at that moment.
+ */
+export function formatEventTime(
+  iso: string | null | undefined,
+  timeZone: string,
+  locale: Locale,
+  { viewerZone, now = Date.now() }: { viewerZone?: string; now?: number } = {},
+): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const zone = timeZone || "UTC";
+  try {
+    const thisYear = yearIn(date, zone) === yearIn(new Date(now), zone);
+    const ownClock = sameClock(date, zone, viewerZone || deviceZone());
+    return new Intl.DateTimeFormat(BCP47[locale], {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      ...(thisYear ? {} : { year: "numeric" }),
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: zone,
+      ...(ownClock ? {} : { timeZoneName: "short" }),
+    }).format(date);
+  } catch {
+    return formatClubDate(iso, timeZone, locale);
+  }
+}
+
+/**
+ * "12 Mar 2026": a day, without the time, in `timeZone`. With `now`, the year
+ * is left out when it is that moment's year ("12 Mar").
+ */
 export function formatDay(
   iso: string | null | undefined,
   timeZone: string,
   locale: Locale,
+  now?: number,
 ): string {
   if (!iso) return "";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
   try {
+    const zone = timeZone || "UTC";
+    const thisYear = now != null && yearIn(date, zone) === yearIn(new Date(now), zone);
     return new Intl.DateTimeFormat(BCP47[locale], {
       day: "numeric",
       month: "short",
-      year: "numeric",
-      timeZone: timeZone || "UTC",
+      ...(thisYear ? {} : { year: "numeric" }),
+      timeZone: zone,
     }).format(date);
   } catch {
     return date.toISOString().slice(0, 10);

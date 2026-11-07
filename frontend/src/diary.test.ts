@@ -4,7 +4,7 @@ import {
   countEntries,
   defaultSpoilerUpto,
   excerpt,
-  isShielded,
+  guardLine,
   positionMarker,
   spoilerLabel,
 } from "./diary";
@@ -32,22 +32,19 @@ describe("positionMarker", () => {
   });
 });
 
-describe("isShielded", () => {
-  const flagged = entry({ spoiler_upto: 60 });
-
-  it("hides flagged entries from readers who are behind", () => {
-    expect(isShielded(flagged, 25, "currently_reading")).toBe(true);
-    expect(isShielded(flagged, null, null)).toBe(true);
-    expect(isShielded(flagged, 60, "currently_reading")).toBe(false);
-    expect(isShielded(flagged, 80, "currently_reading")).toBe(false);
+describe("guardLine", () => {
+  it("names the flag and where the reader is", () => {
+    expect(guardLine({ kind: "marked", upto: 70, me: 35 }, entry())).toBe("Spoiler up to 70% · you're at 35%");
+    expect(guardLine({ kind: "marked", upto: 100, me: 0 }, entry())).toBe("Spoiler: whole book · you're at 0%");
   });
 
-  it("never shields the writer, finished or DNF readers, unflagged or deleted entries", () => {
-    expect(isShielded(entry({ spoiler_upto: 100, mine: true }), 40, "currently_reading")).toBe(false);
-    expect(isShielded(flagged, null, "finished")).toBe(false);
-    expect(isShielded(flagged, 10, "did_not_finish")).toBe(false);
-    expect(isShielded(entry(), null, null)).toBe(false);
-    expect(isShielded(entry({ spoiler_upto: 90, deleted: true }), 0, null)).toBe(false);
+  it("says where the writer was, with their name when asked", () => {
+    const ahead = entry({ status_at: "currently_reading", progress_at: 35 });
+    expect(guardLine({ kind: "ahead", at: 35, me: 0 }, ahead, "jonas")).toBe("jonas · at 35% · you're at 0%");
+    expect(guardLine({ kind: "ahead", at: 35, me: 0 }, ahead)).toBe("at 35% · you're at 0%");
+    const done = entry({ status_at: "finished", progress_at: 100, author_rating: 4 });
+    expect(guardLine({ kind: "ahead", at: 100, me: 20 }, done, "tim")).toBe("tim · Finished ★★★★☆ · you're at 20%");
+    expect(guardLine({ kind: "open" }, ahead)).toBe("");
   });
 });
 
@@ -61,8 +58,8 @@ describe("composer defaults", () => {
 
   it("labels the flag", () => {
     expect(spoilerLabel(null)).toBe("No spoiler flag");
-    expect(spoilerLabel(100)).toBe("Whole book");
-    expect(spoilerLabel(35)).toBe("Safe up to 35%");
+    expect(spoilerLabel(100)).toBe("Spoiler: whole book");
+    expect(spoilerLabel(35)).toBe("Spoiler up to 35%");
   });
 });
 
@@ -85,12 +82,20 @@ describe("clubFeedPreview", () => {
 
   it("hides the excerpt when the viewer is behind or has not shelved the book", () => {
     expect(clubFeedPreview(feedItem({ my_progress: 20, my_status: "currently_reading" }))).toBe(
-      "Spoiler-flagged note",
+      "Spoiler up to 80% · you're at 20%",
     );
-    expect(clubFeedPreview(feedItem())).toBe("Spoiler-flagged note");
+    expect(clubFeedPreview(feedItem())).toBe("Spoiler up to 80% · you're at 0%");
     expect(clubFeedPreview(feedItem({ my_progress: null, my_status: "want_to_read" }))).toBe(
-      "Spoiler-flagged note",
+      "Spoiler up to 80% · you're at 0%",
     );
+  });
+
+  it("hides the excerpt of an unflagged post written further on", () => {
+    const ahead = { spoiler_upto: null, status_at: "currently_reading" as const, progress_at: 35 };
+    expect(clubFeedPreview(feedItem({ entry: ahead, my_progress: 10, my_status: "currently_reading" }))).toBe(
+      "at 35% · you're at 10%",
+    );
+    expect(clubFeedPreview(feedItem({ entry: ahead, my_progress: 35, my_status: "currently_reading" }))).toBe(secret);
   });
 
   it("shows the excerpt to the writer, finished or DNF readers, and readers past the flag", () => {

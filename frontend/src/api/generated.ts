@@ -2708,6 +2708,17 @@ export interface components {
             dnf_reason: string;
             /** Format: int32 */
             progress: number | null;
+            /**
+             * Format: int32
+             * @description The page the viewer is on, while reading in pages (`ShelfItemOut.current_page`).
+             */
+            current_page: number | null;
+            /**
+             * Format: int32
+             * @description The page count the viewer's progress counts in: the edition on their entry's, else the
+             *     work's (`pages`). Null when unknown or the work is not on their shelf.
+             */
+            progress_pages: number | null;
             /** @description Everyone else in the viewer's audience with this work on their shelf, by username. */
             readers: components["schemas"]["BookReader"][];
             /**
@@ -2887,6 +2898,16 @@ export interface components {
             dnf_reason: string;
             /** Format: int32 */
             progress: number | null;
+            /**
+             * Format: int32
+             * @description The page the reader is on, while reading in pages (`ShelfItemOut.current_page`).
+             */
+            current_page: number | null;
+            /**
+             * Format: int32
+             * @description The page count the reader's progress counts in: their edition's, else the work's.
+             */
+            progress_pages: number | null;
             /** @description `/media/{public_id}/a`. */
             avatar_url: string | null;
         };
@@ -4512,6 +4533,13 @@ export interface components {
              * @description 0 to 100; kept only for `currently_reading`.
              */
             progress?: number | null;
+            /**
+             * Format: int32
+             * @description The page the reader is on (0 or more), kept only for `currently_reading`. As in the
+             *     PATCH: with a page count (the edition's, else the work's) it is clamped to it and sets
+             *     `progress`, which it wins over; without one it is dropped.
+             */
+            current_page?: number | null;
         };
         /**
          * @description One entry of a shelf. For anyone but the owner, an `only_me` rating is redacted: `rating`
@@ -4560,9 +4588,16 @@ export interface components {
             dnf_reason: string;
             /**
              * Format: int32
-             * @description Percent read, only while reading.
+             * @description Percent read, only while reading. Derived from `current_page` when the reader counts in
+             *     pages.
              */
             progress: number | null;
+            /**
+             * Format: int32
+             * @description The page the reader is on, only while reading a book with a page count (`book.pages`:
+             *     the edition's, else the work's); null when they count in percent.
+             */
+            current_page: number | null;
         };
         /** @description A user's whole shelf and favourites. */
         ShelfListOut: {
@@ -4608,11 +4643,22 @@ export interface components {
             rating?: number | null;
             take?: string | null;
             dnf_reason?: string | null;
-            /** Format: int32 */
+            /**
+             * Format: int32
+             * @description 0 to 100, kept only while reading. Alone (without `current_page`) it replaces the page.
+             */
             progress?: number | null;
             /**
+             * Format: int32
+             * @description The page the reader is on (0 or more), kept only while reading. With a page count (the
+             *     entry's edition's, else the work's) it is clamped to it and sets `progress`, which wins
+             *     over a `progress` sent with it; without one it is dropped. Null clears the page.
+             */
+            current_page?: number | null;
+            /**
              * Format: int64
-             * @description An edition of the entry's work; null clears it.
+             * @description An edition of the entry's work; null clears it. Another edition drops a stored page (the
+             *     percent stays), unless `current_page` is sent with it.
              */
             edition_id?: number | null;
             rating_visibility?: components["schemas"]["Visibility"] | null;

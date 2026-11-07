@@ -84,10 +84,17 @@ describe("ClubHomePage", () => {
     expect(wrapper.get(".hero-title").attributes("href")).toBe("/book/9");
   });
 
-  it("dates a past pick by its meeting day, without the weekday and time", async () => {
-    const past = { ...PICK, id: 4, book: bookOut({ id: 8, title: "Kairos" }), meeting_at: "2026-10-15T17:30:00Z" };
-    const wrapper = await mountAs("member", PICK, [past]);
-    expect(wrapper.get(".past-tile .book-tile-sub").text()).toBe("15 Oct 2026");
+  it("dates a past pick by its meeting day, without the weekday and time, the year only before this one", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-07T12:00:00Z"));
+    try {
+      const past = { ...PICK, id: 4, book: bookOut({ id: 8, title: "Kairos" }), meeting_at: "2026-10-15T17:30:00Z" };
+      const older = { ...past, id: 3, book: bookOut({ id: 7, title: "Circe" }), meeting_at: "2025-10-15T17:30:00Z" };
+      const wrapper = await mountAs("member", PICK, [past, older]);
+      expect(wrapper.findAll(".past-tile .book-tile-sub").map((tile) => tile.text())).toEqual(["15 Oct", "15 Oct 2025"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("puts the one next step under the pick, by the viewer's shelf", async () => {
@@ -105,8 +112,8 @@ describe("ClubHomePage", () => {
       on_shelf: "currently_reading" as const,
       shelf_id: 30,
       readers: [
-        { username: "ada", status: "currently_reading" as const, progress: 90, rating: null, take: "", dnf_reason: "", avatar_url: null },
-        { username: "grace", status: "finished" as const, progress: null, rating: 4, take: "Loved it", dnf_reason: "", avatar_url: null },
+        { username: "ada", status: "currently_reading" as const, progress: 90, rating: null, take: "", dnf_reason: "", current_page: null, progress_pages: null, avatar_url: null },
+        { username: "grace", status: "finished" as const, progress: null, rating: 4, take: "Loved it", dnf_reason: "", current_page: null, progress_pages: null, avatar_url: null },
       ],
     };
     const wrapper = await mountAs("member", reading);

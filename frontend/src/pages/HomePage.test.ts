@@ -337,4 +337,66 @@ describe("HomePage", () => {
     expect(api.patchShelf).toHaveBeenLastCalledWith(1, { progress: 30 });
     expect(wrapper.get(".progress-trigger").text()).toContain("30%");
   });
+
+  it("reads the feed again when my position moves, so its spoiler guards follow it", async () => {
+    const ahead = (myProgress: number) => ({
+      parent_author: null,
+      my_progress: myProgress,
+      my_status: "currently_reading" as const,
+      club: null,
+      book: bookOut({ id: 1, title: "Circe" }),
+      entry: post({ id: 11, author: "jonas", body: "The witch turns them.", spoiler_upto: null, progress_at: 50 }),
+    });
+    api.diaryFeed.mockResolvedValue({ items: [ahead(30)], has_more: false, timezone: "UTC" });
+    const wrapper = await mountHome([]);
+    expect(wrapper.get(".feed-guard-line").text()).toContain("you're at 30%");
+
+    // The hero saves 60 %: the post is no longer ahead of me.
+    api.diaryFeed.mockResolvedValue({ items: [ahead(60)], has_more: false, timezone: "UTC" });
+    api.patchShelf.mockResolvedValue(shelfItem({ id: 1, status: "currently_reading", progress: 60 }));
+    await wrapper.get(".progress-trigger").trigger("click");
+    await wrapper.get(".sheet input[type=range]").setValue("60");
+    await wrapper.get(".sheet .btn-primary").trigger("click");
+    await flushPromises();
+    expect(api.diaryFeed).toHaveBeenCalledTimes(2);
+    expect(wrapper.find(".feed-guard").exists()).toBe(false);
+    expect(wrapper.get(".feed-body").text()).toContain("The witch turns them.");
+
+    // Undo back to 30 %: it folds again instead of staying open.
+    api.diaryFeed.mockResolvedValue({ items: [ahead(30)], has_more: false, timezone: "UTC" });
+    api.patchShelf.mockResolvedValue(shelfItem({ id: 1, status: "currently_reading", progress: 30 }));
+    const toast = useToast();
+    await toast.run(toast.items.find((row) => row.message === "Progress: 60%")!.id);
+    await flushPromises();
+    expect(api.diaryFeed).toHaveBeenCalledTimes(3);
+    expect(wrapper.get(".feed-guard-line").text()).toContain("you're at 30%");
+  });
+
+  it("reads the feed again after a row's save, but not for stars alone", async () => {
+    api.myShelf.mockResolvedValue({
+      user: { id: 1, username: "ada", avatar_url: null },
+      timezone: "UTC",
+      items: [
+        shelfItem({ id: 1, status: "currently_reading", position: 0, progress: 30, book: { id: 1, title: "Circe" } }),
+        shelfItem({ id: 2, status: "currently_reading", position: 1, progress: 10, book: { id: 2, title: "Later", pages: null } }),
+      ],
+      favorites: [],
+    });
+    const wrapper = await mountHome([]);
+    expect(api.diaryFeed).toHaveBeenCalledTimes(1);
+    const row = wrapper.get(".reading-row");
+    await row.get(".progress-trigger").trigger("click");
+    await wrapper.get(".sheet input[type=range]").setValue("40");
+    api.patchShelf.mockResolvedValue(
+      shelfItem({ id: 2, status: "currently_reading", position: 1, progress: 40, book: { id: 2, title: "Later", pages: null } }),
+    );
+    await wrapper.get(".sheet .btn-primary").trigger("click");
+    await flushPromises();
+    expect(api.patchShelf).toHaveBeenCalledWith(2, { progress: 40 });
+    expect(api.diaryFeed).toHaveBeenCalledTimes(2);
+    // The moment saved stars: the position did not move, the feed stays.
+    useFinish().lastSaved = shelfItem({ id: 2, status: "currently_reading", position: 1, progress: 40, rating: 4, book: { id: 2, title: "Later", pages: null } });
+    await flushPromises();
+    expect(api.diaryFeed).toHaveBeenCalledTimes(2);
+  });
 });

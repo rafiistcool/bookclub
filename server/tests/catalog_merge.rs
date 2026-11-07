@@ -592,6 +592,115 @@ async fn merging_fills_the_winner_and_moves_the_open_library_id(db: PgPool) {
     assert_eq!(found, winner);
 }
 
+/// A page (reading-trust) counts against the entry's edition, else its work. A merge that
+/// changes that count drops the page, as a PATCH to another edition does, and the percent holds
+/// the position; a page whose count stays (an edition that moves along) is kept.
+#[sqlx::test]
+async fn a_merge_drops_a_page_whose_page_count_changes(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let grace = app.user("grace").await;
+    let eve = app.user("eve").await;
+    let hal = app.user("hal").await;
+    let loser = app.work("Circe").await;
+    let winner = app.work("Circe (again)").await;
+    let short = app.edition(&winner, "9780316556347").await;
+    let own = app.edition(&loser, "9783423282710").await;
+    app.exec(&format!(
+        "UPDATE works SET pages = 320 WHERE id = {};
+         UPDATE works SET pages = 400 WHERE id = {};
+         UPDATE editions SET pages = 250 WHERE id = {};
+         UPDATE editions SET pages = 200 WHERE id = {}",
+        loser.id, winner.id, short.id, own.id
+    ))
+    .await;
+    // ada: page 300 of the loser's 320; her older entry on the winner brings an edition of 250.
+    let ada_kept = entry(
+        &app,
+        &ada,
+        loser.id,
+        "currently_reading",
+        0,
+        "progress = 94, current_page = 300, updated_at = '2025-02-01T00:00:00Z'",
+    )
+    .await;
+    entry(
+        &app,
+        &ada,
+        winner.id,
+        "currently_reading",
+        1,
+        &format!(
+            "progress = 10, updated_at = '2025-01-01T00:00:00Z', edition_id = {}",
+            short.id
+        ),
+    )
+    .await;
+    // grace: page 160 of the loser's 320, without an edition: it would count against 400.
+    let grace_moved = entry(
+        &app,
+        &grace,
+        loser.id,
+        "currently_reading",
+        0,
+        "progress = 50, current_page = 160",
+    )
+    .await;
+    // hal: page 50 of the loser's edition of 200, which moves along with its count.
+    let hal_moved = entry(
+        &app,
+        &hal,
+        loser.id,
+        "currently_reading",
+        0,
+        &format!("progress = 25, current_page = 50, edition_id = {}", own.id),
+    )
+    .await;
+    // eve: only on the winner, in the edition of 250: nothing changes for her.
+    let eve_stays = entry(
+        &app,
+        &eve,
+        winner.id,
+        "currently_reading",
+        0,
+        &format!(
+            "progress = 40, current_page = 100, edition_id = {}",
+            short.id
+        ),
+    )
+    .await;
+
+    let mut conn = app.db.acquire().await.unwrap();
+    merge_works(&mut conn, loser.id, winner.id).await.unwrap();
+
+    let page = |id: i64| {
+        let db = app.db.clone();
+        async move {
+            sqlx::query_as::<_, (i64, Option<i64>, Option<i32>, Option<i32>)>(
+                "SELECT work_id, edition_id, progress, current_page FROM shelf_entries WHERE id = $1",
+            )
+            .bind(id)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(
+        page(ada_kept).await,
+        (winner.id, Some(short.id), Some(94), None),
+        "page 300 must not stay on 250 pages: the percent holds the position"
+    );
+    assert_eq!(page(grace_moved).await, (winner.id, None, Some(50), None));
+    assert_eq!(
+        page(hal_moved).await,
+        (winner.id, Some(own.id), Some(25), Some(50))
+    );
+    assert_eq!(
+        page(eve_stays).await,
+        (winner.id, Some(short.id), Some(40), Some(100))
+    );
+}
+
 /// A work cannot be merged into itself, into a missing work, or after it was merged away.
 #[sqlx::test]
 async fn merge_works_refuses_bad_pairs(db: PgPool) {
