@@ -29,6 +29,7 @@ import MergeRequestSheet from "../components/MergeRequestSheet.vue";
 import EditRequestSheet from "../components/EditRequestSheet.vue";
 import { clubsFor, pickTargets } from "../clubActions";
 import { asksForCoverPhoto, personalCoverKey } from "../covers";
+import { backTarget, type BackTarget } from "../backTarget";
 import { worthRetrying } from "../retry";
 import {
   bookPath,
@@ -54,6 +55,37 @@ const router = useRouter();
 const session = useSession();
 const toast = useToast();
 const finish = useFinish();
+
+/**
+ * The "←" link: back to the page the reader came from, named after it, or to
+ * Discover when the book was opened directly. Read again on every route
+ * change, since another book reuses this page.
+ */
+const back = ref<BackTarget>({ kind: "fallback", to: "/discover" });
+/** The previous page's path: the link's href, for a new tab. */
+const backPath = ref("/discover");
+const NAV_KEYS = { home: "nav.home", discover: "nav.discover", shelf: "nav.shelf", club: "nav.club", profile: "nav.profile" } as const;
+watch(
+  () => route.fullPath,
+  () => {
+    const state = router.options.history.state;
+    const previous = state && typeof state.back === "string" ? state.back : null;
+    back.value = backTarget(previous);
+    backPath.value = back.value.kind === "back" && previous ? previous : "/discover";
+  },
+  { immediate: true },
+);
+const backLabel = computed(() => {
+  const target = back.value;
+  if (target.kind === "fallback") return t("book.backTo", { page: t("nav.discover") });
+  if (target.page === "user") return t("book.backTo", { page: target.username ?? "" });
+  if (target.page === null) return t("book.back");
+  return t("book.backTo", { page: t(NAV_KEYS[target.page]) });
+});
+function goBack() {
+  if (back.value.kind === "back") router.back();
+  else void router.push(back.value.to);
+}
 
 const book = ref<BookDetail | null>(null);
 const error = ref("");
@@ -678,7 +710,7 @@ watch(param, load);
 <template>
   <section>
     <p class="fine back-link">
-      <RouterLink to="/discover">{{ t("book.backDiscover") }}</RouterLink>
+      <a :href="backPath" @click.prevent="goBack">{{ backLabel }}</a>
     </p>
 
     <template v-if="!loaded">
