@@ -24,6 +24,7 @@ import ProgressEditor from "./ProgressEditor.vue";
 
 function mountEditor(props: {
   value: number | null;
+  page?: number | null;
   pages?: number | null;
   busy?: boolean;
   shelfId?: number | null;
@@ -57,11 +58,11 @@ describe("ProgressEditor", () => {
     await wrapper.get('.sheet button[aria-label="Forward 5 percent"]').trigger("click");
     await wrapper.get('.sheet button[aria-label="Forward 1 percent"]').trigger("click");
     await save.trigger("click");
-    expect(wrapper.emitted("save")).toEqual([[46]]);
+    expect(wrapper.emitted("save")).toEqual([[{ progress: 46, page: null }]]);
     expect(wrapper.find(".sheet").exists()).toBe(false);
   });
 
-  it("counts in pages when the book has a page count, and saves the percent", async () => {
+  it("counts in pages when the book has a page count, and saves the page", async () => {
     const wrapper = mountEditor({ value: 50, pages: 300 });
     expect(wrapper.get(".progress-trigger").text()).toContain("p. 150 of 300");
     await wrapper.get(".progress-trigger").trigger("click");
@@ -73,7 +74,42 @@ describe("ProgressEditor", () => {
     // Past the last page is the last page.
     expect(wrapper.get(".readout-percent").text()).toBe("100%");
     await wrapper.get(".sheet .btn-primary").trigger("click");
-    expect(wrapper.emitted("save")).toEqual([[100]]);
+    expect(wrapper.emitted("save")).toEqual([[{ progress: 100, page: 300 }]]);
+  });
+
+  it("saves one page more although the percent stays (207 → 208 of 334)", async () => {
+    const wrapper = mountEditor({ value: 62, page: 207, pages: 334 });
+    expect(wrapper.get(".progress-trigger").text()).toContain("p. 207 of 334");
+    await wrapper.get(".progress-trigger").trigger("click");
+    const save = wrapper.get(".sheet .btn-primary");
+    expect(save.attributes("disabled")).toBeDefined();
+    await wrapper.get('.sheet button[aria-label="Forward 1 page"]').trigger("click");
+    expect(wrapper.get(".readout-percent").text()).toBe("62%");
+    expect(save.attributes("disabled")).toBeUndefined();
+    await save.trigger("click");
+    expect(wrapper.emitted("save")).toEqual([[{ progress: 62, page: 208 }]]);
+  });
+
+  it("shows a typed page as typed, from the stored page", async () => {
+    const wrapper = mountEditor({ value: 65, page: 218, pages: 334 });
+    expect(wrapper.get(".progress-trigger").text()).toContain("p. 218 of 334");
+    await wrapper.get(".progress-trigger").trigger("click");
+    expect(wrapper.get(".sheet input[type=number]").element).toHaveProperty("value", "218");
+    await wrapper.get(".sheet input[type=number]").setValue("219");
+    await wrapper.get(".sheet .btn-primary").trigger("click");
+    expect(wrapper.emitted("save")).toEqual([[{ progress: 66, page: 219 }]]);
+  });
+
+  it("holds the sheet against a swipe once the steppers changed the draft", async () => {
+    const wrapper = mountEditor({ value: 40, pages: 300 });
+    await wrapper.get(".progress-trigger").trigger("click");
+    const sheet = wrapper.getComponent({ name: "BottomSheet" });
+    expect(sheet.props("dirty")).toBe(false);
+    await wrapper.get('.sheet button[aria-label="Forward 10 pages"]').trigger("click");
+    expect(sheet.props("dirty")).toBe(true);
+    // Back where it was: nothing to lose, a swipe closes again.
+    await wrapper.get('.sheet button[aria-label="Back 10 pages"]').trigger("click");
+    expect(sheet.props("dirty")).toBe(false);
   });
 
   it("keeps a stored percent that no whole page reaches until the page changes", async () => {
@@ -105,7 +141,7 @@ describe("ProgressEditor", () => {
       await wrapper.get('.sheet button[aria-label="Forward 5 percent"]').trigger("click");
       expect(buttonText(wrapper, "Mark as read")).toBeUndefined();
       await wrapper.get(".sheet .btn-primary").trigger("click");
-      expect(wrapper.emitted("save")).toEqual([[100]]);
+      expect(wrapper.emitted("save")).toEqual([[{ progress: 100, page: null }]]);
     });
 
     it("offers “Mark as read” at 100 % and finishes in one PATCH, with the moment and no save", async () => {
@@ -134,7 +170,7 @@ describe("ProgressEditor", () => {
       await wrapper.get('.sheet button[aria-label="Forward 5 percent"]').trigger("click");
       await wrapper.get('.sheet button[aria-label="Forward 5 percent"]').trigger("click");
       await buttonText(wrapper, "Just save progress")!.trigger("click");
-      expect(wrapper.emitted("save")).toEqual([[100]]);
+      expect(wrapper.emitted("save")).toEqual([[{ progress: 100, page: null }]]);
       expect(patchShelf).not.toHaveBeenCalled();
       expect(useFinish().item).toBeNull();
     });

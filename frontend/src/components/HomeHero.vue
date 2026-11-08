@@ -3,9 +3,10 @@ import { computed, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
 import { bookPath, relativeDay, starLabel, statusLabel, statusShort, type Status } from "../constants";
-import { formatClubDate } from "../i18n/dates";
+import { formatEventTime } from "../i18n/dates";
 import type { Locale } from "../i18n";
 import { isClubGone, useClubs } from "../stores/clubs";
+import { positionOf, positionPatch, positionSaved, type ReadingPosition } from "../progress";
 import { useFinish } from "../stores/finish";
 import { useLocale } from "../stores/locale";
 import { useSession } from "../stores/session";
@@ -107,7 +108,12 @@ const me = computed(
 );
 const status = computed<Status | null>(() => entry.value?.status ?? pick.value?.on_shelf ?? null);
 const shelfId = computed(() => entry.value?.id ?? pick.value?.shelf_id ?? null);
-const progress = computed(() => (entry.value ? entry.value.progress ?? 0 : me.value?.progress ?? 0));
+const position = computed(() => positionOf(entry.value ?? me.value));
+const progress = computed(() => position.value.progress);
+/** The page count my progress counts in: my edition's, else the work's. */
+const pages = computed(() =>
+  entry.value ? entry.value.book.pages : (me.value?.progress_pages ?? book.value?.pages ?? null),
+);
 const rating = computed(() => (entry.value ? entry.value.rating : me.value?.rating ?? null));
 
 /** The pick's readers with my own row as Home knows it now (started, moved, finished here). */
@@ -150,7 +156,7 @@ const meeting = computed(() => {
     at,
     when: relativeDay(at, zone),
     date: shortDay(at, zone),
-    full: formatClubDate(at, zone, locale.locale),
+    full: formatEventTime(at, zone, locale.locale),
   };
 });
 
@@ -176,6 +182,8 @@ function adopt(item: ShelfItem) {
             ...row,
             status: item.status,
             progress: item.status === "currently_reading" ? (item.progress ?? 0) : null,
+            current_page: item.status === "currently_reading" ? item.current_page : null,
+            progress_pages: item.book.pages,
             rating: item.rating,
             take: item.take,
           }
@@ -218,22 +226,22 @@ let undoToast = 0;
  * tapped after a chip swap still restores the book it belongs to, not the
  * one the hero shows by then.
  */
-async function saveProgress(value: number, undo = true, target: number | null = shelfId.value) {
+async function saveProgress(value: ReadingPosition, undo = true, target: number | null = shelfId.value) {
   // An Undo waits for a save still under way instead of being dropped.
   if (!undo) await whenIdle(busy);
   const id = target;
   if (id == null || busy.value) return;
   // The status is known only while the hero still shows that entry.
   if (!undo && id === shelfId.value && status.value !== "currently_reading") return;
-  const before = progress.value;
+  const before = position.value;
   busy.value = true;
   try {
-    const item = await api.patchShelf(id, { progress: value });
+    const item = await api.patchShelf(id, positionPatch(value));
     adopt(item);
     if (undoToast) toast.dismiss(undoToast);
     undoToast = 0;
     if (undo) {
-      undoToast = toast.show(t("book.progressSaved", { n: value }), {
+      undoToast = toast.show(positionSaved(positionOf(item)), {
         label: t("common.undo"),
         run: () => saveProgress(before, false, id),
       });
@@ -326,7 +334,8 @@ const swapKey = computed(() => (solo.value ? `solo-${props.entry?.id ?? 0}` : `c
             <ProgressEditor
               v-if="status === 'currently_reading' && shelfId != null"
               :value="progress"
-              :pages="book.pages"
+              :page="position.page"
+              :pages="pages"
               :label="t('home.yourProgress')"
               :book-title="book.title"
               :busy="busy"

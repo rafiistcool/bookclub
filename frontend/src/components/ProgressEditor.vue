@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
 import { tp } from "../i18n";
+import { pageOfPercent, pagePercent, type ReadingPosition } from "../progress";
 import { useFinish } from "../stores/finish";
 import type { ShelfItem } from "../types";
 import BottomSheet from "./BottomSheet.vue";
@@ -11,7 +12,13 @@ import BottomSheet from "./BottomSheet.vue";
  * A reader's progress as a row that opens a sheet, never a slider on the
  * page: a stray thumb on a range input used to save (and post to the club)
  * at once. The sheet counts in pages when the book has a page count, and
- * saves only on "Save". The server keeps a percent; pages are derived.
+ * saves only on "Save". With a page count the page itself is saved (the
+ * server derives the percent), so one page more is always a change; without
+ * one the percent is.
+ *
+ * Once the draft differs from what is stored, a swipe down no longer closes
+ * the sheet (`BottomSheet`'s `dirty`): the steppers and the slider count as
+ * much as typing. × stays the deliberate way out.
  *
  * With `shelfId`, a draft at the last page offers "Mark as read": the editor
  * itself moves the entry to finished (no progress 100 first, so no progress
@@ -20,6 +27,8 @@ import BottomSheet from "./BottomSheet.vue";
  */
 const props = defineProps<{
   value: number | null;
+  /** The stored page (`current_page`); null when the reader counted in percent so far. */
+  page?: number | null;
   pages?: number | null;
   label: string;
   bookTitle: string;
@@ -30,7 +39,7 @@ const props = defineProps<{
   clubSlug?: string | null;
 }>();
 
-const emit = defineEmits<{ save: [percent: number]; finished: [item: ShelfItem] }>();
+const emit = defineEmits<{ save: [position: ReadingPosition]; finished: [item: ShelfItem] }>();
 const { t } = useI18n();
 
 const open = ref(false);
@@ -40,22 +49,31 @@ const page = ref(0);
 
 const pageCount = computed(() => (props.pages && props.pages > 0 ? props.pages : null));
 const stored = computed(() => Math.min(100, Math.max(0, Math.round(props.value ?? 0))));
+/**
+ * The stored page: the reader's own, else the page an older save in percent
+ * stands for. That page stands for the stored percent until it changes: with
+ * few pages the round trip would otherwise move it (35 % of 50 pages is page
+ * 18, which is 36 %) and offer to save a value nobody chose.
+ */
+const storedPage = computed(() => {
+  if (!pageCount.value) return 0;
+  if (props.page != null) return Math.min(pageCount.value, Math.max(0, props.page));
+  return pageOfPercent(stored.value, pageCount.value);
+});
 
-function pageOf(value: number): number {
-  return pageCount.value ? Math.round((value / 100) * pageCount.value) : 0;
-}
-
-// The page derived from the stored percent stands for that percent: with
-// fewer than 100 pages the round trip would otherwise move it (35 % of 50
-// pages is page 18, which is 36 %) and offer to save a value nobody chose.
 const draft = computed(() => {
   if (!pageCount.value) return percent.value;
-  if (page.value === pageOf(stored.value)) return stored.value;
-  return Math.min(100, Math.round((page.value / pageCount.value) * 100));
+  if (page.value === storedPage.value) return stored.value;
+  return pagePercent(page.value, pageCount.value);
 });
-const changed = computed(() => draft.value !== stored.value);
+/** In pages, any page moved is a change, also one that keeps the percent. */
+const changed = computed(() =>
+  pageCount.value ? page.value !== storedPage.value : percent.value !== stored.value,
+);
 /** At the end of the book: "Mark as read" takes the primary place. */
-const offersFinish = computed(() => props.shelfId != null && draft.value >= 100);
+const offersFinish = computed(
+  () => props.shelfId != null && (pageCount.value ? page.value >= pageCount.value : percent.value >= 100),
+);
 const finishing = ref(false);
 const finishError = ref("");
 
@@ -63,7 +81,7 @@ function start() {
   if (props.busy || finishing.value) return;
   finishError.value = "";
   percent.value = stored.value;
-  page.value = pageOf(stored.value);
+  page.value = storedPage.value;
   open.value = true;
 }
 
@@ -93,7 +111,8 @@ function tick() {
 function save() {
   if (finishing.value) return;
   open.value = false;
-  if (changed.value) emit("save", draft.value);
+  if (!changed.value) return;
+  emit("save", pageCount.value ? { progress: draft.value, page: page.value } : { progress: percent.value, page: null });
 }
 
 function close() {
@@ -149,7 +168,7 @@ function stepLabel(by: number): string {
     <span class="progress-line">
       <span class="finer subtle">{{ label }}</span>
       <span class="progress-figure">
-        <span v-if="pageCount" class="finer subtle nums">{{ t("progress.page", { page: pageOf(stored), pages: pageCount }) }}</span>
+        <span v-if="pageCount" class="finer subtle nums">{{ t("progress.page", { page: storedPage, pages: pageCount }) }}</span>
         <strong class="nums fine">{{ t("progress.percent", { n: stored }) }}</strong>
       </span>
     </span>
@@ -158,7 +177,7 @@ function stepLabel(by: number): string {
     </span>
   </button>
 
-  <BottomSheet v-if="open" :title="label" @close="close">
+  <BottomSheet v-if="open" :title="label" :dirty="changed" @close="close">
     <p class="progress-book">{{ bookTitle }}</p>
     <span class="visually-hidden" aria-live="polite" aria-atomic="true">{{ valueText }}</span>
     <div class="progress-readout">

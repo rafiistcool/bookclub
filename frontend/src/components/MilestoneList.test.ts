@@ -4,10 +4,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MilestoneOut } from "../types";
 
 const milestones = vi.fn();
+const deleteMilestone = vi.fn();
 
 vi.mock("../api/client", () => ({
   ApiError: class ApiError extends Error {},
-  api: { milestones: (...args: unknown[]) => milestones(...args) },
+  api: {
+    milestones: (...args: unknown[]) => milestones(...args),
+    deleteMilestone: (...args: unknown[]) => deleteMilestone(...args),
+  },
 }));
 
 import { i18n } from "../i18n";
@@ -31,18 +35,22 @@ function milestone(overrides: Partial<MilestoneOut> = {}): MilestoneOut {
   };
 }
 
-async function mountList(canManage: boolean) {
+async function mountList(canManage: boolean, attach = false) {
   setActivePinia(createPinia());
   const wrapper = mount(MilestoneList, {
     props: { slug: "readers-ab12", pickId: 5, canManage, timezone: "Europe/Berlin" },
     global: { plugins: [i18n] },
+    ...(attach ? { attachTo: document.body } : {}),
   });
   await flushPromises();
   return wrapper;
 }
 
 describe("MilestoneList", () => {
-  beforeEach(() => milestones.mockReset());
+  beforeEach(() => {
+    milestones.mockReset();
+    deleteMilestone.mockReset();
+  });
 
   it("renders nothing for a member while the pick has no milestones", async () => {
     milestones.mockResolvedValue({ items: [] });
@@ -81,14 +89,59 @@ describe("MilestoneList", () => {
     expect(facts.join("")).not.toContain("·");
   });
 
-  it("keeps remove quiet until it asks to be confirmed", async () => {
-    milestones.mockResolvedValue({ items: [milestone()] });
+  it("shows a quiet remove only in edit mode, and asks before it removes", async () => {
+    milestones.mockResolvedValue({ items: [milestone(), milestone({ id: 2, title: "Part two" })] });
     const wrapper = await mountList(true);
-    const remove = wrapper.get(".milestone .text-btn");
-    expect(remove.classes()).toContain("quiet");
-    await remove.trigger("click");
-    expect(remove.classes()).toEqual(expect.arrayContaining(["danger"]));
-    expect(remove.classes()).not.toContain("quiet");
-    expect(remove.text()).toBe(i18n.global.t("common.deleteConfirm"));
+    expect(wrapper.find(".milestone-remove").exists()).toBe(false);
+    const edit = wrapper.findAll(".section-head .text-btn").find((button) => button.text() === i18n.global.t("common.edit"))!;
+    await edit.trigger("click");
+    // The label says the state ("Done"); a pressed state on top would read "Done, pressed".
+    expect(edit.attributes("aria-pressed")).toBeUndefined();
+    expect(edit.text()).toBe(i18n.global.t("milestones.doneEditing"));
+    const removes = wrapper.findAll(".milestone-remove");
+    expect(removes).toHaveLength(2);
+    expect(removes[0].text()).toBe(i18n.global.t("common.remove"));
+    expect(removes[0].classes()).not.toContain("danger");
+    // The button names the stop it removes for a screen reader.
+    expect(removes[0].attributes("aria-describedby")).toBe(wrapper.findAll(".milestone strong")[0].attributes("id"));
+    await removes[0].trigger("click");
+    expect(removes[0].classes()).toContain("danger");
+    expect(removes[0].text()).toBe(i18n.global.t("milestones.removeConfirm"));
+  });
+
+  it("moves focus on to the next stop's remove, and to Add once the last one is gone", async () => {
+    const first = milestone();
+    const second = milestone({ id: 2, title: "Part two" });
+    milestones.mockResolvedValue({ items: [first, second] });
+    const wrapper = await mountList(true, true);
+    await wrapper.findAll(".section-head .text-btn").find((button) => button.text() === i18n.global.t("common.edit"))!.trigger("click");
+    const confirmRemove = async (index: number) => {
+      const button = wrapper.findAll(".milestone-remove")[index];
+      (button.element as HTMLElement).focus();
+      await button.trigger("click");
+      await button.trigger("click");
+      await flushPromises();
+    };
+
+    deleteMilestone.mockResolvedValue(undefined);
+    milestones.mockResolvedValue({ items: [second] });
+    await confirmRemove(0);
+    expect(deleteMilestone).toHaveBeenCalledWith("readers-ab12", 5, 1);
+    expect(document.activeElement).toBe(wrapper.get(".milestone-remove").element);
+    expect(document.activeElement?.getAttribute("aria-describedby")).toBe("milestone-2");
+
+    milestones.mockResolvedValue({ items: [] });
+    await confirmRemove(0);
+    // Edit mode ends with the list; focus lands on "Add", not on the body.
+    expect(document.activeElement).toBe(wrapper.get(".milestone-add").element);
+    expect(document.activeElement?.textContent?.trim()).toBe(i18n.global.t("milestones.add"));
+    wrapper.unmount();
+  });
+
+  it("keeps a member's list free of edit tools", async () => {
+    milestones.mockResolvedValue({ items: [milestone()] });
+    const wrapper = await mountList(false);
+    expect(wrapper.find(".milestone-tools").exists()).toBe(false);
+    expect(wrapper.find(".milestone-remove").exists()).toBe(false);
   });
 });

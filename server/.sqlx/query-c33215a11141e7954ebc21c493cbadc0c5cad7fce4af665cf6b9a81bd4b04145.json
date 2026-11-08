@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE shelf_entries s SET current_page = NULL\n         FROM unnest($1::bigint[], $2::int[]) AS old(id, pages)\n         WHERE s.id = old.id AND s.current_page IS NOT NULL\n           AND old.pages IS DISTINCT FROM (\n               SELECT coalesce(e.pages, w.pages, 0) FROM works w\n               LEFT JOIN editions e ON e.id = s.edition_id AND e.work_id = w.id\n               WHERE w.id = s.work_id)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int4Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c33215a11141e7954ebc21c493cbadc0c5cad7fce4af665cf6b9a81bd4b04145"
+}

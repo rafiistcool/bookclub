@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
-import { formatClubDate } from "../i18n/dates";
+import { focusLost, focusTemporarily } from "../focusBack";
+import { formatEventTime } from "../i18n/dates";
 import { tp } from "../i18n";
 import { isClubGone, useClubs } from "../stores/clubs";
 import { useLocale } from "../stores/locale";
@@ -12,6 +13,8 @@ import type { MilestoneOut, MilestoneUnit } from "../types";
 /**
  * Reading stops for the current pick: "up to chapter 5 by Friday". Admins add and remove them.
  * A member, who can't add any, sees nothing at all (no heading) while there are none.
+ * Removing is a quiet text action that shows only after "Edit" in the heading, so three
+ * stops never come with three "Remove"s; it asks once more before it removes.
  */
 const props = defineProps<{
   slug: string;
@@ -31,6 +34,9 @@ const error = ref("");
 const adding = ref(false);
 const busy = ref(false);
 const confirmingId = ref<number | null>(null);
+/** "Edit" in the heading shows each stop's "Remove". */
+const editing = ref(false);
+const root = ref<HTMLElement | null>(null);
 
 const title = ref("");
 const unit = ref<MilestoneUnit | "">("");
@@ -66,7 +72,7 @@ function range(row: MilestoneOut): string {
 
 function dueLabel(row: MilestoneOut): string {
   if (!row.due_at) return "";
-  return formatClubDate(row.due_at, props.timezone, locale.locale) || row.due_label || "";
+  return formatEventTime(row.due_at, props.timezone, locale.locale) || row.due_label || "";
 }
 
 /** The meta line's facts. Each wraps as a unit: a time keeps its zone, a count its noun. */
@@ -116,10 +122,18 @@ async function remove(row: MilestoneOut) {
     return;
   }
   confirmingId.value = null;
+  // The tapped "Remove" goes with its row: focus moves on to the next stop's
+  // (else the one before), and with the last stop gone to "Add".
+  const at = items.value.findIndex((item) => item.id === row.id);
+  const neighbour = items.value[at + 1] ?? items.value[at - 1] ?? null;
   busy.value = true;
   try {
     await api.deleteMilestone(props.slug, props.pickId, row.id);
     await load();
+    if (items.value.length === 0) editing.value = false;
+    busy.value = false;
+    await nextTick();
+    if (focusLost()) focusAfterRemoval(neighbour?.id ?? null);
     toast.show(t("milestones.removed"));
   } catch (err) {
     toast.show(fail(err, t("milestones.saveFailed")));
@@ -128,16 +142,43 @@ async function remove(row: MilestoneOut) {
   }
 }
 
+/** Where focus goes after a stop was removed: its neighbour's "Remove", else "Add", else the heading. */
+function focusAfterRemoval(neighbourId: number | null) {
+  const section = root.value;
+  if (!section) return;
+  const next =
+    (neighbourId != null && section.querySelector<HTMLElement>(`[data-milestone="${neighbourId}"] .milestone-remove`)) ||
+    section.querySelector<HTMLElement>(".milestone-add");
+  if (next) next.focus();
+  else {
+    const heading = section.querySelector<HTMLElement>("#milestones-heading");
+    if (heading) focusTemporarily(heading);
+  }
+}
+
 onMounted(load);
 </script>
 
 <template>
-  <section v-if="shown" class="milestones" aria-labelledby="milestones-heading">
+  <section v-if="shown" ref="root" class="milestones" aria-labelledby="milestones-heading">
     <div class="section-head">
       <h2 id="milestones-heading">{{ t("milestones.heading") }}</h2>
-      <button v-if="canManage && !adding" class="text-btn" type="button" @click="adding = true">
-        {{ t("milestones.add") }}
-      </button>
+      <span v-if="canManage" class="milestone-tools">
+        <button
+          v-if="items.length && !adding"
+          class="text-btn"
+          type="button"
+          @click="
+            editing = !editing;
+            confirmingId = null;
+          "
+        >
+          {{ editing ? t("milestones.doneEditing") : t("common.edit") }}
+        </button>
+        <button v-if="!adding && !editing" class="text-btn milestone-add" type="button" @click="adding = true">
+          {{ t("milestones.add") }}
+        </button>
+      </span>
     </div>
 
     <p v-if="error" class="error">{{ error }}</p>
@@ -146,22 +187,23 @@ onMounted(load);
       {{ t("milestones.emptyAdmin") }}
     </p>
     <ol v-else-if="items.length" class="milestone-list">
-      <li v-for="row in items" :key="row.id" class="milestone" :class="{ passed: row.passed }">
+      <li v-for="row in items" :key="row.id" class="milestone" :class="{ passed: row.passed }" :data-milestone="row.id">
         <span class="milestone-meta">
-          <strong>{{ row.title }}</strong>
+          <strong :id="`milestone-${row.id}`">{{ row.title }}</strong>
           <span v-if="metaParts(row).length" class="milestone-facts finer subtle nums">
             <span v-for="part in metaParts(row)" :key="part">{{ part }}</span>
           </span>
         </span>
         <button
-          v-if="canManage"
-          class="text-btn"
-          :class="confirmingId === row.id ? 'danger' : 'quiet'"
+          v-if="canManage && editing"
+          class="text-btn milestone-remove"
+          :class="{ danger: confirmingId === row.id }"
           type="button"
+          :aria-describedby="`milestone-${row.id}`"
           :disabled="busy"
           @click="remove(row)"
         >
-          {{ confirmingId === row.id ? t("common.deleteConfirm") : t("common.remove") }}
+          {{ confirmingId === row.id ? t("milestones.removeConfirm") : t("common.remove") }}
         </button>
       </li>
     </ol>
@@ -230,15 +272,25 @@ onMounted(load);
   border-top: 1px solid var(--border);
 }
 
-/* Remove stays quiet next to the titles until it asks to be confirmed; the
-   padding only widens its target, the text lines up with the row's edge. */
-.milestone .text-btn {
-  flex: none;
-  margin-inline-end: calc(-1 * var(--space-2));
+.milestone-tools {
+  display: inline-flex;
+  gap: var(--space-4);
 }
 
-.milestone .text-btn.quiet {
+/* Only in edit mode, and quiet there: regular weight, muted, until it asks
+   to be confirmed. The padding only widens its target; the text lines up
+   with the row's edge. */
+.milestone-remove {
+  flex: none;
+  margin-inline-end: calc(-1 * var(--space-2));
+  font-size: var(--text-sm);
+  font-weight: 400;
   color: var(--text-muted);
+}
+
+.milestone-remove.danger {
+  font-weight: 600;
+  color: var(--danger);
 }
 
 .milestone.passed {

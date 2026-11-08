@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.id, coalesce(e.pages, w.pages, 0) AS \"pages!\"\n           FROM shelf_entries s\n           JOIN works w ON w.id = s.work_id\n           LEFT JOIN editions e ON e.id = s.edition_id AND e.work_id = w.id\n           WHERE s.work_id = ANY($1) AND s.current_page IS NOT NULL\n           ORDER BY s.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "shelf_entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "pages!",
+        "type_info": "Int4",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "38f91314a1cb5675fe33460bbd944c9c5e808b53929c831517517ee7dbe240ed"
+}

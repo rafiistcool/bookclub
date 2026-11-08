@@ -1,6 +1,7 @@
 import type { Status } from "./constants";
 import { starLabel } from "./constants";
 import { t } from "./i18n";
+import { spoilerGuard, type SpoilerGuard } from "./spoilers";
 import type { DiaryEntry } from "./types";
 
 export const REACTIONS = ["❤️", "👍", "😂", "😮", "🔥", "📚"] as const;
@@ -21,22 +22,6 @@ export function positionMarker(entry: {
   }
   if (entry.status_at === "want_to_read") return t("diary.beforeStarting");
   return "";
-}
-
-/**
- * True when the reader has not got far enough for this entry: the writer
- * flagged it safe only up to `spoiler_upto`, and the reader is below that.
- * Writers always see their own entries. Readers who finished (or DNF'd) see
- * everything; readers who never shelved the book count as being at 0%.
- */
-export function isShielded(
-  entry: { spoiler_upto: number | null; deleted: boolean; mine: boolean },
-  myProgress: number | null,
-  myStatus: Status | null,
-): boolean {
-  if (entry.deleted || entry.mine || entry.spoiler_upto == null) return false;
-  if (myStatus === "finished" || myStatus === "did_not_finish") return false;
-  return (myProgress ?? 0) < entry.spoiler_upto;
 }
 
 /** The composer's default "safe up to": where the writer currently is. */
@@ -62,20 +47,49 @@ export function excerpt(body: string, max = EXCERPT_LENGTH): string {
 }
 
 /**
- * Club → Recently written preview. Shielded items never leak the body;
- * the badge already says they are spoiler-flagged.
+ * The one quiet line that stands in for a post the reader is not far enough
+ * for (`spoilers.ts`): "Spoiler bis 70 % · du bist bei 35 %" for a flagged
+ * post, "bei 35 % · du bist bei 0 %" for one written further on. With
+ * `author`, the line starts with the writer's name.
+ */
+export function guardLine(
+  guard: SpoilerGuard,
+  entry: { progress_at: number | null; status_at: Status | null; author_rating: number | null },
+  author?: string,
+): string {
+  if (guard.kind === "open") return "";
+  if (guard.kind === "marked") {
+    return guard.upto >= 100
+      ? t("spoilers.markedWhole", { me: guard.me })
+      : t("spoilers.marked", { upto: guard.upto, me: guard.me });
+  }
+  const where = positionMarker(entry) || t("diary.atPercent", { n: guard.at });
+  return author != null
+    ? t("spoilers.aheadBy", { name: author, where, me: guard.me })
+    : t("spoilers.ahead", { where, me: guard.me });
+}
+
+/**
+ * Club → Recently written preview. A post the reader is not far enough for
+ * never leaks its body: the guard's line stands in for it.
  */
 export function clubFeedPreview(
   item: {
-    entry: { body: string; spoiler_upto: number | null; deleted: boolean; mine: boolean };
+    entry: {
+      body: string;
+      spoiler_upto: number | null;
+      progress_at: number | null;
+      status_at: Status | null;
+      author_rating: number | null;
+      deleted: boolean;
+      mine: boolean;
+    };
     my_progress: number | null;
     my_status: Status | null;
   },
 ): string {
-  if (isShielded(item.entry, item.my_progress, item.my_status)) {
-    return t("diary.spoilerPreview");
-  }
-  return excerpt(item.entry.body);
+  const guard = spoilerGuard(item.entry, item.my_progress, item.my_status);
+  return guard.kind === "open" ? excerpt(item.entry.body) : guardLine(guard, item.entry);
 }
 
 export function countEntries(items: DiaryEntry[]): number {

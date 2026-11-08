@@ -691,10 +691,33 @@ describe("BookDetailPage", () => {
         take: "Sharp and kind.",
         dnf_reason: "",
         progress: null,
+        current_page: null,
       });
       expect(wrapper.find(".star-row").exists()).toBe(true);
       expect(onlyMeBox(wrapper).checked).toBe(true);
     });
+  });
+
+  it("keeps the reader's page through a remove and its Undo, and the diary's guards follow", async () => {
+    book.mockResolvedValue(
+      detail({ shelf_id: 30, on_shelf: "currently_reading", progress: 62, current_page: 208, progress_pages: 334 }),
+    );
+    const { wrapper } = await mountBook();
+    expect(diary).toHaveBeenCalledTimes(1);
+    removeFromShelf.mockResolvedValue(undefined);
+    await wrapper.findAll("button").find((node) => node.text() === "Remove")!.trigger("click");
+    await flushPromises();
+    // Off the shelf, no position: the guards are read again.
+    expect(diary).toHaveBeenCalledTimes(2);
+    addToShelf.mockResolvedValue(
+      shelfItem({ id: 31, status: "currently_reading", progress: 62, current_page: 208, book: { id: 4, pages: 334 } }),
+    );
+    await useToast().run(useToast().items.at(-1)!.id);
+    await flushPromises();
+    expect(addToShelf).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "currently_reading", progress: 62, current_page: 208 }),
+    );
+    expect(diary).toHaveBeenCalledTimes(3);
   });
 
   describe("finishing the book", () => {
@@ -759,6 +782,16 @@ describe("BookDetailPage", () => {
       await flushPromises();
       expect(useFinish().item).toBeNull();
       expect(useToast().items.at(-1)?.message).toBe("Moved to Reading");
+    });
+
+    it("reads the diary again after a status change: a finished reader sees every post", async () => {
+      book.mockResolvedValue(detail({ shelf_id: 30, on_shelf: "currently_reading", progress: 30 }));
+      const { wrapper } = await mountBook();
+      expect(diary).toHaveBeenCalledTimes(1);
+      patchShelf.mockResolvedValueOnce(finishedItem());
+      await readButton(wrapper).trigger("click");
+      await flushPromises();
+      expect(diary).toHaveBeenCalledTimes(2);
     });
 
     it("hands the progress sheet its entry and adopts the finish it reports, without a progress Undo", async () => {

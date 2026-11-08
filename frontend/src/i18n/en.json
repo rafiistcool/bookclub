@@ -94,7 +94,8 @@
     "forwardPercent": "Forward {n} percent",
     "undone": "Progress put back",
     "markFinished": "Mark as read",
-    "saveOnly": "Just save progress"
+    "saveOnly": "Just save progress",
+    "pageSaved": "Progress: p. {page} · {n}%"
   },
   "status": {
     "want_to_read": "Want to read",
@@ -358,7 +359,7 @@
     "repliedTo": "replied to {name} on",
     "on": "on",
     "spoilerFlagged": "spoiler-flagged",
-    "safeUptoTitle": "Safe up to {n}%",
+    "safeUptoTitle": "Spoiler up to {n}%",
     "overlap": "Shared wants",
     "includeReading": "Include books being read",
     "overlapBlurb": "Books two or more of you want to read.",
@@ -558,17 +559,14 @@
     "addReaction": "Add reaction",
     "reactions": "Reactions",
     "react": "React {emoji}",
-    "revealAria": "Reveal entry, {label}",
-    "youreAt": "You're at {n}% · tap to reveal",
     "finished": "Finished",
     "finishedStars": "Finished {stars}",
     "dnf": "DNF",
     "atPercent": "at {n}%",
     "beforeStarting": "before starting",
     "noSpoiler": "No spoiler flag",
-    "wholeBook": "Whole book",
-    "safeUpto": "Safe up to {n}%",
-    "spoilerPreview": "Spoiler-flagged note",
+    "wholeBook": "Spoiler: whole book",
+    "safeUpto": "Spoiler up to {n}%",
     "readersBlur": "Readers below this point see it blurred",
     "removeFlag": "Remove flag",
     "writeFirst": "Write the first note",
@@ -579,7 +577,12 @@
     "onlyMeBadge": "Only you",
     "onlyMeHint": "Only you can see this entry",
     "clubPostIn": "Written in the discussion of {club}",
-    "placeholderSolo": "A thought, a question, something to remember"
+    "placeholderSolo": "A thought, a question, something to remember",
+    "deleteConfirm": "Really delete?",
+    "moderate": "Delete as admin",
+    "postActions": "More for this post",
+    "yourPost": "Your post",
+    "postBy": "Post by {name}"
   },
   "vote": {
     "title": "Next book",
@@ -601,7 +604,7 @@
     "confirmBlurb": "Ends the vote and replaces the pick for everyone.",
     "blurbAdmin": "One vote each, change it any time.",
     "votedOf": "{voted} of {total} voted",
-    "waitingFor": "waiting for {names}",
+    "waitingFor": "still waiting for {names} | still waiting for {names}",
     "closesAt": "closes {when}",
     "setDeadline": "Set a deadline",
     "changeDeadline": "Change deadline",
@@ -1090,7 +1093,9 @@
     "percentRangeOne": "up to {n}%",
     "due": "due {when}",
     "wasDue": "was due {when}",
-    "notes": "{n} note | {n} notes"
+    "notes": "{n} note | {n} notes",
+    "doneEditing": "Done",
+    "removeConfirm": "Really remove?"
   },
   "discussions": {
     "toCurrent": "← Current pick",
@@ -1729,5 +1734,12 @@
     "chosen": "Chosen",
     "waitForSave": "Wait until the cover is saved.",
     "uploading": "Uploading your photo for “{title}” …"
+  },
+  "spoilers": {
+    "marked": "Spoiler up to {upto}% · you're at {me}%",
+    "markedWhole": "Spoiler: whole book · you're at {me}%",
+    "ahead": "{where} · you're at {me}%",
+    "aheadBy": "{name} · {where} · you're at {me}%",
+    "tapToRead": "Tap to read"
   }
 }

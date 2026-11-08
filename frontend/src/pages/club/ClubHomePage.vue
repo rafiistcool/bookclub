@@ -10,9 +10,10 @@ import MeetingSheet from "../../components/MeetingSheet.vue";
 import MilestoneList from "../../components/MilestoneList.vue";
 import ProgressEditor from "../../components/ProgressEditor.vue";
 import ReaderRings from "../../components/ReaderRings.vue";
+import { positionOf, positionPatch, positionSaved, type ReadingPosition } from "../../progress";
 import { whenIdle } from "../../whenIdle";
 import { bookPath, relativeDay, starLabel, statusLabel, statusShort } from "../../constants";
-import { formatClubDate, formatDay } from "../../i18n/dates";
+import { formatDay, formatEventTime } from "../../i18n/dates";
 import { tp } from "../../i18n";
 import { isClubAdmin, isClubGone, useClubs, useCurrentClub } from "../../stores/clubs";
 import { useFinish } from "../../stores/finish";
@@ -176,21 +177,25 @@ async function startReading() {
 // would undo the newer save too).
 let undoToast = 0;
 
-async function saveProgress(value: number, undo = true) {
+async function saveProgress(value: ReadingPosition, undo = true) {
   // An Undo waits for a save still under way instead of being dropped.
   if (!undo) await whenIdle(busy);
   const current = pick.value;
   if (!current?.shelf_id || busy.value) return;
   if (!undo && current.on_shelf !== "currently_reading") return;
-  const before = me.value?.progress ?? 0;
+  const before = positionOf(me.value);
   busy.value = true;
   try {
-    const item = await api.patchShelf(current.shelf_id, { progress: value });
-    if (me.value) me.value.progress = item.progress;
+    const item = await api.patchShelf(current.shelf_id, positionPatch(value));
+    if (me.value) {
+      me.value.progress = item.progress;
+      me.value.current_page = item.current_page;
+      me.value.progress_pages = item.book.pages;
+    }
     if (undoToast) toast.dismiss(undoToast);
     undoToast = 0;
     if (undo) {
-      undoToast = toast.show(t("book.progressSaved", { n: value }), {
+      undoToast = toast.show(positionSaved(positionOf(item)), {
         label: t("common.undo"),
         run: () => saveProgress(before, false),
       });
@@ -305,7 +310,7 @@ onMounted(load);
             <span>
               <strong v-if="meetingCountdown" class="countdown">{{ meetingCountdown }}</strong>
               <span class="meeting-date">
-                {{ formatClubDate(pick.meeting_at, timezone, locale.locale) || pick.meeting_label }}
+                {{ formatEventTime(pick.meeting_at, timezone, locale.locale) || pick.meeting_label }}
               </span>
             </span>
           </p>
@@ -330,7 +335,8 @@ onMounted(load);
           <ProgressEditor
             v-if="pick.on_shelf === 'currently_reading' && pick.shelf_id"
             :value="me?.progress ?? 0"
-            :pages="pick.book.pages"
+            :page="me?.current_page ?? null"
+            :pages="me?.progress_pages ?? pick.book.pages"
             :label="t('home.yourProgress')"
             :book-title="pick.book.title"
             :busy="busy"
@@ -468,7 +474,7 @@ onMounted(load);
         >
           <BookCover :book="row.book" />
           <span class="book-tile-title">{{ row.book.title }}</span>
-          <span class="book-tile-sub nums">{{ formatDay(row.meeting_at, timezone, locale.locale) || row.meeting_label || row.set_by }}</span>
+          <span class="book-tile-sub nums">{{ formatDay(row.meeting_at, timezone, locale.locale, Date.now()) || row.meeting_label || row.set_by }}</span>
         </RouterLink>
       </div>
     </section>

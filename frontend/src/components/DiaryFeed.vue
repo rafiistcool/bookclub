@@ -3,7 +3,8 @@ import { onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../api/client";
 import { bookPath } from "../constants";
-import { clubFeedPreview, EXCERPT_LENGTH, isShielded, positionMarker } from "../diary";
+import { clubFeedPreview, EXCERPT_LENGTH, excerpt, positionMarker } from "../diary";
+import { isGuarded, spoilerGuard } from "../spoilers";
 import { isClubGone, useClubs } from "../stores/clubs";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
@@ -49,6 +50,8 @@ const error = ref("");
 const loaded = ref(false);
 const hasMore = ref(false);
 const busy = ref(false);
+/** A reload asked for while a page was loading: that page may predate the change, so read again. */
+let reloadAgain = false;
 
 async function load(more = false) {
   if (busy.value) return;
@@ -77,7 +80,20 @@ async function load(more = false) {
   } finally {
     loaded.value = true;
     busy.value = false;
+    if (reloadAgain) {
+      reloadAgain = false;
+      void load();
+    }
   }
+}
+
+/** The first page again: the viewer's position moved, so the spoiler guards (`my_progress`) did. */
+function reload(): Promise<void> {
+  if (busy.value) {
+    reloadAgain = true;
+    return Promise.resolve();
+  }
+  return load();
 }
 
 /** A post of the thread the page already shows (`threadWork`). */
@@ -86,6 +102,26 @@ function inThread(item: DiaryFeedItem): boolean {
 }
 
 const expanded = ref<Set<number>>(new Set());
+/** Posts the reader tapped open although they are not far enough (`spoilers.ts`), for this view. */
+const revealed = ref<Set<number>>(new Set());
+
+function guarded(item: DiaryFeedItem): boolean {
+  return !revealed.value.has(item.entry.id) && isGuarded(item.entry, item.my_progress, item.my_status);
+}
+
+/** The foot's position marker, unless the folded line already starts with it (an unflagged post written further on). */
+function footMarker(item: DiaryFeedItem): string {
+  if (guarded(item) && spoilerGuard(item.entry, item.my_progress, item.my_status).kind === "ahead") return "";
+  return positionMarker(item.entry);
+}
+
+function reveal(id: number) {
+  revealed.value = new Set([...revealed.value, id]);
+}
+
+function preview(item: DiaryFeedItem): string {
+  return revealed.value.has(item.entry.id) ? excerpt(item.entry.body) : clubFeedPreview(item);
+}
 // Notes the two-line preview cannot show in full: cut by length, or clamped at this width.
 const clamped = ref<Set<number>>(new Set());
 
@@ -101,7 +137,7 @@ function measureBody(id: number, el: HTMLElement | null) {
 }
 
 function expandable(item: DiaryFeedItem): boolean {
-  if (item.entry.deleted || isShielded(item.entry, item.my_progress, item.my_status)) return false;
+  if (item.entry.deleted || guarded(item)) return false;
   if (expanded.value.has(item.entry.id)) return true;
   const body = item.entry.body.trim();
   return body.length > EXCERPT_LENGTH || body.includes("\n") || clamped.value.has(item.entry.id);
@@ -150,7 +186,7 @@ watch(
     void load();
   },
 );
-defineExpose({ reload: () => load() });
+defineExpose({ reload });
 </script>
 
 <template>
@@ -198,13 +234,23 @@ defineExpose({ reload: () => load() });
                   {{ item.book.title }}
                 </span>
               </RouterLink>
+              <!-- Not far enough for it: one quiet line instead of the text, a tap shows it here. -->
+              <button
+                v-if="guarded(item)"
+                class="feed-guard"
+                type="button"
+                @click="reveal(item.entry.id)"
+              >
+                <span class="feed-guard-line">{{ clubFeedPreview(item) }}</span>
+                <span class="feed-guard-hint">{{ t("spoilers.tapToRead") }}</span>
+              </button>
               <span
+                v-else
                 :ref="(el) => measureBody(item.entry.id, el as HTMLElement | null)"
                 class="feed-body"
                 :class="{
                   'clamp-2': !expanded.has(item.entry.id),
                   expanded: expanded.has(item.entry.id),
-                  shielded: isShielded(item.entry, item.my_progress, item.my_status),
                 }"
               >
                 <span
@@ -221,7 +267,7 @@ defineExpose({ reload: () => load() });
                 >
                   {{ t("club.spoilerFlagged") }}
                 </span>
-                {{ expanded.has(item.entry.id) ? item.entry.body.trim() : clubFeedPreview(item) }}
+                {{ expanded.has(item.entry.id) ? item.entry.body.trim() : preview(item) }}
               </span>
               <button
                 v-if="expandable(item)"
@@ -237,8 +283,8 @@ defineExpose({ reload: () => load() });
                   <template v-if="!club && item.club">
                     <RouterLink class="feed-club" :to="`/c/${item.club.slug}`">{{ item.club.name }}</RouterLink> ·
                   </template>
-                  <template v-if="positionMarker(item.entry)">
-                    {{ positionMarker(item.entry) }} ·
+                  <template v-if="footMarker(item)">
+                    {{ footMarker(item) }} ·
                   </template>
                   <RelativeTime
                     :iso="item.entry.created_at"
@@ -341,8 +387,54 @@ defineExpose({ reload: () => load() });
   font-style: normal;
 }
 
-.feed-body.shielded {
-  font-style: italic;
+.feed-guard {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-2);
+  min-height: var(--tap);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  align-content: center;
+  cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+/* "bei 35 % · …" starts the line, so it starts with a capital. */
+.feed-guard:active {
+  transform: scale(var(--press-scale));
+  transition-duration: var(--dur-press);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feed-guard:active {
+    transform: none;
+  }
+}
+
+@media (hover: hover) {
+  .feed-guard:hover .feed-guard-line {
+    color: var(--text);
+  }
+}
+
+.feed-guard-line {
+  display: inline-block;
+}
+
+.feed-guard-line::first-letter {
+  text-transform: uppercase;
+}
+
+.feed-guard-hint {
+  color: var(--accent-hover);
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .feed-body.expanded {

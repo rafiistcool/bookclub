@@ -9,6 +9,7 @@ import HomeHero from "../components/HomeHero.vue";
 import NavIcon from "../components/NavIcon.vue";
 import ProgressEditor from "../components/ProgressEditor.vue";
 import { bookPath } from "../constants";
+import { positionOf, positionPatch, positionSaved, type ReadingPosition } from "../progress";
 import { tp } from "../i18n";
 import { heroClubSlug, pickClubSlug, useClubs } from "../stores/clubs";
 import { useFinish } from "../stores/finish";
@@ -43,8 +44,9 @@ const items = ref<ShelfItem[]>([]);
 const favorites = ref<Favorite[]>([]);
 const shelfLoaded = ref(false);
 const shelfError = ref("");
-const progress = ref<Record<number, number>>({});
+const progress = ref<Record<number, ReadingPosition>>({});
 const savingId = ref<number | null>(null);
+const diary = ref<InstanceType<typeof DiaryFeed> | null>(null);
 
 const hasClubs = computed(() => clubs.hasClubs);
 /** The home feed has something to show besides one's own events: club mates' or friends'. */
@@ -109,7 +111,7 @@ async function loadShelf() {
     items.value = shelf.items;
     favorites.value = shelf.favorites;
     progress.value = Object.fromEntries(
-      shelf.items.filter((item) => item.status === "currently_reading").map((item) => [item.id, item.progress ?? 0]),
+      shelf.items.filter((item) => item.status === "currently_reading").map((item) => [item.id, positionOf(item)]),
     );
     shelfError.value = "";
   } catch (err) {
@@ -119,11 +121,19 @@ async function loadShelf() {
   }
 }
 
-/** An entry the hero, a row or the finished moment changed: Home's shelf takes the server's answer. */
+/**
+ * An entry the hero, a row or the finished moment changed: Home's shelf takes
+ * the server's answer. A new position or status reloads "Recently written",
+ * whose spoiler guards come with the viewer's position (`my_progress`): a post
+ * folded at the old position may be safe now, and an Undo to an earlier page
+ * folds again what lies past it.
+ */
 function adopt(item: ShelfItem) {
   const at = items.value.findIndex((row) => row.id === item.id);
+  const before = at < 0 ? null : items.value[at];
   items.value = at < 0 ? [item, ...items.value] : items.value.map((row) => (row.id === item.id ? item : row));
-  if (item.status === "currently_reading") progress.value = { ...progress.value, [item.id]: item.progress ?? 0 };
+  if (item.status === "currently_reading") progress.value = { ...progress.value, [item.id]: positionOf(item) };
+  if (!before || before.status !== item.status || before.progress !== item.progress) void diary.value?.reload();
 }
 
 // The moment a row's ProgressEditor opened saved the stars: the hero's "Rate it" goes.
@@ -138,19 +148,18 @@ watch(
 // would also undo the newer save.
 const undoToasts = new Map<number, number>();
 
-async function saveProgress(item: ShelfItem, value: number, undo = true) {
-  const before = progress.value[item.id] ?? 0;
+async function saveProgress(item: ShelfItem, value: ReadingPosition, undo = true) {
+  const before = progress.value[item.id] ?? positionOf(item);
   progress.value = { ...progress.value, [item.id]: value };
   savingId.value = item.id;
   try {
-    const updated = await api.patchShelf(item.id, { progress: value });
+    const updated = await api.patchShelf(item.id, positionPatch(value));
     adopt(updated);
-    progress.value = { ...progress.value, [item.id]: updated.progress ?? value };
     const previous = undoToasts.get(item.id);
     if (previous) toast.dismiss(previous);
     undoToasts.delete(item.id);
     if (undo) {
-      const id = toast.show(t("book.progressSaved", { n: value }), {
+      const id = toast.show(positionSaved(positionOf(updated)), {
         label: t("common.undo"),
         run: () => saveProgress(updated, before, false),
       });
@@ -239,7 +248,8 @@ onMounted(() => {
             <RouterLink class="reading-title" :to="bookPath(item.book)">{{ item.book.title }}</RouterLink>
             <span v-if="item.book.authors" class="finer subtle">{{ item.book.authors }}</span>
             <ProgressEditor
-              :value="progress[item.id] ?? 0"
+              :value="progress[item.id]?.progress ?? 0"
+              :page="progress[item.id]?.page ?? null"
               :pages="item.book.pages"
               :label="t('home.yourProgress')"
               :book-title="item.book.title"
@@ -257,6 +267,7 @@ onMounted(() => {
     <div class="home-feeds">
       <section class="section">
         <DiaryFeed
+          ref="diary"
           :heading="hasClubs ? t('home.recentlyWritten') : t('home.yourNotes')"
           :empty-text="hasClubs ? t('home.nothingWritten') : t('home.noNotes')"
           :limit="4"

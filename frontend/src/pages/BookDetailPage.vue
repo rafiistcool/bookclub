@@ -10,6 +10,7 @@ import Avatar from "../components/Avatar.vue";
 import BookCover from "../components/BookCover.vue";
 import BookDiary from "../components/BookDiary.vue";
 import ProgressEditor from "../components/ProgressEditor.vue";
+import { positionOf, positionPatch, positionSaved, type ReadingPosition } from "../progress";
 import { whenIdle } from "../whenIdle";
 import QuoteList from "../components/QuoteList.vue";
 import ClubBookActions from "../components/ClubBookActions.vue";
@@ -160,6 +161,8 @@ function adoptEntry(detail: BookDetail, item: ShelfItem) {
   detail.take = item.take;
   detail.dnf_reason = item.dnf_reason;
   detail.progress = item.progress;
+  detail.current_page = item.current_page;
+  detail.progress_pages = item.book.pages;
   syncDrafts(detail);
 }
 
@@ -244,6 +247,8 @@ async function setStatus(status: Status) {
       ? await api.patchShelf(detail.shelf_id, { status, position: 0 })
       : await api.addToShelf({ work_id: detail.id, status });
     adoptEntry(detail, item);
+    // The diary's guards follow the reader's status (finished sees everything).
+    void diary.value?.reload();
     // Finished just now: the moment instead of the toast. A 409 retry whose
     // entry was finished already returned above, without either.
     if (isFinishTransition(previous, item)) celebrate(item);
@@ -286,22 +291,23 @@ async function patch(
 // would undo the newer save too).
 let undoToast = 0;
 
-async function saveProgress(value: number, undo = true) {
+async function saveProgress(value: ReadingPosition, undo = true) {
   // An Undo waits for a save still under way instead of being dropped.
   if (!undo) await whenIdle(busy);
   const detail = book.value;
   if (!detail?.shelf_id || busy.value) return;
   // The server keeps progress only while the book is being read.
   if (!undo && detail.on_shelf !== "currently_reading") return;
-  const before = detail.progress ?? 0;
+  const before = positionOf(detail);
   busy.value = true;
   try {
-    adoptEntry(detail, await api.patchShelf(detail.shelf_id, { progress: value }));
+    const item = await api.patchShelf(detail.shelf_id, positionPatch(value));
+    adoptEntry(detail, item);
     void diary.value?.reload();
     if (undoToast) toast.dismiss(undoToast);
     undoToast = 0;
     if (undo) {
-      undoToast = toast.show(t("book.progressSaved", { n: value }), {
+      undoToast = toast.show(positionSaved(positionOf(item)), {
         label: t("common.undo"),
         run: () => saveProgress(before, false),
       });
@@ -394,6 +400,7 @@ async function remove() {
     take: detail.take,
     dnf_reason: detail.dnf_reason,
     progress: detail.progress,
+    current_page: detail.current_page,
   };
   busy.value = true;
   try {
@@ -406,7 +413,10 @@ async function remove() {
     detail.take = "";
     detail.dnf_reason = "";
     detail.progress = null;
+    detail.current_page = null;
     syncDrafts(detail);
+    // Off the shelf, no position: the diary guards every post written further on again.
+    void diary.value?.reload();
     // The entry's cover (its own, or its edition's) goes with it.
     if (coverKey || previous.edition_id != null) void showStandardCover(detail);
     toast.show(t("book.removed"), {
@@ -414,6 +424,7 @@ async function remove() {
       run: async () => {
         const item = await api.addToShelf(previous);
         adoptEntry(detail, item);
+        void diary.value?.reload();
         if (coverKey) await reapplyCover(detail, item.id, coverKey);
       },
     });
@@ -774,7 +785,8 @@ watch(param, load);
             <div v-if="book.on_shelf === 'currently_reading'" class="control-block">
               <ProgressEditor
                 :value="book.progress"
-                :pages="book.pages"
+                :page="book.current_page"
+                :pages="book.progress_pages ?? book.pages"
                 :label="t('book.progress')"
                 :book-title="book.title"
                 :busy="busy"

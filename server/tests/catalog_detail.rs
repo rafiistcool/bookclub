@@ -622,6 +622,8 @@ async fn work_details_for_unknown_book(db: PgPool) {
         "take",
         "dnf_reason",
         "progress",
+        "current_page",
+        "progress_pages",
         "readers",
         "club_rating",
         "rating_count",
@@ -632,7 +634,7 @@ async fn work_details_for_unknown_book(db: PgPool) {
     ] {
         assert!(keys.contains(&key), "missing {key}");
     }
-    assert_eq!(keys.len(), 33);
+    assert_eq!(keys.len(), 35);
 
     // The first view imports the work; later reads are local even without the RAM caches.
     app.state.catalog.clear_caches();

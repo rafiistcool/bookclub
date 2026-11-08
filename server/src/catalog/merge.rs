@@ -183,6 +183,7 @@ async fn merge_in(
     // that shows them when the entry it was written for hid them (only-me, or gone): sealed
     // before the entries merge, and again once the kept entry's visibility is final.
     seal_finished_ratings(conn, None, Some(&pair[..])).await?;
+    let paged = paged_entries(conn, &pair).await?;
     if !merge_shelves(conn, loser, winner, &covers, last_try, &mut report).await? {
         return Ok(None);
     }
@@ -200,8 +201,58 @@ async fn merge_in(
     .execute(&mut *conn)
     .await?;
     refresh_derived(conn, winner).await?;
+    drop_stale_pages(conn, &paged).await?;
     tracing::info!(?report, "merged two works");
     Ok(Some(report))
+}
+
+/// The entries of the two works that hold a page (`shelf_entries.current_page`), with the page
+/// count each counts against before the merge (its edition's, else its work's; 0 for none).
+struct PagedEntries {
+    ids: Vec<i64>,
+    pages: Vec<i32>,
+}
+
+async fn paged_entries(conn: &mut PgConnection, pair: &[i64; 2]) -> sqlx::Result<PagedEntries> {
+    let rows = sqlx::query!(
+        r#"SELECT s.id, coalesce(e.pages, w.pages, 0) AS "pages!"
+           FROM shelf_entries s
+           JOIN works w ON w.id = s.work_id
+           LEFT JOIN editions e ON e.id = s.edition_id AND e.work_id = w.id
+           WHERE s.work_id = ANY($1) AND s.current_page IS NOT NULL
+           ORDER BY s.id"#,
+        &pair[..]
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(PagedEntries {
+        ids: rows.iter().map(|row| row.id).collect(),
+        pages: rows.iter().map(|row| row.pages).collect(),
+    })
+}
+
+/// After the merge, an entry whose page now counts against another page count (another work,
+/// an edition taken over from the dropped entry, the loser's page count) drops its page, as a
+/// PATCH to another edition does: the percent holds the position. A page of 300 must not stay
+/// on 250 pages.
+async fn drop_stale_pages(conn: &mut PgConnection, paged: &PagedEntries) -> sqlx::Result<()> {
+    if paged.ids.is_empty() {
+        return Ok(());
+    }
+    sqlx::query!(
+        "UPDATE shelf_entries s SET current_page = NULL
+         FROM unnest($1::bigint[], $2::int[]) AS old(id, pages)
+         WHERE s.id = old.id AND s.current_page IS NOT NULL
+           AND old.pages IS DISTINCT FROM (
+               SELECT coalesce(e.pages, w.pages, 0) FROM works w
+               LEFT JOIN editions e ON e.id = s.edition_id AND e.work_id = w.id
+               WHERE w.id = s.work_id)",
+        &paged.ids,
+        &paged.pages
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
 }
 
 /// Locks the live covers of the two works and the live pictures their shelf entries chose

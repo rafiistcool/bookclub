@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import { i18n } from "../i18n";
 import BottomSheet from "./BottomSheet.vue";
 
-function mountSheet() {
+function mountSheet(dirty?: boolean) {
   return mount(BottomSheet, {
-    props: { title: "Report" },
+    props: { title: "Report", dirty },
     slots: { default: '<textarea class="note"></textarea>' },
     global: { plugins: [i18n] },
   });
@@ -46,6 +46,16 @@ describe("BottomSheet", () => {
     expect(wrapper.get(".sheet").attributes("style") ?? "").not.toContain("300px");
     // The deliberate way out still works.
     await wrapper.get(".sheet-close").trigger("click");
+    expect(wrapper.emitted("close")).toHaveLength(1);
+    wrapper.unmount();
+  });
+
+  it("keeps a dirty sheet open on a drag: a stepper's change counts as an edit", async () => {
+    const wrapper = mountSheet(true);
+    await drag(wrapper, 300);
+    expect(wrapper.emitted("close")).toBeUndefined();
+    await wrapper.setProps({ dirty: false });
+    await drag(wrapper, 300);
     expect(wrapper.emitted("close")).toHaveLength(1);
     wrapper.unmount();
   });

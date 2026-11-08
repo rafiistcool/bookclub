@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE shelf_entries\n         SET edition_id = $2, status = $3, position = $4, shelf_position = $5, rating = $6,\n             rating_visibility = $7, take = $8, dnf_reason = $9, progress = $10, updated_at = $11,\n             started_at = $12, finished_at = $13, current_page = $14\n         WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Text",
+        "Text",
+        "Text",
+        "Int4",
+        "Timestamptz",
+        "Timestamptz",
+        "Timestamptz",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "680fa07d31307445803fdc54f0aeaeab579ace8e050723860ba631c17fde12c1"
+}

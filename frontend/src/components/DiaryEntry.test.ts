@@ -79,26 +79,142 @@ describe("DiaryEntry actions", () => {
     useSession().user = user();
   });
 
-  it("keeps reply the one accent action; edit and delete stay quiet until delete asks to confirm", async () => {
+  it("keeps one line: reactions on the left, Reply and “…” on the right", () => {
+    const wrapper = mountEntry(post({ mine: true, body: "Mine", reactions: [{ emoji: "❤️", count: 2, mine: false, users: ["a", "b"] }] }));
+    const footer = wrapper.get(".entry-actions");
+    expect(footer.findAll(":scope > *").map((part) => part.classes()[0])).toEqual(["reaction-row", "entry-links"]);
+    expect(wrapper.findAll(".entry-links .text-btn").map((b) => b.text())).toEqual(["Reply"]);
+    const more = wrapper.get(".entry-links .entry-more");
+    expect(more.attributes("aria-label")).toBe("More for this post");
+    expect(more.attributes("aria-haspopup")).toBe("dialog");
+    // Without reactions the row keeps its shape: Reply stays on the right.
+    const bare = mountEntry(post({ mine: true, body: "Mine" }));
+    expect(bare.get(".entry-actions").findAll(":scope > *").map((part) => part.classes()[0])).toEqual([
+      "reaction-row",
+      "entry-links",
+    ]);
+    wrapper.unmount();
+    bare.unmount();
+  });
+
+  it("opens the reaction picker on a line of its own, never under Reply and “…”", async () => {
     const wrapper = mountEntry(post({ mine: true, body: "Mine" }));
-    const links = () => wrapper.findAll(".entry-links .text-btn");
-    expect(links().map((b) => b.text())).toEqual(["Reply", "Edit", "Delete"]);
-    expect(links()[0].classes()).not.toContain("quiet");
-    expect(links()[1].classes()).toContain("quiet");
-    expect(links()[2].classes()).toContain("quiet");
-    await links()[2].trigger("click");
-    expect(links()[2].classes()).toContain("danger");
-    expect(links()[2].classes()).not.toContain("quiet");
+    await wrapper.get(".chip.reaction.add").trigger("click");
+    const footer = wrapper.get(".entry-actions");
+    // Its own flex item of the wrapping bar, after "+" in the DOM and before the links.
+    expect(footer.findAll(":scope > *").map((part) => part.classes()[0])).toEqual([
+      "reaction-row",
+      "reaction-picker-line",
+      "entry-links",
+    ]);
+    expect(wrapper.find(".reaction-row .reaction-picker").exists()).toBe(false);
+    expect(wrapper.findAll(".reaction-picker-line .reaction-pick")).toHaveLength(6);
     wrapper.unmount();
   });
 
-  it("labels a spoiler shield in sentence case, not as a caps kicker", () => {
+  it("edits and deletes one's own post from the “…” sheet, deleting only on a second tap", async () => {
+    const wrapper = mount(DiaryEntry, {
+      props: { entry: post({ mine: true, body: "Mine" }), myProgress: null, myStatus: null },
+      global: { stubs: { Avatar: true, SpoilerControl: true } },
+      attachTo: document.body,
+    });
+    await wrapper.get(".entry-more").trigger("click");
+    expect(wrapper.get(".sheet").attributes("aria-label")).toBe("Your post");
+    expect(wrapper.findAll(".sheet .sheet-row").map((row) => row.text())).toEqual(["Edit", "Delete"]);
+    const remove = wrapper.get(".sheet .post-delete");
+    await remove.trigger("click");
+    expect(wrapper.emitted("delete")).toBeUndefined();
+    expect(remove.text()).toBe("Really delete?");
+    expect(remove.classes()).toContain("danger");
+    await remove.trigger("click");
+    expect(wrapper.emitted("delete")).toHaveLength(1);
+    expect(wrapper.find(".sheet").exists()).toBe(false);
+
+    await wrapper.get(".entry-more").trigger("click");
+    await wrapper.get(".sheet .post-edit").trigger("click");
+    await nextTick();
+    expect(wrapper.find(".sheet").exists()).toBe(false);
+    const field = wrapper.get(".entry-edit textarea");
+    expect((field.element as HTMLTextAreaElement).value).toBe("Mine");
+    expect(document.activeElement).toBe(field.element);
+
+    // The form goes with its button: cancelling or saving gives the focus to "…".
+    await wrapper.findAll(".entry-edit button").find((b) => b.text() === "Cancel")!.trigger("click");
+    await nextTick();
+    expect(wrapper.find(".entry-edit").exists()).toBe(false);
+    expect(document.activeElement).toBe(wrapper.get(".entry-more").element);
+    await wrapper.get(".entry-more").trigger("click");
+    await wrapper.get(".sheet .post-edit").trigger("click");
+    await nextTick();
+    await wrapper.get(".entry-edit textarea").setValue("Mine, changed");
+    await wrapper.get(".entry-edit").trigger("submit");
+    await nextTick();
+    expect(wrapper.emitted("edit")?.[0]?.[0]).toBe("Mine, changed");
+    expect(document.activeElement).toBe(wrapper.get(".entry-more").element);
+    wrapper.unmount();
+  });
+
+  it("offers no “…” on someone else's post without moderation rights", () => {
+    const wrapper = mountEntry(post({ author: "max", body: "Hi", club: CLUB }));
+    expect(wrapper.find(".entry-more").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("names the writer's flag and where the reader is over the blur", () => {
     const wrapper = mount(DiaryEntry, {
       props: { entry: post({ body: "Secret", spoiler_upto: 70 }), myProgress: 10, myStatus: "currently_reading" },
       global: { stubs: { Avatar: true, SpoilerControl: true } },
     });
     expect(wrapper.find(".shield-btn .kicker").exists()).toBe(false);
-    expect(wrapper.get(".shield-btn .shield-label").text()).toContain("70");
+    expect(wrapper.get(".shield-btn .shield-label").text()).toBe("Spoiler up to 70% · you're at 10%");
+    expect(wrapper.get(".shield-btn").text()).toContain("Tap to read");
+    // The blur hides it from the eye only: a screen reader does not read it either.
+    expect(wrapper.get(".entry-text").attributes("aria-hidden")).toBe("true");
     wrapper.unmount();
+  });
+});
+
+describe("DiaryEntry spoiler fold", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    useSession().user = user();
+  });
+
+  function mountAt(entry: Entry, myProgress: number | null, myStatus: Entry["status_at"]) {
+    return mount(DiaryEntry, {
+      props: { entry, myProgress, myStatus },
+      global: { stubs: { Avatar: true, SpoilerControl: true } },
+      attachTo: document.body,
+    });
+  }
+
+  const ahead = post({ author: "jonas", body: "The twist!", status_at: "currently_reading", progress_at: 35 });
+
+  it("folds a post written further on into one quiet line, and shows it on a tap", async () => {
+    const wrapper = mountAt(ahead, null, null);
+    expect(wrapper.text()).not.toContain("The twist!");
+    expect(wrapper.find(".entry-actions").exists()).toBe(false);
+    const fold = wrapper.get(".entry-folded");
+    expect(fold.get(".folded-line").text()).toBe("jonas · at 35% · you're at 0%");
+    expect(fold.get(".folded-hint").text()).toBe("Tap to read");
+    expect(fold.attributes("aria-expanded")).toBe("false");
+    await fold.trigger("click");
+    expect(wrapper.text()).toContain("The twist!");
+    expect(wrapper.find(".entry-folded").exists()).toBe(false);
+    // The focus moves to the post, not to the page.
+    expect(document.activeElement).toBe(wrapper.get("article").element);
+    wrapper.unmount();
+  });
+
+  it("leaves it open for a reader as far or further, one's own, and after finishing", () => {
+    for (const wrapper of [
+      mountAt(ahead, 35, "currently_reading"),
+      mountAt({ ...ahead, mine: true }, 0, null),
+      mountAt(ahead, null, "finished"),
+    ]) {
+      expect(wrapper.find(".entry-folded").exists()).toBe(false);
+      expect(wrapper.text()).toContain("The twist!");
+      wrapper.unmount();
+    }
   });
 });
