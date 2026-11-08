@@ -365,6 +365,42 @@ describe("DiscoverPage search results", () => {
     expect(wrapper.findAll(".tile")).toHaveLength(0);
   });
 
+  it("always presses one sort, ticked: best match for a search, popular for a subject alone", async () => {
+    search.mockResolvedValue(page([hit()]));
+    const { wrapper } = await mountDiscover("/discover?q=circe");
+    const sorts = () => wrapper.findAll(".sort-chips .chip").map((chip) => [chip.text(), chip.attributes("aria-pressed"), chip.find(".chip-check").exists()]);
+    expect(wrapper.get(".sort-chips").attributes("role")).toBe("group");
+    expect(wrapper.get(".sort-chips").attributes("aria-label")).toBe("Order");
+    expect(sorts()).toEqual([
+      ["Best match", "true", true],
+      ["Popular", "false", false],
+      ["New", "false", false],
+      ["Title", "false", false],
+    ]);
+    await wrapper.findAll(".sort-chips .chip")[2]!.trigger("click");
+    await flushPromises();
+    expect(search).toHaveBeenLastCalledWith(expect.objectContaining({ sort: "new" }), expect.anything());
+    expect(sorts().filter(([, pressed]) => pressed === "true")).toEqual([["New", "true", true]]);
+    // The pressed one again goes back to the start: best match.
+    await wrapper.findAll(".sort-chips .chip")[2]!.trigger("click");
+    await flushPromises();
+    expect(sorts()[0]).toEqual(["Best match", "true", true]);
+
+    const subjectOnly = await mountDiscover("/discover?subject=fantasy");
+    const chips = subjectOnly.wrapper.findAll(".sort-chips .chip");
+    expect(chips.map((chip) => [chip.text(), chip.attributes("aria-pressed")])).toEqual([
+      ["Popular", "true"],
+      ["New", "false"],
+      ["Title", "false"],
+    ]);
+    // The shelf filter sits apart from the order, and ticks too when on.
+    const shelfFilter = subjectOnly.wrapper.get(".result-controls > button.chip");
+    expect(shelfFilter.text()).toBe("Not on my shelf");
+    await shelfFilter.trigger("click");
+    expect(shelfFilter.attributes("aria-pressed")).toBe("true");
+    expect(shelfFilter.find(".chip-check").exists()).toBe(true);
+  });
+
   it("keeps current hits visible while a sort change refetches", async () => {
     const relevance = deferred<SearchPage>();
     const popular = deferred<SearchPage>();

@@ -12,6 +12,7 @@ import { NAV_ITEMS, PROFILE_ITEM, isActive } from "../nav";
 import { reloadWhenVisible, useFriends } from "../stores/friends";
 import { useService } from "../stores/service";
 import { useSession } from "../stores/session";
+import { HIDING_BAR_QUERY, nextBar, type BarState } from "../topBar";
 
 const { t } = useI18n();
 const service = useService();
@@ -71,6 +72,35 @@ watch(
   },
   { flush: "post" },
 );
+// On a phone the wordmark bar slides away while the page scrolls down and
+// comes back on the way up (or on any new page). Sticky bars below it follow
+// through --bar-bottom; with reduced motion the change is instant.
+const bar = ref<BarState>({ hidden: false, anchor: 0 });
+let barFrame = 0;
+// The router places a new page after it has rendered (at the top, or back
+// where the reader was): that first scroll is no move of the reader's, so it
+// only sets where the next decision counts from.
+let placing = false;
+
+function onScroll() {
+  if (barFrame) return;
+  barFrame = requestAnimationFrame(() => {
+    barFrame = 0;
+    const y = window.scrollY;
+    const settled = placing;
+    placing = false;
+    bar.value = matches(HIDING_BAR_QUERY) && !settled ? nextBar(bar.value, y, 56) : { hidden: false, anchor: y };
+  });
+}
+
+watch(
+  () => route.path,
+  () => {
+    placing = true;
+    bar.value = { hidden: false, anchor: window.scrollY };
+  },
+);
+
 const username = computed(() => session.user?.username ?? "");
 const avatarUrl = computed(() => session.user?.avatar_url ?? null);
 
@@ -79,9 +109,14 @@ let stopReloading: (() => void) | null = null;
 onMounted(() => {
   void friends.load();
   stopReloading = reloadWhenVisible();
+  window.addEventListener("scroll", onScroll, { passive: true });
 });
 
-onUnmounted(() => stopReloading?.());
+onUnmounted(() => {
+  stopReloading?.();
+  window.removeEventListener("scroll", onScroll);
+  if (barFrame) cancelAnimationFrame(barFrame);
+});
 
 // A join, leave or new club changes which invitations still wait. A sign-out
 // (no user) asks nothing.
@@ -94,8 +129,8 @@ watch(
 </script>
 
 <template>
-  <div class="shell">
-    <header class="topbar">
+  <div class="shell" :class="{ 'bar-away': bar.hidden }">
+    <header class="topbar" :class="{ away: bar.hidden }" @focusin="bar = { hidden: false, anchor: bar.anchor }">
       <RouterLink class="wordmark" to="/">{{ service.name }}</RouterLink>
     </header>
 
@@ -202,6 +237,31 @@ watch(
   background: var(--bg-translucent-strong);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
+  transition: transform var(--dur-base) var(--ease-out);
+}
+
+/* Away, the bar keeps the safe area covered: only its own 56 px leave. */
+@media (max-width: 720px) {
+  .shell.bar-away {
+    --bar-bottom: env(safe-area-inset-top);
+  }
+
+  .topbar.away {
+    transform: translateY(calc(-1 * var(--header-h)));
+  }
+
+  /* Its words go with it: moved up only 56 px, they would sit under the
+     status bar's clock. Faded, the link takes no tap there; it can still
+     take the focus, which brings the bar back (the header's focusin). */
+  .topbar .wordmark {
+    transition: opacity var(--dur-base) var(--ease-out);
+  }
+
+  .topbar.away .wordmark {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--dur-fast) var(--ease-in);
+  }
 }
 
 .main {

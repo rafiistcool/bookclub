@@ -25,7 +25,7 @@ describe("positionMarker", () => {
     expect(positionMarker(entry({ status_at: "currently_reading", progress_at: 45 }))).toBe("at 45%");
     expect(positionMarker(entry({ status_at: "finished", author_rating: 4 }))).toBe("Finished ★★★★☆");
     expect(positionMarker(entry({ status_at: "finished" }))).toBe("Finished");
-    expect(positionMarker(entry({ status_at: "did_not_finish" }))).toBe("DNF");
+    expect(positionMarker(entry({ status_at: "did_not_finish" }))).toBe("Stopped");
     expect(positionMarker(entry({ status_at: "want_to_read" }))).toBe("before starting");
     expect(positionMarker(entry())).toBe("");
     expect(positionMarker(entry({ status_at: "currently_reading" }))).toBe("");

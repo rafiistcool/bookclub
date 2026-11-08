@@ -12,13 +12,17 @@ export const STATUSES = [
 
 export type Status = (typeof STATUSES)[number];
 
+/**
+ * A status's one name: the same word on the shelf segment, the status chips,
+ * the book page, in sentences ("Verschoben nach „Aktuell“"), aria-labels,
+ * filters and stats (WCAG 2.5.3: the spoken name starts with the shown word).
+ */
 export function statusLabel(status: Status): string {
   return t(`status.${status}`);
 }
 
-export function statusShort(status: Status): string {
-  return t(`statusShort.${status}`);
-}
+/** The same name: there is no second, shorter vocabulary any more. */
+export const statusShort = statusLabel;
 
 export type CoverSize = "xs" | "sm" | "md" | "lg" | "fluid" | "tile";
 

@@ -98,8 +98,8 @@
     "pageSaved": "Fortschritt: S. {page} · {n} %"
   },
   "status": {
-    "want_to_read": "Will ich lesen",
-    "currently_reading": "Lese ich",
+    "want_to_read": "Geplant",
+    "currently_reading": "Aktuell",
     "finished": "Gelesen",
     "did_not_finish": "Abgebrochen"
   },
@@ -107,7 +107,7 @@
     "want_to_read": "Geplant",
     "currently_reading": "Aktuell",
     "finished": "Gelesen",
-    "did_not_finish": "Abbruch"
+    "did_not_finish": "Abgebrochen"
   },
   "relative": {
     "today": "heute",
@@ -147,7 +147,11 @@
     "emailHintNoMail": "Nur du siehst sie.",
     "welcomeNoMail": "Willkommen, {name}!",
     "invitePersonal": "Diese Einladung gilt für jemanden, der schon ein Konto hat, und legt kein neues an.",
-    "inviteFull": "{club} ist voll: Der Club hat schon 20 Mitglieder, mit diesem Code kommst du nicht hinein."
+    "inviteFull": "{club} ist voll: Der Club hat schon 20 Mitglieder, mit diesem Code kommst du nicht hinein.",
+    "checkOrReset": "Prüf die Schreibweise, oder setz unter „Passwort vergessen?“ ein neues.",
+    "resetPassword": "Passwort zurücksetzen",
+    "checkOrAskAdmin": "Prüf die Schreibweise. Passwort vergessen? Ein Admin kann dir ein neues setzen.",
+    "checkConnection": "Prüf deine Verbindung und versuch es nochmal."
   },
   "locale": {
     "en": "English",
@@ -219,8 +223,8 @@
     "noMeeting": "Noch kein Treffen geplant.",
     "openBook": "Buch öffnen",
     "startReading": "Lesen beginnen",
-    "addedToReading": "Zu Lese ich hinzugefügt",
-    "alreadyOnShelf": "Schon im Regal als {status}",
+    "addedToReading": "Unter „Aktuell“ im Regal",
+    "alreadyOnShelf": "Schon im Regal unter „{status}“",
     "addFailed": "Buch konnte nicht hinzugefügt werden",
     "changeMeeting": "Treffen ändern",
     "addMeeting": "Treffen hinzufügen",
@@ -244,7 +248,7 @@
     "yourProgress": "Dein Fortschritt",
     "allClubs": "Alle Clubs",
     "joinWithCode": "Mit Code beitreten",
-    "currentlyReading": "Lese ich gerade",
+    "currentlyReading": "Aktuell",
     "toShelf": "Regal",
     "nothingReading": "Du liest gerade nichts.",
     "recentlyWritten": "Kürzlich geschrieben",
@@ -281,7 +285,7 @@
     "title": "Mein Regal",
     "books": "{n} Buch | {n} Bücher",
     "loadFailed": "Dein Regal konnte nicht geladen werden",
-    "movedTo": "Verschoben nach {status}",
+    "movedTo": "Verschoben nach „{status}“",
     "moveFailed": "Buch konnte nicht verschoben werden",
     "removed": "„{title}“ entfernt",
     "removeFailed": "Buch konnte nicht entfernt werden",
@@ -295,10 +299,10 @@
     "removeBlurb": "Bewertung und Notizen gehen mit. Du kannst es gleich danach rückgängig machen.",
     "nothingHere": "Nichts hier.",
     "directDragHint": "Buch gedrückt halten und ziehen. Den Status änderst du durch Antippen.",
-    "chronologicalHint": "Buch gedrückt halten und ziehen. Beim Wechsel des Monats wird der Abschlussmonat geändert.",
+    "chronologicalHint": "Buch gedrückt halten und ziehen. Zwischen Bücher eines anderen Monats gelegt, bekommt es deren Monat.",
     "finishedMonth": "Gelesen: {month}",
     "noReadingDate": "Lesedatum fehlt",
-    "statusFor": "{title}: {status} – Lesestatus ändern",
+    "statusFor": "{status} – Status von „{title}“ ändern",
     "moreActions": "Weitere Buchaktionen",
     "changeStatus": "Lesestatus ändern",
     "editDate": "Lesedatum ändern",
@@ -315,8 +319,14 @@
     "monthAndYear": "Monat und Jahr",
     "exactDate": "Genaues Datum",
     "currentBooks": "Noch nicht fertig",
-    "finishedBooks": "Fertig gelesen",
-    "currentMemberBooks": "Noch nicht fertig"
+    "finishedBooks": "Gelesen",
+    "currentMemberBooks": "Noch nicht fertig",
+    "undated": "Ohne Datum",
+    "favouritesToggle": "Favoriten",
+    "moreTitle": "Mehr aus deinem Regal",
+    "moreLabel": "Mehr: Tagebuch, Zitate, Jahr",
+    "monthSaved": "Lesedatum: {month}",
+    "monthUndone": "Lesedatum wiederhergestellt"
   },
   "favorites": {
     "heading": "Lieblingsbücher",
@@ -361,11 +371,11 @@
     "spoilerFlagged": "Spoiler markiert",
     "safeUptoTitle": "Spoiler bis {n} %",
     "overlap": "Gemeinsame Wünsche",
-    "includeReading": "Auch was gerade gelesen wird",
-    "overlapBlurb": "Bücher, die mindestens zwei von euch lesen wollen.",
-    "overlapBlurbReading": "Bücher, die mindestens zwei von euch lesen wollen oder gerade lesen.",
+    "includeReading": "Auch „Aktuell“",
+    "overlapBlurb": "Bücher, die mindestens zwei von euch unter „Geplant“ haben.",
+    "overlapBlurbReading": "Bücher, die mindestens zwei von euch unter „Geplant“ oder „Aktuell“ haben.",
     "overlapFailed": "Die Überschneidung konnte nicht geladen werden",
-    "noOverlap": "Noch keine gemeinsamen Wünsche. Legt Bücher auf „Will ich lesen“.",
+    "noOverlap": "Noch keine gemeinsamen Wünsche. Legt Bücher auf „Geplant“.",
     "memberCount": "{n} Mitglied | {n} Mitglieder",
     "allClubs": "Alle Clubs",
     "notFoundTitle": "Club nicht gefunden",
@@ -435,7 +445,9 @@
     "onShelfBadge": "Im Regal",
     "newReleases": "Neuerscheinungen",
     "releaseUpcoming": "Erscheint am {date}",
-    "releaseOut": "Erschienen am {date}"
+    "releaseOut": "Erschienen am {date}",
+    "sortRelevance": "Passend",
+    "sortLabel": "Sortierung"
   },
   "scan": {
     "entry": "Barcode scannen",
@@ -513,7 +525,7 @@
     "removed": "Aus deinem Regal entfernt",
     "nominateFailed": "Buch konnte nicht nominiert werden",
     "setPickFailed": "Club-Buch konnte nicht gesetzt werden",
-    "movedTo": "Verschoben nach {status}",
+    "movedTo": "Verschoben nach „{status}“",
     "ratingCleared": "Bewertung entfernt",
     "writeAFew": "Ein paar Zeilen schreiben",
     "detailsUpdated": "Details aktualisiert",
@@ -649,7 +661,8 @@
     "actions": "Buchaktionen",
     "openBook": "Buch öffnen",
     "setPick": "Als Club-Buch setzen",
-    "nominate": "Fürs Nächste nominieren"
+    "nominate": "Fürs Nächste nominieren",
+    "setPickIn": "Als Club-Buch für {club} setzen"
   },
   "errors": {
     "generic": "Etwas ist schiefgelaufen. Versuch es nochmal.",
@@ -852,7 +865,7 @@
     "homeShort": "Buch",
     "discussionsShort": "Gespräch",
     "voteShort": "Wahl",
-    "membersShort": "Mitglieder",
+    "membersShort": "Runde",
     "more": "Mehr",
     "moreOn": "Mehr, gerade: {section}",
     "invite": "Einladen"
@@ -1167,23 +1180,23 @@
     "short": "Jahr",
     "year": "Jahr",
     "loadFailed": "Die Zahlen konnten nicht geladen werden",
-    "finished": "Beendet",
+    "finished": "Gelesen",
     "pages": "Seiten",
     "average": "Ø Bewertung",
     "averageShort": "Ø ★",
     "fiveStars": "Fünf Sterne",
     "dnf": "Abgebrochen",
     "quotes": "Gesammelte Zitate",
-    "byMonth": "Beendet pro Monat",
-    "byMonthCaption": "Beendete Bücher pro Monat {year}",
+    "byMonth": "Gelesen pro Monat",
+    "byMonthCaption": "Gelesene Bücher pro Monat {year}",
     "month": "Monat",
-    "monthFinished": "{month}: {n} beendet",
-    "nothingYet": "{year} ist noch nichts beendet oder abgebrochen.",
+    "monthFinished": "{month}: {n} gelesen",
+    "nothingYet": "{year} ist noch nichts gelesen oder abgebrochen.",
     "highlights": "Höhepunkte",
     "topBook": "Am besten bewertet",
     "longestBook": "Längstes Buch",
     "clubTitle": "Das Club-Jahr {year}",
-    "clubFinished": "Beendete Bücher",
+    "clubFinished": "Gelesene Bücher",
     "picks": "Club-Bücher",
     "members": "Mitglieder",
     "reader": "Leser:in",
@@ -1192,7 +1205,7 @@
     "bestPick": "Am besten bewertet",
     "setBy": "ausgewählt von {name}",
     "pickSince": "seit {day}",
-    "pickLine": "{readers} im Regal · {finished} beendet · ★ {rating}"
+    "pickLine": "{readers} im Regal · {finished} gelesen · ★ {rating}"
   },
   "editions": {
     "yours": "Deine Ausgabe:",
@@ -1693,7 +1706,7 @@
   },
   "rings": {
     "reading": "{name}: {n} %",
-    "finished": "{name}: fertig",
+    "finished": "{name}: Gelesen",
     "status": "{name}: {status}",
     "more": "{n} weitere",
     "notStarted": "{n} noch nicht angefangen",

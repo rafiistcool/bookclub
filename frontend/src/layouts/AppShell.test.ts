@@ -176,4 +176,89 @@ describe("AppShell", () => {
     await flushPromises();
     expect(api.friends).toHaveBeenCalledTimes(3);
   });
+
+  describe("the phone's top bar", () => {
+    function scrollTo(y: number) {
+      Object.defineProperty(window, "scrollY", { configurable: true, value: y });
+      window.dispatchEvent(new Event("scroll"));
+    }
+
+    beforeEach(() => {
+      api.friends!.mockResolvedValue(friendsOut());
+      vi.stubGlobal("requestAnimationFrame", (run: FrameRequestCallback) => { queueMicrotask(() => run(0)); return 1; });
+      vi.stubGlobal("cancelAnimationFrame", () => {});
+    });
+
+    afterEach(() => {
+      Reflect.deleteProperty(window, "scrollY");
+    });
+
+    it("slides away on the way down, comes back on the way up and on a new page", async () => {
+      vi.stubGlobal("matchMedia", (query: string) => ({
+        matches: query === "(max-width: 720px)", addEventListener() {}, removeEventListener() {},
+      }));
+      const shell = await mountShell("/shelf");
+      const bar = () => shell.get(".topbar");
+      scrollTo(30);
+      await flushPromises();
+      expect(bar().classes()).not.toContain("away");
+      scrollTo(400);
+      await flushPromises();
+      expect(bar().classes()).toContain("away");
+      expect(shell.get(".shell").classes()).toContain("bar-away");
+      // A finger resting does nothing; a real move up brings it back.
+      scrollTo(396);
+      await flushPromises();
+      expect(bar().classes()).toContain("away");
+      scrollTo(300);
+      await flushPromises();
+      expect(bar().classes()).not.toContain("away");
+      scrollTo(800);
+      await flushPromises();
+      expect(bar().classes()).toContain("away");
+      // Tabbing onto the wordmark shows the bar.
+      await bar().trigger("focusin");
+      expect(bar().classes()).not.toContain("away");
+      scrollTo(1200);
+      await flushPromises();
+      expect(bar().classes()).toContain("away");
+      await shell.vm.$router.push("/discover");
+      await flushPromises();
+      expect(bar().classes()).not.toContain("away");
+    });
+
+    it("stays on a page the router puts back deep down, and hides on the reader's next move down", async () => {
+      vi.stubGlobal("matchMedia", (query: string) => ({
+        matches: query === "(max-width: 720px)", addEventListener() {}, removeEventListener() {},
+      }));
+      const shell = await mountShell("/book/1");
+      const bar = () => shell.get(".topbar");
+      scrollTo(0);
+      await flushPromises();
+      // Back to the shelf: the path changes while the book page is still at the top,
+      // then the router restores the shelf's 1500 px.
+      await shell.vm.$router.push("/shelf");
+      await flushPromises();
+      scrollTo(1500);
+      await flushPromises();
+      expect(bar().classes()).not.toContain("away");
+      // That position is where the reader's own scrolling counts from.
+      scrollTo(1504);
+      await flushPromises();
+      expect(bar().classes()).not.toContain("away");
+      scrollTo(1600);
+      await flushPromises();
+      expect(bar().classes()).toContain("away");
+    });
+
+    it("stays where it is on a wide screen", async () => {
+      const shell = await mountShell("/shelf");
+      scrollTo(400);
+      await flushPromises();
+      scrollTo(900);
+      await flushPromises();
+      expect(shell.get(".topbar").classes()).not.toContain("away");
+    });
+  });
 });
+

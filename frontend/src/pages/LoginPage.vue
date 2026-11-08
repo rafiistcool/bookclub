@@ -20,6 +20,8 @@ const username = ref("");
 const password = ref("");
 const show = ref(false);
 const error = ref("");
+/** What to do next, under the error: depends on why the sign-in failed. */
+const nextStep = ref<"" | "check" | "connection">("");
 const pending = ref(false);
 /** Coming from an invite link: sign-up keeps the code. */
 const signupLink = computed(() => {
@@ -29,12 +31,22 @@ const signupLink = computed(() => {
 
 async function submit() {
   error.value = "";
+  nextStep.value = "";
   pending.value = true;
   try {
     await session.login(username.value, password.value);
     await router.replace(safeNextPath(route.query.next));
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : t("auth.couldNotSignIn");
+    // A wrong name or password asks for another look (or a new password);
+    // no answer at all asks for the connection. A pause or a suspension
+    // already says what to do in its own words.
+    if (err instanceof ApiError) {
+      error.value = err.message;
+      nextStep.value = err.status === 401 ? "check" : "";
+    } else {
+      error.value = t("auth.couldNotSignIn");
+      nextStep.value = "connection";
+    }
   } finally {
     pending.value = false;
   }
@@ -45,7 +57,6 @@ async function submit() {
   <main class="auth-page">
     <h1 class="wordmark">{{ service.name }}</h1>
     <form @submit.prevent="submit">
-      <p v-if="error" class="error">{{ error }}</p>
       <label class="field">
         <span>{{ t("auth.username") }}</span>
         <input v-model="username" name="username" autocomplete="username" required />
@@ -69,6 +80,17 @@ async function submit() {
       <button class="btn btn-primary btn-block" type="submit" :disabled="pending">
         {{ pending ? t("auth.signingIn") : t("auth.signIn") }}
       </button>
+      <!-- Under the button, so the fields stay where the fingers are. -->
+      <div class="login-error" role="alert">
+        <template v-if="error">
+          <p class="error">{{ error }}</p>
+          <!-- With mail, the way to a new password is the link right below. -->
+          <p v-if="nextStep === 'check'" class="fine muted">
+            {{ service.mail ? t("auth.checkOrReset") : t("auth.checkOrAskAdmin") }}
+          </p>
+          <p v-else-if="nextStep === 'connection'" class="fine muted">{{ t("auth.checkConnection") }}</p>
+        </template>
+      </div>
     </form>
     <p class="fine auth-forgot">
       <RouterLink to="/forgot-password">{{ t("auth.forgotPassword") }}</RouterLink>
@@ -94,6 +116,15 @@ async function submit() {
 <style scoped>
 form {
   margin-top: var(--space-6);
+}
+
+.login-error:not(:empty) {
+  margin-top: var(--space-3);
+}
+
+.login-error .error {
+  margin: 0 0 var(--space-1);
+  font-weight: 600;
 }
 
 .auth-forgot {

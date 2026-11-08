@@ -178,8 +178,9 @@ watch(slug, () => void load(), { immediate: true });
    so text scrolling under the tab labels doesn't show through. */
 .club-head {
   position: sticky;
-  top: calc(var(--header-h) + env(safe-area-inset-top));
+  top: var(--bar-bottom);
   z-index: 15;
+  transition: top var(--dur-base) var(--ease-out);
   margin: calc(-1 * var(--space-4)) calc(-1 * var(--space-4)) var(--space-5);
   padding: 0 var(--space-4);
   background: var(--bg-translucent-strong);
@@ -187,9 +188,15 @@ watch(slug, () => void load(), { immediate: true });
   border-bottom: 1px solid var(--border);
 }
 
+/* The page's h1 carries the name's size itself (not only the span inside),
+   so the outline reads h1 22 px over the sections' 18 px h2s. */
 .club-title {
   margin: 0;
-  font: inherit;
+  font-family: var(--serif);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
 }
 
 .club-name-btn {
@@ -219,11 +226,7 @@ watch(slug, () => void load(), { immediate: true });
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--serif);
-  font-size: var(--text-xl);
-  font-weight: 600;
-  line-height: var(--leading-tight);
-  letter-spacing: var(--tracking-tight);
+  font-size: 1em;
 }
 
 .club-chevron {
@@ -335,7 +338,7 @@ watch(slug, () => void load(), { immediate: true });
 }
 
 @media (min-width: 720px) {
-  .club-name {
+  .club-title {
     font-size: var(--text-2xl);
   }
 }

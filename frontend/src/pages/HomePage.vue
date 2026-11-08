@@ -245,8 +245,11 @@ onMounted(() => {
             <BookCover :book="item.book" size="sm" />
           </RouterLink>
           <span class="reading-meta">
-            <RouterLink class="reading-title" :to="bookPath(item.book)">{{ item.book.title }}</RouterLink>
-            <span v-if="item.book.authors" class="finer subtle">{{ item.book.authors }}</span>
+            <!-- Title and author are one link: with its hit area it is a finger high. -->
+            <RouterLink class="reading-link" :to="bookPath(item.book)">
+              <span class="reading-title">{{ item.book.title }}</span>
+              <span v-if="item.book.authors" class="finer subtle">{{ item.book.authors }}</span>
+            </RouterLink>
             <ProgressEditor
               :value="progress[item.id]?.progress ?? 0"
               :page="progress[item.id]?.page ?? null"
@@ -400,9 +403,30 @@ onMounted(() => {
   align-content: start;
 }
 
-.reading-title {
+/* The hit area reaches 44 px around a one-line title (the pattern of
+   .chip::before); a taller link keeps its own box. */
+.reading-link {
+  position: relative;
+  display: grid;
+  gap: 2px;
   color: inherit;
   text-decoration: none;
+}
+
+.reading-link::before {
+  content: "";
+  position: absolute;
+  inset: min(0px, calc((100% - var(--tap)) / 2)) 0;
+}
+
+/* Under a one-line title (a book without authors) that hit area reaches
+   into the progress button's top; the button is drawn over it and keeps
+   its own 44 px. */
+.reading-meta :deep(.progress-trigger) {
+  position: relative;
+}
+
+.reading-title {
   font-family: var(--serif);
   font-size: var(--text-md);
   font-weight: 650;

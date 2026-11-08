@@ -367,13 +367,22 @@ defineExpose({ reload });
   gap: 2px;
 }
 
+/* A finger high: the hit area reaches 44 px around the one-line head (the
+   pattern of .chip::before), into the row's padding and the note's first line. */
 .feed-head {
+  position: relative;
   color: inherit;
   text-decoration: none;
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: var(--space-1) var(--space-2);
+}
+
+.feed-head::before {
+  content: "";
+  position: absolute;
+  inset: min(0px, calc((100% - var(--tap)) / 2)) 0;
 }
 
 .feed-body {

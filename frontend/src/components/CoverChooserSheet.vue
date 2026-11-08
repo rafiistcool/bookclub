@@ -64,6 +64,16 @@ export function announceCoverChange(entryId: number, restore: CoverRestore | nul
     },
   });
 }
+/**
+ * A publisher as the tile shows it: without the legal form at its end
+ * ("Diogenes Verlag AG" -> "Diogenes Verlag", "Penguin Random House LLC"
+ * -> "Penguin Random House"), which tells no edition apart and cost the
+ * name its last word. The full name stays in the tile's tooltip.
+ */
+export function shortPublisher(name: string): string {
+  const legal = /(?:[\s,]+(?:G?mbH(?:\s*[&+]\s*Co\.?)?|KG(?:aA)?|AG|e\.\s?K\.|OHG|Ltd\.?|LLC|Inc\.?|S\.A\.|S\.p\.A\.|B\.V\.|plc))+\.?$/i;
+  return name.trim().replace(legal, "").replace(/[\s,&]+$/, "").trim() || name.trim();
+}
 </script>
 
 <script setup lang="ts">
@@ -167,15 +177,15 @@ function labelLines(candidate: CoverCandidateOut): { facts: string; publisher: s
   const facts: string[] = [];
   if (edition?.year) facts.push(String(edition.year));
   if (edition?.language && isRealLanguage(edition.language)) facts.push(languageName(edition.language, locale.value));
-  const publisher = edition?.publisher ?? "";
+  const publisher = edition?.publisher ? shortPublisher(edition.publisher) : "";
   if (!facts.length && !publisher) return { facts: t(`coverChoice.source.${candidate.source}`), publisher: "" };
   return { facts: facts.join(" · "), publisher };
 }
 
-/** The whole label on one line, for the tile's tooltip. */
+/** The whole label on one line, for the tile's tooltip, with the publisher's full name. */
 function label(candidate: CoverCandidateOut): string {
-  const { facts, publisher } = labelLines(candidate);
-  return [facts, publisher].filter(Boolean).join(" · ");
+  const { facts } = labelLines(candidate);
+  return [facts, candidate.edition_label?.publisher?.trim()].filter(Boolean).join(" · ");
 }
 
 function onImageError(candidate: CoverCandidateOut) {
@@ -497,11 +507,23 @@ onBeforeUnmount(() => {
   color: var(--text-muted);
 }
 
-.label-facts,
-.label-publisher {
+.label-facts {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+/* Up to two lines that break between words; only a single word too long for
+   the tile is cut, at its end. */
+.label-publisher {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: manual;
 }
 
 .label-facts {

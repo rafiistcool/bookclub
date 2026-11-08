@@ -98,16 +98,16 @@
     "pageSaved": "Progress: p. {page} · {n}%"
   },
   "status": {
-    "want_to_read": "Want to read",
+    "want_to_read": "Planned",
     "currently_reading": "Reading",
     "finished": "Finished",
-    "did_not_finish": "Did not finish"
+    "did_not_finish": "Stopped"
   },
   "statusShort": {
-    "want_to_read": "To read",
+    "want_to_read": "Planned",
     "currently_reading": "Reading",
-    "finished": "Read",
-    "did_not_finish": "DNF"
+    "finished": "Finished",
+    "did_not_finish": "Stopped"
   },
   "relative": {
     "today": "today",
@@ -147,7 +147,11 @@
     "emailHintNoMail": "Only you see it.",
     "welcomeNoMail": "Welcome, {name}!",
     "invitePersonal": "This invite is for someone who already has an account, and it creates no new one.",
-    "inviteFull": "{club} is full: it already has 20 members, so this code cannot add you."
+    "inviteFull": "{club} is full: it already has 20 members, so this code cannot add you.",
+    "checkOrReset": "Check the spelling, or set a new one under “Forgot your password?”.",
+    "resetPassword": "Reset password",
+    "checkOrAskAdmin": "Check the spelling. Forgot your password? An admin can set you a new one.",
+    "checkConnection": "Check your connection and try again."
   },
   "locale": {
     "en": "English",
@@ -219,8 +223,8 @@
     "noMeeting": "No meeting scheduled yet.",
     "openBook": "Open book",
     "startReading": "Start reading",
-    "addedToReading": "Added to Reading",
-    "alreadyOnShelf": "Already on your shelf as {status}",
+    "addedToReading": "On your shelf under “Reading”",
+    "alreadyOnShelf": "Already on your shelf under “{status}”",
     "addFailed": "Could not add that book",
     "changeMeeting": "Change meeting",
     "addMeeting": "Add meeting",
@@ -244,7 +248,7 @@
     "yourProgress": "Your progress",
     "allClubs": "All clubs",
     "joinWithCode": "Join with a code",
-    "currentlyReading": "Currently reading",
+    "currentlyReading": "Reading",
     "toShelf": "Shelf",
     "nothingReading": "You're not reading anything.",
     "recentlyWritten": "Recently written",
@@ -281,7 +285,7 @@
     "title": "Your shelf",
     "books": "{n} book | {n} books",
     "loadFailed": "Could not load your shelf",
-    "movedTo": "Moved to {status}",
+    "movedTo": "Moved to “{status}”",
     "moveFailed": "Could not move that book",
     "removed": "Removed “{title}”",
     "removeFailed": "Could not remove that book",
@@ -295,10 +299,10 @@
     "removeBlurb": "Your rating and notes go with it. You can undo right after.",
     "nothingHere": "Nothing here.",
     "directDragHint": "Hold a book to move it. Tap its status to change it.",
-    "chronologicalHint": "Hold and drag a book. Moving it to another month changes its completion month.",
+    "chronologicalHint": "Press and hold a book, then drag. Dropped among another month’s books, it takes their month.",
     "finishedMonth": "Finished: {month}",
     "noReadingDate": "No reading date",
-    "statusFor": "{title}: {status} – change reading status",
+    "statusFor": "{status} – change the status of “{title}”",
     "moreActions": "More book actions",
     "changeStatus": "Change reading status",
     "editDate": "Change reading date",
@@ -315,8 +319,14 @@
     "monthAndYear": "Month and year",
     "exactDate": "Exact date",
     "currentBooks": "Not finished yet",
-    "finishedBooks": "Finished reading",
-    "currentMemberBooks": "Not finished yet"
+    "finishedBooks": "Finished",
+    "currentMemberBooks": "Not finished yet",
+    "undated": "No date",
+    "favouritesToggle": "Favourites",
+    "moreTitle": "More from your shelf",
+    "moreLabel": "More: diary, quotes, year",
+    "monthSaved": "Reading date: {month}",
+    "monthUndone": "Reading date restored"
   },
   "favorites": {
     "heading": "Favourites",
@@ -361,11 +371,11 @@
     "spoilerFlagged": "spoiler-flagged",
     "safeUptoTitle": "Spoiler up to {n}%",
     "overlap": "Shared wants",
-    "includeReading": "Include books being read",
-    "overlapBlurb": "Books two or more of you want to read.",
-    "overlapBlurbReading": "Books two or more of you want to read or are reading.",
+    "includeReading": "Include “Reading”",
+    "overlapBlurb": "Books two or more of you have under “Planned”.",
+    "overlapBlurbReading": "Books two or more of you have under “Planned” or “Reading”.",
     "overlapFailed": "Could not load the overlap",
-    "noOverlap": "No shared wants yet. Put books on “Want to read”.",
+    "noOverlap": "No shared wants yet. Put books on “Planned”.",
     "memberCount": "{n} member | {n} members",
     "allClubs": "All clubs",
     "notFoundTitle": "Club not found",
@@ -435,7 +445,9 @@
     "onShelfBadge": "Shelved",
     "newReleases": "New in German",
     "releaseUpcoming": "Out {date}",
-    "releaseOut": "Out since {date}"
+    "releaseOut": "Out since {date}",
+    "sortRelevance": "Best match",
+    "sortLabel": "Order"
   },
   "scan": {
     "entry": "Scan a barcode",
@@ -513,7 +525,7 @@
     "removed": "Removed from your shelf",
     "nominateFailed": "Could not nominate that book",
     "setPickFailed": "Could not set the club pick",
-    "movedTo": "Moved to {status}",
+    "movedTo": "Moved to “{status}”",
     "ratingCleared": "Rating cleared",
     "writeAFew": "Write a few lines",
     "detailsUpdated": "Details updated",
@@ -561,7 +573,7 @@
     "react": "React {emoji}",
     "finished": "Finished",
     "finishedStars": "Finished {stars}",
-    "dnf": "DNF",
+    "dnf": "Stopped",
     "atPercent": "at {n}%",
     "beforeStarting": "before starting",
     "noSpoiler": "No spoiler flag",
@@ -649,7 +661,8 @@
     "actions": "Book actions",
     "openBook": "Open book",
     "setPick": "Set as club pick",
-    "nominate": "Nominate for next up"
+    "nominate": "Nominate for next up",
+    "setPickIn": "Make it the pick for {club}"
   },
   "errors": {
     "generic": "Something went wrong. Try again.",
@@ -852,7 +865,7 @@
     "homeShort": "Book",
     "discussionsShort": "Talk",
     "voteShort": "Vote",
-    "membersShort": "Members",
+    "membersShort": "Group",
     "more": "More",
     "moreOn": "More, now: {section}",
     "invite": "Invite"
@@ -1172,13 +1185,13 @@
     "average": "Avg. rating",
     "averageShort": "Avg. ★",
     "fiveStars": "Five stars",
-    "dnf": "Not finished",
+    "dnf": "Stopped",
     "quotes": "Quotes kept",
     "byMonth": "Finished per month",
     "byMonthCaption": "Books finished per month in {year}",
     "month": "Month",
     "monthFinished": "{month}: {n} finished",
-    "nothingYet": "Nothing finished or set aside in {year} yet.",
+    "nothingYet": "Nothing finished or stopped in {year} yet.",
     "highlights": "Highlights",
     "topBook": "Rated highest",
     "longestBook": "Longest book",
@@ -1693,7 +1706,7 @@
   },
   "rings": {
     "reading": "{name}: {n}%",
-    "finished": "{name}: finished",
+    "finished": "{name}: Finished",
     "status": "{name}: {status}",
     "more": "{n} more",
     "notStarted": "{n} not started yet",

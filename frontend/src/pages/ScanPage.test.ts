@@ -106,10 +106,10 @@ describe("ScanPage", () => {
     expect(w.find(".hit-card .caps").exists()).toBe(false);
     expect(addToShelf).not.toHaveBeenCalled();
 
-    await button(w, "To read").trigger("click");
+    await button(w, "Planned").trigger("click");
     await flushPromises();
     expect(addToShelf).toHaveBeenCalledWith({ work_id: 9, edition_id: 40, status: "want_to_read" });
-    expect(w.text()).toContain("On your shelf: Want to read");
+    expect(w.text()).toContain("On your shelf: Planned");
     expect(w.text()).toContain("This edition is on your shelf.");
     expect(w.find("a[href='/book/9']").text()).toBe("Open book");
   });
@@ -135,7 +135,7 @@ describe("ScanPage", () => {
     patchShelf.mockResolvedValue(shelfItem({ id: 12, status: "finished" }));
     const w = await mountPage();
     await scan(w);
-    await button(w, "Read").trigger("click");
+    await button(w, "Finished").trigger("click");
     await flushPromises();
     expect(patchShelf).toHaveBeenCalledWith(12, { edition_id: 40, status: "finished", position: 0 });
     expect(w.text()).toContain("On your shelf: Finished");
@@ -148,7 +148,7 @@ describe("ScanPage", () => {
     addToShelf.mockResolvedValue(shelfItem({ id: 5, status: "finished" }));
     const w = await mountPage();
     await scan(w);
-    await button(w, "Read").trigger("click");
+    await button(w, "Finished").trigger("click");
     await flushPromises();
     expect(addToShelf).toHaveBeenCalledWith({ work_id: 9, edition_id: 40, status: "finished" });
     expect(useFinish().item).toMatchObject({ id: 5, status: "finished" });
@@ -170,7 +170,7 @@ describe("ScanPage", () => {
       ],
     });
     await scan(w);
-    await button(w, "Read").trigger("click");
+    await button(w, "Finished").trigger("click");
     await flushPromises();
     expect(clubs).toHaveBeenCalledTimes(1);
     expect(useFinish().item).toMatchObject({ id: 5, status: "finished" });
@@ -184,7 +184,7 @@ describe("ScanPage", () => {
     patchShelf.mockResolvedValue(existing);
     const w = await mountPage();
     await scan(w);
-    await button(w, "Read").trigger("click");
+    await button(w, "Finished").trigger("click");
     await flushPromises();
     expect(useFinish().item).toBeNull();
     expect(useToast().items.at(-1)?.message).toBe("On your shelf: Finished");

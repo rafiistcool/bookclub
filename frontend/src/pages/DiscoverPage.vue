@@ -6,6 +6,7 @@ import { api, ApiError } from "../api/client";
 import AddBookSheet from "../components/AddBookSheet.vue";
 import BookTile from "../components/BookTile.vue";
 import TileSkeleton from "../components/TileSkeleton.vue";
+import { CheckIcon } from "@heroicons/vue/24/outline";
 import { extractIsbn } from "../constants";
 import { releaseNote } from "../releases";
 import {
@@ -43,6 +44,7 @@ const BROWSE_ROWS = [
 ] as const;
 
 const SORTS = [
+  { labelKey: "discover.sortRelevance", value: "relevance" },
   { labelKey: "discover.sortPopular", value: "readinglog" },
   { labelKey: "discover.sortNew", value: "new" },
   { labelKey: "discover.sortTitle", value: "title" },
@@ -164,7 +166,7 @@ const submittedQuery = ref("");
 /** "Add your own book" after a search for an ISBN puts it into the ISBN field, not the title. */
 const addIsbn = computed(() => extractIsbn(submittedQuery.value));
 const subject = ref("");
-const sortPick = ref<"" | Exclude<SearchSort, "relevance">>("");
+const sortPick = ref<"" | SearchSort>("");
 const hideOnShelf = ref(false);
 
 const items = ref<SearchHit[]>([]);
@@ -612,10 +614,18 @@ function toggleSubject(value: string) {
   syncRoute();
 }
 
-function pickSort(value: (typeof SORTS)[number]["value"]) {
+/**
+ * One sort is always the pressed one: the order the results come in. A
+ * search starts in the best-match order, a subject alone in the popular one;
+ * tapping the pressed sort again goes back to that start.
+ */
+function pickSort(value: SearchSort) {
   const implied: SearchSort = submittedQuery.value ? "relevance" : "readinglog";
   sortPick.value = sortPick.value === value || value === implied ? "" : value;
 }
+
+/** Best match only means something with a query. */
+const sortOptions = computed(() => SORTS.filter((option) => option.value !== "relevance" || submittedQuery.value));
 
 /** Returns true when it changed state, which means the watcher will fetch. */
 function readRoute(): boolean {
@@ -905,25 +915,31 @@ defineExpose({ loadPage });
     <template v-else>
       <div class="results-head">
         <h2>{{ resultsLabel }}</h2>
-        <div class="chip-row scroll">
+        <!-- The order (one of them always pressed, ticked), then apart from it the shelf filter. -->
+        <div class="chip-row scroll result-controls">
+          <span class="sort-chips" role="group" :aria-label="t('discover.sortLabel')">
+            <button
+              v-for="option in sortOptions"
+              :key="option.value"
+              class="chip sort-chip tick-chip"
+              type="button"
+              :aria-pressed="effectiveSort === option.value"
+              :class="{ active: effectiveSort === option.value }"
+              @click="pickSort(option.value)"
+            >
+              <CheckIcon v-if="effectiveSort === option.value" class="chip-check" aria-hidden="true" />
+              {{ t(option.labelKey) }}
+            </button>
+          </span>
+          <span class="chip-divider" aria-hidden="true" />
           <button
-            v-for="option in SORTS"
-            :key="option.value"
-            class="chip"
-            type="button"
-            :aria-pressed="effectiveSort === option.value"
-            :class="{ active: effectiveSort === option.value }"
-            @click="pickSort(option.value)"
-          >
-            {{ t(option.labelKey) }}
-          </button>
-          <button
-            class="chip"
+            class="chip tick-chip"
             type="button"
             :aria-pressed="hideOnShelf"
             :class="{ active: hideOnShelf }"
             @click="hideOnShelf = !hideOnShelf"
           >
+            <CheckIcon v-if="hideOnShelf" class="chip-check" aria-hidden="true" />
             {{ t("discover.notOnShelf") }}
           </button>
         </div>
@@ -1066,8 +1082,9 @@ defineExpose({ loadPage });
 
 .discover-search {
   position: sticky;
-  top: calc(var(--header-h) + env(safe-area-inset-top));
+  top: var(--bar-bottom);
   z-index: 15;
+  transition: top var(--dur-base) var(--ease-out);
   margin: calc(-1 * var(--space-2)) calc(-1 * var(--space-4)) var(--space-5);
   padding: var(--space-2) var(--space-4) var(--space-3);
   background: var(--bg-translucent-strong);
@@ -1152,6 +1169,39 @@ defineExpose({ loadPage });
 
 .results-head h2 {
   font-size: var(--text-lg);
+}
+
+.sort-chips {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* A pressed chip gets a tick; the others keep its room as padding, so a tap
+   changes no chip's width and the row never shifts under the finger:
+   20 + label + 20 off, 10 + tick 16 + 4 + label + 10 on. */
+.tick-chip {
+  padding-inline: calc(var(--space-3) + 8px);
+}
+
+.tick-chip.active {
+  padding-inline: calc(var(--space-3) - 2px);
+}
+
+.chip-check {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-right: 4px;
+  stroke-width: 2.5;
+}
+
+.chip-divider {
+  flex: none;
+  align-self: center;
+  width: 1px;
+  height: 24px;
+  margin: 0 var(--space-1);
+  background: var(--border-strong);
 }
 
 .filter-banner {

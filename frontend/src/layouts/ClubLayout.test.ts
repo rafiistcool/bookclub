@@ -83,7 +83,7 @@ describe("ClubLayout", () => {
     expect(wrapper.get(".club-tab.active").text()).toBe("Vote");
     expect(wrapper.get(".club-tab.active").attributes("aria-current")).toBe("page");
     // Four short tabs and "More", nothing else.
-    expect(wrapper.findAll(".club-tab").map((tab) => tab.text())).toEqual(["Book", "Talk", "Vote", "Members", "More"]);
+    expect(wrapper.findAll(".club-tab").map((tab) => tab.text())).toEqual(["Book", "Talk", "Vote", "Group", "More"]);
     expect(wrapper.get(".club-tabs").attributes("style")).toContain("--tab: 2");
   });
 

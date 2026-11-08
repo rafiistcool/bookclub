@@ -27,7 +27,7 @@ import CoverChooserSheet, {
 } from "../components/CoverChooserSheet.vue";
 import MergeRequestSheet from "../components/MergeRequestSheet.vue";
 import EditRequestSheet from "../components/EditRequestSheet.vue";
-import { clubsFor } from "../clubActions";
+import { clubsFor, pickTargets } from "../clubActions";
 import { asksForCoverPhoto, personalCoverKey } from "../covers";
 import { worthRetrying } from "../retry";
 import {
@@ -101,14 +101,17 @@ const longDescription = computed(() => (book.value?.description.length ?? 0) > 4
 const longTitle = computed(() => shownTitle.value.length > 48);
 /** Each author on its own, so a name never breaks inside itself. */
 const authorNames = computed(() => (book.value?.authors ?? "").split(", ").filter(Boolean));
-const canPick = computed(() => clubsFor("pick", session.user?.clubs).length > 0);
 const canNominate = computed(() => clubsFor("nominate", session.user?.clubs).length > 0);
-/** With one club to pick in, and the book already its pick, there is nothing to set. */
-const pickDone = computed(() => {
-  const clubs = clubsFor("pick", session.user?.clubs);
-  const current = book.value?.club_picks ?? [];
-  return clubs.length > 0 && clubs.every((club) => current.some((row) => row.slug === club.slug));
-});
+/**
+ * The clubs this book can still become the pick of. Once it is the pick
+ * everywhere the reader may set one, the row goes: the pick badge at the
+ * top says so instead of a greyed-out row.
+ */
+const pickOpen = computed(() => pickTargets(session.user?.clubs, book.value?.club_picks));
+/** The row names the club when there is one; with several, the sheet asks which. */
+const pickRowLabel = computed(() =>
+  pickOpen.value.length === 1 ? t("card.setPickIn", { club: pickOpen.value[0]!.name }) : t("book.setAsPick"),
+);
 const pickNames = computed(() => (book.value?.club_picks ?? []).map((club) => club.name).join(", "));
 const hasCover = computed(() => Boolean(book.value?.cover_url || book.value?.cover_thumb_url));
 /** The club the finished moment counts in: the first whose current pick this is. */
@@ -742,7 +745,7 @@ watch(param, load);
                 <EllipsisHorizontalIcon class="more-icon" aria-hidden="true" />
               </button>
               <p v-if="book.club_picks.length" class="hero-pick">
-                <span class="badge club-pick">{{ t("book.pickBadge", { club: pickNames }) }}</span>
+                <span class="badge club-pick"><FlagIcon class="pick-flag" aria-hidden="true" />{{ t("book.pickBadge", { club: pickNames }) }}</span>
               </p>
               <h1 class="display" :class="{ 'long-title': longTitle }">{{ shownTitle }}</h1>
             </div>
@@ -913,10 +916,10 @@ watch(param, load);
                   }}</span>
                 </button>
               </li>
-              <li v-if="canPick">
-                <button class="sheet-row" type="button" :disabled="pickDone" @click="startClubAction('pick')">
+              <li v-if="pickOpen.length">
+                <button class="sheet-row pick-row" type="button" @click="startClubAction('pick')">
                   <FlagIcon class="sheet-icon" aria-hidden="true" />
-                  <span class="sheet-label">{{ pickDone ? t("book.alreadyPick") : t("book.setAsPick") }}</span>
+                  <span class="sheet-label">{{ pickRowLabel }}</span>
                 </button>
               </li>
               <li v-if="canNominate">
@@ -1232,11 +1235,21 @@ watch(param, load);
   line-height: 1;
 }
 
-/* Every club's name stays readable: the badge wraps rather than cutting. */
+/* Every club's name stays readable: the badge wraps rather than cutting. The
+   flag is the one on the "set as pick" row: this is that row's done state. */
 .hero-pick .badge {
   max-width: 100%;
   white-space: normal;
   line-height: 1.3;
+}
+
+.pick-flag {
+  flex: none;
+  width: 0.95em;
+  height: 0.95em;
+  margin-right: 0.3em;
+  vertical-align: -0.12em;
+  stroke-width: 2;
 }
 
 .detail-subtitle {
@@ -1269,8 +1282,18 @@ watch(param, load);
   gap: var(--space-3);
 }
 
+/* Equal segments where the words fit; a longer word ("Abgebrochen") takes
+   its own width instead of running out of its segment. */
 .status-control button {
   flex: 1 1 0;
+  min-width: max-content;
+}
+
+/* Four words need no 690 px: on a wide panel the segment keeps a hand's width. */
+@media (min-width: 720px) {
+  .status-control {
+    max-width: 30rem;
+  }
 }
 
 .control-block {

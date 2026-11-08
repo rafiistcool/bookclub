@@ -83,7 +83,7 @@ describe("MemberShelfPage favourites portrait", () => {
     const filter = wrapper.get(".shelf-filter");
     expect(filter.classes()).toContain("stacked");
     const segments = filter.findAll("button").map((button) => [button.get(".seg-label").text(), button.get(".seg-count").text()]);
-    expect(segments).toEqual([["All", "2"], ["To read", "1"], ["Reading", "0"], ["Read", "0"], ["DNF", "1"]]);
+    expect(segments).toEqual([["All", "2"], ["Planned", "1"], ["Reading", "0"], ["Finished", "0"], ["Stopped", "1"]]);
   });
 
   it("shows the same not-found answer for a stranger as for an unknown name", async () => {

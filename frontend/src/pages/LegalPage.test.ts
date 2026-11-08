@@ -131,7 +131,9 @@ describe("LegalPage", () => {
       text({ locale: "de", html: "<h2>Impressum</h2><p>Betreiberin</p>" }),
     );
     const { wrapper } = await mountLegal("imprint");
-    const de = wrapper.findAll(".segmented button").find((button) => button.text() === "DE");
+    // The quiet switch of the pages before sign-in: each language in its own words.
+    const de = wrapper.findAll(".locale-quiet button").find((button) => button.text() === "Deutsch");
+    expect(de!.attributes("lang")).toBe("de");
     await de!.trigger("click");
     await flushPromises();
     expect(api.legal).toHaveBeenLastCalledWith("imprint", "de");
