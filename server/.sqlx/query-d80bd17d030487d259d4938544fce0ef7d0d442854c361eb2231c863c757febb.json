@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE events e SET payload = e.payload || '{\"private\": true}'::jsonb\n         WHERE e.kind = 'shelf_finished'\n           AND (e.payload ? 'rating' OR e.payload ? 'take')\n           AND NOT e.payload ? 'private'\n           AND ($1::int8 IS NULL OR e.actor_id = $1)\n           AND ($2::int8[] IS NULL OR e.work_id = ANY($2))\n           AND NOT EXISTS (\n               SELECT 1 FROM shelf_entries s\n               WHERE s.user_id = e.actor_id AND s.work_id = e.work_id\n                 AND s.rating_visibility = 'audience')\n         RETURNING e.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d80bd17d030487d259d4938544fce0ef7d0d442854c361eb2231c863c757febb"
+}

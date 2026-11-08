@@ -5,7 +5,9 @@ pub mod record;
 
 use utoipa_axum::router::OpenApiRouter;
 
-pub use record::{EventKind, NewEvent, PRIVATE_KEY, record, seal_finished_ratings};
+pub use record::{
+    EventKind, NewEvent, PRIVATE_KEY, REMOVAL_SEALED_KEY, record, seal_finished_ratings,
+};
 
 use crate::AppState;
 

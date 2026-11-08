@@ -385,10 +385,14 @@ describe("ShelfPage favourites portrait", () => {
     wrapper.unmount();
   });
 
-  it("removes a book and puts back its edition, rating, take and progress with Undo", async () => {
+  it("removes a book and puts it back as it was with Undo: edition, rating, take, dates and places", async () => {
     const finished = shelfItem({
       id: 1,
       status: "finished",
+      position: 2,
+      shelf_position: 5,
+      started_at: "2025-03-01T08:00:00Z",
+      finished_at: "2025-04-12T10:00:00Z",
       edition: edition({ id: 12, work_id: 1 }),
       rating: 5,
       rating_visibility: "only_me",
@@ -422,6 +426,14 @@ describe("ShelfPage favourites portrait", () => {
       dnf_reason: "",
       progress: null,
       current_page: null,
+      // Its dates, last change and places, so it comes back as it was.
+      restore: {
+        started_at: "2025-03-01T08:00:00Z",
+        finished_at: "2025-04-12T10:00:00Z",
+        updated_at: "2026-09-01T00:00:00Z",
+        position: 2,
+        shelf_position: 5,
+      },
     });
     expect(myShelf).toHaveBeenCalledTimes(2);
     // The standard cover needs no choice.

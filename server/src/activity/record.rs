@@ -132,10 +132,18 @@ pub async fn record(conn: &mut PgConnection, ev: NewEvent) -> sqlx::Result<i64> 
 /// (`"private": true`). The feeds never serve the key itself.
 pub const PRIVATE_KEY: &str = "private";
 
+/// The key of a `shelf_removed` payload that lists the `shelf_finished` events the removal
+/// sealed (their ids, only when there are any). The removal ended the audience entry those
+/// ratings showed under; an Undo that brings the entry back as audience lifts these seals and
+/// no others, so the finish shows its stars again as before the slip. Seals from an only-me
+/// time stay. The feeds never serve the key.
+pub const REMOVAL_SEALED_KEY: &str = "sealed";
+
 /// Seals the rating and take of every `shelf_finished` event (of `actor`, when given, on
 /// `work_ids`, when given) whose actor has no `audience` shelf entry for the event's work: the
 /// payload gets [`PRIVATE_KEY`], and the feeds show its rating and take to the actor only, from
-/// then on, whatever the entry becomes.
+/// then on, whatever the entry becomes (only the Undo of a removal lifts that removal's seals,
+/// `shelf::entries::withdraw_removal`).
 ///
 /// The invariant it keeps: an unsealed payload carries a rating or take only while its actor's
 /// entry for that work exists and is `audience` (security review 2026-10-28 #2). The feeds also
@@ -144,12 +152,15 @@ pub const PRIVATE_KEY: &str = "private";
 /// added the work again with the default visibility, or a merge moved the event onto an
 /// audience entry. The shelf calls it when an entry goes or becomes only-me, the work merge
 /// before and after it moves the events, and the importer once for every event.
+///
+/// Returns the ids of the events it sealed: a removal keeps them ([`REMOVAL_SEALED_KEY`]), so
+/// the Undo of that removal can lift exactly its own seals.
 pub async fn seal_finished_ratings(
     conn: &mut PgConnection,
     actor: Option<i64>,
     work_ids: Option<&[i64]>,
-) -> sqlx::Result<u64> {
-    let done = sqlx::query!(
+) -> sqlx::Result<Vec<i64>> {
+    sqlx::query_scalar!(
         r#"UPDATE events e SET payload = e.payload || '{"private": true}'::jsonb
          WHERE e.kind = 'shelf_finished'
            AND (e.payload ? 'rating' OR e.payload ? 'take')
@@ -159,13 +170,13 @@ pub async fn seal_finished_ratings(
            AND NOT EXISTS (
                SELECT 1 FROM shelf_entries s
                WHERE s.user_id = e.actor_id AND s.work_id = e.work_id
-                 AND s.rating_visibility = 'audience')"#,
+                 AND s.rating_visibility = 'audience')
+         RETURNING e.id"#,
         actor,
         work_ids as Option<&[i64]>
     )
-    .execute(conn)
-    .await?;
-    Ok(done.rows_affected())
+    .fetch_all(conn)
+    .await
 }
 
 #[cfg(test)]

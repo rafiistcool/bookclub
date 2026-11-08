@@ -940,6 +940,14 @@ async fn shelf_writes_record_their_events(db: PgPool) {
     )
     .await;
 
+    // The removal keeps the ids of the finishes it sealed, for its Undo.
+    let first_finish: i64 = sqlx::query_scalar(
+        "SELECT min(id) FROM events WHERE actor_id = $1 AND kind = 'shelf_finished'",
+    )
+    .bind(ada.id())
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
     assert_eq!(
         events(&app, &ada).await,
         [
@@ -957,7 +965,10 @@ async fn shelf_writes_record_their_events(db: PgPool) {
             ),
             ("shelf_dnf".to_owned(), json!({})),
             ("shelf_finished".to_owned(), json!({})),
-            ("shelf_removed".to_owned(), json!({"status": "finished"})),
+            (
+                "shelf_removed".to_owned(),
+                json!({"status": "finished", "sealed": [first_finish]})
+            ),
             ("shelf_dnf".to_owned(), json!({"reason": "Too grim"})),
             ("shelf_finished".to_owned(), json!({"rating": 3})),
         ]
@@ -1488,4 +1499,371 @@ async fn a_page_records_progress_only_when_the_percent_moves(db: PgPool) {
         .map(|(_, payload)| payload)
         .collect();
     assert_eq!(progress, [json!({"progress": 62}), json!({"progress": 65})]);
+}
+
+/// The `restore` part of an Undo: the removed entry's dates and places from its `ShelfItemOut`.
+fn restore_of(item: &Value) -> Value {
+    json!({
+        "started_at": item["started_at"],
+        "finished_at": item["finished_at"],
+        "updated_at": item["updated_at"],
+        "position": item["position"],
+        "shelf_position": item["shelf_position"],
+    })
+}
+
+/// The add an Undo sends for a removed item.
+fn undo_body(item: &Value) -> Value {
+    json!({
+        "work_id": item["book"]["id"],
+        "edition_id": item["edition"]["id"],
+        "status": item["status"],
+        "rating": item["rating"],
+        "rating_visibility": item["rating_visibility"],
+        "take": item["take"],
+        "dnf_reason": item["dnf_reason"],
+        "progress": item["progress"],
+        "current_page": item["current_page"],
+        "restore": restore_of(item),
+    })
+}
+
+/// Removes the entry; asserts 204.
+async fn remove(client: &TestClient, item: &Value) {
+    client
+        .delete(&format!("/api/shelf/{}", item["id"]))
+        .await
+        .assert_status(204);
+}
+
+/// Moves the client's newest `shelf_removed` event `minutes` into the past.
+async fn age_last_removal(app: &TestApp, user: &TestClient, minutes: i32) {
+    sqlx::query(
+        "UPDATE events SET created_at = created_at - make_interval(mins => $2)
+         WHERE id = (SELECT max(id) FROM events WHERE actor_id = $1 AND kind = 'shelf_removed')",
+    )
+    .bind(user.id())
+    .bind(minutes)
+    .execute(&app.db)
+    .await
+    .unwrap();
+}
+
+fn instant(value: &Value) -> time::OffsetDateTime {
+    time::OffsetDateTime::parse(
+        value.as_str().unwrap(),
+        &time::format_description::well_known::Rfc3339,
+    )
+    .unwrap()
+}
+
+/// The Undo of a removal brings the entry back as it was: its dates, its last change, its place
+/// in its column and in the free order; the removal's event is gone and no new one is
+/// recorded, so the feeds read as if the book had never left. Only the id is new.
+#[sqlx::test]
+async fn an_undo_brings_the_entry_back_as_it_was(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let mut ids = Vec::new();
+    for n in 1..=4 {
+        let work = app
+            .ol_work(&format!("OL{n}W"), &format!("Book {n}"), "")
+            .await;
+        let item = add(&ada, &work, json!({"status": "finished", "rating": n})).await;
+        ids.push(item["id"].clone());
+    }
+    // Column (finished): [4, 3, 2, 1]; the free order is arranged by hand: [1, 3, 4, 2].
+    patch(&ada, &ids[2], json!({"finished_on": "2025-04-12"})).await;
+    patch(&ada, &ids[0], json!({"shelf_position": 0})).await;
+    patch(&ada, &ids[2], json!({"shelf_position": 1})).await;
+    // Added after the arranging: unarranged, so it sorts first in the free order.
+    let want = add(&ada, &app.ol_work("OL9W", "Circe", "").await, json!({})).await;
+    // Took a while: the last change is older than the removal.
+    sqlx::query(
+        "UPDATE shelf_entries SET updated_at = '2025-05-01T08:00:00Z',
+                                  started_at = '2025-03-01T08:00:00Z'
+         WHERE id = $1",
+    )
+    .bind(ids[2].as_i64().unwrap())
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let before = items(&ada, None).await;
+    let events_before = events(&app, &ada).await;
+    let removed = before
+        .iter()
+        .find(|row| row["id"] == ids[2])
+        .unwrap()
+        .clone();
+    assert_eq!(removed["position"], 1);
+    assert_eq!(removed["shelf_position"], 1);
+
+    remove(&ada, &removed).await;
+    let res = ada.post("/api/shelf", undo_body(&removed)).await;
+    res.assert_status(201);
+    let back = res.json();
+    let mut expected = removed.clone();
+    expected["id"] = back["id"].clone();
+    // The free order is renumbered densely; its order is what counts (below).
+    expected["shelf_position"] = back["shelf_position"].clone();
+    assert_eq!(back, expected);
+
+    let after = items(&ada, None).await;
+    let same_ids = |rows: &[Value]| -> Vec<Value> {
+        rows.iter()
+            .map(|row| {
+                if row["id"] == back["id"] {
+                    removed["id"].clone()
+                } else {
+                    row["id"].clone()
+                }
+            })
+            .collect()
+    };
+    assert_eq!(same_ids(&after), same_ids(&before), "the column order");
+    let free = |rows: &[Value]| -> Vec<Value> {
+        let ordered: Vec<Value> = by_shelf_position(rows).into_iter().cloned().collect();
+        same_ids(
+            &ordered
+                .iter()
+                .map(|id| json!({"id": id}))
+                .collect::<Vec<_>>(),
+        )
+    };
+    assert_eq!(free(&after), free(&before), "the free order");
+    assert_eq!(
+        free(&before)[0],
+        want["id"],
+        "an unarranged entry sorts first"
+    );
+    // The same events: the removal's seal on the finish is lifted with it, since the entry is
+    // audience again (`withdraw_removal`).
+    assert_eq!(events(&app, &ada).await, events_before);
+}
+
+/// The Undo of a removal gives the friends and club mates back the stars and take of an
+/// audience finish, which the removal had sealed. It lifts only the seals of that removal: one
+/// from an only-me time stays, and an Undo that comes back only-me keeps them all. A plain add
+/// again, or a restore after the window, unseals nothing.
+#[sqlx::test]
+async fn an_undo_unseals_only_what_its_removal_sealed(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let (ada, grace) = friends(&app).await;
+    let circe = circe(&app).await;
+    let item = add(
+        &ada,
+        &circe,
+        json!({"status": "finished", "rating": 5, "take": "Loved it"}),
+    )
+    .await;
+    let shared = json!({"rating": 5, "take": "Loved it"});
+    assert_eq!(feed_finishes(&grace).await, std::slice::from_ref(&shared));
+
+    remove(&ada, &item).await;
+    assert_eq!(feed_finishes(&grace).await, [json!({})]);
+    let removal = ada.get("/api/activity").await.json()["items"][0].clone();
+    assert_eq!(removal["kind"], "shelf_removed");
+    assert_eq!(removal["payload"], json!({"status": "finished"}), "no ids");
+    let item = add(&ada, &circe, undo_body(&item)).await;
+    assert_eq!(
+        finish_payloads(&app, &ada).await,
+        std::slice::from_ref(&shared)
+    );
+    assert_eq!(feed_finishes(&grace).await, std::slice::from_ref(&shared));
+
+    // Back only-me: the seal stays, and so it does once the entry is shared again.
+    remove(&ada, &item).await;
+    let mut body = undo_body(&item);
+    body["rating_visibility"] = json!("only_me");
+    let item = add(&ada, &circe, body).await;
+    let sealed = json!({"rating": 5, "take": "Loved it", "private": true});
+    assert_eq!(
+        finish_payloads(&app, &ada).await,
+        std::slice::from_ref(&sealed)
+    );
+    patch(&ada, &item["id"], json!({"rating_visibility": "audience"})).await;
+    assert_eq!(feed_finishes(&grace).await, [json!({})]);
+
+    // That only-me seal is older than the next removal, so its Undo leaves it.
+    let item = items(&ada, None).await[0].clone();
+    remove(&ada, &item).await;
+    add(&ada, &circe, undo_body(&item)).await;
+    assert_eq!(
+        finish_payloads(&app, &ada).await,
+        std::slice::from_ref(&sealed)
+    );
+    assert_eq!(feed_finishes(&grace).await, [json!({})]);
+
+    // A second, audience finish: a removal past the window, or a plain add, keeps its seal.
+    let song = app.ol_work("OL2W", "Song", "").await;
+    let item = add(&ada, &song, json!({"status": "finished", "rating": 4})).await;
+    remove(&ada, &item).await;
+    age_last_removal(&app, &ada, 11).await;
+    let item = add(&ada, &song, undo_body(&item)).await;
+    let song_sealed = json!({"rating": 4, "private": true});
+    assert_eq!(finish_payloads(&app, &ada).await[1], song_sealed);
+    remove(&ada, &item).await;
+    add(&ada, &song, json!({"status": "finished", "rating": 4})).await;
+    assert_eq!(finish_payloads(&app, &ada).await[1], song_sealed);
+}
+
+/// A restore keeps only the dates its status keeps, none later than now and no start after the
+/// finish; the last change is not later than now either, and the column place is clamped.
+#[sqlx::test]
+async fn a_restore_keeps_the_dates_its_status_keeps_and_none_ahead(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let past = "2025-03-01T08:00:00Z";
+    let earlier = "2025-01-01T08:00:00Z";
+    let future = "2999-01-01T00:00:00Z";
+    let both = json!({"started_at": past, "finished_at": past, "updated_at": earlier});
+    let mut works = Vec::new();
+    for n in 1..=6 {
+        works.push(
+            app.ol_work(&format!("OL{n}W"), &format!("Book {n}"), "")
+                .await,
+        );
+    }
+
+    let wanted = add(&ada, &works[0], json!({"restore": both})).await;
+    assert_eq!(
+        (&wanted["started_at"], &wanted["finished_at"]),
+        (&json!(null), &json!(null))
+    );
+    assert_eq!(wanted["updated_at"], earlier);
+    for (work, status) in [
+        (&works[1], "currently_reading"),
+        (&works[2], "did_not_finish"),
+    ] {
+        let item = add(&ada, work, json!({"status": status, "restore": both})).await;
+        assert_eq!(
+            (&item["started_at"], &item["finished_at"]),
+            (&json!(past), &json!(null))
+        );
+    }
+    let finished = add(
+        &ada,
+        &works[3],
+        json!({"status": "finished", "restore": both}),
+    )
+    .await;
+    assert_eq!(
+        (&finished["started_at"], &finished["finished_at"]),
+        (&json!(past), &json!(past))
+    );
+
+    let start = time::OffsetDateTime::now_utc();
+    let ahead = add(
+        &ada,
+        &works[4],
+        json!({
+            "status": "finished",
+            "restore": {"started_at": future, "finished_at": future, "updated_at": future,
+                        "position": 99},
+        }),
+    )
+    .await;
+    let end = time::OffsetDateTime::now_utc();
+    for field in ["started_at", "finished_at", "updated_at"] {
+        let at = instant(&ahead[field]);
+        assert!(
+            start - time::Duration::seconds(1) <= at && at <= end,
+            "{field}: {at}"
+        );
+    }
+    // Two finished entries: 99 is the bottom of the column.
+    assert_eq!(ahead["position"], 1);
+
+    let crossed = add(
+        &ada,
+        &works[5],
+        json!({"status": "finished", "restore": {"started_at": past, "finished_at": earlier}}),
+    )
+    .await;
+    assert_eq!(
+        (&crossed["started_at"], &crossed["finished_at"]),
+        (&json!(earlier), &json!(earlier))
+    );
+    assert!(
+        instant(&crossed["updated_at"]) >= start,
+        "no updated_at: now"
+    );
+    assert_eq!(crossed["position"], 0, "no position: the top");
+    assert_eq!(crossed["shelf_position"], Value::Null);
+}
+
+/// A restore with a negative place or an unstorable date is a 400, as in the PATCH; nothing is
+/// added.
+#[sqlx::test]
+async fn an_invalid_restore_is_rejected(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let circe = circe(&app).await;
+    for (restore, detail) in [
+        (
+            json!({"position": -1}),
+            "Input should be greater than or equal to 0",
+        ),
+        (
+            json!({"shelf_position": -1}),
+            "Input should be greater than or equal to 0",
+        ),
+        (
+            json!({"finished_at": "0000-01-01T00:00:00+01:00"}),
+            "Invalid value",
+        ),
+    ] {
+        ada.post(
+            "/api/shelf",
+            json!({"work_id": circe.id, "status": "finished", "restore": restore}),
+        )
+        .await
+        .assert_detail(400, detail);
+    }
+    assert!(items(&ada, None).await.is_empty());
+}
+
+/// The removal's event goes only when the restore undoes it: the newest shelf event of the work,
+/// a removal of the same status, younger than 10 minutes. Otherwise the add records its event
+/// as any add does, and an add without `restore` never touches the removal.
+#[sqlx::test]
+async fn a_restore_records_events_unless_it_undoes_a_recent_removal(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let circe = circe(&app).await;
+    let removed = |status: &str| ("shelf_removed".to_owned(), json!({"status": status}));
+    let added = ("shelf_added".to_owned(), json!({"status": "want_to_read"}));
+
+    // Restored without a removal before it: a new entry's event.
+    let item = add(&ada, &circe, json!({"restore": {"position": 0}})).await;
+    assert_eq!(events(&app, &ada).await, std::slice::from_ref(&added));
+
+    // A removal 11 minutes ago stays, and the restore records its event.
+    remove(&ada, &item).await;
+    age_last_removal(&app, &ada, 11).await;
+    let item = add(&ada, &circe, undo_body(&item)).await;
+    assert_eq!(
+        events(&app, &ada).await,
+        [added.clone(), removed("want_to_read"), added.clone()]
+    );
+
+    // A plain add after a removal leaves the removal and records its event.
+    remove(&ada, &item).await;
+    let item = add(&ada, &circe, json!({})).await;
+    assert_eq!(events(&app, &ada).await.len(), 5);
+
+    // A restore in another status than the removed one is a change, not an undo.
+    remove(&ada, &item).await;
+    let mut body = undo_body(&item);
+    body["status"] = json!("finished");
+    let item = add(&ada, &circe, body).await;
+    let recorded = events(&app, &ada).await;
+    assert_eq!(recorded.len(), 7);
+    assert_eq!(recorded[5], removed("want_to_read"));
+    assert_eq!(recorded[6], ("shelf_finished".to_owned(), json!({})));
+
+    // A recent removal of the same status is undone: gone, and nothing new.
+    remove(&ada, &item).await;
+    add(&ada, &circe, undo_body(&item)).await;
+    assert_eq!(events(&app, &ada).await, recorded);
 }

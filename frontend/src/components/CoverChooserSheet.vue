@@ -168,24 +168,25 @@ const restore = computed<CoverRestore | null>(() => {
 });
 
 /**
- * A tile's label in two lines: what tells editions apart first ("2019 ·
- * Deutsch"), then the publisher; the source's name when the edition says
- * nothing. A code that names no language (`und`, `mul`) is left out.
+ * A tile's label: what tells editions apart first (["2019", "Deutsch"]), then
+ * the publisher; the source's name when the edition says nothing. A code that
+ * names no language (`und`, `mul`) is left out. The facts are a list, so the
+ * tile can wrap between them instead of cutting one off.
  */
-function labelLines(candidate: CoverCandidateOut): { facts: string; publisher: string } {
+function labelLines(candidate: CoverCandidateOut): { facts: string[]; publisher: string } {
   const edition = candidate.edition_label;
   const facts: string[] = [];
   if (edition?.year) facts.push(String(edition.year));
   if (edition?.language && isRealLanguage(edition.language)) facts.push(languageName(edition.language, locale.value));
   const publisher = edition?.publisher ? shortPublisher(edition.publisher) : "";
-  if (!facts.length && !publisher) return { facts: t(`coverChoice.source.${candidate.source}`), publisher: "" };
-  return { facts: facts.join(" · "), publisher };
+  if (!facts.length && !publisher) return { facts: [t(`coverChoice.source.${candidate.source}`)], publisher: "" };
+  return { facts, publisher };
 }
 
 /** The whole label on one line, for the tile's tooltip, with the publisher's full name. */
 function label(candidate: CoverCandidateOut): string {
   const { facts } = labelLines(candidate);
-  return [facts, candidate.edition_label?.publisher?.trim()].filter(Boolean).join(" · ");
+  return [...facts, candidate.edition_label?.publisher?.trim()].filter(Boolean).join(" · ");
 }
 
 function onImageError(candidate: CoverCandidateOut) {
@@ -360,7 +361,7 @@ onBeforeUnmount(() => {
             </span>
           </span>
           <span class="tile-label">
-            <span class="label-facts">{{ labelLines(candidate).facts }}</span>
+            <span v-if="labelLines(candidate).facts.length" class="label-facts"><template v-for="(fact, index) in labelLines(candidate).facts" :key="index"><template v-if="index"> · </template><span class="label-fact">{{ fact }}</span></template></span>
             <span v-if="labelLines(candidate).publisher" class="label-publisher">{{ labelLines(candidate).publisher }}</span>
           </span>
         </button>
@@ -497,8 +498,8 @@ onBeforeUnmount(() => {
   stroke-width: 2.5;
 }
 
-/* Year and language on the first line, the publisher on the second: the parts
-   that tell editions apart are never cut off by a long publisher. */
+/* Year and language first, the publisher under them: the parts that tell
+   editions apart are never cut off by a long publisher. */
 .tile-label {
   display: grid;
   min-width: 0;
@@ -507,10 +508,18 @@ onBeforeUnmount(() => {
   color: var(--text-muted);
 }
 
+/* Year and language are never cut: on a narrow tile the language moves under
+   the year ("2019 ·" over "Deutsch"). Each fact stays whole on its line; only
+   one too long for the tile on its own breaks, at a hyphen if the browser
+   knows one, so it still reads to its end. */
 .label-facts {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+}
+
+.label-fact {
+  display: inline-block;
+  max-width: 100%;
+  hyphens: auto;
 }
 
 /* Up to two lines that break between words; only a single word too long for

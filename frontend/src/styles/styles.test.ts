@@ -83,6 +83,42 @@ describe("stylesheets", () => {
     expect(rule(narrow, ".segmented button")).toContain("padding: 0 var(--space-1)");
   });
 
+  it("puts the scan page's four statuses in two rows of two on a 320 px phone", async () => {
+    const scan = await read("pages/ScanPage.vue");
+    expect(scan).toContain('class="segmented add-to"');
+    const narrow = scan.slice(scan.indexOf("@media (max-width: 359px) {\n  .segmented.add-to"));
+    const grid = rule(narrow, "  .segmented.add-to");
+    expect(grid).toContain("display: grid");
+    expect(grid).toContain("grid-template-columns: repeat(2, minmax(0, 1fr))");
+    // Each segment still a finger high: components.css gives it --tap.
+    expect(rule(await read("styles/components.css"), ".segmented button")).toContain("min-height: var(--tap)");
+    // No section of the hit card widens it past the screen.
+    expect(rule(scan, ".hit-section")).toContain("min-width: 0");
+  });
+
+  it("never cuts a cover tile's year or language", async () => {
+    const chooser = await read("components/CoverChooserSheet.vue");
+    expect(rule(chooser, ".label-facts")).not.toContain("text-overflow");
+    expect(rule(chooser, ".label-facts")).not.toContain("nowrap");
+    // A fact moves to the next line whole; only one wider than the tile breaks.
+    const fact = rule(chooser, ".label-fact");
+    expect(fact).toContain("display: inline-block");
+    expect(fact).toContain("max-width: 100%");
+  });
+
+  it("gives the diary's reaction chips and picks a hit area a finger high", async () => {
+    const components = await read("styles/components.css");
+    expect(rule(components, ".chip")).toContain("position: relative");
+    // The 40 px pill's ::before reaches 44 px.
+    expect(rule(components, ".chip::before")).toContain("inset: min(-2px, calc((100% - var(--tap)) / 2)) -2px");
+    const entry = await read("components/DiaryEntry.vue");
+    expect(rule(entry, ".chip.reaction")).toContain("min-height: 40px");
+    // The picks sit 2 px apart, so each is the full target itself.
+    const pick = rule(entry, ".reaction-pick");
+    expect(pick).toContain("min-width: var(--tap)");
+    expect(pick).toContain("min-height: var(--tap)");
+  });
+
   it("keeps Discover's tick chips one width, ticked or not", async () => {
     const discover = await read("pages/DiscoverPage.vue");
     const px = (value: string) => value.replace("var(--space-3)", "12px").replace(/calc\((\d+)px ([+-]) (\d+)px\)/,

@@ -37,7 +37,7 @@ import { personalCoverKey } from "../covers";
 import { isFinishTransition, useFinish } from "../stores/finish";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
-import { clubDate, orderedShelf, readingMonth, readingMonthLabel, shelfDropPosition, visibleShelf } from "../shelf";
+import { clubDate, orderedShelf, readingMonth, readingMonthLabel, shelfDropPosition, undoRemoval, visibleShelf } from "../shelf";
 import type { ClubRef, Favorite, ShelfItem } from "../types";
 
 type Filter = "all" | Status;
@@ -346,17 +346,7 @@ async function confirmRemove() {
     toast.show(t("shelf.removed", { title: item.book.title }), {
       label: t("common.undo"),
       run: async () => {
-        const restored = await api.addToShelf({
-          work_id: item.book.id,
-          edition_id: item.edition?.id ?? null,
-          status: item.status,
-          rating: item.rating,
-          rating_visibility: item.rating_visibility,
-          take: item.take,
-          dnf_reason: item.dnf_reason,
-          progress: item.progress,
-          current_page: item.current_page,
-        });
+        const restored = await api.addToShelf(undoRemoval(item));
         if (coverKey) {
           try {
             await api.chooseCover(restored.id, coverKey);

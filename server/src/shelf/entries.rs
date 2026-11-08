@@ -20,11 +20,13 @@ use super::favorites::{FavoriteOut, favorite_outs};
 use super::layout::remove_from_layout;
 use super::ordering::{
     ShelfSlot, StatusFields, apply_finish_fields, apply_page, apply_progress, apply_reading_dates,
-    column_order, shelf_order,
+    column_order, restore_reading_dates, shelf_index, shelf_order,
 };
 use super::{OwnerQuery, lock_user, resolve_owner};
 use crate::AppState;
-use crate::activity::{EventKind, NewEvent, PRIVATE_KEY, record, seal_finished_ratings};
+use crate::activity::{
+    EventKind, NewEvent, PRIVATE_KEY, REMOVAL_SEALED_KEY, record, seal_finished_ratings,
+};
 use crate::auth::extract::CurrentUser;
 use crate::catalog::shared::books::{
     BookRef, book_outs, edition_outs, require_edition_of, require_work,
@@ -129,7 +131,43 @@ pub struct ShelfAddIn {
     /// `progress`, which it wins over; without one it is dropped.
     #[serde(default)]
     pub current_page: Option<i32>,
+    /// Only for the Undo of a removal: the removed entry's dates and places, so it comes back as
+    /// it was instead of as a new entry. Absent or null for every other add.
+    #[serde(default)]
+    pub restore: Option<ShelfRestoreIn>,
 }
+
+/// The removed entry's values from its `ShelfItemOut`, which the Undo of its removal sends back.
+/// Each is optional; the add then puts the entry back with these values instead of stamping it
+/// as new. When the caller's newest shelf event of the work is the removal of an entry in the
+/// same status, at most 10 minutes old, that event is deleted and no new one is recorded, so the
+/// feeds read as if the book had never left the shelf.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+pub struct ShelfRestoreIn {
+    /// Kept for every status but `want_to_read`; not later than now. Null or absent: none.
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub started_at: Option<OffsetDateTime>,
+    /// Kept for `finished` only; not later than now, and a later `started_at` becomes this
+    /// date. Null or absent: none.
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub finished_at: Option<OffsetDateTime>,
+    /// The entry's last change, which the stats count an abandoned book's year by; not later
+    /// than now. Null or absent: now.
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub updated_at: Option<OffsetDateTime>,
+    /// The position inside the status column (0 or more, clamped). Null or absent: 0, the top.
+    #[serde(default)]
+    pub position: Option<i64>,
+    /// The entry's stored `shelf_position` (0 or more): it goes back to the same place among the
+    /// other entries in the free order. Null or absent: unarranged, as a new entry.
+    #[serde(default)]
+    pub shelf_position: Option<i64>,
+}
+
+/// How long after a removal the Undo's restore still takes back the removal's event. The toast
+/// offers Undo for seconds; the margin covers a slow network. A later restore records its
+/// event as any add does.
+const UNDO_WINDOW_MINUTES: i32 = 10;
 
 fn want_to_read() -> ShelfStatus {
     ShelfStatus::WantToRead
@@ -142,6 +180,18 @@ impl Validate for ShelfAddIn {
         self.dnf_reason = checked_text(&self.dnf_reason, MAX_REASON_CHARS, REASON_TOO_LONG, v);
         v.range_i64(self.progress.map(i64::from), 0, 100);
         v.range_i64(self.current_page.map(i64::from), 0, MAX_PAGE);
+        if let Some(restore) = &self.restore {
+            for at in [restore.started_at, restore.finished_at, restore.updated_at]
+                .into_iter()
+                .flatten()
+            {
+                // A year outside 1 to 9999 in UTC would not serialise back in `ShelfItemOut`.
+                let date = at.to_offset(time::UtcOffset::UTC).date();
+                v.check(tz::personal_date_in_range(date), INVALID_VALUE);
+            }
+            v.range_i64(restore.position, 0, i64::MAX);
+            v.range_i64(restore.shelf_position, 0, i64::MAX);
+        }
     }
 }
 
@@ -296,8 +346,9 @@ pub async fn list_shelf(
     }))
 }
 
-/// Puts a book on the caller's shelf, at the top of its status column. 409 `Already on your
-/// shelf` carries the existing entry as `item`.
+/// Puts a book on the caller's shelf, at the top of its status column; with `restore` (the Undo
+/// of a removal) back where the removed entry was, with its dates. 409 `Already on your shelf`
+/// carries the existing entry as `item`.
 #[utoipa::path(
     post,
     path = "/api/shelf",
@@ -334,8 +385,9 @@ pub async fn add_to_shelf(
     Ok((StatusCode::CREATED, Json(item)))
 }
 
-/// Inserts the entry at the top of its column and records its event; `None` when the user
-/// already has an entry for the work.
+/// Inserts the entry at the top of its column and records its event; with `restore`, puts it
+/// back as the removed entry was (see [`ShelfRestoreIn`]). `None` when the user already has an
+/// entry for the work.
 async fn add_entry(
     conn: &mut PgConnection,
     user_id: i64,
@@ -358,7 +410,20 @@ async fn add_entry(
         let pages = page_count(conn, work_id, body.edition_id).await?;
         apply_page(&mut fields, status, body.current_page, pages);
     }
-    apply_reading_dates(&mut fields, status, false, now);
+    let restore = body.restore.as_ref();
+    match restore {
+        Some(restore) => restore_reading_dates(
+            &mut fields,
+            status,
+            restore.started_at,
+            restore.finished_at,
+            now,
+        ),
+        None => apply_reading_dates(&mut fields, status, false, now),
+    }
+    let updated_at = restore
+        .and_then(|restore| restore.updated_at)
+        .map_or(now, |at| at.min(now));
     let entry = NewEntry {
         user_id,
         work_id,
@@ -366,11 +431,19 @@ async fn add_entry(
         status,
         rating_visibility: body.rating_visibility.unwrap_or(Visibility::Audience),
         fields: &fields,
-        now,
+        now: updated_at,
     };
     let Some(id) = insert_entry(conn, &entry).await? else {
         return Ok(None);
     };
+    if let Some(restore) = restore {
+        put_back(conn, user_id, id, status, restore).await?;
+        if withdraw_removal(conn, user_id, work_id, status).await? {
+            // The book never left the shelf, as far as the feeds tell: the earlier events of
+            // the entry (its add, its finish) still stand for it.
+            return Ok(Some(id));
+        }
+    }
     status_event(
         conn,
         user_id,
@@ -433,6 +506,97 @@ pub(super) async fn insert_entry(
     let siblings = column_ids(conn, entry.user_id, entry.status, id).await?;
     write_positions(conn, &column_order(&siblings, id, 0)).await?;
     Ok(Some(id))
+}
+
+/// Moves a restored entry from the top of its column back to its old places: `position` in the
+/// column (clamped) and, when it had one, its place in the free order. Every other entry keeps
+/// its order, so both orders are the ones from before the removal.
+async fn put_back(
+    conn: &mut PgConnection,
+    user_id: i64,
+    id: i64,
+    status: ShelfStatus,
+    restore: &ShelfRestoreIn,
+) -> sqlx::Result<()> {
+    let position = restore.position.unwrap_or(0);
+    let siblings = column_ids(conn, user_id, status, id).await?;
+    let order = column_order(&siblings, id, position);
+    write_positions(conn, &order).await?;
+    if let Some(shelf_position) = restore.shelf_position {
+        let slots = shelf_slots(conn, user_id).await?;
+        let restored = ShelfSlot {
+            id,
+            status,
+            position: index_of(&order, id),
+            shelf_position: Some(i32::try_from(shelf_position).unwrap_or(i32::MAX)),
+        };
+        let at = shelf_index(&slots, &restored);
+        write_shelf_order(conn, &shelf_order(&slots, id, at)).await?;
+    }
+    Ok(())
+}
+
+/// Deletes the removal that a restore undoes: the caller's newest shelf event of the work, when
+/// it is a `shelf_removed` of the same status younger than [`UNDO_WINDOW_MINUTES`]. Whether one
+/// was deleted; if so, the restore records no event of its own.
+///
+/// The removal sealed the finishes its audience entry showed ([`REMOVAL_SEALED_KEY`]). With no
+/// new finish recorded, those would be the only ones left, and the friends and club mates would
+/// see the book finished without its stars or take. So when the restored entry is audience
+/// again, exactly those seals are lifted: the payloads are back as they were before the removal,
+/// and the invariant of `activity::seal_finished_ratings` holds, since an audience entry for the
+/// work exists. An only-me restore keeps them, as does every seal from before the removal.
+async fn withdraw_removal(
+    conn: &mut PgConnection,
+    user_id: i64,
+    work_id: i64,
+    status: ShelfStatus,
+) -> sqlx::Result<bool> {
+    let deleted = sqlx::query_scalar!(
+        r#"DELETE FROM events e
+         WHERE e.id = (
+                 SELECT l.id FROM events l
+                 WHERE l.actor_id = $1 AND l.club_id IS NULL AND l.work_id = $2
+                   AND l.kind IN ('shelf_added', 'shelf_moved', 'shelf_finished',
+                                  'shelf_dnf', 'shelf_removed')
+                 ORDER BY l.id DESC
+                 LIMIT 1)
+           AND e.kind = 'shelf_removed'
+           AND e.payload ->> 'status' = $3
+           AND e.created_at > now() - make_interval(mins => $4)
+         RETURNING e.payload -> 'sealed' AS sealed"#,
+        user_id,
+        work_id,
+        status_text(status),
+        UNDO_WINDOW_MINUTES
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some(sealed) = deleted else {
+        return Ok(false);
+    };
+    let sealed: Vec<i64> = sealed
+        .as_ref()
+        .and_then(Value::as_array)
+        .map(|ids| ids.iter().filter_map(Value::as_i64).collect())
+        .unwrap_or_default();
+    if !sealed.is_empty() {
+        sqlx::query!(
+            "UPDATE events e SET payload = e.payload - 'private'
+             WHERE e.id = ANY($3) AND e.actor_id = $1 AND e.work_id = $2
+               AND e.kind = 'shelf_finished'
+               AND EXISTS (
+                   SELECT 1 FROM shelf_entries s
+                   WHERE s.user_id = $1 AND s.work_id = $2
+                     AND s.rating_visibility = 'audience')",
+            user_id,
+            work_id,
+            &sealed
+        )
+        .execute(conn)
+        .await?;
+    }
+    Ok(true)
 }
 
 /// 409 `Already on your shelf` with the caller's entry for the work as `item`.
@@ -670,21 +834,25 @@ pub async fn remove_entry(
     let entry = load_entry(&mut tx, user.id, entry_id)
         .await?
         .ok_or_else(|| AppError::not_found(NOT_ON_SHELF))?;
-    record_event(
-        &mut tx,
-        user.id,
-        entry.work_id,
-        EventKind::ShelfRemoved,
-        json!({ "status": entry.status }),
-    )
-    .await?;
     remove_from_layout(&mut tx, user.id, entry_id).await?;
     sqlx::query!("DELETE FROM shelf_entries WHERE id = $1", entry_id)
         .execute(&mut *tx)
         .await?;
     // The finished events' rating and take become the reader's own: adding the work again
-    // (audience by default) must not bring back what this entry showed or hid.
-    seal_finished_ratings(&mut tx, Some(user.id), Some(&[entry.work_id])).await?;
+    // (audience by default) must not bring back what this entry showed or hid. The removal
+    // keeps which ones it sealed, for its Undo (`withdraw_removal`).
+    let sealed = seal_finished_ratings(&mut tx, Some(user.id), Some(&[entry.work_id])).await?;
+    record_event(
+        &mut tx,
+        user.id,
+        entry.work_id,
+        EventKind::ShelfRemoved,
+        json!({
+            "status": entry.status,
+            REMOVAL_SEALED_KEY: (!sealed.is_empty()).then_some(sealed),
+        }),
+    )
+    .await?;
     let leftovers = column_ids(&mut tx, user.id, entry.status, entry_id).await?;
     write_positions(&mut tx, &leftovers).await?;
     tx.commit().await?;
@@ -807,22 +975,32 @@ async fn place_on_shelf(
     entry: &mut Entry,
     position: i64,
 ) -> sqlx::Result<()> {
-    let slots = sqlx::query_as!(
+    let slots = shelf_slots(conn, entry.user_id).await?;
+    let order = shelf_order(&slots, entry.id, position);
+    entry.shelf_position = Some(index_of(&order, entry.id));
+    write_shelf_order(conn, &order).await
+}
+
+/// Every entry of the user as the free order sees it.
+async fn shelf_slots(conn: &mut PgConnection, user_id: i64) -> sqlx::Result<Vec<ShelfSlot>> {
+    sqlx::query_as!(
         ShelfSlot,
         r#"SELECT id, status AS "status: ShelfStatus", position, shelf_position
            FROM shelf_entries WHERE user_id = $1"#,
-        entry.user_id
+        user_id
     )
-    .fetch_all(&mut *conn)
-    .await?;
-    let order = shelf_order(&slots, entry.id, position);
-    entry.shelf_position = Some(index_of(&order, entry.id));
+    .fetch_all(conn)
+    .await
+}
+
+/// Sets each entry's `shelf_position` to its index in `order`.
+async fn write_shelf_order(conn: &mut PgConnection, order: &[i64]) -> sqlx::Result<()> {
     let ranks: Vec<i32> = (0..order.len()).map(rank).collect();
     sqlx::query!(
         "UPDATE shelf_entries AS s SET shelf_position = v.rank
          FROM unnest($1::int8[], $2::int4[]) AS v (id, rank)
          WHERE s.id = v.id AND s.shelf_position IS DISTINCT FROM v.rank",
-        &order,
+        order,
         &ranks
     )
     .execute(conn)

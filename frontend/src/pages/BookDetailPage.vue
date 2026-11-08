@@ -31,6 +31,7 @@ import { clubsFor, pickTargets } from "../clubActions";
 import { asksForCoverPhoto, personalCoverKey } from "../covers";
 import { backTarget, type BackTarget } from "../backTarget";
 import { worthRetrying } from "../retry";
+import { undoRemoval } from "../shelf";
 import {
   bookPath,
   parseBookParam,
@@ -439,6 +440,8 @@ async function remove() {
   };
   busy.value = true;
   try {
+    // The page lacks the entry's dates and places; the shelf has them for the Undo.
+    const entry = await shelfEntry(detail.shelf_id);
     await api.removeFromShelf(detail.shelf_id);
     detail.shelf_id = null;
     detail.on_shelf = null;
@@ -457,7 +460,7 @@ async function remove() {
     toast.show(t("book.removed"), {
       label: t("common.undo"),
       run: async () => {
-        const item = await api.addToShelf(previous);
+        const item = await api.addToShelf(entry ? undoRemoval(entry) : previous);
         adoptEntry(detail, item);
         void diary.value?.reload();
         if (coverKey) await reapplyCover(detail, item.id, coverKey);
@@ -467,6 +470,18 @@ async function remove() {
     toast.show(err instanceof ApiError ? err.message : t("shelf.removeFailed"));
   } finally {
     busy.value = false;
+  }
+}
+
+/**
+ * The caller's entry as the shelf lists it, or null when the shelf cannot be read: the Undo then
+ * puts back what the page knows, without the dates and places.
+ */
+async function shelfEntry(id: number): Promise<ShelfItem | null> {
+  try {
+    return (await api.myShelf()).items.find((row) => row.id === id) ?? null;
+  } catch {
+    return null;
   }
 }
 

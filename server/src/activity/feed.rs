@@ -28,7 +28,7 @@ use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
-use super::record::PRIVATE_KEY;
+use super::record::{PRIVATE_KEY, REMOVAL_SEALED_KEY};
 use crate::AppState;
 use crate::auth::extract::CurrentUser;
 use crate::catalog::shared::books::{BookRef, book_outs};
@@ -452,9 +452,10 @@ async fn items(
 
 /// The payload as the API serves it: `reaction` names its post's author (`author`, from
 /// `author_id`), a `shelf_finished` the caller may not rate (sealed to its actor, or its entry
-/// only-me or gone) loses `rating` and `take`, the seal itself is never shown, and a
-/// `quote_added` shows the quote as it is now (`excerpt`, `page`), never the text it was added
-/// with: that text may have been only-me, and an edit made the quote what its owner shares.
+/// only-me or gone) loses `rating` and `take`, the seal itself is never shown (nor the list of
+/// seals a `shelf_removed` keeps for its Undo), and a `quote_added` shows the quote as it is
+/// now (`excerpt`, `page`), never the text it was added with: that text may have been only-me,
+/// and an edit made the quote what its owner shares.
 fn served_payload(row: &EventRow, authors: &HashMap<i64, String>) -> Value {
     let Value::Object(mut payload) = row.payload.clone() else {
         return Value::Object(serde_json::Map::new());
@@ -466,6 +467,9 @@ fn served_payload(row: &EventRow, authors: &HashMap<i64, String>) -> Value {
                 .and_then(|id| id.as_i64())
                 .and_then(|id| authors.get(&id).cloned());
             payload.insert("author".into(), author.map_or(Value::Null, Value::String));
+        }
+        "shelf_removed" => {
+            payload.remove(REMOVAL_SEALED_KEY);
         }
         "shelf_finished" => {
             payload.remove(PRIVATE_KEY);
@@ -546,6 +550,11 @@ mod tests {
         assert_eq!(
             served_payload(&row("shelf_finished", payload, true), &authors),
             json!({})
+        );
+        let removed = json!({"status": "finished", "sealed": [3, 5]});
+        assert_eq!(
+            served_payload(&row("shelf_removed", removed, false), &authors),
+            json!({"status": "finished"})
         );
     }
 
