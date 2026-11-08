@@ -530,7 +530,6 @@
     "writeAFew": "Write a few lines",
     "detailsUpdated": "Details updated",
     "refreshFailed": "Could not refresh that book",
-    "backDiscover": "← Discover",
     "addedByReader": "Added by a reader — not on Open Library.",
     "pickBlurbIn": "Replaces the current pick for everyone in {club}.",
     "whichClub": "Which club?",
@@ -546,7 +545,9 @@
     "pickBadge": "Club pick · {club}",
     "ratingVotes": "{n} rating | {n} ratings",
     "ratingLabel": "Rating",
-    "clearRating": "Remove rating"
+    "clearRating": "Remove rating",
+    "backTo": "← {page}",
+    "back": "← Back"
   },
   "diary": {
     "heading": "Diary",

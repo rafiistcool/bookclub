@@ -1,7 +1,7 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createMemoryHistory, createRouter } from "vue-router";
+import { createMemoryHistory, createRouter, createWebHistory } from "vue-router";
 import { bookDetail, bookOut, edition, shelfItem, user } from "../test/fixtures";
 import type { BookDetail, ClubSummary } from "../types";
 
@@ -181,6 +181,39 @@ describe("BookDetailPage", () => {
     expect(book.mock.calls[0][0]).toBe(4);
     expect(router.currentRoute.value.fullPath).toBe("/book/9");
     expect(book).toHaveBeenCalledTimes(1);
+  });
+
+  it("leads back to Discover when the book was opened directly", async () => {
+    const { wrapper } = await mountBook("/book/4");
+    const link = wrapper.get(".back-link a");
+    expect(link.text()).toBe("← Discover");
+    expect(link.attributes("href")).toBe("/discover");
+  });
+
+  it("names the page the reader came from and goes back there", async () => {
+    // The browser's history: vue-router keeps the previous page in its state.
+    const router = createRouter({
+      history: createWebHistory(),
+      routes: [
+        { path: "/shelf", component: { template: "<p>shelf</p>" } },
+        { path: "/book/:id", component: BookDetailPage },
+      ],
+    });
+    await router.push("/shelf");
+    await router.isReady();
+    await router.push("/book/4");
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    useSession().user = user();
+    const wrapper = mount(BookDetailPage, { global: { plugins: [pinia, router] } });
+    await flushPromises();
+    const link = wrapper.get(".back-link a");
+    expect(link.text()).toBe("← Shelf");
+    expect(link.attributes("href")).toBe("/shelf");
+    const arrived = new Promise<void>((resolve) => router.afterEach(() => resolve()));
+    await link.trigger("click");
+    await arrived;
+    expect(router.currentRoute.value.fullPath).toBe("/shelf");
   });
 
   it("says the book is not in the catalog for an id that cannot be one", async () => {

@@ -530,7 +530,6 @@
     "writeAFew": "Ein paar Zeilen schreiben",
     "detailsUpdated": "Details aktualisiert",
     "refreshFailed": "Details konnten nicht aktualisiert werden",
-    "backDiscover": "← Entdecken",
     "addedByReader": "Von Hand angelegt — nicht bei Open Library.",
     "pickBlurbIn": "Ersetzt das aktuelle Club-Buch für alle in {club}.",
     "whichClub": "Für welchen Club?",
@@ -546,7 +545,9 @@
     "pickBadge": "Club-Buch · {club}",
     "ratingVotes": "{n} Stimme | {n} Stimmen",
     "ratingLabel": "Bewertung",
-    "clearRating": "Bewertung entfernen"
+    "clearRating": "Bewertung entfernen",
+    "backTo": "← {page}",
+    "back": "← Zurück"
   },
   "diary": {
     "heading": "Tagebuch",
