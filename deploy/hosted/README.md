@@ -220,6 +220,8 @@ The exact version is pushed first. Then `release-tags.sh` compares the tag with 
 
 Once `stable` has moved, the VM's update timer picks the release up within about 3 minutes (see "Updates and rollback"). A pre-release never reaches a stack that follows `stable`; to try one on staging, pin its exact version there (`BOOKCLUB_TAG=0.11.0-rc.1`).
 
+The image build gets the version as the build argument `BOOKCLUB_VERSION` (`1.2.3` from `v1.2.3`), so `docker exec <app container> bookclub-server --version` prints the release the container runs, and the start-up log line `listening on …` carries it as `version`. An image built without it, such as CI's smoke-test image or a local `docker build`, says `dev`. The version in `server/Cargo.toml` and `frontend/package.json` is not the release and stays as it is.
+
 There is no `latest` and no floating major. A tag that is not `vX.Y.Z` or `vX.Y.Z-<pre-release>` fails the run. The publish job runs on the Forgejo runner with the label `docker-host` (`docs/phase2/notes/dep.md`, "The runner") and logs in with the action secret `REGISTRY_TOKEN`, a Forgejo token with `write:package`. It is a secret of the user `rafiistcool`, which the repository's own secret list does not show. The old Python image `rafiistcool/bookclub` is never touched.
 
 Every action in the Forgejo workflows is pinned to a commit, with its release in a comment, because the publish job hands its actions that token and the host's Docker daemon. A pin moves only on purpose; the comment above `jobs:` in `release.yml` says how, and `server/tests/deploy_env.rs` fails on an unpinned `uses:`.

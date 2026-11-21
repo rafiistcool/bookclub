@@ -9,6 +9,7 @@
 //!   they cannot write before they touch the database.
 //! - `deploy/hosted/smoke-test.sh` refuses names that are not CI's before it runs `docker`.
 //! - Every action the Forgejo workflows use is pinned to a commit.
+//! - A release's image build stamps the release into the binary (`bookclub-server --version`).
 //! - `deploy/hosted/backup.env.example` names every setting of the backup and update scripts,
 //!   and every systemd unit starts a script that exists.
 //! - `deploy/hosted/update.sh`, with `docker` and `curl` stood in for: it backs up before it
@@ -684,6 +685,47 @@ fn workflows_pin_every_action_to_a_commit() {
         }
         assert!(checked > 0, "no `uses:` found in {}", workflow.display());
     }
+}
+
+/// `bookclub-server --version` prints the release (`VERSION`): `release.yml` hands the image
+/// build its tag without the `v` as `BOOKCLUB_VERSION`, and the `Dockerfile` declares that
+/// argument in the server stage between the dependency layer and the crate's own build, so a
+/// new release does not rebuild the dependencies. A build without it, such as this test's, says
+/// `dev`.
+#[tokio::test]
+async fn the_release_build_stamps_its_version_into_the_binary() {
+    let release = read(".forgejo/workflows/release.yml");
+    assert!(
+        release.contains("BOOKCLUB_VERSION=${{ steps.meta.outputs.version }}"),
+        "release.yml does not pass the tag's version as the build argument BOOKCLUB_VERSION"
+    );
+
+    let dockerfile = read("Dockerfile");
+    let server = dockerfile
+        .split("\nFROM ")
+        .find(|stage| stage.lines().next().unwrap_or("").ends_with(" AS server"))
+        .expect("the Dockerfile has a stage `AS server`");
+    let at = |needle: &str| {
+        server
+            .find(needle)
+            .unwrap_or_else(|| panic!("the server stage has no `{needle}`"))
+    };
+    let dependencies = at("COPY server/Cargo.toml");
+    let sources = at("COPY server/ ./");
+    let argument = at("\nARG BOOKCLUB_VERSION\n");
+    let build = server.rfind("cargo build --release").unwrap();
+    assert!(
+        dependencies < sources && sources < argument && argument < build,
+        "ARG BOOKCLUB_VERSION belongs after `COPY server/ ./` and before the crate's build"
+    );
+
+    let output = run(bin().arg("--version"), Duration::from_secs(10)).await;
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!("bookclub-server {}\n", bookclub_server::VERSION)
+    );
+    assert!(!bookclub_server::VERSION.is_empty());
 }
 
 // ---- The backup and update scripts ----------------------------------------------------------
