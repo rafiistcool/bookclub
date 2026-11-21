@@ -138,6 +138,7 @@ async fn a_request_after_the_block_is_hidden_from_the_blocker(db: PgPool) {
     ignored.assert_status(200);
     let strip = |mut out: Value| {
         out["outgoing"][0]["created_at"] = Value::Null;
+        out["outgoing"][0]["expires_at"] = Value::Null;
         out["outgoing"][0]["user"]["id"] = Value::Null;
         out["outgoing"][0]["user"]["username"] = Value::Null;
         out

@@ -93,6 +93,7 @@ const API_ERROR_KEYS: Record<string, string> = {
   "That is your own account": "errors.selfAccount",
   "You blocked this account": "errors.youBlocked",
   "No such friend request": "errors.noFriendRequest",
+  "You already have 50 open friend requests. Withdraw some or wait for answers.": "errors.tooManyOpenRequests",
   "No friend with that name": "errors.noFriend",
   "That friend is already in this club": "errors.friendInClub",
   "Only a friend invite names a person": "errors.onlyFriendInviteNames",

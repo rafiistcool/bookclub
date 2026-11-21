@@ -16,6 +16,18 @@ export function isStale(err: unknown): boolean {
   return err instanceof ApiError && (err.status === 404 || err.status === 409);
 }
 
+const DAY_MS = 24 * 60 * 60_000;
+
+/**
+ * Whole days until a pending request expires (`FriendRequestOut.expires_at`,
+ * 30 days after it was sent), rounded up; 1 within the last day, and 0 once
+ * the time has passed (the hourly cleanup deletes it within the hour).
+ */
+export function daysLeft(expiresAt: string, now = Date.now()): number {
+  const left = Date.parse(expiresAt) - now;
+  return left > 0 ? Math.ceil(left / DAY_MS) : 0;
+}
+
 // One `GET /api/friends` at a time per store: the shell and the Friends page both ask on mount.
 const inFlight = new WeakMap<object, Promise<void>>();
 

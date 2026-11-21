@@ -1,5 +1,6 @@
 //! Suspending accounts (#55, Q15): `POST /api/admin/users/{username}/suspend` and
-//! `/unsuspend`, and `GET /api/admin/users/suspended` for the admin page.
+//! `/unsuspend`, and `GET /api/admin/users/suspended` for the admin page; and the accounts whose
+//! friend requests look like spam, `GET /api/admin/users/friend-requests` (REQS, #55).
 //!
 //! A suspension, in one transaction:
 //!
@@ -53,7 +54,14 @@ pub fn admin_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(suspend))
         .routes(routes!(unsuspend))
         .routes(routes!(list_suspended))
+        .routes(routes!(list_friend_request_signals))
 }
+
+/// How many accounts the friend-request list shows at most.
+pub const REQUEST_SIGNALS_SHOWN: i64 = 20;
+
+/// The blocks an account received count for the friend-request list this many days.
+pub const BLOCKS_COUNTED_DAYS: i32 = 30;
 
 /// An account as the admin page shows it: no address, no personal data beyond the name.
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -75,6 +83,23 @@ pub struct AdminUserOut {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct AdminUserList {
     pub items: Vec<AdminUserOut>,
+}
+
+/// An account with friend requests that may be spam: counts only, never whom it asked or who
+/// blocked it.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AdminRequestSignalOut {
+    pub user: AdminUserOut,
+    /// Its pending friend requests out, including those hidden from addressees who blocked it.
+    pub pending_requests: i64,
+    /// The accounts that blocked it in the last 30 days (and have not unblocked it).
+    pub blocks_received: i64,
+}
+
+/// The accounts with the most friend-request signals.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AdminRequestSignalList {
+    pub items: Vec<AdminRequestSignalOut>,
 }
 
 /// Suspends an account: it can no longer sign in, every session and bearer token it has is
@@ -281,6 +306,72 @@ pub async fn list_suspended(
         })
         .collect();
     Ok(Json(AdminUserList { items }))
+}
+
+/// The accounts whose friend requests may be spam, for the admin page's "Accounts" tab: at most
+/// 20 with at least one pending request out or one block received in the last 30 days. Ordered
+/// by the two added up (a block deletes the request it answers, so a request stays in the sum
+/// whether it waits or was blocked), then by the blocks, then by username. Counts only: never
+/// whom an account asked or who blocked it.
+#[utoipa::path(
+    get,
+    path = "/api/admin/users/friend-requests",
+    operation_id = "admin_list_friend_request_signals",
+    tag = "admin",
+    security(("bookclub_session" = []), ("bearer" = [])),
+    responses(
+        (status = 200, body = AdminRequestSignalList, description = "The accounts with the most pending requests and blocks received"),
+        (status = 401, body = ErrorBody, description = "`Not signed in`"),
+        (status = 404, body = ErrorBody, description = "`Not found` for everyone but instance admins")
+    )
+)]
+pub async fn list_friend_request_signals(
+    InstanceAdmin(_admin): InstanceAdmin,
+    State(state): State<AppState>,
+) -> ApiResult<Json<AdminRequestSignalList>> {
+    let mut conn = state.db.acquire().await?;
+    let rows = sqlx::query!(
+        r#"WITH pending AS (
+               SELECT requester_id AS user_id, count(*) AS n FROM friendships
+               WHERE accepted_at IS NULL
+               GROUP BY requester_id
+           ), blocks AS (
+               SELECT blocked_user_id AS user_id, count(*) AS n FROM user_blocks
+               WHERE created_at > now() - make_interval(days => $1)
+               GROUP BY blocked_user_id
+           ), signals AS (
+               SELECT coalesce(p.user_id, b.user_id) AS user_id,
+                      coalesce(p.n, 0) AS pending, coalesce(b.n, 0) AS blocks
+               FROM pending p FULL JOIN blocks b ON b.user_id = p.user_id
+           )
+           SELECT u.id, u.username, m.public_id AS "avatar_public_id?", u.is_admin, u.created_at,
+                  u.suspended_at, s.pending AS "pending!", s.blocks AS "blocks!"
+           FROM signals s
+           JOIN users u ON u.id = s.user_id
+           LEFT JOIN media m ON m.id = u.avatar_media_id AND m.removed_at IS NULL
+           ORDER BY s.pending + s.blocks DESC, s.blocks DESC, u.username
+           LIMIT $2"#,
+        BLOCKS_COUNTED_DAYS,
+        REQUEST_SIGNALS_SHOWN
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let items = rows
+        .into_iter()
+        .map(|row| AdminRequestSignalOut {
+            user: AdminUserOut {
+                id: row.id,
+                username: row.username,
+                avatar_url: avatar_url(row.avatar_public_id.as_deref()),
+                is_admin: row.is_admin,
+                created_at: row.created_at,
+                suspended_at: row.suspended_at,
+            },
+            pending_requests: row.pending,
+            blocks_received: row.blocks,
+        })
+        .collect();
+    Ok(Json(AdminRequestSignalList { items }))
 }
 
 /// The [`AdminUserOut`] of an existing account.

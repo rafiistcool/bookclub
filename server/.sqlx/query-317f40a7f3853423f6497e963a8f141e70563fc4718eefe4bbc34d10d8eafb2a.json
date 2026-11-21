@@ -1,0 +1,103 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH pending AS (\n               SELECT requester_id AS user_id, count(*) AS n FROM friendships\n               WHERE accepted_at IS NULL\n               GROUP BY requester_id\n           ), blocks AS (\n               SELECT blocked_user_id AS user_id, count(*) AS n FROM user_blocks\n               WHERE created_at > now() - make_interval(days => $1)\n               GROUP BY blocked_user_id\n           ), signals AS (\n               SELECT coalesce(p.user_id, b.user_id) AS user_id,\n                      coalesce(p.n, 0) AS pending, coalesce(b.n, 0) AS blocks\n               FROM pending p FULL JOIN blocks b ON b.user_id = p.user_id\n           )\n           SELECT u.id, u.username, m.public_id AS \"avatar_public_id?\", u.is_admin, u.created_at,\n                  u.suspended_at, s.pending AS \"pending!\", s.blocks AS \"blocks!\"\n           FROM signals s\n           JOIN users u ON u.id = s.user_id\n           LEFT JOIN media m ON m.id = u.avatar_media_id AND m.removed_at IS NULL\n           ORDER BY s.pending + s.blocks DESC, s.blocks DESC, u.username\n           LIMIT $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "username",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "username"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "avatar_public_id?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media",
+            "name": "public_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "is_admin",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "is_admin"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "suspended_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "suspended_at"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "pending!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "blocks!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      null,
+      null
+    ]
+  },
+  "hash": "317f40a7f3853423f6497e963a8f141e70563fc4718eefe4bbc34d10d8eafb2a"
+}

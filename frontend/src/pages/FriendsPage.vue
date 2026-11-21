@@ -13,7 +13,7 @@ import InviteFriendSheet from "../components/InviteFriendSheet.vue";
 import { bookPath } from "../constants";
 import { formatDay } from "../i18n/dates";
 import { isClubAdmin, useClubs } from "../stores/clubs";
-import { isStale, useFriends } from "../stores/friends";
+import { daysLeft, isStale, useFriends } from "../stores/friends";
 import { useLocale } from "../stores/locale";
 import { useSession } from "../stores/session";
 import { useToast } from "../stores/toast";
@@ -54,6 +54,12 @@ const inviting = ref<string | null>(null);
 
 function day(iso: string): string {
   return formatDay(iso, session.user?.timezone ?? "UTC", locale.locale);
+}
+
+/** "expires in 12 days" under a sent request (REQS: unanswered requests go after 30 days). */
+function expiry(expiresAt: string): string {
+  const days = daysLeft(expiresAt);
+  return days > 1 ? t("friends.outgoing.expiresIn", { n: days }) : t("friends.outgoing.expiresSoon");
 }
 
 function failure(err: unknown): string {
@@ -331,7 +337,10 @@ onMounted(() => {
               <Avatar :username="request.user.username" :src="request.user.avatar_url" />
               <span class="person-meta">
                 <strong>{{ request.user.username }}</strong>
-                <span class="finer subtle">{{ t("friends.outgoing.sentOn", { day: day(request.created_at) }) }}</span>
+                <span class="finer subtle">
+                  {{ t("friends.outgoing.sentOn", { day: day(request.created_at) }) }} ·
+                  <span class="expiry">{{ expiry(request.expires_at) }}</span>
+                </span>
               </span>
             </span>
             <span class="row-actions">

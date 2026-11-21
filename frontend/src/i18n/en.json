@@ -728,6 +728,7 @@
     "selfAccount": "That is your own account",
     "youBlocked": "You blocked this account. Unblock it first.",
     "noFriendRequest": "That request no longer exists",
+    "tooManyOpenRequests": "You already have 50 open friend requests. Withdraw some, or wait for answers.",
     "noFriend": "None of your friends has that name",
     "friendInClub": "That friend is already in this club",
     "onlyFriendInviteNames": "Only a personal invite names a person",
@@ -1039,6 +1040,8 @@
     "outgoing": {
       "heading": "Requests you sent",
       "sentOn": "sent {day}",
+      "expiresIn": "expires in {n} days",
+      "expiresSoon": "expires within a day",
       "withdraw": "Withdraw",
       "withdrawn": "Request withdrawn"
     },
@@ -1497,7 +1500,17 @@
       "unsuspended": "{name} can sign in again",
       "none": "No account is suspended.",
       "failed": "Could not save that",
-      "howTo": "Every session and app token of the account ends at once, the invites it knows stop working, and an admin loses the admin rights. Lifting the suspension lets it sign in again, without admin rights. It can no longer export or delete its data itself: its owner writes to the contact address, and the operator does it by hand, as the notice-and-takedown runbook describes (“Accounts that cannot sign in”)."
+      "howTo": "Every session and app token of the account ends at once, the invites it knows stop working, and an admin loses the admin rights. Lifting the suspension lets it sign in again, without admin rights. It can no longer export or delete its data itself: its owner writes to the contact address, and the operator does it by hand, as the notice-and-takedown runbook describes (“Accounts that cannot sign in”).",
+      "views": "Lists",
+      "suspendedView": "Suspended",
+      "requests": {
+        "view": "Friend requests",
+        "blurb": "The accounts with the most friend requests waiting for an answer, hidden ones included, and the most blocks in the last 30 days, at most 20. Only the numbers: whom they asked and who blocked them stay private. Unanswered requests expire after 30 days, and nobody has more than 50 waiting.",
+        "counts": "Waiting: {pending} · Blocked by (30 days): {blocks}",
+        "suspend": "Suspend…",
+        "suspended": "Suspended",
+        "none": "No account has friend requests waiting or was blocked in the last 30 days."
+      }
     },
     "edit": {
       "title": "Edit this book as admin",

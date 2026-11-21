@@ -29,7 +29,7 @@ vi.mock("../api/client", () => {
 });
 
 import { ApiError } from "../api/client";
-import { RELOAD_AFTER_MS, reloadWhenVisible, useFriends } from "./friends";
+import { RELOAD_AFTER_MS, daysLeft, reloadWhenVisible, useFriends } from "./friends";
 import { useSession } from "./session";
 
 /** A promise the test settles by hand. */
@@ -226,5 +226,23 @@ describe("the friends store", () => {
     vi.setSystemTime(new Date(Date.now() + 5 * RELOAD_AFTER_MS));
     setVisibility("visible");
     expect(api.friends).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("daysLeft", () => {
+  const sent = Date.parse("2026-10-20T09:00:00Z");
+  const expires = "2026-11-19T09:00:00Z";
+  const DAY = 24 * 60 * 60_000;
+
+  it("counts whole days until a request expires, rounded up", () => {
+    expect(daysLeft(expires, sent)).toBe(30);
+    expect(daysLeft(expires, sent + 1)).toBe(30);
+    expect(daysLeft(expires, sent + 18 * DAY)).toBe(12);
+    expect(daysLeft(expires, sent + 29 * DAY + 60_000)).toBe(1);
+  });
+
+  it("is 0 once the time has passed, until the cleanup deletes the request", () => {
+    expect(daysLeft(expires, sent + 30 * DAY)).toBe(0);
+    expect(daysLeft(expires, sent + 31 * DAY)).toBe(0);
   });
 });
