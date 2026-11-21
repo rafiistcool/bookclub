@@ -67,7 +67,8 @@ describe("QuoteList", () => {
     expect(wrapper.find(".quotes-capped").exists()).toBe(false);
     expect(wrapper.find(".quote-compose").exists()).toBe(false);
     expect(wrapper.findAll(".quote-book")[0]!.attributes("href")).toBe("/book/9");
-    expect(wrapper.findAll(".quote")[1]!.find(".quote-actions").exists()).toBe(false);
+    // Someone else's quote can only be reported (#55, Q11 option C).
+    expect(wrapper.findAll(".quote")[1]!.findAll(".quote-actions .text-btn").map((button) => button.text())).toEqual(["Report"]);
 
     api.editQuote.mockResolvedValue(quote({ visibility: "only_me", page: null }));
     await wrapper.findAll(".quote-actions .text-btn")[0]!.trigger("click");

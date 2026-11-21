@@ -1,13 +1,24 @@
 <script lang="ts">
 /**
  * What a reader reports (#54, Q11 option B): a cover or a profile picture
- * (both by the picture's public id), or a book or an edition a reader added.
+ * (both by the picture's public id), or a book or an edition a reader added;
+ * and (#55, Q11 option C) what another reader wrote: a post (a club post, a
+ * reply or a diary entry), a quote, or the take on a book by its reader's
+ * name. `author` names the writer under the sheet's title.
  */
 export type ReportTarget =
   | { kind: "cover"; publicId: string; title: string }
   | { kind: "avatar"; publicId: string; username: string }
   | { kind: "work"; workId: number; title: string }
-  | { kind: "edition"; editionId: number; title: string };
+  | { kind: "edition"; editionId: number; title: string }
+  | { kind: "post"; postId: number; author: string }
+  | { kind: "quote"; quoteId: number; author: string }
+  | { kind: "take"; workId: number; author: string };
+
+/** A text another reader wrote, not a picture or a book. */
+export function isTextTarget(target: ReportTarget): target is Extract<ReportTarget, { author: string }> {
+  return target.kind === "post" || target.kind === "quote" || target.kind === "take";
+}
 
 /**
  * The stored title of a book a reader added whose text an admin removed on a
@@ -43,9 +54,10 @@ import { useToast } from "../stores/toast";
 import BottomSheet from "./BottomSheet.vue";
 
 /**
- * Notice and takedown: tell an admin that a cover, a profile picture, or a
- * book or edition a reader added is wrong, offensive or infringes someone's
- * rights. "It shows a different book" is offered for covers only. The admin's
+ * Notice and takedown: tell an admin that a cover, a profile picture, a book
+ * or edition a reader added, or a post, quote or take another reader wrote is
+ * wrong, offensive or infringes someone's rights. "It shows a different book"
+ * is offered for covers only (the server refuses it for texts). The admin's
  * decision comes back by mail. A last line names the public contact address
  * for people without an account, when the server has one (`/api/config`).
  */
@@ -65,15 +77,21 @@ const busy = ref(false);
 const error = ref("");
 
 const reasons = computed<readonly Reason[]>(() => (props.target.kind === "cover" ? COVER_REASONS : OTHER_REASONS));
-/** The line under the title: the book, or whose picture it is. */
-const subject = computed(() =>
-  props.target.kind === "avatar" ? t("report.avatarOf", { name: props.target.username }) : props.target.title,
-);
+/** The line under the title: the book, whose picture it is, or who wrote the text. */
+const subject = computed(() => {
+  const target = props.target;
+  if (target.kind === "avatar") return t("report.avatarOf", { name: target.username });
+  if (isTextTarget(target)) return t(`report.by.${target.kind}`, { name: target.author });
+  return target.title;
+});
 
 function send(body: ReportIn) {
   const target = props.target;
   if (target.kind === "work") return api.reportWork(target.workId, body);
   if (target.kind === "edition") return api.reportEdition(target.editionId, body);
+  if (target.kind === "post") return api.reportPost(target.postId, body);
+  if (target.kind === "quote") return api.reportQuote(target.quoteId, body);
+  if (target.kind === "take") return api.reportTake(target.workId, target.author, body);
   return api.reportCover(target.publicId, body);
 }
 

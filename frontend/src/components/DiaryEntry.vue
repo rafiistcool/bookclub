@@ -14,12 +14,14 @@ import type { DiaryEntry, Visibility } from "../types";
 import Avatar from "./Avatar.vue";
 import PostActionsSheet from "./PostActionsSheet.vue";
 import RelativeTime from "./RelativeTime.vue";
+import ReportSheet from "./ReportSheet.vue";
 import SpoilerControl from "./SpoilerControl.vue";
 
 /**
  * One post of a diary or a club discussion, as a light row. Its actions sit
  * in one line under the text: the reactions on the left, "Reply" on the
- * right, and editing, deleting (and a club admin's moderation) behind "…".
+ * right, and editing, deleting (and a club admin's moderation) behind "…",
+ * and for someone else's post, reporting it to the instance admins.
  *
  * A post the reader is not far enough for waits for a tap (`spoilers.ts`):
  * one the writer flagged shows blurred under "Spoiler bis 70 % · du bist bei
@@ -55,6 +57,7 @@ const moreButton = ref<HTMLButtonElement | null>(null);
 const revealed = ref(false);
 const pickerOpen = ref(false);
 const actionsOpen = ref(false);
+const reporting = ref(false);
 const editing = ref(false);
 const editDraft = ref("");
 const editSpoiler = ref<number | null>(null);
@@ -79,7 +82,9 @@ const canDelete = computed(() => {
   if (!club) return false;
   return isClubAdmin(session.user?.clubs.find((row) => row.slug === club.slug)?.role);
 });
-const hasActions = computed(() => props.entry.mine || canDelete.value);
+/** Someone else's post can be reported (a deleted account's tombstone has nothing left). */
+const canReport = computed(() => !props.entry.mine && !props.entry.deleted && props.entry.author != null);
+const hasActions = computed(() => props.entry.mine || canDelete.value || canReport.value);
 const pickable = computed(() =>
   REACTIONS.filter((emoji) => !props.entry.reactions.some((row) => row.emoji === emoji && row.mine)),
 );
@@ -119,10 +124,14 @@ function saveEdit() {
   void endEdit();
 }
 
-async function act(action: "edit" | "delete") {
+async function act(action: "edit" | "delete" | "report") {
   actionsOpen.value = false;
   if (action === "delete") {
     emit("delete");
+    return;
+  }
+  if (action === "report") {
+    reporting.value = true;
     return;
   }
   startEdit();
@@ -334,8 +343,14 @@ onBeforeUnmount(() => {
       :can-edit="entry.mine"
       :can-delete="canDelete"
       :moderating="!entry.mine"
+      :can-report="canReport"
       @close="actionsOpen = false"
       @act="act"
+    />
+    <ReportSheet
+      v-if="reporting"
+      :target="{ kind: 'post', postId: entry.id, author }"
+      @close="reporting = false"
     />
 
     <slot />

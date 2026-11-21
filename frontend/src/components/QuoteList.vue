@@ -9,11 +9,13 @@ import { useToast } from "../stores/toast";
 import type { QuoteOut, Visibility } from "../types";
 import BookCover from "./BookCover.vue";
 import RelativeTime from "./RelativeTime.vue";
+import ReportSheet from "./ReportSheet.vue";
 
 /**
  * Saved lines. On a book page (`workId`) the viewer's audience's quotes of
  * that work plus a composer; on /quotes (`username`) one reader's quotes
- * across books. Each quote is the audience's or "only me".
+ * across books. Each quote is the audience's or "only me". Someone else's
+ * quote can be reported to the instance admins (#55, Q11 option C).
  */
 const props = defineProps<{
   workId?: number;
@@ -55,6 +57,8 @@ const editBody = ref("");
 const editPage = ref<number | "">("");
 const editOnlyMe = ref(false);
 const confirmingId = ref<number | null>(null);
+/** The quote whose report sheet is open. */
+const reporting = ref<QuoteOut | null>(null);
 
 function fail(err: unknown, fallback: string) {
   toast.show(err instanceof ApiError ? err.message : fallback);
@@ -244,10 +248,20 @@ watch(
               {{ confirmingId === quote.id ? t("common.deleteConfirm") : t("common.delete") }}
             </button>
           </p>
+          <p v-else class="quote-actions">
+            <button class="text-btn quiet quote-report" type="button" @click="reporting = quote">
+              {{ t("report.action.text") }}
+            </button>
+          </p>
         </template>
       </li>
     </ol>
     <p v-if="capped && !error" class="fine subtle quotes-capped">{{ t("quotes.capped", { n: READER_LIMIT }) }}</p>
+    <ReportSheet
+      v-if="reporting"
+      :target="{ kind: 'quote', quoteId: reporting.id, author: reporting.author }"
+      @close="reporting = null"
+    />
   </section>
 </template>
 

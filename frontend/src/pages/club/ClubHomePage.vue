@@ -10,6 +10,7 @@ import MeetingSheet from "../../components/MeetingSheet.vue";
 import MilestoneList from "../../components/MilestoneList.vue";
 import ProgressEditor from "../../components/ProgressEditor.vue";
 import ReaderRings from "../../components/ReaderRings.vue";
+import ReportSheet from "../../components/ReportSheet.vue";
 import { positionOf, positionPatch, positionSaved, type ReadingPosition } from "../../progress";
 import { whenIdle } from "../../whenIdle";
 import { bookPath, relativeDay, starLabel, statusLabel, statusShort } from "../../constants";
@@ -99,6 +100,8 @@ const ringReaders = computed(() =>
 );
 
 const takes = computed(() => readers.value.filter((row) => row.take));
+/** Whose take the report sheet is open for (another member's: #55, Q11 option C). */
+const reportingTake = ref<string | null>(null);
 
 // The countdown counts hours on the meeting's own day; a minute clock keeps it current.
 const now = ref(Date.now());
@@ -398,9 +401,23 @@ onMounted(load);
               <strong>{{ row.username }}</strong>
             </RouterLink>
             <span v-if="row.rating" class="finer stars">{{ starLabel(row.rating) }}</span>
+            <button
+              v-if="row.username !== session.user?.username"
+              class="text-btn quiet finer take-report"
+              type="button"
+              :aria-label="t('report.takeOf', { name: row.username })"
+              @click="reportingTake = row.username"
+            >
+              {{ t("report.action.text") }}
+            </button>
             <p>{{ row.take }}</p>
           </li>
         </ul>
+        <ReportSheet
+          v-if="reportingTake"
+          :target="{ kind: 'take', workId: pick.book.id, author: reportingTake }"
+          @close="reportingTake = null"
+        />
       </section>
 
       <!-- Its own root is the section: a member sees none while there are no milestones. -->
@@ -720,6 +737,10 @@ onMounted(load);
   min-height: 32px;
   color: inherit;
   text-decoration: none;
+}
+
+.take-report {
+  margin-left: auto;
 }
 
 .reader-takes p {
