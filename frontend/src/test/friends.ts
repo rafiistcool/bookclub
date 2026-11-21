@@ -36,6 +36,7 @@ export function friendRequest(username: string, overrides: Partial<FriendRequest
   return {
     user: { id: idFor(username), username, avatar_url: null },
     created_at: "2026-10-20T09:00:00Z",
+    expires_at: "2026-11-19T09:00:00Z",
     ...overrides,
   };
 }

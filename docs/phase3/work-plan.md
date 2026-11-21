@@ -442,7 +442,7 @@ For a pair A, B there is at most one `friendships` row. The states are: **none**
 | remove | anything else | unchanged | 404 `No friend with that name` |
 
 - Decline and cancel are the same route (`DELETE /api/friends/requests/{username}`): it deletes the pending row in whichever direction the caller may act on.
-- Declined requests leave no trace. The sender sees the request disappear, exactly as after a cancel, and may ask again. Block is the lasting remedy. Pending requests never expire.
+- Declined requests leave no trace. The sender sees the request disappear, exactly as after a cancel, and may ask again. Block is the lasting remedy. Pending requests never expire. (Changed before the public launch by REQS, #55: a pending request expires 30 days after it was sent, and an account has at most 50 out at once; `notes/reqs.md`, conventions.md §5.10.)
 - Suspension changes nothing here (ADM2's rule: a suspension leaves the account's content as it is). A suspended friend stays a friend, without a marker, as in a club's member list. Requests from and to a suspended account stay as they are; it cannot sign in to send more, and a bound invite to it waits unused.
 - **Concurrency.** Send runs `INSERT … ON CONFLICT ((least(requester_id, addressee_id)), (greatest(requester_id, addressee_id))) DO NOTHING`, then reads the pair's row `FOR UPDATE` and acts on what it finds. Two people sending to each other at once therefore end as friends. A foreign-key violation (the other account was deleted meanwhile) maps to 404 `No account with that name`.
 
@@ -949,7 +949,7 @@ Each decision with the alternative rejected.
 16. **Data:** one `friendships` row per pair (pending or accepted), a separate `user_blocks`, `club_invites.invitee_id` for friend invites. Rejected: two directed rows per friendship; a `blocked` state in the friendship row.
 17. **A friend is `Audience`;** `bc_can_see_user` and `bc_visible_owners` replaced, `bc_friends` added. Rejected: a fourth `Relation`.
 18. **Home feed:** friends' personal events from acceptance on. Rejected: no friends' events on Home.
-19. **Decline deletes;** requests never expire; the sender can ask again. Rejected: a stored `declined` state.
+19. **Decline deletes;** requests never expire (until the public launch: REQS, #55, lets them expire after 30 days, `notes/reqs.md`); the sender can ask again. Rejected: a stored `declined` state.
 20. **Mutual send becomes a friendship.**
 21. **Block:** silent; ends the friendship; future requests stored and hidden; the pair's bound invites revoked; clubs untouched, now and later (a blocked account that joins one of the blocker's clubs is audience again; the copy says so); unblock drops what was hidden. Rejected: telling the blocked account, or refusing its requests with an error; blocks that keep people out of clubs (a club rule, not a friend rule).
 22. **Friend invites:** club admins only; a bound single-use invite for 30 days; the friend joins through `/join/{code}`. `docs/plan.md:31` becomes "clubs they administer". Rejected: any member inviting (cheap to widen later); adding a friend directly without consent.
@@ -1026,5 +1026,5 @@ Before any stranger can sign up, and before Phase 4 (the App Store needs a priva
 - **Mail:** Brevo (Q4): the account, the DPA, SPF, DKIM and DMARC, `EMAIL_TRANSPORT=smtp`, and `send-test-mail` to three providers (items 8, 23). The SPA's "link sent" copy becomes true then.
 - **#53:** the contact mailbox and Impressum address (item 9), the legal texts, the VVT signature and the DPAs (items 17–19). The privacy text also names the camera (on-device decoding) and the redacted ISBN paths, both from SCAN's notes, and friendships. Decided here, before the text is written: SCAN's two proxy-log choices (`notes/scan.md`, Part 1, "For the integrator"), the wider Caddy log filter that also hides book and cover ids, and the request id in the proxy log; the text says what the chosen ones leave.
 - **#51, the rest:** its own VM in its own VLAN (item 10), the Storage Box with snapshots (item 12), the monitor, heartbeats and the outside check (item 13), the Caddy site block from `Caddyfile.example` with HSTS (item 14), and the alert test (item 16).
-- **#55:** `verify-limits.sh` from outside, a takedown run, and `SIGNUP_MODE=open` (items 24–26); Q11 C, reports on texts, now that friends exist; a cap on pending incoming friend requests per account (or their expiry) and a way for admins to see request spam.
+- **#55:** `verify-limits.sh` from outside, a takedown run, and `SIGNUP_MODE=open` (items 24–26); Q11 C, reports on texts, now that friends exist; a cap on pending incoming friend requests per account (or their expiry) and a way for admins to see request spam (done by REQS: pending requests expire after 30 days, at most 50 out per account, and the admin page's "Friend requests" view; `notes/reqs.md`).
 - **The GATE checks** against the real stack, and the first `v1.0.0`.

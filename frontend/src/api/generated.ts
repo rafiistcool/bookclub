@@ -324,6 +324,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/users/friend-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The accounts whose friend requests may be spam, for the admin page's "Accounts" tab: at most
+         *     20 with at least one pending request out or one block received in the last 30 days. Ordered
+         *     by the two added up (a block deletes the request it answers, so a request stays in the sum
+         *     whether it waits or was blocked), then by the blocks, then by username. Counts only: never
+         *     whom an account asked or who blocked it.
+         */
+        get: operations["admin_list_friend_request_signals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/users/suspended": {
         parameters: {
             query?: never;
@@ -1968,9 +1991,10 @@ export interface paths {
         /**
          * Asks another account to be friends. Sending to someone who already asked the caller makes
          *     them friends at once; sending again, or to a friend, changes nothing. A request to someone
-         *     who blocked the caller is stored and shows as sent, but never reaches them. 20 requests and
-         *     blocks per account a day, unknown names and repeats included, and 60 per client address a
-         *     day across its accounts.
+         *     who blocked the caller is stored and shows as sent, but never reaches them. A pending request
+         *     expires after 30 days. At most 50 pending requests out at once (a request back, which
+         *     accepts, is never refused). 20 requests and blocks per account a day, unknown names and
+         *     repeats included, and 60 per client address a day across its accounts.
          */
         post: operations["friends_send_request"];
         delete?: never;
@@ -2609,6 +2633,27 @@ export interface components {
              * @description Resolved later than `target_hours` after they arrived.
              */
             over_target: number;
+        };
+        /** @description The accounts with the most friend-request signals. */
+        AdminRequestSignalList: {
+            items: components["schemas"]["AdminRequestSignalOut"][];
+        };
+        /**
+         * @description An account with friend requests that may be spam: counts only, never whom it asked or who
+         *     blocked it.
+         */
+        AdminRequestSignalOut: {
+            user: components["schemas"]["AdminUserOut"];
+            /**
+             * Format: int64
+             * @description Its pending friend requests out, including those hidden from addressees who blocked it.
+             */
+            pending_requests: number;
+            /**
+             * Format: int64
+             * @description The accounts that blocked it in the last 30 days (and have not unblocked it).
+             */
+            blocks_received: number;
         };
         /** @description Both queues at a glance. */
         AdminSummary: {
@@ -3423,6 +3468,12 @@ export interface components {
             user: components["schemas"]["UserSummary"];
             /** Format: date-time */
             created_at: string;
+            /**
+             * Format: date-time
+             * @description When the request expires unanswered: 30 days after `created_at`. The hourly cleanup
+             *     deletes it within the hour after that.
+             */
+            expires_at: string;
         };
         /** @description The caller's friends, requests, blocks and personal club invitations. */
         FriendsOut: {
@@ -5005,6 +5056,8 @@ export type AdminEditIn = components['schemas']['AdminEditIn'];
 export type AdminOldestItem = components['schemas']['AdminOldestItem'];
 export type AdminQueueSummary = components['schemas']['AdminQueueSummary'];
 export type AdminReportStats = components['schemas']['AdminReportStats'];
+export type AdminRequestSignalList = components['schemas']['AdminRequestSignalList'];
+export type AdminRequestSignalOut = components['schemas']['AdminRequestSignalOut'];
 export type AdminSummary = components['schemas']['AdminSummary'];
 export type AdminUserList = components['schemas']['AdminUserList'];
 export type AdminUserOut = components['schemas']['AdminUserOut'];
@@ -5989,6 +6042,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminSummary"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not found` for everyone but instance admins */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_list_friend_request_signals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The accounts with the most pending requests and blocks received */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminRequestSignalList"];
                 };
             };
             /** @description `Not signed in` */
@@ -11057,7 +11148,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description `You blocked this account` */
+            /** @description `You blocked this account`; `You already have 50 open friend requests. Withdraw some or wait for answers.` */
             409: {
                 headers: {
                     [name: string]: unknown;

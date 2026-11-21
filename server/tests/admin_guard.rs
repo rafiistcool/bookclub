@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 
 /// Every admin operation. A new one is added here, with its seeded ids and a valid body below.
-const ADMIN_OPERATIONS: [&str; 22] = [
+const ADMIN_OPERATIONS: [&str; 23] = [
     "DELETE /api/admin/invites/{invite_id}",
     "DELETE /api/admin/media/{public_id}",
     "GET /api/admin/cover-suggestions",
@@ -31,6 +31,7 @@ const ADMIN_OPERATIONS: [&str; 22] = [
     "GET /api/admin/missing-covers",
     "GET /api/admin/reports",
     "GET /api/admin/summary",
+    "GET /api/admin/users/friend-requests",
     "GET /api/admin/users/suspended",
     "PATCH /api/admin/editions/{edition_id}",
     "PATCH /api/admin/works/{work_id}",

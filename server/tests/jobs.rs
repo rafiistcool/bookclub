@@ -552,6 +552,34 @@ async fn lifting_a_suspension_starts_the_30_days_of_an_empty_sign_up_again(db: P
     assert!(!user_ids(&app.db).await.contains(&ada));
 }
 
+/// REQS: the cleanup expires pending friend requests 30 days after they were sent, before the
+/// purge, so a sign-up whose only data was an unanswered request it sent goes in the same run. A
+/// newer request keeps its sender, as before.
+#[sqlx::test]
+async fn cleanup_expires_friend_requests_before_the_purge(db: PgPool) {
+    let keeper = insert_user(&db, "keeper").await;
+    let asked_long_ago = sign_up(&db, "asked_long_ago", 60).await;
+    let asked_lately = sign_up(&db, "asked_lately", 60).await;
+    exec(
+        &db,
+        "INSERT INTO friendships (requester_id, addressee_id, created_at)
+         VALUES ({old}, {keeper}, now() - interval '31 days'),
+                ({new}, {keeper}, now() - interval '29 days')",
+        &[
+            ("old", asked_long_ago),
+            ("new", asked_lately),
+            ("keeper", keeper),
+        ],
+    )
+    .await;
+    run_cleanup(&db).await;
+    assert_eq!(user_ids(&db).await, BTreeSet::from([keeper, asked_lately]));
+    assert_eq!(
+        ids(&db, "SELECT requester_id FROM friendships").await,
+        [asked_lately]
+    );
+}
+
 /// Every foreign key to `users` whose row means the account holds data, with SQL that gives the
 /// account `{u}` such a row. The other names are the fixture rows of
 /// [`every_reference_to_an_account_is_data_or_a_trace_of_signing_in`].

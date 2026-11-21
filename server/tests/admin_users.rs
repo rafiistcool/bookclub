@@ -1,5 +1,6 @@
 //! Suspending accounts (#55, Q15): `POST /api/admin/users/{username}/suspend` and `/unsuspend`,
-//! `GET /api/admin/users/suspended`, and what a suspension does to sign-in.
+//! `GET /api/admin/users/suspended`, and what a suspension does to sign-in; and the accounts
+//! whose friend requests may be spam, `GET /api/admin/users/friend-requests` (REQS).
 
 mod common;
 
@@ -624,4 +625,127 @@ async fn the_operator_commands_lift_a_suspension_and_end_admin_rights(db: PgPool
             "{command}"
         );
     }
+}
+
+/// The usernames and counts of `GET /api/admin/users/friend-requests`.
+async fn request_signals(admin: &TestClient) -> Vec<(String, i64, i64, bool)> {
+    let res = admin.get("/api/admin/users/friend-requests").await;
+    res.assert_status(200);
+    res.json()["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| {
+            (
+                item["user"]["username"].as_str().unwrap().to_owned(),
+                item["pending_requests"].as_i64().unwrap(),
+                item["blocks_received"].as_i64().unwrap(),
+                !item["user"]["suspended_at"].is_null(),
+            )
+        })
+        .collect()
+}
+
+/// REQS: the admin page lists the accounts with pending friend requests out (hidden ones
+/// included) or blocks received in the last 30 days, by the two added up, then by the blocks,
+/// then by name; counts only, never whom they asked or who blocked them. At most 20; accounts
+/// without either are left out; a suspended account shows as suspended.
+#[sqlx::test]
+async fn the_admin_page_lists_accounts_by_their_friend_requests(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let root = app.admin("root").await;
+    assert_eq!(request_signals(&root).await, []);
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let cy = app.user("cy").await;
+    let dee = app.user("dee").await;
+    // ada asks bob, cy and dee; bob blocks her (her request goes), cy accepts, dee waits.
+    for name in ["bob", "cy", "dee"] {
+        ada.post("/api/friends/requests", json!({ "username": name }))
+            .await
+            .assert_status(200);
+    }
+    bob.put("/api/friends/blocks/ada", json!({}))
+        .await
+        .assert_status(200);
+    cy.post("/api/friends/requests/ada/accept", json!({}))
+        .await
+        .assert_status(200);
+    // A request to bob after his block: hidden from him, still pending.
+    ada.post("/api/friends/requests", json!({ "username": "bob" }))
+        .await
+        .assert_status(200);
+    // dee asks cy; cy blocks dee, and an old block of dee by bob is past the 30 days.
+    dee.post("/api/friends/requests", json!({ "username": "cy" }))
+        .await
+        .assert_status(200);
+    dee.post("/api/friends/requests", json!({ "username": "bob" }))
+        .await
+        .assert_status(200);
+    cy.put("/api/friends/blocks/dee", json!({}))
+        .await
+        .assert_status(200);
+    bob.put("/api/friends/blocks/dee", json!({}))
+        .await
+        .assert_status(200);
+    app.exec(&format!(
+        "UPDATE user_blocks SET created_at = now() - interval '31 days'
+         WHERE user_id = {} AND blocked_user_id = {}",
+        bob.id(),
+        dee.id()
+    ))
+    .await;
+    assert_eq!(
+        request_signals(&root).await,
+        [
+            ("ada".to_owned(), 2, 1, false),
+            ("dee".to_owned(), 0, 1, false)
+        ]
+    );
+    let res = root.get("/api/admin/users/friend-requests").await;
+    let item = &res.json()["items"][0];
+    let keys: Vec<&String> = item.as_object().unwrap().keys().collect();
+    assert_eq!(keys, ["blocks_received", "pending_requests", "user"]);
+    let keys: Vec<&String> = item["user"].as_object().unwrap().keys().collect();
+    assert_eq!(
+        keys,
+        [
+            "avatar_url",
+            "created_at",
+            "id",
+            "is_admin",
+            "suspended_at",
+            "username"
+        ]
+    );
+
+    // Ties go by blocks, then by name; a suspended account stays in the list, marked.
+    let eve = app.user("eve").await;
+    eve.post("/api/friends/requests", json!({ "username": "ada" }))
+        .await
+        .assert_status(200);
+    suspend(&root, "dee").await.assert_status(200);
+    assert_eq!(
+        request_signals(&root).await,
+        [
+            ("ada".to_owned(), 2, 1, false),
+            ("dee".to_owned(), 0, 1, true),
+            ("eve".to_owned(), 1, 0, false)
+        ]
+    );
+
+    // At most 20, the strongest first.
+    app.exec(
+        "INSERT INTO users (username, password_hash)
+         SELECT 'many' || i, 'x' FROM generate_series(1, 25) i;
+         INSERT INTO friendships (requester_id, addressee_id)
+         SELECT m.id, t.id FROM users m CROSS JOIN users t
+         WHERE m.username LIKE 'many%' AND t.username IN ('cy', 'root')",
+    )
+    .await;
+    let listed = request_signals(&root).await;
+    assert_eq!(listed.len(), 20);
+    assert_eq!(listed[0], ("ada".to_owned(), 2, 1, false));
+    assert_eq!(listed[1], ("many1".to_owned(), 2, 0, false));
+    assert!(listed.iter().all(|(name, ..)| name != "eve"));
 }

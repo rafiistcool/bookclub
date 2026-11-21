@@ -213,6 +213,16 @@ describe("FriendsPage", () => {
     await flushPromises();
     expect(page.get(".add-form .error").text()).toBe("You blocked this account. Unblock it first.");
 
+    // REQS: at most 50 requests waiting at once.
+    api.sendFriendRequest.mockRejectedValue(
+      apiError(409, "You already have 50 open friend requests. Withdraw some or wait for answers."),
+    );
+    await form.trigger("submit");
+    await flushPromises();
+    expect(page.get(".add-form .error").text()).toBe(
+      "You already have 50 open friend requests. Withdraw some, or wait for answers.",
+    );
+
     api.sendFriendRequest.mockRejectedValue(apiError(400, "That is your own account"));
     await input.setValue("ada");
     await form.trigger("submit");
@@ -224,6 +234,26 @@ describe("FriendsPage", () => {
     expect(page.find(".sheet").exists()).toBe(false);
     await openAdd(page);
     expect(page.find(".add-form .error").exists()).toBe(false);
+  });
+
+  it("says when each sent request expires (REQS: 30 days unanswered)", async () => {
+    const DAY = 24 * 60 * 60_000;
+    const page = await mountPage(
+      friendsOut({
+        outgoing: [
+          friendRequest("olga", { expires_at: new Date(Date.now() + 12 * DAY - 60_000).toISOString() }),
+          friendRequest("pia", { expires_at: new Date(Date.now() + 3_600_000).toISOString() }),
+          friendRequest("quinn", { expires_at: new Date(Date.now() - 60_000).toISOString() }),
+        ],
+      }),
+    );
+    const rows = section(page, "sent-requests").findAll(".outgoing-row");
+    expect(rows.map((row) => row.get(".expiry").text())).toEqual([
+      "expires in 12 days",
+      "expires within a day",
+      "expires within a day",
+    ]);
+    expect(rows[0]!.text()).toContain("sent 20 Oct 2026 ·");
   });
 
   it("opens the sheet at once from the profile's invitation, and Back does not open it again", async () => {

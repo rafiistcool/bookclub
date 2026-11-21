@@ -20,6 +20,10 @@
 //! **Lock order** of every write about a pair (send, accept, decline or cancel, remove, block,
 //! unblock), taken by [`lock_pair`]:
 //!
+//! 0. a request only: the requester's turn ([`lock_requester`], `REQUESTER_LOCK_SPACE`), so two
+//!    requests of one account to different people run one after the other and the cap on
+//!    pending requests out (`requests::MAX_PENDING_OUT`) counts what the other wrote. Nothing
+//!    else takes it, and a request takes it before its pair's turn, so no lock order reverses;
 //! 1. the pair's turn, a transaction-level advisory lock (`PAIR_LOCK_SPACE`), so the writes of
 //!    one pair run one after the other: a request and a block by the same account, or an
 //!    unblock and the other's request, cannot interleave;
@@ -28,6 +32,11 @@
 //!    locks the account `FOR UPDATE` before its cascade reaches the pair's rows, so it cannot
 //!    hold one of them while it waits for the write;
 //! 3. the `user_blocks` row, then the pair's `friendships` row, then the pair's invite rows.
+//!
+//! The expiry of pending requests (`requests::expire_requests`, in the hourly cleanup) takes the
+//! pair's turn and then deletes the row, one pair per transaction, so an accept or a request back
+//! either commits first (the row is a friendship, which the expiry leaves) or finds the request
+//! gone (404 `No such friend request`, or a new request).
 //!
 //! **Names.** Only a request and a block tell an unknown name from an existing one, and both are
 //! counted (`count_request`, §4.9). The uncounted writes (accept, decline or cancel, remove,
@@ -67,6 +76,9 @@ use out::{FriendsOut, friends_out};
 /// The first key of the two-key advisory lock space of a pair's turn ([`lock_pair`]); beside
 /// ingest's `0x6263_0100`, the reports' `0x6263_0200` and `jobs::lock_ids`.
 pub const PAIR_LOCK_SPACE: i32 = 0x6263_0300;
+
+/// The first key of the requester's turn ([`lock_requester`]), beside the pair's.
+pub const REQUESTER_LOCK_SPACE: i32 = 0x6263_0301;
 
 /// The text whose `hashtext` is the second key of the pair's turn: the lower id, a colon, the
 /// higher id, so both accounts of a pair take the same turn.
@@ -151,13 +163,7 @@ pub(crate) async fn account_id(
 /// and 2): the pair's turn, then both accounts' rows `FOR KEY SHARE` in id order. False when one
 /// of the accounts no longer exists; the write then answers as for an unknown name.
 pub(crate) async fn lock_pair(conn: &mut PgConnection, me: i64, other: i64) -> sqlx::Result<bool> {
-    sqlx::query!(
-        "SELECT pg_advisory_xact_lock($1, hashtext($2))",
-        PAIR_LOCK_SPACE,
-        pair_key(me, other)
-    )
-    .execute(&mut *conn)
-    .await?;
+    lock_pair_turn(conn, me, other).await?;
     let found = sqlx::query_scalar!(
         "SELECT id FROM users WHERE id IN ($1, $2) ORDER BY id FOR KEY SHARE",
         me,
@@ -166,6 +172,33 @@ pub(crate) async fn lock_pair(conn: &mut PgConnection, me: i64, other: i64) -> s
     .fetch_all(conn)
     .await?;
     Ok(found.len() == 2)
+}
+
+/// Takes the requester's turn (the module's lock order, step 0): a transaction-level advisory
+/// lock on (`REQUESTER_LOCK_SPACE`, `hashtext('<id>')`). Only a friend request takes it, before
+/// its pair's turn.
+pub(crate) async fn lock_requester(conn: &mut PgConnection, me: i64) -> sqlx::Result<()> {
+    sqlx::query!(
+        "SELECT pg_advisory_xact_lock($1, hashtext($2))",
+        REQUESTER_LOCK_SPACE,
+        me.to_string()
+    )
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Takes the pair's turn alone (the module's lock order, step 1), for the expiry of a request,
+/// which writes no account's data and so needs no account row.
+pub(crate) async fn lock_pair_turn(conn: &mut PgConnection, a: i64, b: i64) -> sqlx::Result<()> {
+    sqlx::query!(
+        "SELECT pg_advisory_xact_lock($1, hashtext($2))",
+        PAIR_LOCK_SPACE,
+        pair_key(a, b)
+    )
+    .execute(conn)
+    .await?;
+    Ok(())
 }
 
 /// Revokes the open friend invites the pair made for each other (an unfriend or a block, §4.2,

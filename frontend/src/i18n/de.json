@@ -717,6 +717,7 @@
     "selfAccount": "Das ist dein eigenes Konto",
     "youBlocked": "Du hast dieses Konto blockiert. Gib es zuerst frei.",
     "noFriendRequest": "Diese Anfrage gibt es nicht mehr",
+    "tooManyOpenRequests": "Du hast schon 50 offene Freundschaftsanfragen. Zieh einige zurück oder warte auf Antworten.",
     "noFriend": "Keiner deiner Freunde hat diesen Namen",
     "friendInClub": "Diese Person ist schon in diesem Club",
     "onlyFriendInviteNames": "Nur eine persönliche Einladung nennt eine Person",
@@ -1025,6 +1026,8 @@
     "outgoing": {
       "heading": "Deine Anfragen",
       "sentOn": "gesendet am {day}",
+      "expiresIn": "läuft in {n} Tagen ab",
+      "expiresSoon": "läuft innerhalb eines Tages ab",
       "withdraw": "Zurückziehen",
       "withdrawn": "Anfrage zurückgezogen"
     },
@@ -1477,7 +1480,17 @@
       "unsuspended": "{name} kann sich wieder anmelden",
       "none": "Kein Konto ist gesperrt.",
       "failed": "Das konnte nicht gespeichert werden",
-      "howTo": "Jede Sitzung und jedes App-Token des Kontos endet sofort, die Einladungen, die es kennt, gelten nicht mehr, und ein Admin verliert die Admin-Rechte. Hebst du die Sperre auf, kann es sich wieder anmelden, ohne Admin-Rechte. Seine Daten kann es nicht mehr selbst exportieren oder löschen: Die Person schreibt an die Kontaktadresse, und der Betrieb erledigt das von Hand, wie es die Anleitung zu Meldungen und Entfernungen beschreibt („Konten, die sich nicht anmelden können“)."
+      "howTo": "Jede Sitzung und jedes App-Token des Kontos endet sofort, die Einladungen, die es kennt, gelten nicht mehr, und ein Admin verliert die Admin-Rechte. Hebst du die Sperre auf, kann es sich wieder anmelden, ohne Admin-Rechte. Seine Daten kann es nicht mehr selbst exportieren oder löschen: Die Person schreibt an die Kontaktadresse, und der Betrieb erledigt das von Hand, wie es die Anleitung zu Meldungen und Entfernungen beschreibt („Konten, die sich nicht anmelden können“).",
+      "views": "Listen",
+      "suspendedView": "Gesperrt",
+      "requests": {
+        "view": "Freundschaftsanfragen",
+        "blurb": "Die Konten mit den meisten unbeantworteten Freundschaftsanfragen, verborgene eingeschlossen, und den meisten Blockierungen der letzten 30 Tage, höchstens 20. Nur die Zahlen: Wen sie gefragt haben und wer sie blockiert hat, bleibt privat. Unbeantwortete Anfragen verfallen nach 30 Tagen, und niemand hat mehr als 50 offen.",
+        "counts": "Offen: {pending} · Blockiert von (30 Tage): {blocks}",
+        "suspend": "Sperren…",
+        "suspended": "Gesperrt",
+        "none": "Kein Konto hat offene Freundschaftsanfragen oder wurde in den letzten 30 Tagen blockiert."
+      }
     },
     "edit": {
       "title": "Buch als Admin bearbeiten",

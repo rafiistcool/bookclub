@@ -8,9 +8,10 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 use sqlx::PgConnection;
-use time::OffsetDateTime;
+use time::{Duration, OffsetDateTime};
 use utoipa::ToSchema;
 
+use super::requests::REQUEST_EXPIRY_DAYS;
 use crate::catalog::shared::books::{BookRef, book_outs};
 use crate::dto::{BookOut, ClubRef, UserSummary, UserSummaryRow};
 use crate::shelf::cover::{apply_personal_cover, personal_covers};
@@ -63,6 +64,10 @@ pub struct FriendRequestOut {
     pub user: UserSummary,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    /// When the request expires unanswered: 30 days after `created_at`. The hourly cleanup
+    /// deletes it within the hour after that.
+    #[serde(with = "time::serde::rfc3339")]
+    pub expires_at: OffsetDateTime,
 }
 
 /// An account the caller blocked.
@@ -198,6 +203,7 @@ pub async fn friends_out(conn: &mut PgConnection, viewer: i64) -> sqlx::Result<F
             }
             .into(),
             created_at: row.created_at,
+            expires_at: row.created_at + Duration::days(REQUEST_EXPIRY_DAYS.into()),
         };
         if row.outgoing {
             outgoing.push(out);

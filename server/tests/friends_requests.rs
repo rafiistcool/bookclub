@@ -1,14 +1,16 @@
 //! Friend requests and friendships (FRIENDS, #57; docs/phase3/work-plan.md §4.2, §4.5, §4.9):
 //! every transition of the request table, the mutual send and its race, the lookups of a name
 //! (also of an account deleted meanwhile), the daily limits, and the work an uncounted route
-//! does for an unknown name.
+//! does for an unknown name. REQS (#55): the expiry of pending requests after 30 days and its
+//! race with an accept, and the cap of 50 pending requests out with its race.
 
 mod common;
 
 use std::net::IpAddr;
 use std::time::Duration;
 
-use bookclub_server::friends::{NO_ACCOUNT, PAIR_LOCK_SPACE, pair_key};
+use bookclub_server::friends::requests::{MAX_PENDING_OUT, REQUEST_EXPIRY_DAYS, expire_requests};
+use bookclub_server::friends::{NO_ACCOUNT, PAIR_LOCK_SPACE, REQUESTER_LOCK_SPACE, pair_key};
 use common::*;
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -533,4 +535,348 @@ async fn wait_for_a_lock(app: &TestApp) {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     panic!("the write never waited for a lock");
+}
+
+const TOO_MANY_OPEN: &str =
+    "You already have 50 open friend requests. Withdraw some or wait for answers.";
+
+/// Runs the expiry of pending requests once, as the hourly cleanup does.
+async fn expire(app: &TestApp) -> u64 {
+    let mut conn = app.db.acquire().await.unwrap();
+    expire_requests(&mut conn).await.unwrap()
+}
+
+/// Makes the pair's row `days` days old (`created_at`, and `accepted_at` when accepted).
+async fn age(app: &TestApp, a: &TestClient, b: &TestClient, days: i32) {
+    app.exec(&format!(
+        "UPDATE friendships
+         SET created_at = now() - make_interval(days => {days}),
+             accepted_at = CASE WHEN accepted_at IS NULL THEN NULL
+                                ELSE now() - make_interval(days => {days}) END
+         WHERE least(requester_id, addressee_id) = least({a}::int8, {b}::int8)
+           AND greatest(requester_id, addressee_id) = greatest({a}::int8, {b}::int8)",
+        a = a.id(),
+        b = b.id()
+    ))
+    .await;
+}
+
+/// `n` accounts `<prefix>1` … `<prefix>n`, each with a pending request from `from`, inserted
+/// directly (the routes allow 20 requests a day).
+async fn pending_to_many(app: &TestApp, from: &TestClient, prefix: &str, n: i64) {
+    app.exec(&format!(
+        "INSERT INTO users (username, password_hash)
+         SELECT '{prefix}' || i, 'x' FROM generate_series(1, {n}) i;
+         INSERT INTO friendships (requester_id, addressee_id)
+         SELECT {from}, id FROM users WHERE username LIKE '{prefix}%'",
+        from = from.id()
+    ))
+    .await;
+}
+
+/// REQS: a pending request, hidden or not, expires 30 days after it was sent; the hourly cleanup
+/// deletes it without a trace. A newer request and a friendship, however old, stay.
+/// `FriendRequestOut.expires_at` is `created_at` plus 30 days.
+#[sqlx::test]
+async fn pending_requests_expire_after_30_days(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    let cy = app.user("cy").await;
+    let dee = app.user("dee").await;
+    let eve = app.user("eve").await;
+    send(&ada, "bob").await.assert_status(200);
+    send(&ada, "cy").await.assert_status(200);
+    // A hidden request: eve blocked dee before dee asked.
+    eve.put("/api/friends/blocks/dee", json!({}))
+        .await
+        .assert_status(200);
+    send(&dee, "eve").await.assert_status(200);
+    send(&dee, "ada").await.assert_status(200);
+    accept(&ada, "dee").await.assert_status(200);
+    age(&app, &ada, &bob, REQUEST_EXPIRY_DAYS + 1).await;
+    age(&app, &ada, &cy, REQUEST_EXPIRY_DAYS - 1).await;
+    age(&app, &dee, &eve, REQUEST_EXPIRY_DAYS + 1).await;
+    age(&app, &ada, &dee, 400).await;
+
+    let out = friends_of(&ada).await;
+    let request = &out["outgoing"][1];
+    assert_eq!(request["user"]["username"], "bob");
+    let instant = |value: &Value| {
+        time::OffsetDateTime::parse(
+            value.as_str().unwrap(),
+            &time::format_description::well_known::Rfc3339,
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        instant(&request["expires_at"]) - instant(&request["created_at"]),
+        time::Duration::days(30)
+    );
+    assert_eq!(names(&friends_of(&bob).await, "incoming"), ["ada"]);
+
+    assert_eq!(expire(&app).await, 2);
+    assert_eq!(row(&app, &ada, &bob).await, None);
+    assert_eq!(row(&app, &dee, &eve).await, None);
+    assert_eq!(row(&app, &ada, &cy).await, Some((ada.id(), cy.id(), false)));
+    assert_eq!(
+        row(&app, &dee, &ada).await,
+        Some((dee.id(), ada.id(), true))
+    );
+    let out = friends_of(&ada).await;
+    assert_eq!(names(&out, "outgoing"), ["cy"]);
+    assert_eq!(names(&out, "friends"), ["dee"]);
+    assert_eq!(
+        names(&friends_of(&bob).await, "incoming"),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        names(&friends_of(&dee).await, "outgoing"),
+        Vec::<String>::new()
+    );
+    // The answer to the expired request is the one to a request never sent; asking again works.
+    accept(&bob, "ada")
+        .await
+        .assert_detail(404, "No such friend request");
+    send(&ada, "bob").await.assert_status(200);
+    assert_eq!(expire(&app).await, 0, "a new request is not due");
+
+    // The hourly cleanup runs the expiry.
+    age(&app, &ada, &cy, REQUEST_EXPIRY_DAYS + 1).await;
+    let mut conn = app.db.acquire().await.unwrap();
+    bookclub_server::auth::cleanup(&mut conn).await.unwrap();
+    assert_eq!(row(&app, &ada, &cy).await, None);
+    assert_eq!(app.scalar_i64("SELECT count(*) FROM friendships").await, 2);
+}
+
+/// The expiry goes through every due request, more than one batch of them.
+#[sqlx::test]
+async fn the_expiry_deletes_every_due_request(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    app.exec(&format!(
+        "INSERT INTO users (username, password_hash)
+         SELECT 'many' || i, 'x' FROM generate_series(1, 1201) i;
+         INSERT INTO friendships (requester_id, addressee_id, created_at)
+         SELECT id, {ada}, now() - interval '31 days' FROM users WHERE username LIKE 'many%'",
+        ada = ada.id()
+    ))
+    .await;
+    send(&bob, "ada").await.assert_status(200);
+    assert_eq!(expire(&app).await, 1201);
+    assert_eq!(names(&friends_of(&ada).await, "incoming"), ["bob"]);
+}
+
+/// The expiry takes the pair's turn, as every write about the pair does: an accept in flight
+/// commits first, and the expiry then leaves the friendship. Without the turn it would delete
+/// the request under the accept's feet, or the accept would find it gone.
+#[sqlx::test]
+async fn the_expiry_waits_for_an_accept_in_flight(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    let bob = app.user("bob").await;
+    send(&bob, "ada").await.assert_status(200);
+    age(&app, &ada, &bob, REQUEST_EXPIRY_DAYS + 1).await;
+    // What `accept` holds when it has taken the turn.
+    let mut accepting = app.db.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock($1, hashtext($2))")
+        .bind(PAIR_LOCK_SPACE)
+        .bind(pair_key(ada.id(), bob.id()))
+        .execute(&mut *accepting)
+        .await
+        .unwrap();
+    let task = tokio::spawn({
+        let db = app.db.clone();
+        async move {
+            let mut conn = db.acquire().await.unwrap();
+            expire_requests(&mut conn).await.unwrap()
+        }
+    });
+    wait_for_a_lock(&app).await;
+    assert!(!task.is_finished(), "the expiry did not wait for the turn");
+    sqlx::query(
+        "UPDATE friendships SET accepted_at = clock_timestamp()
+         WHERE requester_id = $1 AND addressee_id = $2",
+    )
+    .bind(bob.id())
+    .bind(ada.id())
+    .execute(&mut *accepting)
+    .await
+    .unwrap();
+    accepting.commit().await.unwrap();
+    assert_eq!(task.await.unwrap(), 0);
+    assert_eq!(
+        row(&app, &ada, &bob).await,
+        Some((bob.id(), ada.id(), true))
+    );
+}
+
+/// An accept racing the expiry either wins (200, friends) or finds the request gone (404 `No
+/// such friend request`, no row); never a 500, and never a friendship without its row.
+#[sqlx::test]
+async fn an_accept_racing_the_expiry_wins_or_finds_no_request(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    for round in 0..8 {
+        let bob = app.user(&format!("bob{round}")).await;
+        send(&bob, "ada").await.assert_status(200);
+        age(&app, &ada, &bob, REQUEST_EXPIRY_DAYS + 1).await;
+        let accepting = tokio::spawn({
+            let ada = ada.clone();
+            let name = bob.username().to_owned();
+            async move { accept(&ada, &name).await }
+        });
+        let expiring = tokio::spawn({
+            let db = app.db.clone();
+            async move {
+                let mut conn = db.acquire().await.unwrap();
+                expire_requests(&mut conn).await.unwrap()
+            }
+        });
+        let res = accepting.await.unwrap();
+        let expired = expiring.await.unwrap();
+        match res.status.as_u16() {
+            200 => {
+                assert_eq!(expired, 0, "round {round}");
+                assert_eq!(
+                    row(&app, &ada, &bob).await,
+                    Some((bob.id(), ada.id(), true))
+                );
+            }
+            _ => {
+                res.assert_detail(404, "No such friend request");
+                assert_eq!(expired, 1, "round {round}");
+                assert_eq!(row(&app, &ada, &bob).await, None);
+            }
+        }
+    }
+}
+
+/// REQS: at most 50 pending requests out at once, hidden ones included. The 51st is 409; a
+/// repeat, a request to a friend and a request back (which accepts) are never refused; once one
+/// goes (withdrawn, declined, expired), a new request works again.
+#[sqlx::test]
+async fn fifty_pending_requests_out_at_most(db: PgPool) {
+    assert_eq!(MAX_PENDING_OUT, 50);
+    assert!(TOO_MANY_OPEN.contains(&MAX_PENDING_OUT.to_string()));
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    app.user("bob").await;
+    let cy = app.user("cy").await;
+    let dee = app.user("dee").await;
+    send(&ada, "dee").await.assert_status(200);
+    accept(&dee, "ada").await.assert_status(200);
+    send(&cy, "ada").await.assert_status(200);
+    // 49 more, one of them hidden: target1 blocked ada.
+    pending_to_many(&app, &ada, "target", MAX_PENDING_OUT - 1).await;
+    app.exec(&format!(
+        "INSERT INTO user_blocks (user_id, blocked_user_id)
+         SELECT id, {ada} FROM users WHERE username = 'target1'",
+        ada = ada.id()
+    ))
+    .await;
+    send(&ada, "bob").await.assert_status(200);
+    let pending = format!(
+        "SELECT count(*) FROM friendships WHERE requester_id = {} AND accepted_at IS NULL",
+        ada.id()
+    );
+    assert_eq!(app.scalar_i64(&pending).await, MAX_PENDING_OUT);
+
+    // The 51st, to someone new.
+    let erin = app.user("erin").await;
+    send(&ada, "erin").await.assert_detail(409, TOO_MANY_OPEN);
+    assert_eq!(row(&app, &ada, &erin).await, None);
+    // A repeat, hidden or not, and a request to a friend change nothing and are not refused.
+    for name in ["bob", "target1", "dee"] {
+        send(&ada, name).await.assert_status(200);
+    }
+    // A request back accepts cy's request: not a new pending one.
+    let res = send(&ada, "cy").await;
+    res.assert_status(200);
+    assert_eq!(names(&res.json(), "friends"), ["cy", "dee"]);
+    assert_eq!(app.scalar_i64(&pending).await, MAX_PENDING_OUT);
+    // So does accepting through its route, and others may still ask ada.
+    send(&erin, "ada").await.assert_status(200);
+    accept(&ada, "erin").await.assert_status(200);
+
+    let fay = app.user("fay").await;
+    send(&ada, "fay").await.assert_detail(409, TOO_MANY_OPEN);
+    drop_request(&ada, "bob").await.assert_status(200);
+    send(&ada, "fay").await.assert_status(200);
+    send(&ada, "bob").await.assert_detail(409, TOO_MANY_OPEN);
+    // An expired request frees its place too.
+    age(&app, &ada, &fay, REQUEST_EXPIRY_DAYS + 1).await;
+    assert_eq!(expire(&app).await, 1);
+    send(&ada, "bob").await.assert_status(200);
+    assert_eq!(row(&app, &ada, &fay).await, None);
+    assert_eq!(app.scalar_i64(&pending).await, MAX_PENDING_OUT);
+}
+
+/// Two requests of one account at the same moment, with one place left: exactly one gets it.
+/// Each request takes the requester's turn before it counts.
+#[sqlx::test]
+async fn concurrent_requests_cannot_pass_the_cap(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    pending_to_many(&app, &ada, "target", MAX_PENDING_OUT - 1).await;
+    for round in 0..5 {
+        let bob = app.user(&format!("bob{round}")).await;
+        let cy = app.user(&format!("cy{round}")).await;
+        let tasks = [bob.username(), cy.username()].map(|to| {
+            let ada = ada.clone();
+            let to = to.to_owned();
+            tokio::spawn(async move { send(&ada, &to).await })
+        });
+        let mut statuses = Vec::new();
+        for task in tasks {
+            let res = task.await.unwrap();
+            if res.status != 200 {
+                res.assert_detail(409, TOO_MANY_OPEN);
+            }
+            statuses.push(res.status.as_u16());
+        }
+        statuses.sort_unstable();
+        assert_eq!(statuses, [200, 409], "round {round}");
+        assert_eq!(
+            app.scalar_i64(&format!(
+                "SELECT count(*) FROM friendships WHERE requester_id = {}",
+                ada.id()
+            ))
+            .await,
+            MAX_PENDING_OUT
+        );
+        // Back to one place left.
+        app.exec(&format!(
+            "DELETE FROM friendships WHERE requester_id = {} AND addressee_id IN ({}, {})",
+            ada.id(),
+            bob.id(),
+            cy.id()
+        ))
+        .await;
+    }
+}
+
+/// The requester's turn is what serialises them: a request waits while it is held (without it,
+/// both requests above could count 49 and insert).
+#[sqlx::test]
+async fn a_request_waits_for_the_requesters_turn(db: PgPool) {
+    let app = TestApp::new(db).await;
+    let ada = app.user("ada").await;
+    app.user("bob").await;
+    let mut other = app.db.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock($1, hashtext($2))")
+        .bind(REQUESTER_LOCK_SPACE)
+        .bind(ada.id().to_string())
+        .execute(&mut *other)
+        .await
+        .unwrap();
+    let task = tokio::spawn({
+        let ada = ada.clone();
+        async move { send(&ada, "bob").await }
+    });
+    wait_for_a_lock(&app).await;
+    assert!(!task.is_finished(), "the request did not wait for the turn");
+    other.rollback().await.unwrap();
+    task.await.unwrap().assert_status(200);
 }
