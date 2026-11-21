@@ -16,7 +16,7 @@ RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build
 
-FROM rust:1.99-slim-trixie AS server
+FROM rust:1.100-slim-trixie AS server
 WORKDIR /src/server
 # The sqlx query macros check against the committed server/.sqlx/; no database at build time.
 ENV SQLX_OFFLINE=true
@@ -30,6 +30,10 @@ RUN mkdir src \
     && cargo build --release --locked ${CARGO_JOBS:+--jobs "$CARGO_JOBS"} \
     && rm -rf src
 COPY server/ ./
+# The release, e.g. 0.12.2: release.yml passes its tag without the `v`, and
+# `bookclub-server --version` prints it (server/src/lib.rs, VERSION). Without it the binary
+# says `dev`. Declared after the dependency layer, so a new release does not rebuild that.
+ARG BOOKCLUB_VERSION
 # COPY keeps the sources' modification times, which can be older than the stubs' build.
 RUN touch src/main.rs src/lib.rs \
     && cargo build --release --locked ${CARGO_JOBS:+--jobs "$CARGO_JOBS"} \

@@ -38,6 +38,15 @@ use std::any::Any;
 use std::borrow::Cow;
 use std::sync::Arc;
 
+/// The release this binary was built for, as `bookclub-server --version` and the start-up log
+/// show it. The image build passes the release tag without its `v` as `BOOKCLUB_VERSION` (root
+/// `Dockerfile`, `.forgejo/workflows/release.yml`); every other build says `dev`. The crate
+/// version in `Cargo.toml` is not the release and stays as it is: a release is its Git tag.
+pub const VERSION: &str = match option_env!("BOOKCLUB_VERSION") {
+    Some(version) if !version.is_empty() => version,
+    _ => "dev",
+};
+
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::extract::DefaultBodyLimit;

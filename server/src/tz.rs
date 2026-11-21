@@ -299,7 +299,7 @@ pub fn personal_date_in_range(date: Date) -> bool {
 /// `"%Y-%m-%dT%H:%M"` in `zone`, the value of a `datetime-local` input.
 pub fn local_minute(dt: OffsetDateTime, zone: &TimeZone) -> String {
     to_jiff(dt)
-        .to_zoned(zone.clone())
+        .to_zoned_datetime(zone.clone())
         .strftime("%Y-%m-%dT%H:%M")
         .to_string()
 }
@@ -307,14 +307,14 @@ pub fn local_minute(dt: OffsetDateTime, zone: &TimeZone) -> String {
 /// `"%a %d %b %Y, %H:%M %Z"` in `zone`, always English, e.g. `"Wed 01 Jul 2026, 20:00 CEST"`.
 pub fn label(dt: OffsetDateTime, zone: &TimeZone) -> String {
     to_jiff(dt)
-        .to_zoned(zone.clone())
+        .to_zoned_datetime(zone.clone())
         .strftime("%a %d %b %Y, %H:%M %Z")
         .to_string()
 }
 
 /// Today's date in `zone`.
 pub fn today(zone: &TimeZone) -> Date {
-    to_time_date(Timestamp::now().to_zoned(zone.clone()).date())
+    to_time_date(Timestamp::now().to_zoned_datetime(zone.clone()).date())
 }
 
 /// 12:00 local time on `date` in `zone`, as UTC (how personal dates such as `finished_on` are
@@ -598,7 +598,7 @@ mod tests {
                     let at = CivilDate::new(year, month, 1)
                         .unwrap()
                         .at(12, 0, 0, 0)
-                        .to_zoned(TimeZone::UTC)
+                        .to_zoned_datetime(TimeZone::UTC)
                         .unwrap()
                         .timestamp();
                     assert_eq!(

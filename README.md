@@ -37,14 +37,14 @@ Today it runs as a private instance on the homelab for one club: invite-only, wi
 
 Two processes: the Rust server on `127.0.0.1:8080` and Vite on `:5173`. Vite proxies `/api` and `/media` to the server, so the browser only talks to `localhost:5173`.
 
-Needs the stable Rust toolchain, Node **20+** and Docker (for Postgres). [CLAUDE.md](CLAUDE.md) has every command, including parallel worktrees and the agents VM.
+Needs the stable Rust toolchain, Node **22.12+** and Docker (for Postgres). [CLAUDE.md](CLAUDE.md) has every command, including parallel worktrees and the agents VM.
 
 **Postgres and the schema** (once):
 
 ```bash
 docker compose -f server/compose.yaml up -d --wait
 export DATABASE_URL=postgres://bookclub:bookclub@127.0.0.1:5432/bookclub
-cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --features rustls,postgres
+cargo install sqlx-cli --version 0.9.1 --locked --no-default-features --features rustls,postgres
 cd server && cargo sqlx migrate run
 ```
 

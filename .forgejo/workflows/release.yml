@@ -81,7 +81,7 @@ jobs:
       # sqlx-cli has no prebuilt binaries; rust-cache keeps ~/.cargo/bin, so this is a no-op
       # after the first run.
       - name: Install sqlx-cli
-        run: cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --features rustls,postgres
+        run: cargo install sqlx-cli --version 0.9.1 --locked --no-default-features --features rustls,postgres
       # The query macros check against the live schema, so migrate before compiling.
       - name: Migrate
         run: cargo sqlx migrate run
@@ -167,6 +167,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # v1.2.3 -> 1.2.3, which `bookclub-server --version` prints (Dockerfile, VERSION).
+          build-args: |
+            BOOKCLUB_VERSION=${{ steps.meta.outputs.version }}
           # One plain image manifest per tag, without attestation manifests next to it.
           provenance: false
           sbom: false

@@ -96,7 +96,7 @@ jobs:
       # sqlx-cli has no prebuilt binaries; rust-cache keeps ~/.cargo/bin, so this is a no-op
       # after the first run.
       - name: Install sqlx-cli
-        run: cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --features rustls,postgres
+        run: cargo install sqlx-cli --version 0.9.1 --locked --no-default-features --features rustls,postgres
       # The query macros check against the live schema, so migrate before compiling.
       - name: Migrate
         run: cargo sqlx migrate run

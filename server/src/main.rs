@@ -29,7 +29,7 @@ const JOBS_STOP_TIMEOUT: Duration = Duration::from_secs(10);
 /// The Bookclub server and its maintenance commands. Configuration comes from the environment
 /// (docs/phase1/conventions.md §11).
 #[derive(Parser)]
-#[command(name = "bookclub-server", version)]
+#[command(name = "bookclub-server", version = bookclub_server::VERSION)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -137,7 +137,10 @@ async fn serve() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(bind_addr)
         .await
         .with_context(|| format!("cannot listen on {bind_addr}"))?;
-    tracing::info!("listening on http://{bind_addr}");
+    tracing::info!(
+        version = bookclub_server::VERSION,
+        "listening on http://{bind_addr}"
+    );
 
     let stop = shutdown.clone();
     serve::run(
