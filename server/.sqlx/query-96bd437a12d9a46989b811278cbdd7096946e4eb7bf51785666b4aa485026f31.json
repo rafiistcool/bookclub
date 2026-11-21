@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE reports SET text_snapshot = NULL\n         WHERE target_user_id = $1 AND text_snapshot IS NOT NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "96bd437a12d9a46989b811278cbdd7096946e4eb7bf51785666b4aa485026f31"
+}

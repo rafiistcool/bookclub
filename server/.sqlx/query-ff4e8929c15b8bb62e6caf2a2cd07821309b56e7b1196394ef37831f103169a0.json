@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE events e SET payload = e.payload - 'take'\n                 FROM shelf_entries s\n                 WHERE s.id = $1 AND e.kind = 'shelf_finished' AND e.actor_id = s.user_id\n                   AND e.work_id = s.work_id\n                   AND (e.payload ->> 'take' = $2\n                        OR e.payload ->> 'take' IN (SELECT r.text_snapshot FROM reports r\n                                                    WHERE r.shelf_entry_id = $1\n                                                      AND r.text_snapshot IS NOT NULL))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ff4e8929c15b8bb62e6caf2a2cd07821309b56e7b1196394ef37831f103169a0"
+}

@@ -301,6 +301,15 @@ const USERNAME_ROUTES: &[(&str, Class)] = &[
         Not("instance administration: instance admins only (admin_guard.rs, admin_users.rs)"),
     ),
     (
+        "POST /api/books/works/{work_id}/takes/{username}/reports",
+        Not(
+            "moderation (TEXTS, Q11 C): files a report of a take the caller sees under the Shelf \
+             rule (bc_can_see_item with the entry's rating_visibility), else 404 `Not found` \
+             like an unknown name; answers with the report's id and status, never the take \
+             (text_reports.rs)",
+        ),
+    ),
+    (
         "POST /api/friends/requests/{username}/accept",
         Kinds(&[Kind::Friends]),
     ),

@@ -91,6 +91,9 @@ function report(overrides: Partial<ReportOut> = {}): ReportOut {
     avatar_url: null,
     target_user: null,
     book: bookOut({ id: 9, title: "Circe" }),
+    text_snapshot: null,
+    current_text: null,
+    club: null,
     created_by: ADA,
     created_at: "2026-10-27T10:00:00Z",
     resolved_by: null,
@@ -762,6 +765,58 @@ describe("AdminPage", () => {
     i18n.global.locale.value = "de";
     await flushPromises();
     expect(wrapper.get(".report-item .kind-badge").text()).toBe("Profilbild");
+  });
+
+  it("shows a reported text as reported and as it is now, and withdraws it (#55, Q11 C)", async () => {
+    const circe = bookOut({ id: 9, title: "Circe" });
+    const text = { media_public_id: null, cover_url: null, cover_thumb_url: null, book: circe, target_user: GRACE };
+    api.adminReportPage.mockResolvedValue(
+      page([
+        report({
+          id: 61,
+          ...text,
+          target_kind: "post",
+          reason: "offensive",
+          details: "",
+          text_snapshot: "Rude words",
+          current_text: "Edited words",
+          club: { slug: "readers-ab12", name: "Readers" },
+        }),
+        report({ id: 62, ...text, target_kind: "quote", reason: "copyright", text_snapshot: "A page", current_text: "A page" }),
+        report({ id: 63, ...text, target_kind: "take", reason: "other", text_snapshot: "Meh", current_text: null, gone: true }),
+      ]),
+    );
+    const { wrapper } = await mountAdmin("/admin?tab=reports");
+    const [post, quote, take] = wrapper.findAll(".report-item");
+    expect(post!.get(".kind-badge").text()).toBe("Post");
+    expect(post!.get(".report-subject").text()).toContain("Post by grace");
+    expect(post!.get(".report-subject").text()).toContain("in Readers");
+    expect(post!.get(".report-snapshot").text()).toBe("Rude words");
+    expect(post!.get(".report-current").text()).toBe("Edited words");
+    expect(post!.get(".report-text-book").text()).toBe("Circe");
+    // Unchanged since the report: one quote, no "now".
+    expect(quote!.get(".kind-badge").text()).toBe("Quote");
+    expect(quote!.find(".report-current").exists()).toBe(false);
+    // Deleted by its author: only closing.
+    expect(take!.get(".kind-badge").text()).toBe("Take");
+    expect(take!.text()).toContain("No longer online: its author deleted it");
+    expect(buttonIn(take!, "Remove the text")).toBeUndefined();
+    expect(buttonIn(take!, "Close the report")).toBeDefined();
+
+    await buttonIn(post!, "Remove the text").trigger("click");
+    expect(post!.text()).toContain("The post disappears for everyone");
+    api.resolveReport.mockResolvedValue(report({ id: 61, target_kind: "post", status: "removed" }));
+    api.adminReportPage.mockResolvedValue(page([report({ id: 62, ...text, target_kind: "quote", text_snapshot: "A page", current_text: "A page" })]));
+    await buttonIn(post!, "Remove for good").trigger("click");
+    await flushPromises();
+    expect(api.resolveReport).toHaveBeenCalledWith(61, "remove");
+    expect(useToast().items.at(-1)?.message).toBe("Text removed");
+    expect(wrapper.findAll(".report-item")).toHaveLength(1);
+
+    i18n.global.locale.value = "de";
+    await flushPromises();
+    expect(wrapper.get(".report-item .kind-badge").text()).toBe("Zitat");
+    expect(wrapper.get(".report-item figcaption").text()).toBe("Wie gemeldet");
   });
 
   it("offers only closing a report of something gone, and reads the queue again on a 409", async () => {

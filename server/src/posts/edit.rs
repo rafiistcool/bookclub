@@ -23,6 +23,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use serde::Deserialize;
 use serde_json::json;
+use sqlx::PgConnection;
 use utoipa::ToSchema;
 
 use super::out::{PostOut, post_out};
@@ -187,40 +188,51 @@ pub async fn delete_post(
     if !mine && !moderator {
         return Err(AppError::forbidden(DELETE_OWN));
     }
+    if !withdraw(&mut tx, post_id).await? {
+        return Err(AppError::not_found(msg::NO_ENTRY));
+    }
+    tx.commit().await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The delete of a post, shared by its author's or a club moderator's [`delete_post`] and an
+/// instance admin's "remove" on a report (`text_reports`, Q11 option C): locks the post, drops
+/// its reactions, and leaves a tombstone when it has replies, else deletes it. False when the
+/// post is missing or a tombstone already (nothing changed).
+pub(crate) async fn withdraw(conn: &mut PgConnection, post_id: i64) -> sqlx::Result<bool> {
     // The lock waits for a reply or a reaction in flight (they hold the post FOR KEY SHARE),
     // so the reply check below sees every reply committed before the delete.
     let live = sqlx::query_scalar!(
         r#"SELECT deleted_at IS NULL AS "live!" FROM posts WHERE id = $1 FOR UPDATE"#,
         post_id
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut *conn)
     .await?;
     if live != Some(true) {
-        return Err(AppError::not_found(msg::NO_ENTRY));
+        return Ok(false);
     }
     sqlx::query!("DELETE FROM post_reactions WHERE post_id = $1", post_id)
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
     let has_replies = sqlx::query_scalar!(
         r#"SELECT EXISTS (SELECT 1 FROM posts WHERE parent_id = $1) AS "has_replies!""#,
         post_id
     )
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut *conn)
     .await?;
     if has_replies {
         sqlx::query!(
             "UPDATE posts SET body = '', spoiler_upto = NULL, deleted_at = now() WHERE id = $1",
             post_id
         )
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
     } else {
         sqlx::query!("DELETE FROM posts WHERE id = $1", post_id)
-            .execute(&mut *tx)
+            .execute(&mut *conn)
             .await?;
     }
-    tx.commit().await?;
-    Ok(StatusCode::NO_CONTENT)
+    Ok(true)
 }
 
 /// Toggles one of the caller's reactions on a post they can see.
