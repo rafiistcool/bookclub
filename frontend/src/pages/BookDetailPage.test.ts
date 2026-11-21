@@ -14,6 +14,7 @@ const removeFavorite = vi.fn();
 const addToShelf = vi.fn();
 const patchShelf = vi.fn();
 const removeFromShelf = vi.fn();
+const myShelf = vi.fn();
 const editions = vi.fn();
 const requestWorkEdit = vi.fn();
 const diary = vi.fn();
@@ -44,6 +45,7 @@ vi.mock("../api/client", () => ({
     addToShelf: (...args: unknown[]) => addToShelf(...args),
     patchShelf: (...args: unknown[]) => patchShelf(...args),
     removeFromShelf: (...args: unknown[]) => removeFromShelf(...args),
+    myShelf: (...args: unknown[]) => myShelf(...args),
     editions: (...args: unknown[]) => editions(...args),
     requestWorkEdit: (...args: unknown[]) => requestWorkEdit(...args),
     diary: (...args: unknown[]) => diary(...args),
@@ -126,10 +128,12 @@ async function choose(wrapper: Page, selector: string, file: File) {
 
 describe("BookDetailPage", () => {
   beforeEach(() => {
-    for (const mock of [book, addFavorite, removeFavorite, addToShelf, patchShelf, removeFromShelf, editions, requestWorkEdit, diary, nominate, uploadCover, adminSetCover, refreshBook, coverCandidates, chooseCover, uploadPersonalCover, clearPersonalCover]) {
+    for (const mock of [book, addFavorite, removeFavorite, addToShelf, patchShelf, removeFromShelf, myShelf, editions, requestWorkEdit, diary, nominate, uploadCover, adminSetCover, refreshBook, coverCandidates, chooseCover, uploadPersonalCover, clearPersonalCover]) {
       mock.mockReset();
     }
     book.mockResolvedValue(detail());
+    // The shelf a removal reads first for its Undo; empty, the Undo sends what the page knows.
+    myShelf.mockResolvedValue({ timezone: "UTC", user: { id: 1, username: "ada", avatar_url: null }, items: [], favorites: [] });
     diary.mockResolvedValue({ work_id: 4, my_progress: null, my_status: null, items: [], timezone: "UTC" });
     editions.mockResolvedValue({ items: [] });
     i18n.global.locale.value = "en";
@@ -723,6 +727,84 @@ describe("BookDetailPage", () => {
     it("removes the book and puts back everything with Undo", async () => {
       book.mockResolvedValue(detail({ ...FINISHED, rating_visibility: "only_me" }));
       const { wrapper } = await mountBook();
+      removeFromShelf.mockResolvedValue(undefined);
+      // "Remove", not "Remove rating".
+      await wrapper.findAll("button").find((node) => node.text() === "Remove")!.trigger("click");
+      await flushPromises();
+      expect(removeFromShelf).toHaveBeenCalledWith(30);
+      expect(wrapper.find(".star-row").exists()).toBe(false);
+      const toast = useToast().items.at(-1)!;
+      expect(toast.message).toBe("Removed from your shelf");
+      expect(toast.action?.label).toBe("Undo");
+
+      addToShelf.mockResolvedValue(
+        stored({ id: 31, rating_visibility: "only_me", edition: edition({ id: 12, work_id: 4 }) }),
+      );
+      await useToast().run(toast.id);
+      await flushPromises();
+      expect(addToShelf).toHaveBeenCalledWith({
+        work_id: 4,
+        edition_id: 12,
+        status: "finished",
+        rating: 4,
+        rating_visibility: "only_me",
+        take: "Sharp and kind.",
+        dnf_reason: "",
+        progress: null,
+        current_page: null,
+      });
+      expect(wrapper.find(".star-row").exists()).toBe(true);
+      expect(onlyMeBox(wrapper).checked).toBe(true);
+    });
+
+    it("removes the book and puts it back as it was with Undo: dates and places too", async () => {
+      book.mockResolvedValue(detail({ ...FINISHED, rating_visibility: "only_me" }));
+      const { wrapper } = await mountBook();
+      const entry = stored({
+        rating_visibility: "only_me",
+        edition: edition({ id: 12, work_id: 4 }),
+        position: 2,
+        shelf_position: 7,
+        started_at: "2025-03-01T08:00:00Z",
+        finished_at: "2025-04-12T10:00:00Z",
+        updated_at: "2025-04-12T10:00:00Z",
+      });
+      myShelf.mockResolvedValue({ timezone: "UTC", user: { id: 1, username: "ada", avatar_url: null }, items: [entry], favorites: [] });
+      removeFromShelf.mockResolvedValue(undefined);
+      await wrapper.findAll("button").find((node) => node.text() === "Remove")!.trigger("click");
+      await flushPromises();
+      // The shelf is read before the entry is gone.
+      expect(myShelf.mock.invocationCallOrder[0]).toBeLessThan(removeFromShelf.mock.invocationCallOrder[0]!);
+      expect(removeFromShelf).toHaveBeenCalledWith(30);
+
+      addToShelf.mockResolvedValue(stored({ id: 31, rating_visibility: "only_me", edition: edition({ id: 12, work_id: 4 }) }));
+      await useToast().run(useToast().items.at(-1)!.id);
+      await flushPromises();
+      expect(addToShelf).toHaveBeenCalledWith({
+        work_id: 4,
+        edition_id: 12,
+        status: "finished",
+        rating: 4,
+        rating_visibility: "only_me",
+        take: "Sharp and kind.",
+        dnf_reason: "",
+        progress: null,
+        current_page: null,
+        restore: {
+          started_at: "2025-03-01T08:00:00Z",
+          finished_at: "2025-04-12T10:00:00Z",
+          updated_at: "2025-04-12T10:00:00Z",
+          position: 2,
+          shelf_position: 7,
+        },
+      });
+      expect(wrapper.find(".star-row").exists()).toBe(true);
+    });
+
+    it("puts back what the page knows when the shelf cannot be read for the Undo", async () => {
+      book.mockResolvedValue(detail({ ...FINISHED, rating_visibility: "only_me" }));
+      const { wrapper } = await mountBook();
+      myShelf.mockRejectedValue(new Error("offline"));
       removeFromShelf.mockResolvedValue(undefined);
       // "Remove", not "Remove rating".
       await wrapper.findAll("button").find((node) => node.text() === "Remove")!.trigger("click");

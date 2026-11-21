@@ -1,3 +1,4 @@
+import type { ShelfAddIn } from "./api/generated";
 import { STATUSES, type Status } from "./constants";
 import type { ShelfItem } from "./types";
 
@@ -97,4 +98,31 @@ export function shelfDropPosition(all: ShelfItem[], visible: ShelfItem[], item: 
   if (next) return siblings.findIndex((row) => row.id === next.id);
   const previous = visible[index - 1];
   return previous ? siblings.findIndex((row) => row.id === previous.id) + 1 : siblings.length;
+}
+
+/**
+ * The add that undoes the removal of `item`: its edition, status, rating, take, reason and
+ * reading position, and with `restore` its dates, its last change and its places in the column
+ * and the free order, so it comes back as it was (and the feeds lose the removal instead of
+ * gaining a new add). A personal cover is chosen again separately.
+ */
+export function undoRemoval(item: ShelfItem): ShelfAddIn {
+  return {
+    work_id: item.book.id,
+    edition_id: item.edition?.id ?? null,
+    status: item.status,
+    rating: item.rating,
+    rating_visibility: item.rating_visibility,
+    take: item.take,
+    dnf_reason: item.dnf_reason,
+    progress: item.progress,
+    current_page: item.current_page,
+    restore: {
+      started_at: item.started_at,
+      finished_at: item.finished_at,
+      updated_at: item.updated_at,
+      position: item.position,
+      shelf_position: item.shelf_position,
+    },
+  };
 }

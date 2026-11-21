@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE events e SET payload = e.payload - 'private'\n             WHERE e.id = ANY($3) AND e.actor_id = $1 AND e.work_id = $2\n               AND e.kind = 'shelf_finished'\n               AND EXISTS (\n                   SELECT 1 FROM shelf_entries s\n                   WHERE s.user_id = $1 AND s.work_id = $2\n                     AND s.rating_visibility = 'audience')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d6db2a2ee6e14cd821434191a7bda144ca5ccf93abc915016bb12e88e7781950"
+}

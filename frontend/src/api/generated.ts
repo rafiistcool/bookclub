@@ -2276,8 +2276,9 @@ export interface paths {
         get: operations["shelf_list"];
         put?: never;
         /**
-         * Puts a book on the caller's shelf, at the top of its status column. 409 `Already on your
-         *     shelf` carries the existing entry as `item`.
+         * Puts a book on the caller's shelf, at the top of its status column; with `restore` (the Undo
+         *     of a removal) back where the removed entry was, with its dates. 409 `Already on your shelf`
+         *     carries the existing entry as `item`.
          */
         post: operations["shelf_add"];
         delete?: never;
@@ -4540,6 +4541,7 @@ export interface components {
              *     `progress`, which it wins over; without one it is dropped.
              */
             current_page?: number | null;
+            restore?: components["schemas"]["ShelfRestoreIn"] | null;
         };
         /**
          * @description One entry of a shelf. For anyone but the owner, an `only_me` rating is redacted: `rating`
@@ -4662,6 +4664,43 @@ export interface components {
              */
             edition_id?: number | null;
             rating_visibility?: components["schemas"]["Visibility"] | null;
+        };
+        /**
+         * @description The removed entry's values from its `ShelfItemOut`, which the Undo of its removal sends back.
+         *     Each is optional; the add then puts the entry back with these values instead of stamping it
+         *     as new. When the caller's newest shelf event of the work is the removal of an entry in the
+         *     same status, at most 10 minutes old, that event is deleted and no new one is recorded, so the
+         *     feeds read as if the book had never left the shelf.
+         */
+        ShelfRestoreIn: {
+            /**
+             * Format: date-time
+             * @description Kept for every status but `want_to_read`; not later than now. Null or absent: none.
+             */
+            started_at?: string | null;
+            /**
+             * Format: date-time
+             * @description Kept for `finished` only; not later than now, and a later `started_at` becomes this
+             *     date. Null or absent: none.
+             */
+            finished_at?: string | null;
+            /**
+             * Format: date-time
+             * @description The entry's last change, which the stats count an abandoned book's year by; not later
+             *     than now. Null or absent: now.
+             */
+            updated_at?: string | null;
+            /**
+             * Format: int64
+             * @description The position inside the status column (0 or more, clamped). Null or absent: 0, the top.
+             */
+            position?: number | null;
+            /**
+             * Format: int64
+             * @description The entry's stored `shelf_position` (0 or more): it goes back to the same place among the
+             *     other entries in the free order. Null or absent: unarranged, as a new entry.
+             */
+            shelf_position?: number | null;
         };
         /**
          * @description A shelf entry's status. Stored as text; sorts alphabetically, as the legacy app did.
@@ -5102,6 +5141,7 @@ export type ShelfItemOut = components['schemas']['ShelfItemOut'];
 export type ShelfListOut = components['schemas']['ShelfListOut'];
 export type ShelfMaterial = components['schemas']['ShelfMaterial'];
 export type ShelfPatchIn = components['schemas']['ShelfPatchIn'];
+export type ShelfRestoreIn = components['schemas']['ShelfRestoreIn'];
 export type ShelfStatus = components['schemas']['ShelfStatus'];
 export type SignupInviteIn = components['schemas']['SignupInviteIn'];
 export type SpineColorsOut = components['schemas']['SpineColorsOut'];

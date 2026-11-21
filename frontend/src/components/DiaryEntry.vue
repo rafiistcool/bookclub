@@ -597,7 +597,9 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-/* Six 40px buttons are 256px; on a narrower column they wrap inside the pill. */
+/* Six picks a finger wide are 280px with the pill's padding and border, so
+   they fit a 320px phone's column; on a narrower one (an indented reply) they
+   wrap inside the pill. */
 .reaction-picker {
   display: inline-flex;
   flex-wrap: wrap;
@@ -609,11 +611,13 @@ onBeforeUnmount(() => {
   background: var(--surface);
 }
 
+/* The picks sit 2px apart, with no room for a hit area beyond their edges
+   (the chips' ::before), so each is a full 44px target itself. */
 .reaction-pick {
   border: 0;
   background: transparent;
-  min-width: 40px;
-  min-height: 40px;
+  min-width: var(--tap);
+  min-height: var(--tap);
   font-size: var(--text-lg);
   border-radius: var(--radius-pill);
   transition: transform var(--dur-fast) var(--ease-out);

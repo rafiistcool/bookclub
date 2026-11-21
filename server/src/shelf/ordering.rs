@@ -8,6 +8,8 @@
 //! - [`column_order`] is the `position` half of `place_item`: the order of one (user, status)
 //!   column after the item is inserted.
 //! - [`shelf_order`] is `place_on_shelf`: the free order across every status.
+//! - [`restore_reading_dates`] and [`shelf_index`] are new: the Undo of a removal puts the
+//!   entry back with its dates and at its place in the free order.
 
 use time::OffsetDateTime;
 
@@ -161,6 +163,34 @@ pub fn apply_reading_dates(
     }
 }
 
+/// The reading dates of an entry that the Undo of its removal puts back in `status`: the removed
+/// entry's own dates where the status keeps them (want to read: none; reading and DNF: the
+/// start; finished: both), none later than `now`, and the start not after the finish (as the
+/// PATCH's `finished_on` keeps it). A date the removed entry did not have stays empty: unlike
+/// [`apply_reading_dates`], nothing is stamped, so the entry comes back as it was.
+pub fn restore_reading_dates(
+    fields: &mut StatusFields,
+    status: ShelfStatus,
+    started_at: Option<OffsetDateTime>,
+    finished_at: Option<OffsetDateTime>,
+    now: OffsetDateTime,
+) {
+    let (started_at, finished_at) = match status {
+        ShelfStatus::WantToRead => (None, None),
+        ShelfStatus::CurrentlyReading | ShelfStatus::DidNotFinish => (started_at, None),
+        ShelfStatus::Finished => (started_at, finished_at),
+    };
+    let finished_at = finished_at.map(|at| at.min(now));
+    let mut started_at = started_at.map(|at| at.min(now));
+    if let (Some(started), Some(finished)) = (started_at, finished_at)
+        && started > finished
+    {
+        started_at = Some(finished);
+    }
+    fields.started_at = started_at;
+    fields.finished_at = finished_at;
+}
+
 /// The column order after `place_item`: `siblings` are the other entries of the target column
 /// ordered by `(position, id)`; the item goes in at `position`, clamped to the column. Each id's
 /// index in the result is its new `position`.
@@ -186,15 +216,7 @@ pub struct ShelfSlot {
 /// the result is its new `shelf_position`, so every entry is arranged afterwards.
 pub fn shelf_order(slots: &[ShelfSlot], item: i64, position: i64) -> Vec<i64> {
     let mut sorted: Vec<&ShelfSlot> = slots.iter().collect();
-    sorted.sort_by_key(|slot| {
-        (
-            slot.shelf_position.is_some(),
-            slot.shelf_position
-                .map_or_else(|| declaration_index(slot.status), i64::from),
-            slot.position,
-            slot.id,
-        )
-    });
+    sorted.sort_by_key(|slot| free_order_key(slot));
     let mut order: Vec<i64> = sorted
         .into_iter()
         .map(|slot| slot.id)
@@ -203,6 +225,31 @@ pub fn shelf_order(slots: &[ShelfSlot], item: i64, position: i64) -> Vec<i64> {
     let at = position.clamp(0, order.len() as i64) as usize;
     order.insert(at, item);
     order
+}
+
+/// Where an entry sorts in the free order (see [`shelf_order`]).
+fn free_order_key(slot: &ShelfSlot) -> (bool, i64, i32, i64) {
+    (
+        slot.shelf_position.is_some(),
+        slot.shelf_position
+            .map_or_else(|| declaration_index(slot.status), i64::from),
+        slot.position,
+        slot.id,
+    )
+}
+
+/// The index `slot` takes among the other entries of `slots` in the free order: the number of
+/// them that sort before it. The Undo of a removal passes the removed entry's stored
+/// `shelf_position`, which [`shelf_order`] then turns back into its old place. A removal does
+/// not compact the free order, and an entry added meanwhile is unarranged and sorts first, so
+/// counting (not reusing the stored number) is what keeps the order as it was.
+pub fn shelf_index(slots: &[ShelfSlot], slot: &ShelfSlot) -> i64 {
+    let key = free_order_key(slot);
+    let before = slots
+        .iter()
+        .filter(|other| other.id != slot.id && free_order_key(other) < key)
+        .count();
+    i64::try_from(before).unwrap_or(i64::MAX)
 }
 
 #[cfg(test)]
@@ -390,6 +437,40 @@ mod tests {
     }
 
     #[test]
+    fn restored_dates_follow_the_status_and_never_lie_ahead() {
+        let later = datetime!(2026-11-01 10:00 UTC);
+        let restored = |status, started, finished| {
+            let mut fields = noted();
+            restore_reading_dates(&mut fields, status, started, finished, NOW);
+            (fields.started_at, fields.finished_at)
+        };
+        let both = (Some(EARLIER), Some(EARLIER));
+        assert_eq!(
+            restored(ShelfStatus::WantToRead, both.0, both.1),
+            (None, None)
+        );
+        for status in [ShelfStatus::CurrentlyReading, ShelfStatus::DidNotFinish] {
+            assert_eq!(restored(status, both.0, both.1), (Some(EARLIER), None));
+        }
+        assert_eq!(restored(ShelfStatus::Finished, both.0, both.1), both);
+        // Nothing is stamped: a date the entry did not have stays empty.
+        assert_eq!(restored(ShelfStatus::Finished, None, None), (None, None));
+        // A date in the future is now; a start after the finish is the finish.
+        assert_eq!(
+            restored(ShelfStatus::Finished, Some(later), Some(later)),
+            (Some(NOW), Some(NOW))
+        );
+        assert_eq!(
+            restored(ShelfStatus::Finished, Some(NOW), Some(EARLIER)),
+            (Some(EARLIER), Some(EARLIER))
+        );
+        assert_eq!(
+            restored(ShelfStatus::CurrentlyReading, Some(later), None),
+            (Some(NOW), None)
+        );
+    }
+
+    #[test]
     fn column_order_inserts_at_the_clamped_position() {
         assert_eq!(column_order(&[], 9, 0), vec![9]);
         assert_eq!(column_order(&[1, 2, 3], 9, 0), vec![9, 1, 2, 3]);
@@ -429,5 +510,31 @@ mod tests {
             slot(5, ShelfStatus::Finished, 0, None),
         ];
         assert_eq!(shelf_order(&slots, 2, 2), vec![5, 4, 2, 3, 1]);
+    }
+
+    #[test]
+    fn shelf_index_counts_the_entries_before_a_stored_place() {
+        // Arranged as [1, 2, 3, 4] (ranks 0..3); 3 was removed, leaving a gap, and 6 was added
+        // meanwhile (unarranged, so it sorts first).
+        let slots = [
+            slot(1, ShelfStatus::WantToRead, 0, Some(0)),
+            slot(2, ShelfStatus::Finished, 0, Some(1)),
+            slot(4, ShelfStatus::Finished, 1, Some(3)),
+            slot(6, ShelfStatus::WantToRead, 0, None),
+            slot(9, ShelfStatus::Finished, 2, None),
+        ];
+        let restored = slot(9, ShelfStatus::Finished, 2, Some(2));
+        let index = shelf_index(&slots, &restored);
+        assert_eq!(index, 3);
+        assert_eq!(shelf_order(&slots, 9, index), vec![6, 1, 2, 9, 4]);
+        // At the front and past the end.
+        assert_eq!(
+            shelf_index(&slots, &slot(9, ShelfStatus::Finished, 2, Some(0))),
+            2
+        );
+        assert_eq!(
+            shelf_index(&slots, &slot(9, ShelfStatus::Finished, 2, Some(50))),
+            4
+        );
     }
 }

@@ -97,6 +97,13 @@ describe("CoverChooserSheet", () => {
     expect(shown.every((tile) => tile.get("img").attributes("loading") === "lazy")).toBe(true);
     // Year and language first, the publisher on its own line: what tells editions apart is never cut off.
     expect(shown.map((tile) => tile.get(".label-facts").text())).toEqual(["2019 · Deutsch", "2018 · Englisch", "Open Library", "2021"]);
+    // Each fact is a part of its own, so a narrow tile wraps between them instead of cutting one off.
+    expect(shown.map((tile) => tile.findAll(".label-fact").map((part) => part.text()))).toEqual([
+      ["2019", "Deutsch"],
+      ["2018", "Englisch"],
+      ["Open Library"],
+      ["2021"],
+    ]);
     // The legal form goes, so the name itself keeps its last word.
     expect(shown.map((tile) => tile.find(".label-publisher").exists() ? tile.get(".label-publisher").text() : null)).toEqual([
       "Diogenes",

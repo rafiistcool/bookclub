@@ -369,7 +369,7 @@ onBeforeUnmount(() => {
 
       <div v-if="!hit.on_shelf" class="hit-section">
         <p class="fine add-to-label">{{ t("scan.addTo") }}</p>
-        <div class="segmented" role="group" :aria-label="t('scan.addTo')">
+        <div class="segmented add-to" role="group" :aria-label="t('scan.addTo')">
           <button
             v-for="status in STATUSES"
             :key="status"
@@ -544,6 +544,25 @@ onBeforeUnmount(() => {
   color: var(--text-muted);
 }
 
+/* Inside the card's padding four statuses ("Geplant | Aktuell | Gelesen |
+   Abgebrochen") need about 262 px, a few more than a 320 px phone leaves; one
+   row would scroll and hide the last word. There they take two rows of two,
+   each half a hand wide, so every status stays whole and a finger high. */
+@media (max-width: 359px) {
+  .segmented.add-to {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    /* Concentric with the pill segments in its corners. */
+    border-radius: calc(var(--tap) / 2 + 2px);
+    overflow: visible;
+  }
+
+  .segmented.add-to button {
+    min-width: 0;
+    padding-inline: var(--space-1);
+  }
+}
+
 /* On a phone the miss's three ways on share one width, stacked. */
 @media (max-width: 599px) {
   .miss-actions {
@@ -552,9 +571,11 @@ onBeforeUnmount(() => {
   }
 }
 
+/* min-width: a section never widens the card past the screen. */
 .hit-section {
   display: grid;
   gap: var(--space-2);
+  min-width: 0;
   padding-top: var(--space-3);
   border-top: 1px solid var(--border);
 }

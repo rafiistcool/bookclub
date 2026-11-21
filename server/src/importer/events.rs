@@ -214,7 +214,7 @@ impl Importer {
         // redacted only at read time.
         let hidden = seal_finished_ratings(&mut self.tx, None, None).await?;
         self.report
-            .normalised_by("events.payload.rating_take", hidden);
+            .normalised_by("events.payload.rating_take", hidden.len() as u64);
         self.report.entity(
             "events",
             Some(events.len() as u64),
