@@ -187,12 +187,14 @@ describe("BookDiary", () => {
     const items = [post({ id: 4, author: "max", body: "Off topic", club: CLUB, pick_id: 5 })];
     api.pickThread.mockResolvedValue(thread({ items }));
     const asMember = await mountDiary({ club: { slug: CLUB.slug, pickId: null } }, "member");
-    expect(asMember.find(".entry-more").exists()).toBe(false);
+    // A member may only report it (#55, Q11 option C).
+    await asMember.get(".entry-more").trigger("click");
+    expect(asMember.findAll(".sheet .sheet-row").map((row) => row.text())).toEqual(["Report"]);
     const asAdmin = await mountDiary({ club: { slug: CLUB.slug, pickId: null } }, "admin");
     // Never a link beside "Reply".
     expect(asAdmin.findAll(".entry-links .text-btn").map((button) => button.text())).toEqual(["Reply"]);
     await asAdmin.get(".entry-more").trigger("click");
     const rows = asAdmin.findAll(".sheet .sheet-row").map((row) => row.text());
-    expect(rows).toEqual(["Delete as admin"]);
+    expect(rows).toEqual(["Delete as admin", "Report"]);
   });
 });

@@ -9,14 +9,17 @@ import Avatar from "../components/Avatar.vue";
 import BackLink from "../components/BackLink.vue";
 import BottomSheet from "../components/BottomSheet.vue";
 import PhysicalShelf from "../components/PhysicalShelf.vue";
+import ReportSheet, { type ReportTarget } from "../components/ReportSheet.vue";
 import ShelfBookInfo from "../components/ShelfBookInfo.vue";
 import ShelfViewSwitch from "../components/ShelfViewSwitch.vue";
 import { bookPath } from "../constants";
 import { reconcileLayout, type PhysicalShelfLayout, type ShelfObjectId } from "../physicalShelf";
+import { useSession } from "../stores/session";
 import type { ShelfItem } from "../types";
 
 const { t } = useI18n();
 const route = useRoute();
+const session = useSession();
 const username = ref("");
 const avatarUrl = ref<string | null>(null);
 const items = ref<ShelfItem[]>([]);
@@ -25,6 +28,13 @@ const loaded = ref(false);
 const error = ref("");
 const selectedId = ref<number | null>(null);
 const selected = computed(() => items.value.find(item => item.id === selectedId.value) ?? null);
+/** The take being reported (#55, Q11 option C); the book's sheet closes for it. */
+const reporting = ref<ReportTarget | null>(null);
+
+function reportTake(item: ShelfItem) {
+  selectedId.value = null;
+  reporting.value = { kind: "take", workId: item.book.id, author: username.value };
+}
 
 async function load() {
   loaded.value = false;
@@ -75,8 +85,17 @@ watch(() => route.params.username, load);
       <ShelfBookInfo :item="selected">
         <button type="button" class="icon-btn close-spine-sheet" :aria-label="t('physicalShelf.close')" @click="selectedId = null"><XMarkIcon aria-hidden="true" /></button>
       </ShelfBookInfo>
+      <button
+        v-if="selected.take && username !== session.user?.username"
+        class="text-btn quiet finer take-report"
+        type="button"
+        @click="reportTake(selected)"
+      >
+        {{ t("report.action.take") }}
+      </button>
       <RouterLink class="btn btn-primary btn-block open-book" :to="bookPath(selected.book)">{{ t("physicalShelf.openBook") }}</RouterLink>
     </BottomSheet>
+    <ReportSheet v-if="reporting" :target="reporting" @close="reporting = null" />
   </section>
 </template>
 
@@ -88,4 +107,5 @@ watch(() => route.params.username, load);
 .close-spine-sheet { align-self: flex-start; }
 .close-spine-sheet svg { width: 20px; height: 20px; }
 .open-book { margin-top: 22px; }
+.take-report { margin-top: var(--space-2); }
 </style>

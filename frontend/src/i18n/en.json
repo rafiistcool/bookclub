@@ -35,13 +35,18 @@
     "action": {
       "avatar": "Report profile picture",
       "work": "Report this book",
-      "edition": "Report"
+      "edition": "Report",
+      "text": "Report",
+      "take": "Report this take"
     },
     "title": {
       "cover": "Report this cover",
       "avatar": "Report this profile picture",
       "work": "Report this book",
-      "edition": "Report this edition"
+      "edition": "Report this edition",
+      "post": "Report this post",
+      "quote": "Report this quote",
+      "take": "Report this take"
     },
     "avatarOf": "Profile picture of {name}",
     "editionOf": "Report the edition {edition}",
@@ -56,7 +61,13 @@
     "noAccount": "No account here? Anyone can report content by writing to {email}.",
     "instead": "Offensive or infringing?",
     "removedTitle": "[removed]",
-    "removedNote": "Removed by an admin after a report."
+    "removedNote": "Removed by an admin after a report.",
+    "by": {
+      "post": "Post by {name}",
+      "quote": "Quote saved by {name}",
+      "take": "Take by {name}"
+    },
+    "takeOf": "Report {name}'s take"
   },
   "common": {
     "cancel": "Cancel",
@@ -788,7 +799,10 @@
     "reportedBookMerged": "This book was merged into another one since it was reported. Close the report, and correct the other book with “Edit as admin” if it took over the reported text.",
     "pictureGone": "The reported picture is no longer online: its owner replaced or deleted it. Close the report.",
     "coverExists": "This book has a cover now.",
-    "coverNotChoosable": "This cover is no longer available."
+    "coverNotChoosable": "This cover is no longer available.",
+    "ownText": "You cannot report what you wrote yourself.",
+    "textWrongBook": "A text cannot be reported as showing the wrong book.",
+    "textGone": "The text is no longer online: its author deleted it. Close the report instead."
   },
   "physicalShelf": {
     "title": "Your real bookshelf",
@@ -1435,7 +1449,10 @@
       "cover": "Cover",
       "avatar": "Profile picture",
       "work": "Book added by a reader",
-      "edition": "Edition added by a reader"
+      "edition": "Edition added by a reader",
+      "post": "Post",
+      "quote": "Quote",
+      "take": "Take"
     },
     "avatarOf": "Profile picture of {name}",
     "notice": "Emailed notice · received {when}",
@@ -1444,7 +1461,10 @@
     "removeBlurb": {
       "avatar": "The picture disappears from the profile and everywhere else, and the same file cannot be uploaded again.",
       "work": "The title becomes “[removed]”, and the authors, description and subjects go, for good. Shelves, posts and picks keep the book.",
-      "edition": "The edition loses its own title, subtitle and publisher for good, and shows its book's title."
+      "edition": "The edition loses its own title, subtitle and publisher for good, and shows its book's title.",
+      "post": "The post disappears for everyone, as if its author had deleted it; replies stay under a note that it was deleted.",
+      "quote": "The quote is deleted for good.",
+      "take": "The take is cleared everywhere, the feeds included; the rating stays."
     },
     "textRemoved": "Text removed",
     "removedBy": "Removed by {name} · {when}",
@@ -1553,7 +1573,8 @@
     },
     "gone": {
       "avatar": "No longer online: its owner replaced or deleted the picture, so there is nothing left to take down.",
-      "work": "Merged into this book since it was reported, so the reported text no longer shows on its own. If this book took some of it over, correct it with “Edit as admin”."
+      "work": "Merged into this book since it was reported, so the reported text no longer shows on its own. If this book took some of it over, correct it with “Edit as admin”.",
+      "text": "No longer online: its author deleted it, so there is nothing left to remove."
     },
     "closeReport": "Close the report",
     "closedBy": "Closed by {name} · {when}",
@@ -1637,7 +1658,16 @@
     },
     "howTo": "How this works",
     "reportsHowTo": "Removing takes a picture down everywhere, or withdraws what a reader typed, for good; keeping closes the report. The reporters hear the decision by mail, and whoever's content was removed hears why.",
-    "noticeShort": "Emailed notice"
+    "noticeShort": "Emailed notice",
+    "textBy": {
+      "post": "Post by {name}",
+      "quote": "Quote saved by {name}",
+      "take": "Take by {name}"
+    },
+    "inClub": "in {club}",
+    "asReported": "As reported",
+    "textNow": "Now, after an edit (“Remove the text” removes this version)",
+    "snapshotGone": "The text is gone: its author deleted the account."
   },
   "notFound": {
     "title": "Page not found",

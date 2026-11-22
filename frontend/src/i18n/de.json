@@ -35,13 +35,18 @@
     "action": {
       "avatar": "Profilbild melden",
       "work": "Dieses Buch melden",
-      "edition": "Melden"
+      "edition": "Melden",
+      "text": "Melden",
+      "take": "Diesen Satz melden"
     },
     "title": {
       "cover": "Dieses Cover melden",
       "avatar": "Dieses Profilbild melden",
       "work": "Dieses Buch melden",
-      "edition": "Diese Ausgabe melden"
+      "edition": "Diese Ausgabe melden",
+      "post": "Diesen Beitrag melden",
+      "quote": "Dieses Zitat melden",
+      "take": "Diesen Satz melden"
     },
     "avatarOf": "Profilbild von {name}",
     "editionOf": "Die Ausgabe {edition} melden",
@@ -56,7 +61,13 @@
     "noAccount": "Kein Konto hier? Inhalte melden kann man auch per E-Mail an {email}.",
     "instead": "Anstößig oder rechtsverletzend?",
     "removedTitle": "[entfernt]",
-    "removedNote": "Nach einer Meldung von einem Admin entfernt."
+    "removedNote": "Nach einer Meldung von einem Admin entfernt.",
+    "by": {
+      "post": "Beitrag von {name}",
+      "quote": "Zitat, gespeichert von {name}",
+      "take": "Satz von {name}"
+    },
+    "takeOf": "Satz von {name} melden"
   },
   "common": {
     "cancel": "Abbrechen",
@@ -788,7 +799,10 @@
     "reportedBookMerged": "Dieses Buch wurde seit der Meldung mit einem anderen zusammengeführt. Schließ die Meldung und korrigiere das andere Buch mit „Als Admin bearbeiten“, falls es den gemeldeten Text übernommen hat.",
     "pictureGone": "Das gemeldete Bild ist nicht mehr online: Wer es hochgeladen hat, hat es ersetzt oder gelöscht. Schließ die Meldung.",
     "coverExists": "Dieses Buch hat inzwischen ein Cover.",
-    "coverNotChoosable": "Dieses Cover ist nicht mehr verfügbar."
+    "coverNotChoosable": "Dieses Cover ist nicht mehr verfügbar.",
+    "ownText": "Was du selbst geschrieben hast, kannst du nicht melden.",
+    "textWrongBook": "Ein Text kann nicht als falsches Buch gemeldet werden.",
+    "textGone": "Der Text ist nicht mehr online: Wer ihn geschrieben hat, hat ihn gelöscht. Schließ die Meldung stattdessen."
   },
   "physicalShelf": {
     "title": "Dein Bücherregal",
@@ -1435,7 +1449,10 @@
       "cover": "Cover",
       "avatar": "Profilbild",
       "work": "Von Leser:in angelegtes Buch",
-      "edition": "Von Leser:in angelegte Ausgabe"
+      "edition": "Von Leser:in angelegte Ausgabe",
+      "post": "Beitrag",
+      "quote": "Zitat",
+      "take": "Satz zum Buch"
     },
     "avatarOf": "Profilbild von {name}",
     "notice": "Meldung per E-Mail · eingegangen {when}",
@@ -1444,7 +1461,10 @@
     "removeBlurb": {
       "avatar": "Das Bild verschwindet aus dem Profil und überall sonst, und dieselbe Datei kann nicht wieder hochgeladen werden.",
       "work": "Der Titel wird zu „[removed]“, Autor:innen, Beschreibung und Themen werden endgültig gelöscht. Regale, Beiträge und Auswahlen behalten das Buch.",
-      "edition": "Die Ausgabe verliert endgültig ihren eigenen Titel, Untertitel und Verlag und zeigt den Titel ihres Buchs."
+      "edition": "Die Ausgabe verliert endgültig ihren eigenen Titel, Untertitel und Verlag und zeigt den Titel ihres Buchs.",
+      "post": "Der Beitrag verschwindet für alle, als hätte ihn sein Autor gelöscht; Antworten bleiben unter einem Hinweis, dass er gelöscht wurde.",
+      "quote": "Das Zitat wird endgültig gelöscht.",
+      "take": "Der Satz verschwindet überall, auch aus den Neuigkeiten; die Bewertung bleibt."
     },
     "textRemoved": "Text entfernt",
     "removedBy": "Entfernt von {name} · {when}",
@@ -1553,7 +1573,8 @@
     },
     "gone": {
       "avatar": "Nicht mehr online: Das Bild wurde ersetzt oder gelöscht, es gibt nichts mehr zu entfernen.",
-      "work": "Seit der Meldung mit diesem Buch zusammengeführt, der gemeldete Text erscheint nicht mehr für sich. Hat dieses Buch etwas davon übernommen, korrigiere es mit „Als Admin bearbeiten“."
+      "work": "Seit der Meldung mit diesem Buch zusammengeführt, der gemeldete Text erscheint nicht mehr für sich. Hat dieses Buch etwas davon übernommen, korrigiere es mit „Als Admin bearbeiten“.",
+      "text": "Nicht mehr online: Wer ihn geschrieben hat, hat den Text gelöscht, es gibt nichts mehr zu entfernen."
     },
     "closeReport": "Meldung schließen",
     "closedBy": "Geschlossen von {name} · {when}",
@@ -1637,7 +1658,16 @@
     },
     "howTo": "So funktioniert das",
     "reportsHowTo": "Entfernen nimmt ein Bild überall heraus oder löscht, was jemand eingetippt hat, endgültig; Behalten schließt die Meldung. Die Meldenden erfahren die Entscheidung per E-Mail, und wessen Inhalt entfernt wurde, erfährt den Grund.",
-    "noticeShort": "Meldung per E-Mail"
+    "noticeShort": "Meldung per E-Mail",
+    "textBy": {
+      "post": "Beitrag von {name}",
+      "quote": "Zitat, gespeichert von {name}",
+      "take": "Satz von {name}"
+    },
+    "inClub": "in {club}",
+    "asReported": "Wie gemeldet",
+    "textNow": "Jetzt, nach einer Änderung („Text entfernen“ entfernt diese Fassung)",
+    "snapshotGone": "Der Text ist weg: Das Konto wurde gelöscht."
   },
   "notFound": {
     "title": "Seite nicht gefunden",

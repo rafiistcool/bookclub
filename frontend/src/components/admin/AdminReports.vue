@@ -29,9 +29,14 @@ import { useQueue } from "./useQueue";
  * by URL" (pictures; it names no sender) or as a report an admin files.
  *
  * A report of something gone (`ReportOut.gone`: a profile picture its owner
- * replaced or deleted, a book merged into another one since) says so and offers
- * only "Close the report": nothing is left to take down, and the server refuses
- * "remove" for it.
+ * replaced or deleted, a book merged into another one since, a text its author
+ * deleted) says so and offers only "Close the report": nothing is left to take
+ * down, and the server refuses "remove" for it.
+ *
+ * A post, quote or take another reader wrote (#55, Q11 option C) shows who
+ * wrote it, its book (and a club post's club), the text as it was reported,
+ * and the text as it is now when its author edited it since: "Remove the
+ * text" withdraws the current one.
  */
 const props = defineProps<{
   /** Hours after which an open report is overdue (`AdminSummary.target_hours`). */
@@ -42,11 +47,22 @@ const props = defineProps<{
 const emit = defineEmits<{ changed: [] }>();
 
 const REASONS = ["wrong_book", "offensive", "copyright", "other"];
-const KINDS = ["cover", "avatar", "work", "edition"];
+const KINDS = ["cover", "avatar", "work", "edition", "post", "quote", "take"];
+const TEXTS = ["post", "quote", "take"];
 
-/** A picture is taken down; a book or edition loses its text. */
+/** A post, quote or take a reader wrote. */
+function isText(report: ReportOut): boolean {
+  return TEXTS.includes(report.target_kind);
+}
+
+/** A picture is taken down; a book or edition loses its text, and a text is withdrawn. */
 function isPicture(report: ReportOut): boolean {
-  return report.target_kind !== "work" && report.target_kind !== "edition";
+  return report.target_kind !== "work" && report.target_kind !== "edition" && !isText(report);
+}
+
+/** The text now, when its author changed it since the report. */
+function editedText(report: ReportOut): string | null {
+  return report.current_text != null && report.current_text !== report.text_snapshot ? report.current_text : null;
 }
 
 const { t } = useI18n();
@@ -155,6 +171,7 @@ function removeBlurb(report: ReportOut): string {
 
 /** Why a gone report has nothing left to decide. */
 function goneNote(report: ReportOut): string {
+  if (isText(report)) return t("admin.gone.text");
   return t(report.target_kind === "avatar" ? "admin.gone.avatar" : "admin.gone.work");
 }
 
@@ -284,6 +301,24 @@ onMounted(load);
             <p v-if="report.target_kind === 'avatar'" class="report-subject">
               {{ t("admin.avatarOf", { name: report.target_user?.username ?? t("admin.someone") }) }}
             </p>
+            <template v-else-if="isText(report)">
+              <p class="report-subject">
+                {{ t(`admin.textBy.${report.target_kind}`, { name: report.target_user?.username ?? t("admin.someone") }) }}
+                <span v-if="report.club" class="fine subtle"> · {{ t("admin.inClub", { club: report.club.name }) }}</span>
+              </p>
+              <RouterLink v-if="report.book" :to="bookPath(report.book)" class="fine report-text-book">
+                {{ report.book.title }}
+              </RouterLink>
+              <figure class="report-quote">
+                <figcaption class="finer subtle">{{ t("admin.asReported") }}</figcaption>
+                <blockquote v-if="report.text_snapshot != null" class="report-snapshot">{{ report.text_snapshot }}</blockquote>
+                <p v-else class="fine subtle">{{ t("admin.snapshotGone") }}</p>
+              </figure>
+              <figure v-if="editedText(report) && view === 'open'" class="report-quote">
+                <figcaption class="finer subtle">{{ t("admin.textNow") }}</figcaption>
+                <blockquote class="report-current">{{ editedText(report) }}</blockquote>
+              </figure>
+            </template>
             <RouterLink v-else-if="report.book" :to="bookPath(report.book)" class="admin-book-title report-book">
               {{ report.book.title }}
             </RouterLink>
@@ -371,6 +406,26 @@ onMounted(load);
 }
 
 .report-details {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.report-text-book {
+  color: var(--text-muted);
+  font-family: var(--serif);
+}
+
+.report-quote {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+}
+
+.report-quote blockquote {
+  margin: 0;
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--accent-line);
+  font-family: var(--serif);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

@@ -255,7 +255,9 @@ async fn club_rows_reached_by_id_or_query_stay_hidden(db: PgPool) {
         .into_iter()
         .filter(|op| op.path.starts_with("/api/posts/{post_id}"))
         .collect();
-    let body = json!({"body": "Edited by an outsider", "emoji": "\u{2764}\u{fe0f}"});
+    // `reason` for the report of a post (TEXTS, Q11 option C).
+    let body = json!({"body": "Edited by an outsider", "emoji": "\u{2764}\u{fe0f}",
+                      "reason": "offensive"});
     for op in &post_ops {
         for caller in [&outsider, &clubless] {
             for post in posts {

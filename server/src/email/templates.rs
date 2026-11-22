@@ -363,6 +363,32 @@ pub enum Reported<'a> {
     Work(&'a str),
     /// An edition a reader added, by its book's title.
     Edition(&'a str),
+    /// A post a reader wrote: a club post, a reply or a diary entry (#55, Q11 option C).
+    Post(Text<'a>),
+    /// A quote a reader saved.
+    Quote(Text<'a>),
+    /// The one-line take on a reader's shelf entry.
+    Take(Text<'a>),
+}
+
+/// A reported text (#55, Q11 option C): the book it is about, and what an admin removed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Text<'a> {
+    /// The title of the book the text is on, when known.
+    pub book: Option<&'a str>,
+    /// The removed text (shortened), quoted in its author's statement of reasons only; the
+    /// reporter's decision never repeats it.
+    pub excerpt: Option<&'a str>,
+}
+
+impl Reported<'_> {
+    /// A text a reader wrote, not a picture or a book.
+    fn is_text(self) -> bool {
+        matches!(
+            self,
+            Reported::Post(_) | Reported::Quote(_) | Reported::Take(_)
+        )
+    }
 }
 
 /// What came of a report, for its reporter.
@@ -388,11 +414,13 @@ pub fn report_decision(
     contact: Option<&str>,
 ) -> Email {
     let book = matches!(what, Reported::Work(_) | Reported::Edition(_));
-    // German: "es" for das Coverbild, das Profilbild, das Buch; "sie" for die Ausgabe.
-    let (it, it_upper) = if matches!(what, Reported::Edition(_)) {
-        ("sie", "Sie")
-    } else {
-        ("es", "Es")
+    let text = what.is_text();
+    // German: "es" for das Coverbild, das Profilbild, das Buch, das Zitat; "sie" for die
+    // Ausgabe; "er" for der Beitrag, der Satz.
+    let (it, it_upper) = match what {
+        Reported::Edition(_) => ("sie", "Sie"),
+        Reported::Post(_) | Reported::Take(_) => ("er", "Er"),
+        _ => ("es", "Es"),
     };
     let (subject, text) = if german(to) {
         let what = match what {
@@ -407,6 +435,24 @@ pub fn report_decision(
             Reported::Edition(title) => {
                 format!("die Ausgabe von „{title}“, die du gemeldet hast,")
             }
+            Reported::Post(Text {
+                book: Some(title), ..
+            }) => {
+                format!("den Beitrag zu „{title}“, den du gemeldet hast,")
+            }
+            Reported::Post(_) => "den Beitrag, den du gemeldet hast,".to_owned(),
+            Reported::Quote(Text {
+                book: Some(title), ..
+            }) => {
+                format!("das Zitat aus „{title}“, das du gemeldet hast,")
+            }
+            Reported::Quote(_) => "das Zitat, das du gemeldet hast,".to_owned(),
+            Reported::Take(Text {
+                book: Some(title), ..
+            }) => {
+                format!("den Satz zu „{title}“, den du gemeldet hast,")
+            }
+            Reported::Take(_) => "den Satz, den du gemeldet hast,".to_owned(),
         };
         let (outcome, decision, next) = match outcome {
             Outcome::Removed => (
@@ -415,9 +461,14 @@ pub fn report_decision(
                     "Ein Admin von {} hat {what} geprüft und entfernt.",
                     site.service
                 ),
-                "Wer den Inhalt hochgeladen oder eingetragen hat, erfährt, dass und warum er \
-                 entfernt wurde, aber nicht, von wem die Meldung kam."
-                    .to_owned(),
+                if text {
+                    "Wer den Text geschrieben hat, erfährt, dass und warum er entfernt wurde, \
+                     aber nicht, von wem die Meldung kam."
+                } else {
+                    "Wer den Inhalt hochgeladen oder eingetragen hat, erfährt, dass und warum er \
+                     entfernt wurde, aber nicht, von wem die Meldung kam."
+                }
+                .to_owned(),
             ),
             Outcome::Kept => (
                 "nicht entfernt",
@@ -448,8 +499,13 @@ pub fn report_decision(
                 "nicht mehr online",
                 format!(
                     "Ein Admin von {} hat {what} geprüft: {it_upper} ist nicht mehr online, weil {it} \
-                     ersetzt oder gelöscht wurde.",
-                    site.service
+                     {} wurde.",
+                    site.service,
+                    if text {
+                        "gelöscht"
+                    } else {
+                        "ersetzt oder gelöscht"
+                    }
                 ),
                 format!("Wenn {it} wieder auftaucht, kannst du {it} erneut melden."),
             ),
@@ -476,6 +532,24 @@ pub fn report_decision(
             }
             Reported::Work(title) => format!("the book \"{title}\" you reported"),
             Reported::Edition(title) => format!("the edition of \"{title}\" you reported"),
+            Reported::Post(Text {
+                book: Some(title), ..
+            }) => {
+                format!("the post on \"{title}\" you reported")
+            }
+            Reported::Post(_) => "the post you reported".to_owned(),
+            Reported::Quote(Text {
+                book: Some(title), ..
+            }) => {
+                format!("the quote from \"{title}\" you reported")
+            }
+            Reported::Quote(_) => "the quote you reported".to_owned(),
+            Reported::Take(Text {
+                book: Some(title), ..
+            }) => {
+                format!("the take on \"{title}\" you reported")
+            }
+            Reported::Take(_) => "the take you reported".to_owned(),
         };
         let (outcome, decision, next) = match outcome {
             Outcome::Removed => (
@@ -484,9 +558,14 @@ pub fn report_decision(
                     "An admin of {} reviewed {what} and removed it.",
                     site.service
                 ),
-                "Whoever uploaded or added it is told that it was removed and why, but not who \
-                 reported it."
-                    .to_owned(),
+                if text {
+                    "Whoever wrote it is told that it was removed and why, but not who reported \
+                     it."
+                } else {
+                    "Whoever uploaded or added it is told that it was removed and why, but not \
+                     who reported it."
+                }
+                .to_owned(),
             ),
             Outcome::Kept => (
                 "not removed",
@@ -513,8 +592,13 @@ pub fn report_decision(
                 "no longer online",
                 format!(
                     "An admin of {} reviewed {what}: it is no longer online, because it was \
-                     replaced or deleted.",
-                    site.service
+                     {}.",
+                    site.service,
+                    if text {
+                        "deleted"
+                    } else {
+                        "replaced or deleted"
+                    }
                 ),
                 "If it shows up again, you can report it again.".to_owned(),
             ),
@@ -534,6 +618,15 @@ pub fn report_decision(
     mail(site, to, subject, text)
 }
 
+/// The removed text a statement of reasons quotes to its author: a reported post's, quote's or
+/// take's.
+fn excerpt<'a>(what: Reported<'a>) -> Option<&'a str> {
+    match what {
+        Reported::Post(text) | Reported::Quote(text) | Reported::Take(text) => text.excerpt,
+        _ => None,
+    }
+}
+
 /// To whoever uploaded or added content an admin removed: the statement of reasons of DSA
 /// Art. 17 (what was removed, the ground, that a person decided, and how to object). `reason`
 /// is the `reports.reason` of the report or notice it was removed on, `None` when an admin
@@ -547,6 +640,7 @@ pub fn statement_of_reasons(
     contact: Option<&str>,
 ) -> Email {
     let terms = format!("{}/terms", site.public_url);
+    let removed_text = excerpt(what);
     let (subject, text) = if german(to) {
         let (subject, what, effect) = match what {
             Reported::Cover(title) => (
@@ -596,6 +690,39 @@ pub fn statement_of_reasons(
                 "Titel, Untertitel und Verlag wurden entfernt. Die Ausgabe bleibt, unter dem \
                  Titel des Buchs.",
             ),
+            Reported::Post(text) => (
+                format!("Dein Beitrag bei {} wurde entfernt", site.service),
+                match text.book {
+                    Some(title) => format!("deinen Beitrag zu „{title}“"),
+                    None => "einen Beitrag von dir".to_owned(),
+                },
+                "Der Beitrag erscheint für niemanden mehr. Antworten anderer darauf bleiben, \
+                 unter dem Hinweis, dass er gelöscht wurde.",
+            ),
+            Reported::Quote(text) => (
+                format!("Dein Zitat bei {} wurde entfernt", site.service),
+                match text.book {
+                    Some(title) => format!("das Zitat, das du aus „{title}“ gespeichert hast,"),
+                    None => "ein Zitat von dir".to_owned(),
+                },
+                "Das Zitat wurde gelöscht.",
+            ),
+            Reported::Take(text) => (
+                format!(
+                    "Dein Satz zu einem Buch bei {} wurde entfernt",
+                    site.service
+                ),
+                match text.book {
+                    Some(title) => format!("deinen Satz zu „{title}“"),
+                    None => "einen Satz von dir".to_owned(),
+                },
+                "Der Satz erscheint nirgends mehr; deine Bewertung bleibt. Du kannst einen \
+                 neuen schreiben.",
+            ),
+        };
+        let quoted = match removed_text {
+            Some(excerpt) => format!("\n\nDer entfernte Text lautete: „{excerpt}“"),
+            None => String::new(),
         };
         let why = match reason {
             Some(reason) => format!(
@@ -616,7 +743,7 @@ pub fn statement_of_reasons(
             subject,
             format!(
                 "Hallo {user},\n\n\
-                 ein Admin von {service} hat {what} entfernt.\n\n\
+                 ein Admin von {service} hat {what} entfernt.{quoted}\n\n\
                  Warum: {why} Die Entscheidung hat ein Mensch getroffen, kein automatisches \
                  System.\n\n\
                  Was sich ändert: {effect}\n\n\
@@ -666,6 +793,35 @@ pub fn statement_of_reasons(
                 "Its title, subtitle and publisher were removed. The edition stays, under the \
                  book's own title.",
             ),
+            Reported::Post(text) => (
+                format!("Your post on {} was removed", site.service),
+                match text.book {
+                    Some(title) => format!("your post on \"{title}\""),
+                    None => "a post of yours".to_owned(),
+                },
+                "The post no longer shows to anyone. Replies others wrote to it stay, under a \
+                 note that it was deleted.",
+            ),
+            Reported::Quote(text) => (
+                format!("Your quote on {} was removed", site.service),
+                match text.book {
+                    Some(title) => format!("the quote you saved from \"{title}\""),
+                    None => "a quote of yours".to_owned(),
+                },
+                "The quote was deleted.",
+            ),
+            Reported::Take(text) => (
+                format!("Your take on a book on {} was removed", site.service),
+                match text.book {
+                    Some(title) => format!("your take on \"{title}\""),
+                    None => "a take of yours".to_owned(),
+                },
+                "The take no longer shows anywhere; your rating stays. You can write a new one.",
+            ),
+        };
+        let quoted = match removed_text {
+            Some(excerpt) => format!("\n\nThe removed text read: \"{excerpt}\""),
+            None => String::new(),
         };
         let why = match reason {
             Some(reason) => format!(
@@ -683,7 +839,7 @@ pub fn statement_of_reasons(
             subject,
             format!(
                 "Hi {user},\n\n\
-                 an admin of {service} removed {what}.\n\n\
+                 an admin of {service} removed {what}.{quoted}\n\n\
                  Why: {why} A person made this decision, not an automated system.\n\n\
                  What changed: {effect}\n\n\
                  If you think the decision is wrong, write to {contact}; it will be reviewed \
@@ -898,12 +1054,24 @@ mod tests {
         assert_eq!(age_de(80), "3 Tagen");
     }
 
-    const REPORTED: [Reported<'static>; 5] = [
+    const CIRCE_TEXT: Text<'static> = Text {
+        book: Some("Circe"),
+        excerpt: Some("Loved the witch"),
+    };
+
+    const REPORTED: [Reported<'static>; 9] = [
         Reported::Cover(Some("Circe")),
         Reported::Cover(None),
         Reported::Avatar,
         Reported::Work("Circe"),
         Reported::Edition("Circe"),
+        Reported::Post(CIRCE_TEXT),
+        Reported::Quote(CIRCE_TEXT),
+        Reported::Take(CIRCE_TEXT),
+        Reported::Post(Text {
+            book: None,
+            excerpt: None,
+        }),
     ];
 
     /// One mail of every template in `locale`, by template name.
@@ -1211,6 +1379,98 @@ mod tests {
             de.text
                 .contains("mit dem Titel „[entfernt]“ (in manchen Listen „[removed]“)")
         );
+    }
+
+    /// TEXTS (#55, Q11 option C): a reported post, quote or take is named by its book to the
+    /// reporter, never quoted; its author's statement quotes the removed text, in German too.
+    #[test]
+    fn texts_are_named_to_the_reporter_and_quoted_to_their_author() {
+        for (what, en, de) in [
+            (
+                Reported::Post(CIRCE_TEXT),
+                "reviewed the post on \"Circe\" you reported and removed it.",
+                "hat den Beitrag zu „Circe“, den du gemeldet hast, geprüft und entfernt.",
+            ),
+            (
+                Reported::Quote(CIRCE_TEXT),
+                "reviewed the quote from \"Circe\" you reported and removed it.",
+                "hat das Zitat aus „Circe“, das du gemeldet hast, geprüft und entfernt.",
+            ),
+            (
+                Reported::Take(CIRCE_TEXT),
+                "reviewed the take on \"Circe\" you reported and removed it.",
+                "hat den Satz zu „Circe“, den du gemeldet hast, geprüft und entfernt.",
+            ),
+        ] {
+            let mail = report_decision(SITE, to("en"), what, Outcome::Removed, None);
+            assert!(mail.text.contains(en), "{}", mail.text);
+            assert!(mail.text.contains("Whoever wrote it is told"));
+            assert!(!mail.text.contains("Loved the witch"));
+            let mail = report_decision(SITE, to("de"), what, Outcome::Removed, None);
+            assert!(mail.text.contains(de), "{}", mail.text);
+            assert!(mail.text.contains("Wer den Text geschrieben hat"));
+            assert!(!mail.text.contains("Loved the witch"));
+        }
+        let gone = report_decision(
+            SITE,
+            to("en"),
+            Reported::Quote(CIRCE_TEXT),
+            Outcome::Gone,
+            None,
+        );
+        assert!(gone.text.contains(
+            "reviewed the quote from \"Circe\" you reported: it is no longer online, because it \
+             was deleted."
+        ));
+        let gone = report_decision(
+            SITE,
+            to("de"),
+            Reported::Post(CIRCE_TEXT),
+            Outcome::Gone,
+            None,
+        );
+        assert!(gone.text.contains(
+            "hat den Beitrag zu „Circe“, den du gemeldet hast, geprüft: Er ist nicht mehr online, \
+             weil er gelöscht wurde."
+        ));
+
+        let take = statement_of_reasons(
+            SITE,
+            to("en"),
+            Reported::Take(CIRCE_TEXT),
+            Some("offensive"),
+            None,
+        );
+        assert_eq!(take.subject, "Your take on a book on Bookclub was removed");
+        assert!(take.text.contains(
+            "an admin of Bookclub removed your take on \"Circe\".\n\nThe removed text read: \
+             \"Loved the witch\""
+        ));
+        assert!(take.text.contains("your rating stays"));
+        let post = statement_of_reasons(
+            SITE,
+            to("de"),
+            Reported::Post(CIRCE_TEXT),
+            Some("copyright"),
+            None,
+        );
+        assert_eq!(post.subject, "Dein Beitrag bei Bookclub wurde entfernt");
+        assert!(post.text.contains(
+            "ein Admin von Bookclub hat deinen Beitrag zu „Circe“ entfernt.\n\nDer entfernte \
+             Text lautete: „Loved the witch“"
+        ));
+        let quote = statement_of_reasons(
+            SITE,
+            to("en"),
+            Reported::Quote(Text {
+                book: None,
+                excerpt: None,
+            }),
+            None,
+            None,
+        );
+        assert_eq!(quote.subject, "Your quote on Bookclub was removed");
+        assert!(quote.text.contains("removed a quote of yours.\n\nWhy:"));
     }
 
     /// A held profile picture (its owner had replaced or deleted it while it was reported) is

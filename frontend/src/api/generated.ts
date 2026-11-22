@@ -287,15 +287,18 @@ export interface paths {
         put?: never;
         /**
          * Decides a report: `remove` takes the reported picture down (everywhere it is shown, for
-         *     good) or withdraws the text of a reported work or edition a reader added; `dismiss` keeps
-         *     it. Either way every open report of the same picture, work or edition is resolved with it.
+         *     good), withdraws the text of a reported work or edition a reader added, or withdraws a
+         *     reported post (a tombstone when it has replies, else deleted), quote (deleted) or take
+         *     (cleared, the rating stays); `dismiss` keeps it. Either way every open report of the same
+         *     picture, work, edition or text is resolved with it.
          *     After the commit each reporter is mailed the decision, and on a removal the uploader, the
          *     avatar's owner or the reader who added the record gets a statement of reasons. A profile
          *     picture its owner replaced or deleted while it was reported is held for the decision:
          *     "remove" takes it down, "dismiss" deletes it. A report of something gone (`ReportOut.gone`:
-         *     the profile picture of an account deleted since, a work merged away) is only dismissed, a
-         *     merged work's with the other open reports of that work, a deleted account's picture's on its
-         *     own; its reporters learn that it is no longer online.
+         *     the profile picture of an account deleted since, a work merged away, a text its author
+         *     deleted) is only dismissed, a merged work's with the other open reports of that work, a
+         *     deleted account's picture's and a deleted text's on its own; its reporters learn that it is
+         *     no longer online.
          */
         post: operations["media_admin_resolve_report"];
         delete?: never;
@@ -556,6 +559,7 @@ export interface paths {
          *     - Personal data, sessions, memberships, friendships and requests, blocks, the friend invites
          *       bound to the user and the user's activity events go with the account; picks, nominations,
          *       invites and catalog rows keep existing without the name.
+         *     - Reports of the user's posts, quotes and takes lose the reported text (`text_snapshot`).
          *
          *     The password is checked under the current-password limits (10 checks per session in ten
          *     minutes, 30 per account an hour; then 429).
@@ -1353,6 +1357,28 @@ export interface paths {
          *     reader and book.
          */
         post: operations["catalog_report_work"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/books/works/{work_id}/takes/{username}/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reports the take another reader wrote on a book (`ShelfItemOut.take`, a club pick reader's
+         *     `take`, a `shelf_finished` event's `take`), addressed by the book and the reader's name: the
+         *     take must show to the caller (the reader is in their audience and keeps rating and take
+         *     `audience`), else 404 `Not found`. Same limits and queue as every report.
+         */
+        post: operations["shelf_report_take"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2210,6 +2236,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/posts/{post_id}/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reports a post: a club post, a reply or a diary entry the reader can see, written by someone
+         *     else (`copyright`, `offensive` or `other`). 20 new reports per day and 30 requests per
+         *     minute, shared with every other report. Idempotent per reader and post.
+         */
+        post: operations["posts_report"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/quotes": {
         parameters: {
             query?: never;
@@ -2247,6 +2294,26 @@ export interface paths {
         head?: never;
         /** Changes one of the caller's quotes. */
         patch: operations["shelf_update_quote"];
+        trace?: never;
+    };
+    "/api/quotes/{quote_id}/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reports a quote the reader can see, saved by someone else. Same limits and queue as every
+         *     report.
+         */
+        post: operations["shelf_report_quote"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/search-history": {
@@ -4357,9 +4424,15 @@ export interface components {
              */
             status: string;
         };
-        /** @description A reader's report of a cover, a profile picture, or a work or edition a reader added. */
+        /**
+         * @description A reader's report of a cover, a profile picture, a work or edition a reader added, or a post,
+         *     quote or take another reader wrote.
+         */
         ReportIn: {
-            /** @description `copyright`, `wrong_book`, `offensive` or `other`. */
+            /**
+             * @description `copyright`, `wrong_book`, `offensive` or `other`; `wrong_book` is for covers and books
+             *     only.
+             */
             reason: string;
             /** @description What is wrong; at most 2000 characters. */
             details?: string | null;
@@ -4384,7 +4457,8 @@ export interface components {
             id: number;
             /**
              * @description What was reported: `cover`, `avatar` (a profile picture), `work` or `edition` (one a
-             *     reader added).
+             *     reader added), `post` (a club post, a reply or a diary entry), `quote` or `take` (the
+             *     one-line take on a shelf entry).
              */
             target_kind: string;
             /** @description `copyright`, `wrong_book`, `offensive` or `other`. */
@@ -4408,6 +4482,18 @@ export interface components {
             avatar_url: string | null;
             target_user: components["schemas"]["UserSummary"] | null;
             book: components["schemas"]["BookOut"] | null;
+            /**
+             * @description Posts, quotes and takes: the text as it was when the report was filed (instance admins
+             *     only). Null for the other kinds, for a report closed on arrival, and once the author
+             *     deleted the account.
+             */
+            text_snapshot: string | null;
+            /**
+             * @description Posts, quotes and takes: the text as it is now, which "remove" withdraws (it differs from
+             *     `text_snapshot` when the author edited it since). Null once it was removed or deleted.
+             */
+            current_text: string | null;
+            club: components["schemas"]["ClubRef"] | null;
             created_by: components["schemas"]["UserSummary"] | null;
             /** Format: date-time */
             created_at: string;
@@ -4423,17 +4509,18 @@ export interface components {
             /**
              * @description What was reported no longer shows as reported, as it is now: a profile picture without
              *     its row (the account was deleted, or the picture was held for a report and dismissed),
-             *     or a book merged into another one (`book` is that one). Only `dismiss` decides such a
-             *     report; `remove` answers 409. A picture its owner replaced or deleted while it was
-             *     reported is held for the decision, and not gone.
+             *     a book merged into another one (`book` is that one), or a post, quote or take its author
+             *     deleted (or emptied) and no admin removed. Only `dismiss` decides such a report; `remove`
+             *     answers 409. A picture its owner replaced or deleted while it was reported is held for the
+             *     decision, and not gone.
              */
             gone: boolean;
         };
         /** @description What the admin decided. */
         ReportResolveIn: {
             /**
-             * @description `remove` takes the picture down, or withdraws the text of a reader's work or edition;
-             *     `dismiss` keeps it.
+             * @description `remove` takes the picture down, withdraws the text of a reader's work or edition, or
+             *     withdraws a post, quote or take; `dismiss` keeps it.
              */
             action: string;
         };
@@ -6015,7 +6102,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description `This report was already resolved`; on `remove`, `The reported picture is no longer online` (the profile picture of an account deleted since) or `The reported book was merged into another one` */
+            /** @description `This report was already resolved`; on `remove`, `The reported picture is no longer online` (the profile picture of an account deleted since), `The reported book was merged into another one` or `The reported text is no longer online` (a post, quote or take its author deleted) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -8866,6 +8953,71 @@ export interface operations {
             };
         };
     };
+    shelf_report_take: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A work id, `OL…W`, or a legacy key; a merged work follows the merge */
+                work_id: string;
+                /** @description Whose take */
+                username: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportIn"];
+            };
+        };
+        responses: {
+            /** @description The report is in the admin queue (`open`), or an admin already removed the take (`removed`, closed on arrival); a repeat names the same report */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportCreated"];
+                };
+            };
+            /** @description `Input should be 'copyright', 'wrong_book', 'offensive' or 'other'`, `A text cannot be reported as the wrong book`, `You cannot report your own text` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No such book.`; `Not found`: no such reader, no take, or a take the caller cannot see */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Slow down a little. Try again later.` (20 new reports per day; 30 requests per minute, repeats included) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     clubs_list: {
         parameters: {
             query?: never;
@@ -11680,6 +11832,69 @@ export interface operations {
             };
         };
     };
+    posts_report: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The post */
+                post_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportIn"];
+            };
+        };
+        responses: {
+            /** @description The report is in the admin queue (`open`), or an admin already removed the post (`removed`, closed on arrival); a repeat names the same report */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportCreated"];
+                };
+            };
+            /** @description `Input should be 'copyright', 'wrong_book', 'offensive' or 'other'`, `A text cannot be reported as the wrong book`, `You cannot report your own text`, a non-numeric id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No entry with that id` (also a tombstone or a post the caller cannot see) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Slow down a little. Try again later.` (20 new reports per day; 30 requests per minute, repeats included) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     shelf_list_quotes: {
         parameters: {
             query?: {
@@ -11893,6 +12108,69 @@ export interface operations {
             };
             /** @description `No quote with that id` (also a quote the caller cannot see) */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    shelf_report_quote: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The quote */
+                quote_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportIn"];
+            };
+        };
+        responses: {
+            /** @description The report is in the admin queue (`open`); a repeat names the same report */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportCreated"];
+                };
+            };
+            /** @description `Input should be 'copyright', 'wrong_book', 'offensive' or 'other'`, `A text cannot be reported as the wrong book`, `You cannot report your own text`, a non-numeric id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Not signed in` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `No quote with that id` (also a quote the caller cannot see) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `Slow down a little. Try again later.` (20 new reports per day; 30 requests per minute, repeats included) */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

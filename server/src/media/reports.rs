@@ -31,10 +31,11 @@
 //! or avatar, `via = 'notice'`) that arrived at `received_at`, so the history and the
 //! response-time statistics include it.
 //!
-//! **"Remove" per kind** (docs/phase2/notes/adm2.md): a cover or a profile picture is taken
-//! down as above (a removed avatar shows nowhere: every reader of `users.avatar_media_id` skips
-//! a removed picture); a work or edition a reader added loses what the reader typed
-//! (`catalog::reports::decide`).
+//! **"Remove" per kind** (docs/phase2/notes/adm2.md, docs/phase3/notes/texts.md): a cover or a
+//! profile picture is taken down as above (a removed avatar shows nowhere: every reader of
+//! `users.avatar_media_id` skips a removed picture); a work or edition a reader added loses what
+//! the reader typed (`catalog::reports::decide`); a post, quote or take a reader wrote is
+//! withdrawn (`text_reports::decide`, Q11 option C).
 //!
 //! **Decision notices** (Q12 option A, `admin::notices`): after a decision commits, each
 //! reporter is mailed the decision, and on a removal the uploader, the avatar's owner or the
@@ -95,13 +96,14 @@ use crate::auth::extract::{CurrentUser, InstanceAdmin};
 use crate::catalog::reports::{self as catalog_reports, CatalogTarget};
 use crate::catalog::shared::books::{BookRef, book_outs};
 use crate::catalog::shared::ingest::clear_media;
-use crate::dto::{BookOut, UserSummary, user_summaries};
-use crate::email::templates::Reported;
+use crate::dto::{BookOut, ClubRef, UserSummary, user_summaries};
+use crate::email::templates::{Reported, Text};
 use crate::error::{ApiResult, AppError, ErrorBody, msg};
 use crate::extract::{
     ApiJson, ApiPath, ApiQuery, BODY_TOO_LARGE, FIELD_REQUIRED, Validate, Validator,
 };
 use crate::text::{py_strip, truncate_chars};
+use crate::text_reports::{self, TextReport};
 
 /// Longest `details` of a report (silently cut, like request notes).
 pub const MAX_DETAILS_CHARS: usize = 2000;
@@ -123,16 +125,19 @@ pub const RECEIVED_IN_FUTURE: &str = "Input should be in the past";
 const RECEIVED_AT_SLACK: time::Duration = time::Duration::minutes(5);
 
 /// The advisory lock space (two-key form) that serialises one reader's reports of one picture
-/// (key `<user id>:<media id>`), work (`<user id>:work:<id>`) or edition
-/// (`<user id>:edition:<id>`). Separate from `jobs::lock_ids` and ingest's `0x6263_0100`.
+/// (key `<user id>:<media id>`), work (`<user id>:work:<id>`), edition
+/// (`<user id>:edition:<id>`), post (`<user id>:post:<id>`), quote (`<user id>:quote:<id>`) or
+/// take (`<user id>:take:<shelf entry id>`). Separate from `jobs::lock_ids` and ingest's `0x6263_0100`.
 pub(crate) const REPORT_LOCK_SPACE: i32 = 0x6263_0200;
 
 const REASONS: [&str; 4] = ["copyright", "wrong_book", "offensive", "other"];
 
-/// A reader's report of a cover, a profile picture, or a work or edition a reader added.
+/// A reader's report of a cover, a profile picture, a work or edition a reader added, or a post,
+/// quote or take another reader wrote.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct ReportIn {
-    /// `copyright`, `wrong_book`, `offensive` or `other`.
+    /// `copyright`, `wrong_book`, `offensive` or `other`; `wrong_book` is for covers and books
+    /// only.
     pub reason: String,
     /// What is wrong; at most 2000 characters.
     #[serde(default)]
@@ -163,7 +168,8 @@ pub struct ReportCreated {
 pub struct ReportOut {
     pub id: i64,
     /// What was reported: `cover`, `avatar` (a profile picture), `work` or `edition` (one a
-    /// reader added).
+    /// reader added), `post` (a club post, a reply or a diary entry), `quote` or `take` (the
+    /// one-line take on a shelf entry).
     pub target_kind: String,
     /// `copyright`, `wrong_book`, `offensive` or `other`.
     pub reason: String,
@@ -182,11 +188,22 @@ pub struct ReportOut {
     pub cover_thumb_url: Option<String>,
     /// A reported profile picture (`/media/{public_id}/a`), null once it was taken down.
     pub avatar_url: Option<String>,
-    /// Whose profile picture was reported (avatars), as the account is now.
+    /// Whose profile picture was reported (avatars), or who wrote the text (posts, quotes,
+    /// takes), as the account is now; null once it was deleted.
     pub target_user: Option<UserSummary>,
     /// Covers: the book that showed the picture when it was reported; works and editions: the
-    /// reported book (with the edition), as it is now.
+    /// reported book (with the edition), as it is now; posts, quotes and takes: the book the text
+    /// is on.
     pub book: Option<BookOut>,
+    /// Posts, quotes and takes: the text as it was when the report was filed (instance admins
+    /// only). Null for the other kinds, for a report closed on arrival, and once the author
+    /// deleted the account.
+    pub text_snapshot: Option<String>,
+    /// Posts, quotes and takes: the text as it is now, which "remove" withdraws (it differs from
+    /// `text_snapshot` when the author edited it since). Null once it was removed or deleted.
+    pub current_text: Option<String>,
+    /// A club post's (or reply's) club; null for a diary entry and every other kind.
+    pub club: Option<ClubRef>,
     pub created_by: Option<UserSummary>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
@@ -199,9 +216,10 @@ pub struct ReportOut {
     pub closed_on_arrival: bool,
     /// What was reported no longer shows as reported, as it is now: a profile picture without
     /// its row (the account was deleted, or the picture was held for a report and dismissed),
-    /// or a book merged into another one (`book` is that one). Only `dismiss` decides such a
-    /// report; `remove` answers 409. A picture its owner replaced or deleted while it was
-    /// reported is held for the decision, and not gone.
+    /// a book merged into another one (`book` is that one), or a post, quote or take its author
+    /// deleted (or emptied) and no admin removed. Only `dismiss` decides such a report; `remove`
+    /// answers 409. A picture its owner replaced or deleted while it was reported is held for the
+    /// decision, and not gone.
     pub gone: bool,
 }
 
@@ -219,8 +237,8 @@ pub struct ReportList {
 /// What the admin decided.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct ReportResolveIn {
-    /// `remove` takes the picture down, or withdraws the text of a reader's work or edition;
-    /// `dismiss` keeps it.
+    /// `remove` takes the picture down, withdraws the text of a reader's work or edition, or
+    /// withdraws a post, quote or take; `dismiss` keeps it.
     pub action: String,
 }
 
@@ -539,15 +557,18 @@ pub async fn list_reports(
 }
 
 /// Decides a report: `remove` takes the reported picture down (everywhere it is shown, for
-/// good) or withdraws the text of a reported work or edition a reader added; `dismiss` keeps
-/// it. Either way every open report of the same picture, work or edition is resolved with it.
+/// good), withdraws the text of a reported work or edition a reader added, or withdraws a
+/// reported post (a tombstone when it has replies, else deleted), quote (deleted) or take
+/// (cleared, the rating stays); `dismiss` keeps it. Either way every open report of the same
+/// picture, work, edition or text is resolved with it.
 /// After the commit each reporter is mailed the decision, and on a removal the uploader, the
 /// avatar's owner or the reader who added the record gets a statement of reasons. A profile
 /// picture its owner replaced or deleted while it was reported is held for the decision:
 /// "remove" takes it down, "dismiss" deletes it. A report of something gone (`ReportOut.gone`:
-/// the profile picture of an account deleted since, a work merged away) is only dismissed, a
-/// merged work's with the other open reports of that work, a deleted account's picture's on its
-/// own; its reporters learn that it is no longer online.
+/// the profile picture of an account deleted since, a work merged away, a text its author
+/// deleted) is only dismissed, a merged work's with the other open reports of that work, a
+/// deleted account's picture's and a deleted text's on its own; its reporters learn that it is
+/// no longer online.
 #[utoipa::path(
     post,
     path = "/api/admin/reports/{report_id}/resolve",
@@ -561,7 +582,7 @@ pub async fn list_reports(
         (status = 400, body = ErrorBody, description = "`Input should be 'remove' or 'dismiss'`; on `remove`, `Only books readers added can be reported` (a work or edition from another source)"),
         (status = 401, body = ErrorBody, description = "`Not signed in`"),
         (status = 404, body = ErrorBody, description = "`Not found`"),
-        (status = 409, body = ErrorBody, description = "`This report was already resolved`; on `remove`, `The reported picture is no longer online` (the profile picture of an account deleted since) or `The reported book was merged into another one`")
+        (status = 409, body = ErrorBody, description = "`This report was already resolved`; on `remove`, `The reported picture is no longer online` (the profile picture of an account deleted since), `The reported book was merged into another one` or `The reported text is no longer online` (a post, quote or take its author deleted)")
     )
 )]
 pub async fn resolve_report(
@@ -572,7 +593,7 @@ pub async fn resolve_report(
 ) -> ApiResult<Json<ReportOut>> {
     let report = sqlx::query!(
         "SELECT target_kind, media_id, work_id, edition_id, target_work_id, target_user_id,
-                status
+                post_id, quote_id, shelf_entry_id, status
          FROM reports WHERE id = $1",
         report_id
     )
@@ -613,6 +634,28 @@ pub async fn resolve_report(
                 gone: decided.merged,
                 held: false,
                 earlier: false,
+                excerpt: None,
+            })
+        }
+        "post" | "quote" | "take" => {
+            let text = TextReport {
+                kind: &report.target_kind,
+                post_id: report.post_id,
+                quote_id: report.quote_id,
+                shelf_entry_id: report.shelf_entry_id,
+                work_id: report.work_id,
+                author: report.target_user_id,
+            };
+            // Resolves the text's open reports, this one included.
+            let decided = text_reports::decide(&mut tx, text, remove, admin.id).await?;
+            Some(Decision {
+                title: decided.book,
+                owner: decided.owner,
+                removed: decided.removed,
+                gone: decided.gone,
+                held: false,
+                earlier: false,
+                excerpt: decided.excerpt,
             })
         }
         _ => {
@@ -650,6 +693,7 @@ pub async fn resolve_report(
                         gone,
                         held,
                         earlier: avatar && !took_current_avatar(&mut tx, owner).await?,
+                        excerpt: None,
                     }
                 }
                 _ => Decision {
@@ -659,13 +703,15 @@ pub async fn resolve_report(
                     gone,
                     held,
                     earlier: false,
+                    excerpt: None,
                 },
             })
         }
     };
-    // This report, and every other open report of the same picture, work or edition. A gone
-    // profile picture has no `media_id`, and its account's deletion cleared `target_user_id`
-    // too, so its report is closed alone.
+    // This report, and every other open report of the same picture, work or edition (a text's
+    // were resolved by `text_reports::decide`). A gone profile picture has no `media_id`, and its
+    // account's deletion cleared `target_user_id` too, so its report is closed alone; so is the
+    // report of a post or quote its author deleted (no `post_id` or `quote_id` left).
     sqlx::query!(
         "UPDATE reports SET status = $3, resolved_by = $2, resolved_at = now()
          WHERE status = 'open'
@@ -708,7 +754,7 @@ pub async fn resolve_report(
         } else {
             report.target_kind.as_str()
         };
-        reported(kind, decision.title.as_deref())
+        reported(kind, decision.title.as_deref(), decision.excerpt.as_deref())
     });
     let notices = match (&decision, what) {
         (Some(decision), Some(what)) => {
@@ -757,6 +803,8 @@ struct Decision {
     /// A profile picture taken down that is not the owner's current one (a held picture, its
     /// copy not taken down with it): the statement names it as an earlier picture.
     earlier: bool,
+    /// A post, quote or take withdrawn: its text, shortened, for its author's statement.
+    excerpt: Option<String>,
 }
 
 /// Whether this transaction took down the profile picture `owner` shows now. False after the
@@ -783,7 +831,7 @@ async fn took_current_avatar(conn: &mut PgConnection, owner: Option<i64>) -> sql
 /// either could wait for the owner's row while the owner's transaction waited for the picture,
 /// and Postgres would abort one of them. An account deleted meanwhile has no row: its pictures
 /// are gone too, which the caller's read of the picture finds.
-async fn lock_owner(conn: &mut PgConnection, owner: Option<i64>) -> sqlx::Result<()> {
+pub(crate) async fn lock_owner(conn: &mut PgConnection, owner: Option<i64>) -> sqlx::Result<()> {
     if let Some(owner) = owner {
         sqlx::query!("SELECT id FROM users WHERE id = $1 FOR KEY SHARE", owner)
             .fetch_optional(conn)
@@ -846,14 +894,26 @@ async fn lock_picture(conn: &mut PgConnection, media_id: i64, remove: bool) -> s
 }
 
 /// What a decision's notices name: a cover (with its book's title), a profile picture (an
-/// earlier one: `earlier_avatar`), or a work or edition by its title before the decision. `None`
-/// for a work or edition that is gone.
-fn reported<'a>(kind: &str, title: Option<&'a str>) -> Option<Reported<'a>> {
+/// earlier one: `earlier_avatar`), a work or edition by its title before the decision, or a
+/// post, quote or take by its book's title (with the removed text for its author). `None` for a
+/// work or edition that is gone.
+fn reported<'a>(
+    kind: &str,
+    title: Option<&'a str>,
+    excerpt: Option<&'a str>,
+) -> Option<Reported<'a>> {
+    let text = Text {
+        book: title,
+        excerpt,
+    };
     match kind {
         "avatar" => Some(Reported::Avatar),
         "earlier_avatar" => Some(Reported::EarlierAvatar),
         "work" => title.map(Reported::Work),
         "edition" => title.map(Reported::Edition),
+        "post" => Some(Reported::Post(text)),
+        "quote" => Some(Reported::Quote(text)),
+        "take" => Some(Reported::Take(text)),
         _ => Some(Reported::Cover(title)),
     }
 }
@@ -1295,13 +1355,26 @@ pub async fn report_outs(conn: &mut PgConnection, ids: &[i64]) -> sqlx::Result<V
                   r.edition_id, r.target_user_id, r.created_by, r.created_at AS "created_at!",
                   r.resolved_by, r.resolved_at, r.closed_on_arrival AS "closed_on_arrival!",
                   m.public_id AS "public_id?", m.removed_at IS NOT NULL AS "removed?",
+                  r.text_snapshot, t.text AS "current_text?",
+                  c.slug AS "club_slug?", c.name AS "club_name?",
                   CASE r.target_kind
                       WHEN 'avatar' THEN r.media_id IS NULL
                       WHEN 'work' THEN r.target_work_id IS DISTINCT FROM r.work_id
+                      WHEN 'post' THEN r.status <> 'removed' AND t.text IS NULL
+                      WHEN 'quote' THEN r.status <> 'removed' AND t.text IS NULL
+                      WHEN 'take' THEN r.status <> 'removed' AND t.text IS NULL
                       ELSE false
                   END AS "gone!"
            FROM reports r
            LEFT JOIN media m ON m.id = r.media_id
+           LEFT JOIN posts p ON p.id = r.post_id
+           LEFT JOIN clubs c ON c.id = p.club_id
+           LEFT JOIN quotes q ON q.id = r.quote_id
+           LEFT JOIN shelf_entries s ON s.id = r.shelf_entry_id
+           CROSS JOIN LATERAL (
+               SELECT coalesce(CASE WHEN p.deleted_at IS NULL THEN p.body END, q.body,
+                               nullif(s.take, '')) AS text
+           ) t
            WHERE r.id = ANY($1)"#,
         ids
     )
@@ -1353,6 +1426,12 @@ pub async fn report_outs(conn: &mut PgConnection, ids: &[i64]) -> sqlx::Result<V
                 avatar_url,
                 target_user: row.target_user_id.and_then(|id| users.get(&id).cloned()),
                 book,
+                text_snapshot: row.text_snapshot,
+                current_text: row.current_text,
+                club: row
+                    .club_slug
+                    .zip(row.club_name)
+                    .map(|(slug, name)| ClubRef { slug, name }),
                 created_by: row.created_by.and_then(|id| users.get(&id).cloned()),
                 created_at: row.created_at,
                 resolved_by: row.resolved_by.and_then(|id| users.get(&id).cloned()),

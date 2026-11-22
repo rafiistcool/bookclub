@@ -586,7 +586,10 @@ async fn catalog_sections(
     // `about_me`: the removals of the user's content after a report, one entry per decision, which
     // the user was told about anyway by the statement of reasons: their profile picture
     // (`target_user_id`), pictures they uploaded, works and editions they added (a work report by
-    // the work as reported, `target_work_id`, which a merge leaves on the reader's record). The
+    // the work as reported, `target_work_id`, which a merge leaves on the reader's record), and
+    // posts, quotes and takes they wrote (`target_user_id`, TEXTS), with their own text as
+    // reported (`text_snapshot`; the book is `work_id`, the post or quote is deleted or a
+    // tombstone by then). `filed` never carries a snapshot: it is another reader's text. The
     // reporter is never named to the other side (ADM2, Q12), and in a club of 2 to 5, or between
     // friends, a report's existence, number or time names them: only club mates and friends can
     // report a profile picture. So open and dismissed reports, reports closed on arrival, how many
@@ -601,7 +604,7 @@ async fn catalog_sections(
     let reports = sqlx::query_scalar!(
         r#"SELECT jsonb_build_object(
                'filed', (SELECT coalesce(jsonb_agg(to_jsonb(r) - 'created_by' - 'resolved_by'
-                                                   - 'target_user_id'
+                                                   - 'target_user_id' - 'text_snapshot'
                              ORDER BY r.id), '[]')
                          FROM reports r WHERE r.created_by = $1),
                'resolved', (SELECT coalesce(jsonb_agg(jsonb_build_object(
@@ -615,9 +618,13 @@ async fn catalog_sections(
                                 'work_id', d.work_id, 'edition_id', d.edition_id,
                                 'reason', d.reason, 'status', d.status,
                                 'resolved_at', d.resolved_at)
+                                || CASE WHEN d.target_kind IN ('post', 'quote', 'take')
+                                        THEN jsonb_build_object('text_snapshot', d.text_snapshot)
+                                        ELSE '{}'::jsonb END
                             ORDER BY d.resolved_at, d.first), '[]')
                             FROM (SELECT DISTINCT ON (r.resolved_by, r.resolved_at)
                                          r.target_kind, r.media_id, r.work_id, r.edition_id,
+                                         r.text_snapshot,
                                          r.reason, r.status, r.resolved_at, r.id AS first
                                   FROM reports r
                                   LEFT JOIN media m ON m.id = r.media_id

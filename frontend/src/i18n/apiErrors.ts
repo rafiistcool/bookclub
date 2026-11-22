@@ -43,6 +43,9 @@ const API_ERROR_KEYS: Record<string, string> = {
   "You cannot suspend your own account": "errors.cannotSuspendSelf",
   "The reported picture is no longer online": "errors.pictureGone",
   "The reported book was merged into another one": "errors.reportedBookMerged",
+  "You cannot report your own text": "errors.ownText",
+  "A text cannot be reported as the wrong book": "errors.textWrongBook",
+  "The reported text is no longer online": "errors.textGone",
 
   // Clubs
   "No such club": "errors.noSuchClub",

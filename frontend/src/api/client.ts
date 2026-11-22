@@ -295,6 +295,19 @@ export const api = {
   /** The same for an edition a reader added. */
   reportEdition: (editionId: number, body: ReportIn) =>
     request<ReportCreated>(`/api/books/editions/${editionId}/reports`, json("POST", body)),
+  /**
+   * Notice-and-takedown for what another reader wrote (#55, Q11 option C): a
+   * post (a club post, a reply or a diary entry), a quote, or the take on a
+   * book by its reader's name. Only `copyright`, `offensive` and `other`;
+   * one's own text is 400 `You cannot report your own text`, and a text the
+   * caller cannot see is 404 like an unknown one.
+   */
+  reportPost: (postId: number, body: ReportIn) =>
+    request<ReportCreated>(`/api/posts/${postId}/reports`, json("POST", body)),
+  reportQuote: (quoteId: number, body: ReportIn) =>
+    request<ReportCreated>(`/api/quotes/${quoteId}/reports`, json("POST", body)),
+  reportTake: (workId: number, username: string, body: ReportIn) =>
+    request<ReportCreated>(`${workPath(workId)}/takes/${enc(username)}/reports`, json("POST", body)),
 
   myShelf: () => request<ShelfListOut>("/api/shelf"),
   friendShelf: (username: string) => request<ShelfListOut>(`/api/shelf?username=${enc(username)}`),

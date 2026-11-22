@@ -30,6 +30,7 @@ pub mod serve;
 pub mod shelf;
 pub mod spa;
 pub mod text;
+pub mod text_reports;
 pub mod tz;
 pub mod visibility;
 pub mod votes;
@@ -145,6 +146,7 @@ fn api_router() -> OpenApiRouter<AppState> {
         .merge(activity::routes())
         .merge(legal::routes())
         .merge(friends::routes())
+        .merge(text_reports::routes())
 }
 
 /// Every `/api/admin/*` route.

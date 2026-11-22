@@ -154,9 +154,10 @@ describe("DiaryEntry actions", () => {
     wrapper.unmount();
   });
 
-  it("offers no “…” on someone else's post without moderation rights", () => {
+  it("offers only a report behind someone else's post's “…” without moderation rights", async () => {
     const wrapper = mountEntry(post({ author: "max", body: "Hi", club: CLUB }));
-    expect(wrapper.find(".entry-more").exists()).toBe(false);
+    await wrapper.get(".entry-more").trigger("click");
+    expect(wrapper.findAll(".sheet .sheet-row").map((row) => row.text())).toEqual(["Report"]);
     wrapper.unmount();
   });
 

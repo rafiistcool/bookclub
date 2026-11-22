@@ -11,11 +11,13 @@ import type { ActivityItem } from "../types";
 import Avatar from "./Avatar.vue";
 import BookCover from "./BookCover.vue";
 import RelativeTime from "./RelativeTime.vue";
+import ReportSheet, { type ReportTarget } from "./ReportSheet.vue";
 
 /**
  * What happened: picks, votes, notes, shelves. Without `club` it is the home
  * feed across every club of the viewer (plus their own events); with a slug,
- * that club's feed.
+ * that club's feed. Another reader's take on a finished book can be reported
+ * to the instance admins from here (#55, Q11 option C).
  */
 const props = defineProps<{
   club?: string;
@@ -40,7 +42,16 @@ const busy = ref(false);
 /** The answer's zone: the club's in a club feed, where every line is in it (personal events too). */
 const feedZone = ref<string | null>(null);
 
-const rows = computed(() => items.value.map((item) => ({ item, line: activityLine(item) })));
+const rows = computed(() => items.value.map((item) => ({ item, line: activityLine(item), take: takeOf(item) })));
+const reporting = ref<ReportTarget | null>(null);
+
+/** Another reader's take in a finish's line, which can be reported; null for anything else. */
+function takeOf(item: ActivityItem): ReportTarget | null {
+  const take = (item.payload as Record<string, unknown> | null)?.take;
+  if (item.kind !== "shelf_finished" || typeof take !== "string" || !take) return null;
+  if (!item.actor || item.actor === session.user?.username || !item.book) return null;
+  return { kind: "take", workId: item.book.id, author: item.actor };
+}
 
 async function load(more = false) {
   if (busy.value) return;
@@ -98,7 +109,7 @@ watch(
     <p v-else-if="items.length === 0" class="fine subtle">{{ emptyText ?? t("activity.empty") }}</p>
     <template v-else>
       <ol class="activity-list">
-        <li v-for="{ item, line } in rows" :key="item.id" class="activity-row">
+        <li v-for="{ item, line, take } in rows" :key="item.id" class="activity-row">
           <RouterLink
             v-if="item.book"
             class="activity-cover"
@@ -121,6 +132,15 @@ watch(
               <template v-for="(value, name) in line.params" :key="name" #[name]>{{ value }}</template>
             </i18n-t>
             <span v-if="line.detail" class="activity-detail clamp-2">{{ line.detail }}</span>
+            <button
+              v-if="take"
+              class="text-btn quiet finer activity-report"
+              type="button"
+              :aria-label="t('report.takeOf', { name: item.actor })"
+              @click="reporting = take"
+            >
+              {{ t("report.action.take") }}
+            </button>
             <span class="finer subtle">
               <template v-if="!club && item.club">
                 <RouterLink class="activity-club" :to="`/c/${item.club.slug}`">{{ item.club.name }}</RouterLink> ·
@@ -135,6 +155,7 @@ watch(
         {{ t("common.showMore") }}
       </button>
     </template>
+    <ReportSheet v-if="reporting" :target="reporting" @close="reporting = null" />
   </section>
 </template>
 
@@ -203,6 +224,11 @@ watch(
 .activity-actor:active,
 .activity-book:active {
   opacity: 0.6;
+}
+
+.activity-report {
+  justify-self: start;
+  min-height: 0;
 }
 
 .activity-detail {

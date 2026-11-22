@@ -10,6 +10,7 @@ const api = {
   vote: vi.fn(),
   patchClubPick: vi.fn(),
   setClubPick: vi.fn(),
+  reportTake: vi.fn(),
   meetingIcsPath: (slug: string) => `/api/clubs/${slug}/pick/meeting.ics`,
 };
 
@@ -104,6 +105,25 @@ describe("ClubHomePage", () => {
     const done = await mountAs("member", { ...PICK, on_shelf: "finished", shelf_id: 30 });
     expect(done.get(".hero-action .to-discussion").attributes("href")).toBe("/c/readers-ab12/discussions");
     expect(done.find(".hero-action .start-reading").exists()).toBe(false);
+  });
+
+  it("offers a report on another member's take, not on mine (#55, Q11 C)", async () => {
+    const readers = [
+      { username: "ada", status: "finished" as const, progress: null, rating: 5, take: "Mine", dnf_reason: "", current_page: null, progress_pages: null, avatar_url: null },
+      { username: "grace", status: "finished" as const, progress: null, rating: 2, take: "Rude", dnf_reason: "", current_page: null, progress_pages: null, avatar_url: null },
+    ];
+    const wrapper = await mountAs("member", { ...PICK, readers });
+    const buttons = wrapper.findAll(".take-report");
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]!.attributes("aria-label")).toBe("Report grace's take");
+    await buttons[0]!.trigger("click");
+    api.reportTake.mockResolvedValue({ id: 1, status: "open" });
+    const sheet = wrapper.findComponent({ name: "ReportSheet" });
+    expect(sheet.text()).toContain("Take by grace");
+    await sheet.get('input[value="offensive"]').setValue(true);
+    await sheet.get("form").trigger("submit");
+    await flushPromises();
+    expect(api.reportTake).toHaveBeenCalledWith(9, "grace", { reason: "offensive", details: null });
   });
 
   it("finishes the book from the progress editor and reloads where everyone is", async () => {

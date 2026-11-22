@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { PencilSquareIcon, TrashIcon } from "@heroicons/vue/24/outline";
+import { FlagIcon, PencilSquareIcon, TrashIcon } from "@heroicons/vue/24/outline";
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 import BottomSheet from "./BottomSheet.vue";
@@ -9,8 +9,9 @@ import BottomSheet from "./BottomSheet.vue";
  * the book page's "…" sheet. The writer edits and deletes their own post; a
  * club admin deletes someone else's club post (moderation), and only here,
  * never as a link beside "Reply". Deleting asks once more in place: the row
- * turns into "Really delete?", and a second tap deletes. The sheet only says
- * what was asked (`act`); the post closes it and does the rest.
+ * turns into "Really delete?", and a second tap deletes. Someone else's post
+ * can be reported to the instance admins (#55, Q11 option C). The sheet only
+ * says what was asked (`act`); the post closes it and does the rest.
  */
 const props = defineProps<{
   title: string;
@@ -18,8 +19,10 @@ const props = defineProps<{
   canDelete: boolean;
   /** Deleting someone else's post as a club admin. */
   moderating?: boolean;
+  /** Someone else's post: "Report" opens the report sheet. */
+  canReport?: boolean;
 }>();
-const emit = defineEmits<{ close: []; act: [action: "edit" | "delete"] }>();
+const emit = defineEmits<{ close: []; act: [action: "edit" | "delete" | "report"] }>();
 
 const { t } = useI18n();
 const confirming = ref(false);
@@ -48,6 +51,12 @@ function remove() {
           <span class="sheet-label" aria-live="polite">
             {{ confirming ? t("diary.deleteConfirm") : moderating ? t("diary.moderate") : t("common.delete") }}
           </span>
+        </button>
+      </li>
+      <li v-if="canReport">
+        <button class="sheet-row post-report" type="button" @click="emit('act', 'report')">
+          <FlagIcon class="sheet-icon" aria-hidden="true" />
+          <span class="sheet-label">{{ t("report.action.text") }}</span>
         </button>
       </li>
     </ul>

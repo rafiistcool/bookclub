@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT r.id AS \"id!\", r.target_kind AS \"target_kind!\", r.reason AS \"reason!\",\n                  r.details AS \"details!\", r.status AS \"status!\", r.via AS \"via!\", r.work_id,\n                  r.edition_id, r.target_user_id, r.created_by, r.created_at AS \"created_at!\",\n                  r.resolved_by, r.resolved_at, r.closed_on_arrival AS \"closed_on_arrival!\",\n                  m.public_id AS \"public_id?\", m.removed_at IS NOT NULL AS \"removed?\",\n                  CASE r.target_kind\n                      WHEN 'avatar' THEN r.media_id IS NULL\n                      WHEN 'work' THEN r.target_work_id IS DISTINCT FROM r.work_id\n                      ELSE false\n                  END AS \"gone!\"\n           FROM reports r\n           LEFT JOIN media m ON m.id = r.media_id\n           WHERE r.id = ANY($1)",
+  "query": "SELECT r.id AS \"id!\", r.target_kind AS \"target_kind!\", r.reason AS \"reason!\",\n                  r.details AS \"details!\", r.status AS \"status!\", r.via AS \"via!\", r.work_id,\n                  r.edition_id, r.target_user_id, r.created_by, r.created_at AS \"created_at!\",\n                  r.resolved_by, r.resolved_at, r.closed_on_arrival AS \"closed_on_arrival!\",\n                  m.public_id AS \"public_id?\", m.removed_at IS NOT NULL AS \"removed?\",\n                  r.text_snapshot, t.text AS \"current_text?\",\n                  c.slug AS \"club_slug?\", c.name AS \"club_name?\",\n                  CASE r.target_kind\n                      WHEN 'avatar' THEN r.media_id IS NULL\n                      WHEN 'work' THEN r.target_work_id IS DISTINCT FROM r.work_id\n                      WHEN 'post' THEN r.status <> 'removed' AND t.text IS NULL\n                      WHEN 'quote' THEN r.status <> 'removed' AND t.text IS NULL\n                      WHEN 'take' THEN r.status <> 'removed' AND t.text IS NULL\n                      ELSE false\n                  END AS \"gone!\"\n           FROM reports r\n           LEFT JOIN media m ON m.id = r.media_id\n           LEFT JOIN posts p ON p.id = r.post_id\n           LEFT JOIN clubs c ON c.id = p.club_id\n           LEFT JOIN quotes q ON q.id = r.quote_id\n           LEFT JOIN shelf_entries s ON s.id = r.shelf_entry_id\n           CROSS JOIN LATERAL (\n               SELECT coalesce(CASE WHEN p.deleted_at IS NULL THEN p.body END, q.body,\n                               nullif(s.take, '')) AS text\n           ) t\n           WHERE r.id = ANY($1)",
   "describe": {
     "columns": [
       {
@@ -176,6 +176,45 @@
       },
       {
         "ordinal": 16,
+        "name": "text_snapshot",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "reports",
+            "name": "text_snapshot"
+          }
+        }
+      },
+      {
+        "ordinal": 17,
+        "name": "current_text?",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 18,
+        "name": "club_slug?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "clubs",
+            "name": "slug"
+          }
+        }
+      },
+      {
+        "ordinal": 19,
+        "name": "club_name?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "clubs",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 20,
         "name": "gone!",
         "type_info": "Bool",
         "origin": "Expression"
@@ -201,10 +240,14 @@
       true,
       true,
       true,
-      false,
+      true,
       null,
+      true,
+      null,
+      true,
+      true,
       null
     ]
   },
-  "hash": "5188e5265fe04e42ae4bfd84e7aa58daa08b6b2d3ade7bff7d3d8ede8efb3747"
+  "hash": "adfe25bf05fabc18641e558765857dba03b79b632a92dd588b426602bccc3d06"
 }

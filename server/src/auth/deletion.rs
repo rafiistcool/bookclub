@@ -36,6 +36,7 @@ impl Validate for AccountDeleteIn {}
 /// - Personal data, sessions, memberships, friendships and requests, blocks, the friend invites
 ///   bound to the user and the user's activity events go with the account; picks, nominations,
 ///   invites and catalog rows keep existing without the name.
+/// - Reports of the user's posts, quotes and takes lose the reported text (`text_snapshot`).
 ///
 /// The password is checked under the current-password limits (10 checks per session in ten
 /// minutes, 30 per account an hour; then 429).
@@ -146,6 +147,15 @@ pub async fn delete_user(
         .into_iter()
         .flatten(),
     );
+    // The texts reported of the user's posts, quotes and takes, as the admin queue kept them
+    // (TEXTS, Q11 option C): the reports stay for the statistics, without the words.
+    sqlx::query!(
+        "UPDATE reports SET text_snapshot = NULL
+         WHERE target_user_id = $1 AND text_snapshot IS NOT NULL",
+        user_id
+    )
+    .execute(&mut *conn)
+    .await?;
     sqlx::query!("DELETE FROM users WHERE id = $1", user_id)
         .execute(&mut *conn)
         .await?;
