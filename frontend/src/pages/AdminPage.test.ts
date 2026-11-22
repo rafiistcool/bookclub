@@ -1,4 +1,4 @@
-import { flushPromises, mount } from "@vue/test-utils";
+import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
@@ -124,8 +124,13 @@ function summary(overrides: Partial<AdminSummary> = {}): AdminSummary {
   };
 }
 
+// The pinia of the page mounted last: tests read its toasts by name, never through the active
+// pinia, which a component of another mount can switch.
+let mounted = createPinia();
+
 async function mountAdmin(path = "/admin") {
   const pinia = createPinia();
+  mounted = pinia;
   setActivePinia(pinia);
   useSession().user = user({ username: "root", is_admin: true });
   const router = createRouter({
@@ -144,6 +149,12 @@ async function mountAdmin(path = "/admin") {
 function buttonIn(scope: ReturnType<Awaited<ReturnType<typeof mountAdmin>>["wrapper"]["get"]>, label: string) {
   return scope.findAll("button").find((node) => node.text() === label)!;
 }
+
+// Every test mounts a page with a pinia of its own. A page left mounted re-renders when a later test
+// switches the shared i18n locale, and a store used from its components can make its pinia the
+// active one again; once, in CI under load, a test read an earlier test's toast that way. Pages are
+// unmounted after each test, and toasts are read from the mounted page's pinia (`mounted`).
+enableAutoUnmount(afterEach);
 
 describe("AdminPage", () => {
   beforeEach(() => {
@@ -185,7 +196,7 @@ describe("AdminPage", () => {
     await flushPromises();
     expect(api.approveEditRequest).toHaveBeenCalledWith(1);
     expect(wrapper.findAll(".request-item")).toHaveLength(1);
-    expect(useToast().items.at(-1)?.message).toBe("Approved");
+    expect(useToast(mounted).items.at(-1)?.message).toBe("Approved");
     // The badges come from the summary, read again after the decision.
     expect(api.adminSummary).toHaveBeenCalledTimes(2);
     expect(wrapper.get(".admin-tabs button").text()).toBe("Requests 1");
@@ -267,7 +278,7 @@ describe("AdminPage", () => {
     await flushPromises();
     expect(wrapper.findAll(".request-item")).toHaveLength(0);
     expect(wrapper.text()).toContain("Nothing waiting.");
-    expect(useToast().items.at(-1)?.message).toBe("Someone already decided this request");
+    expect(useToast(mounted).items.at(-1)?.message).toBe("Someone already decided this request");
   });
 
   it("takes a reported cover down with a second tap, or keeps it", async () => {
@@ -287,7 +298,7 @@ describe("AdminPage", () => {
     await buttonIn(items[0]!, "Take down for good").trigger("click");
     await flushPromises();
     expect(api.resolveReport).toHaveBeenCalledWith(7, "remove");
-    expect(useToast().items.at(-1)?.message).toBe("Picture taken down");
+    expect(useToast(mounted).items.at(-1)?.message).toBe("Picture taken down");
 
     api.resolveReport.mockResolvedValue(report({ id: 8, status: "dismissed" }));
     await buttonIn(wrapper.get(".report-item"), "Keep it").trigger("click");
@@ -340,7 +351,7 @@ describe("AdminPage", () => {
     expect(api.adminEditWork).toHaveBeenCalledWith(9, { title: "Circe (corrected)" });
     expect(api.adminEditRequestPage).toHaveBeenCalledTimes(2);
     expect(wrapper.find(".sheet").exists()).toBe(false);
-    expect(useToast().items.at(-1)?.message).toBe("Saved. Everyone sees the new values now.");
+    expect(useToast(mounted).items.at(-1)?.message).toBe("Saved. Everyone sees the new values now.");
     // The request stays open for a decision.
     expect(api.approveEditRequest).not.toHaveBeenCalled();
     expect(api.rejectEditRequest).not.toHaveBeenCalled();
@@ -628,7 +639,7 @@ describe("AdminPage", () => {
       details: "Mail from someone without an account.",
       received_at: new Date("2026-10-27T09:30").toISOString(),
     });
-    expect(useToast().items.at(-1)?.message).toBe("Picture taken down and the notice recorded");
+    expect(useToast(mounted).items.at(-1)?.message).toBe("Picture taken down and the notice recorded");
     expect(api.adminSummary).toHaveBeenCalledTimes(1);
     expect(api.adminReportPage).toHaveBeenCalledWith("open", 1);
     expect((form.get("input[name=takedown-url]").element as HTMLInputElement).value).toBe("");
@@ -711,7 +722,7 @@ describe("AdminPage", () => {
     await flushPromises();
     expect(api.adminTakeDown).toHaveBeenCalledTimes(1);
     expect(api.adminTakeDown).toHaveBeenCalledWith(id, expect.objectContaining({ reason: "copyright", details: "" }));
-    expect(useToast().items.at(-1)?.message).toBe("Picture taken down and the notice recorded");
+    expect(useToast(mounted).items.at(-1)?.message).toBe("Picture taken down and the notice recorded");
     expect(form.findAll("button").map((node) => node.text())).not.toContain("Take down without a record");
   });
 
@@ -758,7 +769,7 @@ describe("AdminPage", () => {
     await buttonIn(work!, "Remove for good").trigger("click");
     await flushPromises();
     expect(api.resolveReport).toHaveBeenCalledWith(32, "remove");
-    expect(useToast().items.at(-1)?.message).toBe("Text removed");
+    expect(useToast(mounted).items.at(-1)?.message).toBe("Text removed");
     expect(api.adminReportPage).toHaveBeenLastCalledWith("open", 1);
     expect(wrapper.findAll(".report-item")).toHaveLength(1);
 
@@ -810,7 +821,7 @@ describe("AdminPage", () => {
     await buttonIn(post!, "Remove for good").trigger("click");
     await flushPromises();
     expect(api.resolveReport).toHaveBeenCalledWith(61, "remove");
-    expect(useToast().items.at(-1)?.message).toBe("Text removed");
+    expect(useToast(mounted).items.at(-1)?.message).toBe("Text removed");
     expect(wrapper.findAll(".report-item")).toHaveLength(1);
 
     i18n.global.locale.value = "de";
@@ -849,7 +860,7 @@ describe("AdminPage", () => {
     await buttonIn(gonePicture!, "Close the report").trigger("click");
     await flushPromises();
     expect(api.resolveReport).toHaveBeenCalledWith(51, "dismiss");
-    expect(useToast().items.at(-1)?.message).toBe("Report closed, nothing was removed");
+    expect(useToast(mounted).items.at(-1)?.message).toBe("Report closed, nothing was removed");
     expect(wrapper.findAll(".report-item")).toHaveLength(2);
 
     // The owner replaced the picture after the list was read: the takedown is refused, and the
@@ -862,7 +873,7 @@ describe("AdminPage", () => {
     api.adminReportPage.mockResolvedValue(page([merged, { ...avatar, media_public_id: null, avatar_url: null, gone: true }]));
     await buttonIn(liveItem, "Take down for good").trigger("click");
     await flushPromises();
-    expect(useToast().items.at(-1)?.message).toBe(
+    expect(useToast(mounted).items.at(-1)?.message).toBe(
       "The reported picture is no longer online: its owner replaced or deleted it. Close the report.",
     );
     expect(api.adminReportPage).toHaveBeenLastCalledWith("open", 1);
@@ -963,7 +974,7 @@ describe("AdminPage", () => {
     await form.trigger("submit");
     await flushPromises();
     expect(api.adminSuspendUser).toHaveBeenLastCalledWith("eve");
-    expect(useToast().items.at(-1)?.message).toBe("eve is suspended");
+    expect(useToast(mounted).items.at(-1)?.message).toBe("eve is suspended");
     expect(wrapper.findAll(".user-row").map((row) => row.get("strong").text())).toEqual(["eve", "mallory"]);
     expect(wrapper.findAll(".user-row")[0]!.text()).toContain("Admin");
     expect((form.get("input[name=suspend-username]").element as HTMLInputElement).value).toBe("");
@@ -972,7 +983,7 @@ describe("AdminPage", () => {
     await buttonIn(wrapper.findAll(".user-row")[1]!, "Lift suspension").trigger("click");
     await flushPromises();
     expect(api.adminUnsuspendUser).toHaveBeenCalledWith("mallory");
-    expect(useToast().items.at(-1)?.message).toBe("mallory can sign in again");
+    expect(useToast(mounted).items.at(-1)?.message).toBe("mallory can sign in again");
     expect(wrapper.findAll(".user-row")).toHaveLength(1);
   });
 
