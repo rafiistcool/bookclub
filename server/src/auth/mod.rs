@@ -196,7 +196,10 @@ pub const PURGE_BATCH: i64 = 500;
 ///   `decided_at`); open ones stay however old they are. A rejected cover request whose photo is
 ///   still stored is left to [`delete_rejected_cover_photos`], which deletes the photo with it:
 ///   deleted here, the request would leave its photo behind with nothing referencing it;
-/// - empty sign-ups, 30 days after their last sign-in ([`purge_empty_sign_ups`]).
+/// - pending friend requests, hidden ones too, 30 days after they were sent
+///   (`friends::requests::expire_requests`, REQS);
+/// - empty sign-ups, 30 days after their last sign-in ([`purge_empty_sign_ups`]). The requests
+///   go first: a sign-up whose only data was a request it sent is empty from then on.
 pub async fn cleanup(conn: &mut PgConnection) -> sqlx::Result<()> {
     let sessions = sqlx::query!("DELETE FROM sessions WHERE expires_at < now()")
         .execute(&mut *conn)
@@ -223,14 +226,16 @@ pub async fn cleanup(conn: &mut PgConnection) -> sqlx::Result<()> {
     .execute(&mut *conn)
     .await?
     .rows_affected();
+    let friend_requests = crate::friends::requests::expire_requests(conn).await?;
     let sign_ups = purge_empty_sign_ups(conn).await?;
     tracing::info!(
         sessions,
         tokens,
         reports,
         edit_requests,
+        friend_requests,
         sign_ups,
-        "deleted expired sessions and email tokens, old decisions and empty sign-ups"
+        "deleted expired sessions and email tokens, old decisions, expired friend requests and empty sign-ups"
     );
     Ok(())
 }

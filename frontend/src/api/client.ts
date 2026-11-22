@@ -1,5 +1,6 @@
 import type {
   ActivityOut,
+  AdminRequestSignalList,
   AdminSummary,
   AdminUserList,
   AdminUserOut,
@@ -548,6 +549,11 @@ export const api = {
     request<AdminUserOut>(`/api/admin/users/${enc(username)}/unsuspend`, { method: "POST" }),
   /** The suspended accounts, the latest suspension first. */
   adminSuspendedUsers: () => request<AdminUserList>("/api/admin/users/suspended"),
+  /**
+   * At most 20 accounts by their pending friend requests out and the blocks
+   * they received in the last 30 days, the most first; counts only.
+   */
+  adminFriendRequestSignals: () => request<AdminRequestSignalList>("/api/admin/users/friend-requests"),
 
   /** A reader's year in books: the caller's without `username`; the newest year without `year`. */
   personalStats: (params: { username?: string; year?: number } = {}) => {

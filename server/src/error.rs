@@ -85,6 +85,10 @@ pub mod msg {
     pub const YOU_BLOCKED: &str = "You blocked this account";
     /// 404 when there is no pending request the caller may accept, decline or cancel.
     pub const NO_FRIEND_REQUEST: &str = "No such friend request";
+    /// 409 when a friend request would be the account's 51st pending one (REQS,
+    /// `friends::requests::MAX_PENDING_OUT`).
+    pub const TOO_MANY_OPEN_REQUESTS: &str =
+        "You already have 50 open friend requests. Withdraw some or wait for answers.";
     /// 404 when the caller is not friends with that name: removal and friend invites.
     pub const NO_FRIEND: &str = "No friend with that name";
     /// 409 when a friend invite names someone who is already in the club.

@@ -1,0 +1,43 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT requester_id, addressee_id FROM friendships\n             WHERE accepted_at IS NULL AND created_at < now() - make_interval(days => $1)\n               AND (requester_id, addressee_id) > ($2, $3)\n             ORDER BY requester_id, addressee_id\n             LIMIT $4",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "requester_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "friendships",
+            "name": "requester_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "addressee_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "friendships",
+            "name": "addressee_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "47938e80173f3889f374228e670eb494f3f5ca7d74096e03c7569ad2e70b7f82"
+}

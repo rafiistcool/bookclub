@@ -450,6 +450,6 @@ async fn a_friend_shows_three_current_books_in_shelf_order(db: PgPool) {
             .unwrap()
             .keys()
             .collect::<Vec<_>>(),
-        ["created_at", "user"]
+        ["created_at", "expires_at", "user"]
     );
 }
